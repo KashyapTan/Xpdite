@@ -276,6 +276,13 @@ function App() {
           content: m.content,
           images: m.images && m.images.length > 0 ? m.images : undefined,
           model: m.model,
+          contentBlocks: m.content_blocks
+            ? m.content_blocks.map((b) =>
+                b.type === 'tool_call'
+                  ? { type: 'tool_call' as const, toolCall: { name: b.name!, args: b.args ?? {}, server: b.server ?? '', status: 'complete' as const } }
+                  : { type: 'text' as const, content: b.content ?? '' }
+              )
+            : undefined,
         }));
 
         chatState.loadConversation(resumeData.conversation_id, msgs);

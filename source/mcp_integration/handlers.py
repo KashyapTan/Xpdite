@@ -97,6 +97,7 @@ async def handle_mcp_tool_calls(
           "already_streamed": True} — caller skips re-streaming
     """
     tool_calls_made: List[Dict[str, Any]] = []
+    interleaved_blocks: List[Dict[str, Any]] = []
 
     if not mcp_manager.has_tools():
         return messages, tool_calls_made, None
@@ -164,10 +165,12 @@ async def handle_mcp_tool_calls(
         if is_first_round and current_content:
             await broadcast_message("response_chunk", current_content)
             all_accumulated_text.append(current_content)
+            interleaved_blocks.append({"type": "text", "content": current_content})
             is_first_round = False
         elif not is_first_round and current_content:
             # Text was already broadcast by _stream_tool_follow_up
             all_accumulated_text.append(current_content)
+            interleaved_blocks.append({"type": "text", "content": current_content})
 
         # Add assistant message (with tool calls) to history
         assistant_msg: Dict[str, Any] = {
@@ -236,6 +239,14 @@ async def handle_mcp_tool_calls(
                     "server": server_name,
                 }
             )
+            interleaved_blocks.append(
+                {
+                    "type": "tool_call",
+                    "name": fn_name,
+                    "args": fn_args,
+                    "server": server_name,
+                }
+            )
 
             messages.append({"role": "tool", "content": result_str, "name": fn_name})
 
@@ -258,6 +269,7 @@ async def handle_mcp_tool_calls(
         if not current_tool_calls:
             if current_content:
                 all_accumulated_text.append(current_content)
+                interleaved_blocks.append({"type": "text", "content": current_content})
             break
 
     # Broadcast response_complete (text was streamed throughout the loop)
@@ -271,6 +283,7 @@ async def handle_mcp_tool_calls(
             "content": "".join(all_accumulated_text),
             "token_stats": total_token_stats,
             "already_streamed": True,
+            "interleaved_blocks": interleaved_blocks,
         }
 
     return messages, tool_calls_made, None

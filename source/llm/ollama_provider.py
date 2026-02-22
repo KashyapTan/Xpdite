@@ -95,6 +95,7 @@ async def stream_ollama_chat(
                     "token_stats", {"prompt_eval_count": 0, "eval_count": 0}
                 ),
                 tool_calls_list,
+                pre_computed_response.get("interleaved_blocks"),
             )
         # Legacy pre-computed path (safety net)
         return await _broadcast_tool_final_response(
@@ -276,7 +277,7 @@ async def stream_ollama_chat(
             safe_schedule(broadcast_message("response_complete", ""))
             loop.call_soon_threadsafe(
                 done_future.set_result,
-                ("".join(accumulated), collected_token_stats, tool_calls_list),
+                ("".join(accumulated), collected_token_stats, tool_calls_list, None),
             )
 
         except Exception as e:
@@ -286,7 +287,7 @@ async def stream_ollama_chat(
             if not done_future.done():
                 loop.call_soon_threadsafe(
                     done_future.set_result,
-                    (err, collected_token_stats, tool_calls_list),
+                    (err, collected_token_stats, tool_calls_list, None),
                 )
 
     threading.Thread(target=producer, daemon=True).start()
@@ -330,7 +331,7 @@ async def _broadcast_tool_final_response(
     if token_stats.get("prompt_eval_count") or token_stats.get("eval_count"):
         await broadcast_message("token_usage", json.dumps(token_stats))
 
-    return content, token_stats, tool_calls_list
+    return content, token_stats, tool_calls_list, None
 
 
 def _extract_token(chunk) -> tuple[str | None, str | None]:

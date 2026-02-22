@@ -157,6 +157,13 @@ export interface ConversationResumedContent {
     content: string;
     images?: Array<{ name: string; thumbnail: string }>;
     model?: string;
+    content_blocks?: Array<{
+      type: string;
+      content?: string;
+      name?: string;
+      args?: Record<string, unknown>;
+      server?: string;
+    }>;
   }>;
   token_usage?: {
     total: number;

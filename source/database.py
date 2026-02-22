@@ -75,6 +75,12 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             pass
 
+        # Migration: add content_blocks column to messages (stores interleaved tool-call layout)
+        try:
+            cursor.execute("ALTER TABLE messages ADD COLUMN content_blocks TEXT")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # --- TABLE 2: MESSAGES ---
         # This holds the actual content.
         # The 'conversation_id' column links this message to a specific row
@@ -213,9 +219,12 @@ class DatabaseManager:
         content: str,
         images: List[str] | None = None,
         model: str | None = None,
+        content_blocks: List[Dict] | None = None,
     ):
         """
         Saves a message AND updates the parent conversation's timestamp.
+        content_blocks stores the interleaved layout of text + tool calls
+        (tool call args only — results are intentionally omitted to save storage).
         """
 
         connection = self._get_connection()
@@ -223,13 +232,12 @@ class DatabaseManager:
         time_stamp = time.time()
 
         # 1. Serialize: Convert Python List -> JSON String
-        # If images is None, store None (NULL in SQL).
-        # If it's a list, make it a string.
         images_json = json.dumps(images) if images else None
+        content_blocks_json = json.dumps(content_blocks) if content_blocks else None
 
         cursor.execute(
-            "INSERT INTO messages (conversation_id, role, content, images, model, created_at)  VALUES (?, ?, ?, ?, ?, ?)",
-            (conversation_id, role, content, images_json, model, time_stamp),
+            "INSERT INTO messages (conversation_id, role, content, images, model, content_blocks, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, role, content, images_json, model, content_blocks_json, time_stamp),
         )
 
         # 3. Update the Parent
@@ -286,7 +294,7 @@ class DatabaseManager:
         cursor = connection.cursor()
 
         cursor.execute(
-            """SELECT role, content, images, created_at, model from messages
+            """SELECT role, content, images, created_at, model, content_blocks FROM messages
                 WHERE conversation_id = ?
                 ORDER BY created_at ASC""",  # Oldest messages at top (like standard chat)
             (conversation_id,),
@@ -298,9 +306,8 @@ class DatabaseManager:
         results = []
 
         for row in rows:
-            # Deserialize: JSON String -> Python List
-            # If row[2] (images) is a string, parse it. If None, return empty list.
             img_list = json.loads(row[2]) if row[2] else []
+            blocks = json.loads(row[5]) if row[5] else None
 
             results.append(
                 {
@@ -309,6 +316,7 @@ class DatabaseManager:
                     "images": img_list,
                     "timestamp": row[3],
                     "model": row[4],
+                    "content_blocks": blocks,
                 }
             )
         return results

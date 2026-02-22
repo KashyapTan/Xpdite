@@ -68,7 +68,7 @@ async def route_chat(
 
     if provider == "ollama":
         if app_state.stop_streaming:
-            return "", {"prompt_eval_count": 0, "eval_count": 0}, []
+            return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
 
         from .ollama_provider import stream_ollama_chat
 
@@ -90,10 +90,11 @@ async def route_chat(
             f"Error: No API key for {provider}",
             {"prompt_eval_count": 0, "eval_count": 0},
             [],
+            None,
         )
 
     if app_state.stop_streaming:
-        return "", {"prompt_eval_count": 0, "eval_count": 0}, []
+        return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
 
     # Get relevant tool names for the streaming function
     allowed_tool_names: set[str] = set()
@@ -105,7 +106,7 @@ async def route_chat(
 
     # Stream with inline tool calling — text and tool results are
     # interleaved and broadcast to the user in real-time
-    response_text, token_stats, tool_calls_list = await stream_cloud_chat(
+    response_text, token_stats, tool_calls_list, interleaved_blocks = await stream_cloud_chat(
         provider,
         model,
         api_key,
@@ -116,4 +117,4 @@ async def route_chat(
         system_prompt=system_prompt,
     )
 
-    return response_text, token_stats, tool_calls_list
+    return response_text, token_stats, tool_calls_list, interleaved_blocks

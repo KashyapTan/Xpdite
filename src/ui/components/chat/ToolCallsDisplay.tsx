@@ -24,7 +24,8 @@ export function InlineToolCard({ toolCall }: InlineToolCardProps) {
     <div className="inline-tool-card-wrapper">
       <div
         className={`tool-timeline-item ${isRunning ? 'running' : ''} ${isExpanded ? 'expanded' : ''}`}
-        onClick={() => !isRunning && setIsExpanded(!isExpanded)}
+        onClick={() => !isRunning && !!toolCall.result && setIsExpanded(!isExpanded)}
+        style={!isRunning && !toolCall.result ? { cursor: 'default' } : undefined}
       >
         <div className="tool-status-icon-wrapper">
           {isRunning ? (
@@ -39,7 +40,7 @@ export function InlineToolCard({ toolCall }: InlineToolCardProps) {
         </div>
         <div className="tool-badge">{badge}</div>
         <div className="tool-desc">{text}</div>
-        {!isRunning && (
+        {!isRunning && !!toolCall.result && (
           <svg
             className={`tool-item-chevron ${isExpanded ? 'expanded' : ''}`}
             viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
@@ -48,10 +49,10 @@ export function InlineToolCard({ toolCall }: InlineToolCardProps) {
           </svg>
         )}
       </div>
-      {isExpanded && !isRunning && (
+      {isExpanded && !isRunning && !!toolCall.result && (
         <div className="tool-details-panel">
           <div className="tool-details-label">Result:</div>
-          <pre className="tool-details-content">{toolCall.result || 'No output returned.'}</pre>
+          <pre className="tool-details-content">{toolCall.result}</pre>
         </div>
       )}
     </div>
@@ -162,7 +163,8 @@ export function ToolCallsDisplay({ toolCalls }: ToolCallsDisplayProps) {
                 {/* Tool Header (Always Visible) */}
                 <div 
                   className={`tool-timeline-item ${isItemExpanded ? 'expanded' : ''} ${isRunning ? 'running' : ''}`}
-                  onClick={() => !isRunning && toggleTool(idx)}
+                  onClick={() => !isRunning && !!tc.result && toggleTool(idx)}
+                  style={!isRunning && !tc.result ? { cursor: 'default' } : undefined}
                 >
                   <div className="tool-status-icon-wrapper">
                     {isRunning ? (
@@ -179,7 +181,7 @@ export function ToolCallsDisplay({ toolCalls }: ToolCallsDisplayProps) {
                   <div className="tool-badge">{badge}</div>
                   <div className="tool-desc">{text}</div>
                   
-                  {!isRunning && (
+                  {!isRunning && !!tc.result && (
                      <svg 
                        className={`tool-item-chevron ${isItemExpanded ? 'expanded' : ''}`} 
                        viewBox="0 0 24 24" 
@@ -193,11 +195,11 @@ export function ToolCallsDisplay({ toolCalls }: ToolCallsDisplayProps) {
                 </div>
 
                 {/* Tool Details (Expanded) */}
-                {isItemExpanded && !isRunning && (
+                {isItemExpanded && !isRunning && !!tc.result && (
                   <div className="tool-details-panel">
                     <div className="tool-details-label">Result:</div>
                     <pre className="tool-details-content">
-                      {tc.result || 'No output returned.'}
+                      {tc.result}
                     </pre>
                   </div>
                 )}

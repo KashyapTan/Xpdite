@@ -147,6 +147,8 @@ async def _stream_anthropic(
     all_accumulated: list[str] = []
     thinking_tokens: list[str] = []
     total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    interleaved_blocks: List[Dict[str, Any]] = []
+    current_round_text: list[str] = []
 
     # Get tools in Anthropic format
     tools = None
@@ -212,6 +214,7 @@ async def _stream_anthropic(
                                 if thinking_tokens and not all_accumulated:
                                     await broadcast_message("thinking_complete", "")
                                 all_accumulated.append(delta.text)
+                                current_round_text.append(delta.text)
                                 await broadcast_message("response_chunk", delta.text)
 
                 # Get final message for token stats and tool_use detection
@@ -230,6 +233,10 @@ async def _stream_anthropic(
             if tool_use_blocks:
                 # Add assistant response to messages (includes text + tool_use blocks)
                 anthropic_msgs.append({"role": "assistant", "content": final_message.content})
+
+                if current_round_text:
+                    interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
+                    current_round_text = []
 
                 # Execute each tool
                 tool_results = []
@@ -274,6 +281,10 @@ async def _stream_anthropic(
                         "name": fn_name, "args": fn_args,
                         "result": result_str, "server": server_name,
                     })
+                    interleaved_blocks.append({
+                        "type": "tool_call", "name": fn_name,
+                        "args": fn_args, "server": server_name,
+                    })
 
                     tool_results.append({
                         "type": "tool_result",
@@ -295,14 +306,17 @@ async def _stream_anthropic(
 
         if tool_calls_list:
             print(f"[Cloud/Anthropic] Tool loop complete after {rounds} round(s)")
+        # Flush any remaining text from the final (non-tool) round
+        if current_round_text:
+            interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
 
-        return "".join(all_accumulated), total_token_stats, tool_calls_list
+        return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
         err = f"Error streaming from Anthropic: {e}"
         print(err)
         await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list
+        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +411,8 @@ async def _stream_openai(
     all_accumulated: list[str] = []
     thinking_tokens: list[str] = []
     total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    interleaved_blocks: List[Dict[str, Any]] = []
+    current_round_text: list[str] = []
 
     # Get tools in OpenAI format
     tools = None
@@ -464,6 +480,7 @@ async def _stream_openai(
                     if thinking_tokens and not all_accumulated:
                         await broadcast_message("thinking_complete", "")
                     all_accumulated.append(delta.content)
+                    current_round_text.append(delta.content)
                     await broadcast_message("response_chunk", delta.content)
 
                 # Accumulate tool call deltas
@@ -497,6 +514,10 @@ async def _stream_openai(
                     "content": None,
                     "tool_calls": assistant_tool_calls,
                 })
+
+                if current_round_text:
+                    interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
+                    current_round_text = []
 
                 # Execute each tool
                 for tc_info in assistant_tool_calls:
@@ -543,6 +564,10 @@ async def _stream_openai(
                         "name": fn_name, "args": fn_args,
                         "result": result_str, "server": server_name,
                     })
+                    interleaved_blocks.append({
+                        "type": "tool_call", "name": fn_name,
+                        "args": fn_args, "server": server_name,
+                    })
 
                     openai_msgs.append({
                         "role": "tool",
@@ -561,14 +586,16 @@ async def _stream_openai(
 
         if tool_calls_list:
             print(f"[Cloud/OpenAI] Tool loop complete after {rounds} round(s)")
+        if current_round_text:
+            interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
 
-        return "".join(all_accumulated), total_token_stats, tool_calls_list
+        return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
         err = f"Error streaming from OpenAI: {e}"
         print(err)
         await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list
+        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -671,6 +698,8 @@ async def _stream_gemini(
     all_accumulated: list[str] = []
     thinking_tokens: list[str] = []
     total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    interleaved_blocks: List[Dict[str, Any]] = []
+    current_round_text: list[str] = []
 
     # Get tools in Gemini format
     gemini_tools = None
@@ -769,6 +798,7 @@ async def _stream_gemini(
                         if thinking_tokens and not all_accumulated:
                             await broadcast_message("thinking_complete", "")
                         all_accumulated.append(part.text)
+                        current_round_text.append(part.text)
                         round_has_text = True
                         await broadcast_message("response_chunk", part.text)
                         round_parts.append(part)
@@ -792,6 +822,10 @@ async def _stream_gemini(
                 # Add model's response (text + function calls) to contents
                 if round_parts:
                     contents.append(types.Content(role="model", parts=round_parts))
+
+                if current_round_text:
+                    interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
+                    current_round_text = []
 
                 # Execute each function call
                 fn_response_parts = []
@@ -835,6 +869,10 @@ async def _stream_gemini(
                         "name": fn_name, "args": fn_args,
                         "result": result_str, "server": server_name,
                     })
+                    interleaved_blocks.append({
+                        "type": "tool_call", "name": fn_name,
+                        "args": fn_args, "server": server_name,
+                    })
 
                     fn_response_parts.append(
                         types.Part.from_function_response(
@@ -857,14 +895,16 @@ async def _stream_gemini(
 
         if tool_calls_list:
             print(f"[Cloud/Gemini] Tool loop complete after {rounds} round(s)")
+        if current_round_text:
+            interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
 
-        return "".join(all_accumulated), total_token_stats, tool_calls_list
+        return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
         err = f"Error streaming from Gemini: {e}"
         print(err)
         await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list
+        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -908,3 +948,6 @@ async def stream_cloud_chat(
         )
     else:
         raise ValueError(f"Unknown cloud provider: {provider}")
+
+# Note: stream_cloud_chat now returns a 4-tuple:
+#   (response_text, token_stats, tool_calls_list, interleaved_blocks | None)

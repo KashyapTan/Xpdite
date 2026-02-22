@@ -152,7 +152,7 @@ class ConversationService:
 
             # Stream the response — use cleaned query (without slash commands) for the LLM
             query_for_llm = llm_query if llm_query else user_query
-            response_text, token_stats, tool_calls = await route_chat(
+            response_text, token_stats, tool_calls, interleaved_blocks_from_llm = await route_chat(
                 current_model,
                 query_for_llm,
                 image_paths,
@@ -228,12 +228,38 @@ class ConversationService:
                 user_query,
                 image_paths if image_paths else None,
             )
-            if response_text.strip():
+            if response_text.strip() or tool_calls:
+                # Use interleaved blocks from LLM if available (preserves actual text↔tool order).
+                # Fall back to flat construction (all tools then text) for legacy/edge cases.
+                content_blocks_data: List[Dict] | None = None
+                if interleaved_blocks_from_llm:
+                    # Drop results from tool_call blocks — they are not stored to save space
+                    content_blocks_data = [
+                        {k: v for k, v in block.items() if k != "result"}
+                        for block in interleaved_blocks_from_llm
+                    ]
+                elif tool_calls:
+                    content_blocks_data = [
+                        {
+                            "type": "tool_call",
+                            "name": tc["name"],
+                            "args": tc.get("args", {}),
+                            "server": tc.get("server", ""),
+                        }
+                        for tc in tool_calls
+                    ]
+                    if response_text.strip():
+                        content_blocks_data.append(
+                            {"type": "text", "content": response_text}
+                        )
+
+                save_text = response_text if response_text.strip() else "[Tool calls completed]"
                 db.add_message(
                     app_state.conversation_id,
                     "assistant",
-                    response_text,
+                    save_text,
                     model=current_model,
+                    content_blocks=content_blocks_data,
                 )
 
             # Notify frontend
