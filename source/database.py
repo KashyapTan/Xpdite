@@ -328,7 +328,10 @@ class DatabaseManager:
         connection = self._get_connection()
         cursor = connection.cursor()
 
-        # Delete messages first (child rows), then the conversation (parent)
+        # Delete terminal events, messages, then the conversation
+        cursor.execute(
+            "DELETE FROM terminal_events WHERE conversation_id = ?", (conversation_id,)
+        )
         cursor.execute(
             "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
         )
@@ -612,6 +615,22 @@ class DatabaseManager:
     # SKILL OPERATIONS
     # ---------------------------------------------------------
 
+    @staticmethod
+    def _row_to_skill(r) -> Dict:
+        """Map a skills table row (tuple) to a dict."""
+        return {
+            "id": r[0],
+            "skill_name": r[1],
+            "display_name": r[2],
+            "slash_command": r[3],
+            "content": r[4],
+            "is_default": bool(r[5]),
+            "is_modified": bool(r[6]),
+            "enabled": bool(r[7]),
+            "created_at": r[8],
+            "updated_at": r[9],
+        }
+
     def get_all_skills(self) -> List[Dict]:
         """Returns all skill rows."""
         connection = self._get_connection()
@@ -623,21 +642,7 @@ class DatabaseManager:
         )
         rows = cursor.fetchall()
         connection.close()
-        return [
-            {
-                "id": r[0],
-                "skill_name": r[1],
-                "display_name": r[2],
-                "slash_command": r[3],
-                "content": r[4],
-                "is_default": bool(r[5]),
-                "is_modified": bool(r[6]),
-                "enabled": bool(r[7]),
-                "created_at": r[8],
-                "updated_at": r[9],
-            }
-            for r in rows
-        ]
+        return [self._row_to_skill(r) for r in rows]
 
     def get_skill_by_name(self, skill_name: str) -> Dict | None:
         """Returns a single skill by name, or None."""
@@ -653,18 +658,7 @@ class DatabaseManager:
         connection.close()
         if not r:
             return None
-        return {
-            "id": r[0],
-            "skill_name": r[1],
-            "display_name": r[2],
-            "slash_command": r[3],
-            "content": r[4],
-            "is_default": bool(r[5]),
-            "is_modified": bool(r[6]),
-            "enabled": bool(r[7]),
-            "created_at": r[8],
-            "updated_at": r[9],
-        }
+        return self._row_to_skill(r)
 
     def get_skill_by_slash_command(self, command: str) -> Dict | None:
         """Returns a single skill by its slash command, or None."""
@@ -680,18 +674,7 @@ class DatabaseManager:
         connection.close()
         if not r:
             return None
-        return {
-            "id": r[0],
-            "skill_name": r[1],
-            "display_name": r[2],
-            "slash_command": r[3],
-            "content": r[4],
-            "is_default": bool(r[5]),
-            "is_modified": bool(r[6]),
-            "enabled": bool(r[7]),
-            "created_at": r[8],
-            "updated_at": r[9],
-        }
+        return self._row_to_skill(r)
 
     def upsert_skill(
         self,
@@ -701,8 +684,15 @@ class DatabaseManager:
         content: str,
         is_default: bool = False,
         enabled: bool = True,
+        is_modified: bool = False,
     ) -> None:
-        """Insert or update a skill."""
+        """Insert or update a skill.
+
+        Args:
+            is_modified: When True the ON CONFLICT path sets is_modified=1,
+                         allowing callers (e.g. the update-skill endpoint) to
+                         mark a default skill as user-modified in a single write.
+        """
         connection = self._get_connection()
         cursor = connection.cursor()
         now = time.time()
@@ -710,11 +700,12 @@ class DatabaseManager:
             """INSERT INTO skills
                (skill_name, display_name, slash_command, content,
                 is_default, is_modified, enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(skill_name) DO UPDATE SET
                  display_name = excluded.display_name,
                  slash_command = excluded.slash_command,
                  content = excluded.content,
+                 is_modified = excluded.is_modified,
                  enabled = excluded.enabled,
                  updated_at = excluded.updated_at""",
             (
@@ -723,6 +714,7 @@ class DatabaseManager:
                 slash_command,
                 content,
                 1 if is_default else 0,
+                1 if is_modified else 0,
                 1 if enabled else 0,
                 now,
                 now,

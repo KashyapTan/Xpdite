@@ -24,7 +24,8 @@ def create_app() -> FastAPI:
         version="0.1.0"
     )
     
-    # Allow the React dev server (Vite on port 5123) to call HTTP endpoints
+    # Intentionally permissive: this is a local desktop app, not a web service.
+    # The Electron shell and React dev server both need unrestricted access.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],

@@ -14,10 +14,12 @@ import asyncio
 import glob
 import json
 import os
+import shlex
 from typing import Optional
 
 from ..core.connection import broadcast_message
 from ..core.state import app_state
+from ..core.thread_pool import run_in_thread
 from ..services.terminal import terminal_service
 
 
@@ -67,9 +69,9 @@ async def execute_terminal_tool(
     elif fn_name == "kill_process":
         return await _handle_kill_process(fn_args)
     elif fn_name == "get_environment":
-        return _handle_get_environment()
+        return await run_in_thread(_handle_get_environment)
     elif fn_name == "find_files":
-        return _handle_find_files(fn_args)
+        return await run_in_thread(_handle_find_files, fn_args)
     return f"Unknown terminal tool: {fn_name}"
 
 
@@ -233,8 +235,8 @@ def _handle_get_environment() -> str:
             continue
         try:
             result = subprocess.run(
-                cmd,
-                shell=True,
+                shlex.split(cmd),
+                shell=False,
                 capture_output=True,
                 text=True,
                 timeout=3,
@@ -274,6 +276,12 @@ def _handle_find_files(fn_args: dict) -> str:
         directory = os.path.abspath(directory)
     if not os.path.isdir(directory):
         return f"Error: Directory does not exist: {directory}"
+
+    # Path traversal protection: restrict to CWD subtree
+    resolved = os.path.realpath(directory)
+    cwd = os.path.realpath(os.getcwd())
+    if not resolved.startswith(cwd):
+        return "Error: find_files is restricted to the current working directory tree."
 
     search_pattern = os.path.join(directory, pattern)
     try:

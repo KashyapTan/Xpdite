@@ -76,7 +76,7 @@ async def get_ollama_models() -> List[dict]:
         return models
     except Exception as e:
         print(f"[HTTP] Error fetching Ollama models: {e}")
-        return []
+        return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
 
 
 # ============================================
@@ -160,11 +160,29 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
             import anthropic
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
-            # Count message tokens as a lightweight validation
-            await client.messages.count_tokens(
-                model="claude-3-haiku-20240307",  # Use a cheap/fast model for validation
-                messages=[{"role": "user", "content": "hi"}],
-            )
+            # Validate by counting tokens — try multiple models in case one is deprecated
+            _ANTHROPIC_VALIDATION_MODELS = [
+                "claude-sonnet-4-20250514",
+                "claude-3-haiku-20240307",
+            ]
+            last_err = None
+            for model_id in _ANTHROPIC_VALIDATION_MODELS:
+                try:
+                    await client.messages.count_tokens(
+                        model=model_id,
+                        messages=[{"role": "user", "content": "hi"}],
+                    )
+                    last_err = None
+                    break
+                except anthropic.NotFoundError:
+                    last_err = None  # model gone, but key was accepted
+                    break
+                except anthropic.AuthenticationError as e:
+                    raise e  # key itself is invalid — propagate immediately
+                except Exception as e:
+                    last_err = e
+            if last_err is not None:
+                raise last_err
 
         elif provider == "openai":
             import openai
@@ -256,28 +274,6 @@ GEMINI_FALLBACK = [
     },
     {"name": "gemini-1.5-pro", "description": "Gemini 1.5 Pro — balanced"},
     {"name": "gemini-1.5-flash", "description": "Gemini 1.5 Flash — fast"},
-]
-
-
-OPENAI_FALLBACK = [
-    {"name": "gpt-4o", "description": "GPT-4o — versatile & fast"},
-    {"name": "gpt-4o-mini", "description": "GPT-4o Mini — cost-efficient"},
-    {"name": "o1-preview", "description": "o1 Preview — advanced reasoning"},
-    {"name": "o1-mini", "description": "o1 Mini — fast reasoning"},
-    {"name": "gpt-4-turbo", "description": "GPT-4 Turbo — capable"},
-]
-
-GEMINI_FALLBACK = [
-    {
-        "name": "gemini-2.0-flash-exp",
-        "description": "Gemini 2.0 Flash (Exp) — next gen",
-    },
-    {"name": "gemini-1.5-pro", "description": "Gemini 1.5 Pro — balanced"},
-    {"name": "gemini-1.5-flash", "description": "Gemini 1.5 Flash — fast"},
-    {
-        "name": "gemini-1.5-flash-8b",
-        "description": "Gemini 1.5 Flash-8B — extremely fast",
-    },
 ]
 
 
@@ -544,13 +540,7 @@ async def get_mcp_servers():
     """Get connected MCP servers and their tools."""
     from ..mcp_integration.manager import mcp_manager
 
-    servers = {}
-    # Iterate over tool_registry to get all servers (including inline ones like terminal)
-    for tool_name, entry in mcp_manager._tool_registry.items():
-        server_name = entry["server_name"]
-        if server_name not in servers:
-            servers[server_name] = []
-        servers[server_name].append(tool_name)
+    servers = mcp_manager.get_server_tools()
 
     result = [{"server": name, "tools": sorted(tools)} for name, tools in servers.items()]
     return sorted(result, key=lambda x: x["server"])
@@ -567,7 +557,7 @@ async def get_tools_settings():
     if always_on_json:
         try:
             always_on = json.loads(always_on_json)
-        except:
+        except (json.JSONDecodeError, ValueError):
             pass
 
     top_k_str = db.get_setting("tool_retriever_top_k")
@@ -585,7 +575,7 @@ async def set_tools_settings(body: ToolsSettingsUpdate):
     db.set_setting("tool_always_on", json.dumps(body.always_on))
     db.set_setting("tool_retriever_top_k", str(body.top_k))
 
-    return {"status": "updated", "settings": body.dict()}
+    return {"status": "updated", "settings": body.model_dump()}
 
 
 # ============================================
@@ -698,12 +688,10 @@ async def update_skill(skill_name: str, body: SkillUpdate):
         content=body.content,
         is_default=skill["is_default"],
         enabled=body.enabled,
+        # Mark as modified when a default skill's content is changed
+        is_modified=skill["is_default"] and body.content != skill["content"],
     )
-    
-    # If content changed from original on a default skill, mark it updated via explicit method
-    if skill["is_default"] and body.content != skill["content"]:
-        db.update_skill_content(skill_name, body.content)
-        
+
     return {"status": "updated"}
 
 

@@ -38,14 +38,14 @@ const ChatHistory: React.FC = () => {
           const data = JSON.parse(event.data);
           switch (data.type) {
             case 'conversations_list': {
-              const convos = JSON.parse(data.content) as Conversation[];
+              const convos = data.content as Conversation[];
               console.log('Parsed conversations:', convos);
               setConversations(convos);
               setLoading(false);
               break;
             }
             case 'conversation_deleted': {
-              const deleteData = JSON.parse(data.content);
+              const deleteData = data.content;
               setConversations(prev => prev.filter(c => c.id !== deleteData.conversation_id));
               break;
             }

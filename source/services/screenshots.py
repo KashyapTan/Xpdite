@@ -108,8 +108,6 @@ class ScreenshotHandler:
     @staticmethod
     async def clear_screenshots():
         """Clear all screenshots from context."""
-        import json
-        
         for ss in app_state.screenshot_list:
             if os.path.exists(ss["path"]):
                 try:
@@ -117,7 +115,7 @@ class ScreenshotHandler:
                 except Exception as e:
                     print(f"Error deleting screenshot: {e}")
         
-        app_state.screenshot_list = []
+        app_state.screenshot_list.clear()
         await broadcast_message("screenshots_cleared", "")
     
     @staticmethod

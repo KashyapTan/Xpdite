@@ -63,12 +63,12 @@ class KeyManager:
         hostname = socket.gethostname()
         app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-        # Combine and hash
+        # Combine and hash — use PBKDF2 for brute-force resistance
         material = f"{username}:{hostname}:{app_path}".encode("utf-8")
-        digest = hashlib.sha256(salt + material).digest()
+        key = hashlib.pbkdf2_hmac('sha256', material, salt, iterations=100_000)
 
         # Fernet requires a 32-byte key, base64url-encoded
-        return base64.urlsafe_b64encode(digest)
+        return base64.urlsafe_b64encode(key)
 
     def _ensure_initialized(self):
         """Lazily initialize the Fernet instance."""
@@ -101,11 +101,13 @@ class KeyManager:
             return None
 
     @staticmethod
-    def mask_key(plaintext: str) -> str:
+    def mask_key(plaintext: str | None) -> str:
         """
         Mask an API key for display purposes.
         Shows first 3 and last 4 characters: 'sk-...a1b2'
         """
+        if not plaintext:
+            return "****"
         if len(plaintext) <= 8:
             return "****"
         return f"{plaintext[:3]}...{plaintext[-4:]}"
@@ -147,10 +149,14 @@ class KeyManager:
         Get status of all provider API keys.
         Returns {provider: {has_key: bool, masked: str|None}} for each provider.
         """
+        from ..database import db  # deferred: avoid circular import
+
         status = {}
         for provider in VALID_PROVIDERS:
-            key = self.get_api_key(provider)
-            if key:
+            # Check for existence without decrypting to avoid unnecessary crypto ops
+            encrypted = db.get_setting(f"api_key_{provider}")
+            if encrypted:
+                key = self.get_api_key(provider)
                 status[provider] = {
                     "has_key": True,
                     "masked": self.mask_key(key),

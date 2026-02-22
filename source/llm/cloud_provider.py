@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional, Set
 
 from ..core.connection import broadcast_message
 from ..core.state import app_state
-from ..config import MAX_MCP_TOOL_ROUNDS
+from ..config import MAX_MCP_TOOL_ROUNDS, ANTHROPIC_THINKING_KEYWORDS, GEMINI_THINKING_KEYWORDS, CLOUD_MAX_TOKENS
 
 
 # ---------------------------------------------------------------------------
@@ -49,10 +49,11 @@ def _guess_media_type(path: str) -> str:
 
 def _truncate_tool_result(result: str) -> str:
     """Truncate excessively large tool results."""
+    from ..config import MAX_TOOL_RESULT_LENGTH
     result_str = str(result)
-    if len(result_str) > 100000:
+    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
         print(f"[Cloud] Truncating large tool output ({len(result_str)} chars)")
-        return result_str[:100000] + "... [Output truncated due to length]"
+        return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
     return result_str
 
 
@@ -130,7 +131,7 @@ async def _stream_anthropic(
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from Anthropic's Claude API with interleaved tool calling.
 
@@ -160,10 +161,10 @@ async def _stream_anthropic(
                 tools = None
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        client = anthropic.AsyncAnthropic(api_key=api_key, timeout=300.0)
 
         if app_state.stop_streaming:
-            return "", total_token_stats, tool_calls_list
+            return "", total_token_stats, tool_calls_list, None
 
         rounds = 0
         has_more = True
@@ -172,18 +173,22 @@ async def _stream_anthropic(
             if app_state.stop_streaming:
                 break
 
+            ctx = app_state.current_request
+            if ctx and ctx.cancelled:
+                break
+
             rounds += 1
 
             create_kwargs: Dict[str, Any] = {
                 "model": model,
-                "max_tokens": 16384,
+                "max_tokens": CLOUD_MAX_TOKENS,
                 "messages": anthropic_msgs,
             }
             if system_prompt:
                 create_kwargs["system"] = system_prompt
 
             # Add thinking support for extended-thinking capable models
-            is_thinking_model = any(kw in model for kw in ("opus", "sonnet"))
+            is_thinking_model = any(kw in model for kw in ANTHROPIC_THINKING_KEYWORDS)
             if is_thinking_model:
                 create_kwargs["thinking"] = {
                     "type": "enabled",
@@ -313,10 +318,10 @@ async def _stream_anthropic(
         return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
-        err = f"Error streaming from Anthropic: {e}"
-        print(err)
-        await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
+        error_msg = f"LLM API error ({type(e).__name__})"
+        print(f"[Cloud/Anthropic] Full error: {e}")
+        await broadcast_message("error", error_msg)
+        return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +396,7 @@ async def _stream_openai(
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from OpenAI's API with interleaved tool calling.
 
@@ -424,16 +429,20 @@ async def _stream_openai(
                 tools = None
 
     try:
-        client = AsyncOpenAI(api_key=api_key)
+        client = AsyncOpenAI(api_key=api_key, timeout=300.0)
 
         if app_state.stop_streaming:
-            return "", total_token_stats, tool_calls_list
+            return "", total_token_stats, tool_calls_list, None
 
         rounds = 0
         has_more = True
 
         while has_more and rounds < MAX_MCP_TOOL_ROUNDS:
             if app_state.stop_streaming:
+                break
+
+            ctx = app_state.current_request
+            if ctx and ctx.cancelled:
                 break
 
             rounds += 1
@@ -592,10 +601,10 @@ async def _stream_openai(
         return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
-        err = f"Error streaming from OpenAI: {e}"
-        print(err)
-        await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
+        error_msg = f"LLM API error ({type(e).__name__})"
+        print(f"[Cloud/OpenAI] Full error: {e}")
+        await broadcast_message("error", error_msg)
+        return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -681,7 +690,7 @@ async def _stream_gemini(
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from Google's Gemini API with interleaved tool calling.
 
@@ -719,14 +728,14 @@ async def _stream_gemini(
         client = genai.Client(api_key=api_key)
 
         if app_state.stop_streaming:
-            return "", total_token_stats, tool_calls_list
+            return "", total_token_stats, tool_calls_list, None
 
         config_kwargs: Dict[str, Any] = {}
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
 
         # Enable thinking for capable models
-        is_thinking_model = "thinking" in model or "2.5" in model
+        is_thinking_model = any(kw in model for kw in GEMINI_THINKING_KEYWORDS)
         if is_thinking_model:
             config_kwargs["thinking_config"] = types.ThinkingConfig(
                 thinking_budget=10000,
@@ -744,6 +753,10 @@ async def _stream_gemini(
 
         while has_more and rounds < MAX_MCP_TOOL_ROUNDS:
             if app_state.stop_streaming:
+                break
+
+            ctx = app_state.current_request
+            if ctx and ctx.cancelled:
                 break
 
             rounds += 1
@@ -901,10 +914,10 @@ async def _stream_gemini(
         return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
 
     except Exception as e:
-        err = f"Error streaming from Gemini: {e}"
-        print(err)
-        await broadcast_message("error", err)
-        return err, {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
+        error_msg = f"LLM API error ({type(e).__name__})"
+        print(f"[Cloud/Gemini] Full error: {e}")
+        await broadcast_message("error", error_msg)
+        return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
 
 # ---------------------------------------------------------------------------
@@ -921,12 +934,12 @@ async def stream_cloud_chat(
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from a cloud LLM provider with inline tool calling.
 
-    Same return signature as stream_ollama_chat:
-        (response_text, token_stats, tool_calls_list)
+    Returns:
+        (response_text, token_stats, tool_calls_list, interleaved_blocks)
 
     Each provider handles tool execution inline during streaming — the user
     sees text and tool calls interleaved in real-time.

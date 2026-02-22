@@ -94,15 +94,15 @@ class ToolRetriever:
             )
             self._embedding_model_type = "none"
 
-    def _get_embedding(self, text: str) -> np.ndarray:
-        """Get embedding for a single string."""
+    def _get_embedding(self, text: str) -> Optional[np.ndarray]:
+        """Get embedding for a single string, or None on failure."""
         if self._embedding_model_type == "ollama":
             try:
                 response = ollama.embeddings(model=self._ollama_model_name, prompt=text)
                 return np.array(response["embedding"])
             except Exception as e:
                 print(f"[ToolRetriever] Ollama embedding failed: {e}")
-                return np.zeros(1)  # Fail safe
+                return None
 
         elif self._embedding_model_type == "sentence-transformers":
             if (
@@ -120,7 +120,7 @@ class ToolRetriever:
                     return embedding
                 return np.array(embedding)
 
-        return np.zeros(1)
+        return None
 
     def embed_tools(self, tools: List[Dict]):
         """
@@ -150,7 +150,8 @@ class ToolRetriever:
             # Combine name and description for better semantic match
             text_to_embed = f"{name}: {description}"
             embedding = self._get_embedding(text_to_embed)
-            self._tool_embeddings[name] = embedding
+            if embedding is not None:
+                self._tool_embeddings[name] = embedding
 
         print("[ToolRetriever] Tool embedding complete.")
 
@@ -175,32 +176,36 @@ class ToolRetriever:
         # 2. Semantic retrieval
         if top_k > 0 and self._embedding_model_type != "none" and query.strip() and self._tool_embeddings:
             query_embedding = self._get_embedding(query)
+            if query_embedding is None:
+                # Embedding failed — fall through; only always-on tools returned
+                pass
+            else:
+                scores = []
+                for name, embedding in self._tool_embeddings.items():
+                    if name in selected_tool_names:
+                        continue  # Already selected
 
-            scores = []
-            for name, embedding in self._tool_embeddings.items():
-                if name in selected_tool_names:
-                    continue  # Already selected
+                    if embedding.shape != query_embedding.shape:
+                        continue
 
-                if embedding.shape != query_embedding.shape:
-                    continue
+                    # Cosine similarity
+                    norm_q = np.linalg.norm(query_embedding)
+                    norm_t = np.linalg.norm(embedding)
 
-                # Cosine similarity
-                norm_q = np.linalg.norm(query_embedding)
-                norm_t = np.linalg.norm(embedding)
+                    if norm_q == 0 or norm_t == 0:
+                        sim = 0
+                    else:
+                        sim = np.dot(query_embedding, embedding) / (norm_q * norm_t)
 
-                if norm_q == 0 or norm_t == 0:
-                    sim = 0
-                else:
-                    sim = np.dot(query_embedding, embedding) / (norm_q * norm_t)
+                    scores.append((sim, name))
 
-                scores.append((sim, name))
+                # Sort by similarity desc
+                scores.sort(key=lambda x: x[0], reverse=True)
 
-            # Sort by similarity desc
-            scores.sort(key=lambda x: x[0], reverse=True)
-
-            # Pick top K
-            for _, name in scores[:top_k]:
-                selected_tool_names.add(name)
+                # Pick top K, filtering out near-zero similarity
+                for sim, name in scores[:top_k]:
+                    if sim >= MIN_SIMILARITY_THRESHOLD:
+                        selected_tool_names.add(name)
 
         # 3. Filter the full tool list
         final_tools = [
@@ -218,6 +223,29 @@ class ToolRetriever:
 
         return final_tools
 
+# Minimum cosine similarity to include a tool (below this, even top-K tools
+# are ignored to prevent irrelevant tool injection).
+MIN_SIMILARITY_THRESHOLD = 0.3
 
-# Global instance
-retriever = ToolRetriever()
+
+# Lazy-initialised singleton — avoids calling ollama.list() at import time,
+# which would add startup latency when Ollama isn’t running.
+_retriever_instance: Optional["ToolRetriever"] = None
+
+
+def _get_retriever() -> "ToolRetriever":
+    global _retriever_instance
+    if _retriever_instance is None:
+        _retriever_instance = ToolRetriever()
+    return _retriever_instance
+
+
+# Backward-compatible module-level name that lazily initialises.
+class _LazyRetriever:
+    """Proxy that defers ToolRetriever() construction until first attribute access."""
+
+    def __getattr__(self, name):
+        return getattr(_get_retriever(), name)
+
+
+retriever = _LazyRetriever()  # type: ignore[assignment]

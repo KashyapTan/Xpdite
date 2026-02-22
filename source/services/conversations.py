@@ -5,12 +5,14 @@ Handles conversation lifecycle, persistence, and query processing.
 """
 
 import os
+import copy
 import json
 from typing import List, Dict, Any, Optional
 
 from ..core.state import app_state
 from ..core.request_context import RequestContext
 from ..core.connection import broadcast_message
+from ..core.thread_pool import run_in_thread
 from ..llm.router import route_chat
 from ..config import SCREENSHOT_FOLDER, CaptureMode
 from .screenshots import ScreenshotHandler
@@ -20,8 +22,54 @@ from ..database import db
 # Conversations service logic
 
 
+def _extract_skill_slash_commands_sync(message: str) -> tuple[list[dict], str]:
+    """Extract slash commands from a user message and match to skills.
+
+    Returns (matched_skills, cleaned_message).
+    Removes matched slash commands from the message text.
+    If a slash command is recognized but the skill is disabled, strip it
+    from the message silently and skip injection.
+
+    This is the synchronous implementation; callers should use
+    ``ConversationService.extract_skill_slash_commands`` which wraps it
+    in ``run_in_thread`` to avoid blocking the event loop on DB I/O.
+    """
+    all_skills = db.get_all_skills()
+    slash_map = {s["slash_command"]: s for s in all_skills}
+
+    tokens = message.split()
+    matched_skills: list[dict] = []
+    remaining_tokens: list[str] = []
+
+    for token in tokens:
+        if token.startswith("/"):
+            cmd = token[1:].lower()
+            if cmd in slash_map:
+                skill = slash_map[cmd]
+                if skill["enabled"]:
+                    matched_skills.append(skill)
+                # disabled skill: strip from message, skip injection silently
+            else:
+                remaining_tokens.append(token)  # unknown slash command, leave it
+        else:
+            remaining_tokens.append(token)
+
+    cleaned_message = " ".join(remaining_tokens)
+    return matched_skills, cleaned_message
+
+
 class ConversationService:
     """Manages conversation lifecycle and query processing."""
+
+    @staticmethod
+    async def extract_skill_slash_commands(message: str) -> tuple[list[dict], str]:
+        """Extract slash commands from a user message (async wrapper).
+
+        Delegates to ``_extract_skill_slash_commands_sync`` via
+        ``run_in_thread`` so the synchronous DB call does not block the
+        event loop.
+        """
+        return await run_in_thread(_extract_skill_slash_commands_sync, message)
 
     @staticmethod
     async def clear_context():
@@ -44,7 +92,6 @@ class ConversationService:
     async def resume_conversation(conversation_id: str):
         """Resume a previously saved conversation."""
         from .terminal import terminal_service
-        from ..database import db
         from ..ss import create_thumbnail
 
         # Clear current state
@@ -62,11 +109,11 @@ class ConversationService:
                 entry["model"] = msg["model"]
             if msg.get("images"):
                 entry["images"] = msg["images"]
-                # Generate thumbnails for frontend
+                # Generate thumbnails for frontend (blocking I/O via run_in_thread)
                 thumbnails = []
                 for img_path in msg["images"]:
                     if os.path.exists(img_path):
-                        thumb = create_thumbnail(img_path)
+                        thumb = await run_in_thread(create_thumbnail, img_path)
                         thumbnails.append(
                             {"name": os.path.basename(img_path), "thumbnail": thumb}
                         )
@@ -156,12 +203,15 @@ class ConversationService:
                 current_model,
                 query_for_llm,
                 image_paths,
-                app_state.chat_history.copy(),
+                copy.deepcopy(app_state.chat_history),
                 forced_skills=ctx.forced_skills,
             )
 
+            # Check if request was cancelled during route_chat
+            if ctx.cancelled:
+                return
+
             # 1. Create conversation entry if it doesn't exist
-            from ..database import db
             if app_state.conversation_id is None:
                 title = user_query[:50] + ("..." if len(user_query) > 50 else "")
                 app_state.conversation_id = db.start_new_conversation(title)
@@ -169,7 +219,6 @@ class ConversationService:
 
                 # Flush any terminal events that were queued before conversation existed
                 from .terminal import terminal_service
-                from ..database import db
                 terminal_service.flush_pending_events(app_state.conversation_id)
 
             # Persist token usage
@@ -221,7 +270,6 @@ class ConversationService:
                 )
 
             # Persist to database
-            from ..database import db
             db.add_message(
                 app_state.conversation_id,
                 "user",

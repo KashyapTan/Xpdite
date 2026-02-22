@@ -17,14 +17,19 @@ previously called ``asyncio.to_thread(fn, ...)`` should instead::
 import asyncio
 import concurrent.futures
 import functools
+from typing import TypeVar, Callable, Any
+
+from ..config import THREAD_POOL_SIZE
+
+T = TypeVar("T")
 
 # Shared executor for the whole application.
 _app_executor = concurrent.futures.ThreadPoolExecutor(
-    max_workers=4, thread_name_prefix="app-worker"
+    max_workers=THREAD_POOL_SIZE, thread_name_prefix="app-worker"
 )
 
 
-async def run_in_thread(func, *args, **kwargs):
+async def run_in_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     """Run *func(*args, **kwargs)* in the app-owned thread pool.
 
     Drop-in replacement for ``asyncio.to_thread`` that is immune to the

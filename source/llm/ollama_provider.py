@@ -14,6 +14,7 @@ from ollama import chat
 
 from ..core.connection import broadcast_message
 from ..core.state import app_state
+from ..config import OLLAMA_CTX_SIZE
 from ..mcp_integration.handlers import handle_mcp_tool_calls
 from ..mcp_integration.manager import mcp_manager
 
@@ -47,13 +48,14 @@ def _build_messages(
 
 async def stream_ollama_chat(
     user_query: str, image_paths: List[str], chat_history: List[Dict[str, Any]], system_prompt: str = ""
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream Ollama response without blocking the event loop.
 
     A background thread iterates the blocking Ollama generator and schedules
     WebSocket broadcasts for each incremental token. Returns a tuple of
-    (full_output_text, token_stats_dict, tool_calls_list) once streaming completes.
+    (response_text, token_stats, tool_calls_list, interleaved_blocks) once
+    streaming completes.
 
     Args:
         user_query: The user's question
@@ -61,7 +63,7 @@ async def stream_ollama_chat(
         chat_history: Previous conversation messages
 
     Returns:
-        Tuple of (response_text, token_stats, tool_calls)
+        Tuple of (response_text, token_stats, tool_calls, interleaved_blocks)
     """
     loop = asyncio.get_running_loop()
 
@@ -135,7 +137,7 @@ async def stream_ollama_chat(
                 "model": app_state.selected_model,
                 "messages": messages,
                 "stream": True,
-                "options": {"num_ctx": 32768},
+                "options": {"num_ctx": OLLAMA_CTX_SIZE},
             }
             if should_pass_tools:
                 chat_kwargs["tools"] = mcp_manager.get_ollama_tools()
@@ -235,7 +237,7 @@ async def stream_ollama_chat(
                         "model": app_state.selected_model,
                         "messages": messages,
                         "stream": False,
-                        "options": {"num_ctx": 32768},
+                        "options": {"num_ctx": OLLAMA_CTX_SIZE},
                     }
                     # Don't pass tools in fallback - just get a text response
                     fallback = chat(**fallback_kwargs)
@@ -281,13 +283,13 @@ async def stream_ollama_chat(
             )
 
         except Exception as e:
-            err = f"Error streaming from Ollama: {e}"
-            print(err)
-            safe_schedule(broadcast_message("error", err))
+            error_msg = f"LLM API error ({type(e).__name__})"
+            print(f"[Ollama] Full error: {e}")
+            safe_schedule(broadcast_message("error", error_msg))
             if not done_future.done():
                 loop.call_soon_threadsafe(
                     done_future.set_result,
-                    (err, collected_token_stats, tool_calls_list, None),
+                    ("", collected_token_stats, tool_calls_list, None),
                 )
 
     threading.Thread(target=producer, daemon=True).start()
@@ -297,7 +299,7 @@ async def stream_ollama_chat(
 async def _broadcast_tool_final_response(
     pre_computed: Dict[str, Any],
     tool_calls_list: List[Dict[str, Any]],
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Broadcast a pre-computed response directly (no re-streaming needed).
 

@@ -6,7 +6,6 @@ Interpolated at request time — never hardcoded or cached.
 
 import platform
 from datetime import datetime
-from pathlib import Path
 
 
 _BASE_TEMPLATE = """\
@@ -51,21 +50,17 @@ def _get_datetime() -> str:
 def _get_os_info() -> str:
     system = platform.system()
     machine = platform.machine()
-    try:
-        home = str(Path.home())
-    except Exception:
-        home = "unknown"
 
     if system == "Windows":
         # platform.release() gives build number on Windows; version() is cleaner
         version = platform.version()
-        return f"Windows {version} ({machine}), home: {home}"
+        return f"Windows {version} ({machine})"
     elif system == "Darwin":
         release = platform.mac_ver()[0]
-        return f"macOS {release} ({machine}), home: {home}"
+        return f"macOS {release} ({machine})"
     else:
         release = platform.release()
-        return f"Linux {release} ({machine}), home: {home}"
+        return f"Linux {release} ({machine})"
 
 
 def build_system_prompt(skills_block: str = "", template: str | None = None) -> str:

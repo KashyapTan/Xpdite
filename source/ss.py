@@ -132,16 +132,6 @@ def copy_image_to_clipboard(image, dpi_scale=None):
             
     except Exception as e:
         print(f"Error copying to clipboard: {e}")
-    
-    # Fallback to PowerShell if ctypes fails (slower but very robust)
-    # This specifically copies the *pixels* via .NET
-    try:
-        # We need a temporary file for PowerShell to read from if we don't have one
-        # but since take_region_screenshot already saves a file, we can ideally use that.
-        # For now, this is just a backup.
-        pass
-    except:
-        pass
         
     return False
 

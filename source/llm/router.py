@@ -6,7 +6,7 @@ model name prefix. Cloud models use the format "provider/model-name" (e.g.,
 "anthropic/claude-sonnet-4-20250514"). Ollama models have no prefix.
 """
 
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 
 
 def parse_provider(model_name: str) -> Tuple[str, str]:
@@ -32,12 +32,12 @@ async def route_chat(
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
     forced_skills: List[Dict[str, Any]] | None = None,
-) -> tuple[str, Dict[str, int], List[Dict[str, Any]]]:
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Route a chat request to the correct LLM provider.
 
-    Same return signature as stream_ollama_chat:
-        (response_text, token_stats, tool_calls_list)
+    Returns:
+        (response_text, token_stats, tool_calls_list, interleaved_blocks)
 
     For Ollama models, delegates to stream_ollama_chat (MCP tool handling built-in).
     For cloud models, retrieves relevant tools and passes them to stream_cloud_chat

@@ -168,8 +168,12 @@ class McpToolManager:
             print(
                 f"[MCP] Connected to '{server_name}' — {len(tools_result.tools)} tool(s)"
             )
-            # Re-embed tools for the retriever
-            retriever.embed_tools(self._ollama_tools)
+            # Re-embed tools for the retriever (blocking call, run in thread)
+            from ..core.thread_pool import run_in_thread
+            try:
+                await run_in_thread(retriever.embed_tools, self._ollama_tools)
+            except Exception as e:
+                print(f"[MCP] Tool embedding failed (non-fatal): {e}")
         except Exception as e:
             print(f"[MCP] ERROR connecting to '{server_name}': {e}")
             print(f"[MCP] The server will work without '{server_name}' tools.")
@@ -229,6 +233,13 @@ class McpToolManager:
         entry = self._tool_registry[tool_name]
         session = entry["session"]
 
+        if session is None:
+            return (
+                f"Error: Tool '{tool_name}' is an inline tool "
+                f"(server '{entry['server_name']}') and cannot be called via MCP "
+                f"session. It must be handled by the inline tool executor."
+            )
+
         import asyncio
 
         try:
@@ -261,6 +272,16 @@ class McpToolManager:
     def has_tools(self) -> bool:
         """Check if any tools are registered."""
         return len(self._ollama_tools) > 0
+
+    def get_server_tools(self) -> Dict[str, List[str]]:
+        """Return a mapping of server names to their tool names."""
+        servers: Dict[str, List[str]] = {}
+        for tool_name, entry in self._tool_registry.items():
+            server_name = entry["server_name"]
+            if server_name not in servers:
+                servers[server_name] = []
+            servers[server_name].append(tool_name)
+        return servers
 
     def get_anthropic_tools(self) -> List[Dict] | None:
         """Return tool definitions in Anthropic format, or None if no tools."""
@@ -438,26 +459,12 @@ class McpToolManager:
 
     async def cleanup(self):
         """Disconnect from all MCP servers."""
-        for name, conn in list(self._connections.items()):
+        for name in list(self._connections):
             try:
-                shutdown_event: asyncio.Event = conn["shutdown_event"]
-                task: asyncio.Task = conn["task"]
-                shutdown_event.set()
-                try:
-                    await asyncio.wait_for(task, timeout=10.0)
-                except asyncio.TimeoutError:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, Exception):
-                        pass
-                print(f"[MCP] Disconnected from '{name}'")
+                await self.disconnect_server(name)
             except Exception as e:
                 print(f"[MCP] Error disconnecting from '{name}': {e}")
-        self._connections.clear()
-        self._tool_registry.clear()
-        self._ollama_tools.clear()
-        self._raw_tools.clear()
+        self._initialized = False
 
 
 # Global MCP tool manager singleton
@@ -477,6 +484,10 @@ async def init_mcp_servers():
     ║  4. Restart the app — your tools are now available!              ║
     ╚══════════════════════════════════════════════════════════════════╝
     """
+    if mcp_manager._initialized:
+        print("[MCP] Already initialized — skipping double init")
+        return
+
     # ── Demo server (add two numbers) ──────────────────────────────
     # await mcp_manager.connect_server(
     #     "demo",

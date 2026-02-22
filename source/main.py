@@ -6,26 +6,40 @@ It initializes all services and starts the FastAPI server.
 
 Architecture:
     source/
-    ├── main.py         # This file - entry point
-    ├── app.py          # FastAPI app factory
-    ├── config.py       # Configuration constants
-    ├── database.py     # SQLite operations
-    ├── ss.py           # Screenshot service
-    ├── core/           # Core utilities
-    │   ├── state.py    # Global state management
-    │   ├── connection.py # WebSocket connections
-    │   └── lifecycle.py  # Cleanup & signals
-    ├── api/            # API layer
-    │   ├── websocket.py  # WebSocket endpoint
-    │   └── handlers.py   # Message handlers
-    ├── mcp/            # MCP integration
-    │   ├── manager.py  # Tool manager
-    │   └── handlers.py # Tool call handlers
-    ├── llm/            # LLM integration
-    │   └── ollama.py   # Ollama streaming
-    └── services/       # Business logic
+    ├── main.py           # This file - entry point
+    ├── app.py            # FastAPI app factory
+    ├── config.py         # Configuration constants
+    ├── database.py       # SQLite operations
+    ├── ss.py             # Screenshot service
+    ├── core/             # Core utilities
+    │   ├── state.py        # Global state management
+    │   ├── connection.py   # WebSocket connections
+    │   ├── lifecycle.py    # Cleanup & signals
+    │   ├── request_context.py # Request cancellation
+    │   └── thread_pool.py  # App-owned thread pool
+    ├── api/              # API layer (thin, no business logic)
+    │   ├── websocket.py    # WebSocket endpoint
+    │   ├── handlers.py     # Message handlers
+    │   ├── http.py         # REST API endpoints
+    │   └── terminal.py     # Terminal REST endpoints
+    ├── mcp_integration/  # MCP tool integration
+    │   ├── manager.py      # Tool manager
+    │   ├── handlers.py     # Tool call handlers (Ollama)
+    │   ├── retriever.py    # Semantic tool retrieval
+    │   └── terminal_executor.py # Terminal tool execution
+    ├── llm/              # LLM integration
+    │   ├── router.py       # Provider dispatch
+    │   ├── ollama_provider.py  # Ollama streaming
+    │   ├── cloud_provider.py   # Anthropic/OpenAI/Gemini
+    │   ├── key_manager.py  # API key encryption
+    │   └── prompt.py       # System prompt builder
+    └── services/         # Business logic
         ├── screenshots.py  # Screenshot handling
-        └── conversations.py # Conversation handling
+        ├── conversations.py # Conversation handling
+        ├── terminal.py     # Terminal/PTY service
+        ├── transcription.py # Audio transcription
+        ├── google_auth.py  # Google OAuth
+        └── approval_history.py # Command approval cache
 """
 
 import sys
@@ -159,11 +173,18 @@ def main():
     app_state.server_thread.start()
 
     # Wait for server loop to be ready
-    for _ in range(50):
-        if app_state.server_loop_holder.get("loop") is not None:
-            break
-        time.sleep(0.1)
-    else:
+    server_ready = threading.Event()
+
+    def _poll_server_ready():
+        for _ in range(50):
+            if app_state.server_loop_holder.get("loop") is not None:
+                server_ready.set()
+                return
+            time.sleep(0.1)
+
+    poll_thread = threading.Thread(target=_poll_server_ready, daemon=True)
+    poll_thread.start()
+    if not server_ready.wait(timeout=5.0):
         print("Warning: server loop not initialized; continuing anyway.")
 
     port = app_state.server_loop_holder.get("port", DEFAULT_PORT)

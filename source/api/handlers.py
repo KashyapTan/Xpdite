@@ -86,7 +86,7 @@ class MessageHandler:
             return
 
         # Parse slash commands from the query text
-        forced_skills, cleaned_query = extract_skill_slash_commands(query_text)
+        forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(query_text)
 
         if forced_skills:
             print(f"[Skills] Slash commands matched: {[s['skill_name'] for s in forced_skills]}")
@@ -96,10 +96,25 @@ class MessageHandler:
 
         # Run as background task — pass original text for display/save, cleaned for LLM
         asyncio.create_task(
-            ConversationService.submit_query(
+            self._safe_submit_query(
                 query_text, capture_mode, forced_skills, llm_query=llm_query
             )
         )
+
+    async def _safe_submit_query(self, *args, **kwargs):
+        """Wrapper around submit_query that catches and reports errors."""
+        try:
+            await ConversationService.submit_query(*args, **kwargs)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            try:
+                await self.websocket.send_text(json.dumps({
+                    "type": "error",
+                    "content": f"Query failed: {str(e)[:200]}"
+                }))
+            except Exception:
+                pass
 
     async def _handle_clear_context(self, data: Dict[str, Any]):
         """Handle context clearing."""
@@ -129,8 +144,6 @@ class MessageHandler:
         app_state.stop_streaming = True
 
         # Cancel any pending terminal approvals/sessions so tool loop unblocks
-        from ..services.terminal import terminal_service
-
         terminal_service.cancel_all_pending()
 
     async def _handle_get_conversations(self, data: Dict[str, Any]):
@@ -140,9 +153,11 @@ class MessageHandler:
         conversations = ConversationService.get_conversations(
             limit=limit, offset=offset
         )
+        # TODO(frontend): content is now a native object, not a JSON string.
+        # Remove any extra JSON.parse() calls on the frontend for this message type.
         await self.websocket.send_text(
             json.dumps(
-                {"type": "conversations_list", "content": json.dumps(conversations)}
+                {"type": "conversations_list", "content": conversations}
             )
         )
 
@@ -155,9 +170,7 @@ class MessageHandler:
                 json.dumps(
                     {
                         "type": "conversation_loaded",
-                        "content": json.dumps(
-                            {"conversation_id": conv_id, "messages": messages}
-                        ),
+                        "content": {"conversation_id": conv_id, "messages": messages},
                     }
                 )
             )
@@ -171,7 +184,7 @@ class MessageHandler:
                 json.dumps(
                     {
                         "type": "conversation_deleted",
-                        "content": json.dumps({"conversation_id": conv_id}),
+                        "content": {"conversation_id": conv_id},
                     }
                 )
             )
@@ -185,7 +198,7 @@ class MessageHandler:
             results = ConversationService.get_conversations(limit=50)
 
         await self.websocket.send_text(
-            json.dumps({"type": "conversations_list", "content": json.dumps(results)})
+            json.dumps({"type": "conversations_list", "content": results})
         )
 
     async def _handle_resume_conversation(self, data: Dict[str, Any]):
@@ -196,8 +209,10 @@ class MessageHandler:
 
     async def _handle_start_recording(self, data: Dict[str, Any]):
         """Handle start recording request."""
+        from ..core.thread_pool import run_in_thread
+
         if app_state.transcription_service:
-            app_state.transcription_service.start_recording()
+            await run_in_thread(app_state.transcription_service.start_recording)
 
     async def _handle_stop_recording(self, data: Dict[str, Any]):
         """Handle stop recording request."""
@@ -246,5 +261,10 @@ class MessageHandler:
         """Handle terminal panel resize — sync PTY dimensions with xterm viewport."""
         cols = data.get("cols", 120)
         rows = data.get("rows", 24)
-        if isinstance(cols, int) and isinstance(rows, int) and cols > 0 and rows > 0:
+        if (
+            isinstance(cols, int)
+            and isinstance(rows, int)
+            and 0 < cols <= 500
+            and 0 < rows <= 200
+        ):
             await terminal_service.resize_all_pty(cols, rows)

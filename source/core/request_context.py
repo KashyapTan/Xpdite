@@ -21,7 +21,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
-from typing import Callable, List
+from typing import Any, Callable, Dict, List
 
 
 class RequestContext:
@@ -39,8 +39,10 @@ class RequestContext:
     def __init__(self) -> None:
         self._cancelled = False
         self._cancel_callbacks: List[Callable[[], None]] = []
+        # asyncio.Event() requires a running event loop on Python < 3.10.
+        # RequestContext is always created inside async handlers, so this is safe.
         self._done_event = asyncio.Event()
-        self.forced_skills: list[dict] = []  # Skills from slash commands
+        self.forced_skills: List[Dict[str, Any]] = []  # Skills from slash commands
 
     # ── Read-only state ────────────────────────────────────────────
 
@@ -62,12 +64,13 @@ class RequestContext:
         for cb in self._cancel_callbacks:
             try:
                 cb()
-            except Exception:
-                pass  # never let a callback crash the cancel path
+            except Exception as e:
+                print(f"[RequestContext] Cancel callback failed: {e}")
 
     def mark_done(self) -> None:
         """Mark the request as completed (success or failure)."""
         self._done_event.set()
+        self._cancel_callbacks.clear()
 
     def on_cancel(self, callback: Callable[[], None]) -> None:
         """Register a cleanup callback that fires on cancel().

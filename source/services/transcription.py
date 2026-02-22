@@ -1,10 +1,15 @@
+"""Audio transcription service using faster-whisper.
+
+Provides start/stop recording with background thread audio capture
+and Whisper model inference for speech-to-text.
+"""
+
 import threading
 import time
 import queue
 import tempfile
 import os
 import asyncio
-import numpy as np
 import pyaudio
 import wave
 from faster_whisper import WhisperModel
@@ -15,6 +20,7 @@ class TranscriptionService:
         self.model_size = model_size
         self.model = None
         self.is_recording = False
+        self._recording_error: str | None = None  # set by _record_audio on failure
         self.stop_recording_event = threading.Event()
         self.audio_queue = queue.Queue()
         self.recording_thread = None
@@ -24,6 +30,7 @@ class TranscriptionService:
         self.FORMAT = pyaudio.paInt16
         self.CHANNELS = 1
         self.RATE = 16000
+        self.SAMPLE_WIDTH = 2  # pyaudio.paInt16 is always 2 bytes
 
     def _load_model(self):
         """Load the Whisper model if not already loaded."""
@@ -39,12 +46,13 @@ class TranscriptionService:
             except Exception as e:
                 print(f"Error loading Whisper model: {e}")
 
-    def start_recording(self):
+    def start_recording(self) -> None:
         """Start recording audio in a background thread."""
         if self.is_recording:
             return
 
         self.is_recording = True
+        self._recording_error = None
         self.stop_recording_event.clear()
         self.audio_queue = queue.Queue()
 
@@ -52,7 +60,7 @@ class TranscriptionService:
         self.recording_thread.start()
         print("Recording started...")
 
-    def stop_recording(self):
+    def stop_recording(self) -> str | None:
         """Stop recording and return the transcribed text."""
         if not self.is_recording:
             return None
@@ -63,6 +71,10 @@ class TranscriptionService:
 
         if self.recording_thread:
             self.recording_thread.join()
+
+        # Check for recording errors
+        if self._recording_error:
+            return f"Error: {self._recording_error}"
 
         # Process the recorded audio
         return self._transcribe_audio()
@@ -88,6 +100,7 @@ class TranscriptionService:
             stream.close()
         except Exception as e:
             print(f"Error recording audio: {e}")
+            self._recording_error = str(e)
         finally:
             p.terminate()
 
@@ -96,6 +109,9 @@ class TranscriptionService:
         # Ensure model is loaded (lazy loading)
         if self.model is None:
             self._load_model()
+
+        if self.model is None:
+            return "Error: Transcription model failed to load"
 
         if self.audio_queue.empty():
             return ""
@@ -113,7 +129,7 @@ class TranscriptionService:
         try:
             wf = wave.open(temp_filename, "wb")
             wf.setnchannels(self.CHANNELS)
-            wf.setsampwidth(pyaudio.PyAudio().get_sample_size(self.FORMAT))
+            wf.setsampwidth(self.SAMPLE_WIDTH)
             wf.setframerate(self.RATE)
             wf.writeframes(b"".join(frames))
             wf.close()

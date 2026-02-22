@@ -18,6 +18,7 @@ from .terminal_executor import is_terminal_tool, execute_terminal_tool
 from ..core.connection import broadcast_message
 from ..core.state import app_state
 from ..core.thread_pool import run_in_thread
+from ..config import MAX_TOOL_RESULT_LENGTH
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +66,9 @@ def retrieve_relevant_tools(user_query: str) -> list:
 def _truncate_result(result: str) -> str:
     """Truncate excessively large tool results."""
     result_str = str(result)
-    if len(result_str) > 100000:
+    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
         print(f"[MCP] Truncating large tool output ({len(result_str)} chars)")
-        return result_str[:100000] + "... [Output truncated due to length]"
+        return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
     return result_str
 
 
@@ -157,6 +158,11 @@ async def handle_mcp_tool_calls(
 
         if app_state.stop_streaming:
             print("[MCP] Stop requested — aborting tool call loop")
+            break
+
+        ctx = app_state.current_request
+        if ctx and ctx.cancelled:
+            print("[MCP] Request cancelled — aborting tool call loop")
             break
 
         # Broadcast text from this round
@@ -309,7 +315,7 @@ async def _stream_tool_follow_up(
 
     def safe_schedule(coro):
         try:
-            loop.call_soon_threadsafe(asyncio.create_task, coro)
+            asyncio.run_coroutine_threadsafe(coro, loop)
         except RuntimeError:
             pass
 

@@ -93,6 +93,12 @@ class GoogleAuthService:
                     token_file.write(creds.to_json())
             except Exception as e:
                 print(f"[Google Auth] Token refresh failed: {e}")
+                # Remove invalid token to avoid a "connected but broken" state
+                try:
+                    os.remove(GOOGLE_TOKEN_FILE)
+                    print("[Google Auth] Removed expired/invalid token file")
+                except OSError:
+                    pass
                 return None
 
         return creds

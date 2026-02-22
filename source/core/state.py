@@ -5,8 +5,10 @@ Centralizes all mutable global state into a single class for better
 maintainability and testability.
 """
 
-from typing import List, Dict, Any, Optional
+import os
 import threading
+from typing import List, Dict, Any, Optional
+
 from ..ss import ScreenshotService
 from .request_context import RequestContext
 import asyncio
@@ -22,26 +24,24 @@ class AppState:
 
     def __init__(self):
         # Screenshot state
+        # Each entry: {"id": str, "path": str, "name": str, "thumbnail": str}
         self.screenshot_list: List[Dict[str, Any]] = []
         self.screenshot_counter: int = 0
 
         # Request lifecycle — the canonical way to manage streaming state.
-        # conversations.py creates a RequestContext at the start of submit_query
-        # and stores it here.  All subsystems check ctx.cancelled.
         self.current_request: Optional[RequestContext] = None
-        self._request_lock: asyncio.Lock = asyncio.Lock()
+        self.__request_lock: Optional[asyncio.Lock] = None
 
-        # Legacy streaming flags — kept so ollama_provider.py and other
-        # subsystems that haven't been migrated yet continue to work.
-        # conversations.py keeps these in sync with current_request.
+        # Legacy streaming flags
         self.is_streaming: bool = False
         self.stop_streaming: bool = False
-        self.stream_lock: asyncio.Lock = asyncio.Lock()
+        self.__stream_lock: Optional[asyncio.Lock] = None
 
         # Capture mode: 'fullscreen' | 'precision' | 'none'
         self.capture_mode: str = "fullscreen"
 
         # Currently selected model (updated when user picks from dropdown)
+        # deferred: avoid circular import with config.py
         from ..config import DEFAULT_MODEL
 
         self.selected_model: str = DEFAULT_MODEL
@@ -53,13 +53,27 @@ class AppState:
         self.conversation_id: Optional[str] = None
 
         # Service references for cleanup
-        self.screenshot_service: ScreenshotService | None = None
-        self.transcription_service: Any = None
-        self.server_thread: threading.Thread | None = None
-        self.service_thread: threading.Thread | None = None
+        self.screenshot_service: Optional[ScreenshotService] = None
+        self.transcription_service: Optional[Any] = None
+        self.server_thread: Optional[threading.Thread] = None
+        self.service_thread: Optional[threading.Thread] = None
 
         # Event loop holder for cross-thread scheduling
         self.server_loop_holder: Dict[str, Any] = {}
+
+    @property
+    def _request_lock(self) -> asyncio.Lock:
+        """Lazily create request lock (avoids issues on Python < 3.10)."""
+        if self.__request_lock is None:
+            self.__request_lock = asyncio.Lock()
+        return self.__request_lock
+
+    @property
+    def stream_lock(self) -> asyncio.Lock:
+        """Lazily create stream lock (avoids issues on Python < 3.10)."""
+        if self.__stream_lock is None:
+            self.__stream_lock = asyncio.Lock()
+        return self.__stream_lock
 
     def reset_conversation(self):
         """Reset state for a new conversation."""
@@ -77,16 +91,14 @@ class AppState:
 
     def remove_screenshot(self, screenshot_id: str) -> bool:
         """Remove a screenshot by ID. Returns True if found and removed."""
-        for i, ss in enumerate(self.screenshot_list):
-            if ss["id"] == screenshot_id:
-                self.screenshot_list.pop(i)
-                return True
-        return False
+        original_len = len(self.screenshot_list)
+        self.screenshot_list = [
+            ss for ss in self.screenshot_list if ss["id"] != screenshot_id
+        ]
+        return len(self.screenshot_list) < original_len
 
     def get_image_paths(self) -> List[str]:
         """Get list of valid image paths from current screenshots."""
-        import os
-
         return [
             os.path.abspath(ss["path"])
             for ss in self.screenshot_list

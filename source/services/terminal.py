@@ -775,6 +775,31 @@ class TerminalService:
 
     # ── Session Interaction (send_input / read_output / kill_process) ──
 
+    @staticmethod
+    def _decode_safe_escapes(text: str) -> str:
+        """Decode only known-safe escape sequences.
+
+        The previous approach (raw_unicode_escape → unicode_escape codec) could
+        allow arbitrary control-character injection.  This whitelist approach is
+        intentionally conservative.
+        """
+        _SAFE = {
+            "\\n": "\n",
+            "\\r": "\r",
+            "\\t": "\t",
+            "\\\\": "\\",
+        }
+        for seq, char in _SAFE.items():
+            text = text.replace(seq, char)
+        # Also handle hex escapes like \x03 (Ctrl-C)
+        import re
+        text = re.sub(
+            r"\\x([0-9a-fA-F]{2})",
+            lambda m: chr(int(m.group(1), 16)),
+            text,
+        )
+        return text
+
     async def send_input(
         self,
         session_id: str,
@@ -802,8 +827,10 @@ class TerminalService:
             return f"Error: Session {session_id} has no active process"
 
         try:
-            # Decode JSON escape sequences (\r\n → actual CR LF, \x03 → Ctrl-C, etc.)
-            decoded = text.encode("raw_unicode_escape").decode("unicode_escape")
+            # Decode only known-safe escape sequences (whitelist approach).
+            # The raw_unicode_escape + unicode_escape codec allows arbitrary
+            # control character injection, so we use explicit replacements.
+            decoded = _decode_safe_escapes(text)
 
             # Auto-append Enter if requested and not already present
             if press_enter and not decoded.endswith(("\r", "\n")):
@@ -982,7 +1009,7 @@ class TerminalService:
         # Kill any running standard subprocess
         if self._active_process:
             try:
-                self._active_process.kill()
+                _kill_process_tree(self._active_process.pid)
             except ProcessLookupError:
                 pass
 

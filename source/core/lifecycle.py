@@ -11,8 +11,16 @@ import signal
 import atexit
 
 
+_cleanup_done = False
+
+
 def cleanup_resources():
     """Clean up all resources when shutting down."""
+    global _cleanup_done
+    if _cleanup_done:
+        return
+    _cleanup_done = True
+
     # Use absolute imports inside the function to avoid circular import issues
     import sys
     
@@ -36,18 +44,7 @@ def cleanup_resources():
     try:
         loop = app_state.server_loop_holder.get("loop")
         if loop and loop.is_running():
-            import concurrent.futures
-            fut = concurrent.futures.Future()
-            
-            async def _do_cleanup():
-                try:
-                    await mcp_manager.cleanup()
-                    fut.set_result(True)
-                except Exception as e:
-                    fut.set_result(False)
-                    print(f"MCP cleanup error: {e}")
-            
-            loop.call_soon_threadsafe(asyncio.ensure_future, _do_cleanup())
+            fut = asyncio.run_coroutine_threadsafe(mcp_manager.cleanup(), loop)
             try:
                 fut.result(timeout=5)
             except Exception:
@@ -72,14 +69,26 @@ def cleanup_resources():
     except Exception as e:
         print(f"Error cleaning screenshots folder: {e}")
     
+    # Shut down the thread pool so worker threads don't block exit
+    try:
+        from .thread_pool import shutdown_thread_pool
+        shutdown_thread_pool()
+        print("Thread pool shut down")
+    except Exception as e:
+        print(f"Error shutting down thread pool: {e}")
+
     print("Cleanup completed")
 
 
 def _clear_folder(folder_path: str):
-    """Clear all files in a folder."""
+    """Remove all files (not subdirectories) from a folder."""
     if os.path.exists(folder_path):
         for file_path in glob.glob(os.path.join(folder_path, "*")):
-            os.remove(file_path)
+            if os.path.isfile(file_path):
+                try:
+                    os.remove(file_path)
+                except OSError as e:
+                    print(f"Warning: Could not remove {file_path}: {e}")
 
 
 def signal_handler(signum, frame):

@@ -4,6 +4,7 @@ WebSocket endpoint for real-time communication.
 Handles bidirectional WebSocket connections with the frontend.
 """
 import json
+import traceback
 from fastapi import WebSocket, WebSocketDisconnect
 
 from ..core.connection import manager
@@ -26,6 +27,14 @@ async def websocket_endpoint(websocket: WebSocket):
       - delete_conversation: Delete a conversation
       - search_conversations: Search conversations by text
       - resume_conversation: Resume a previous conversation
+      - start_recording: Start audio recording for transcription
+      - stop_recording: Stop audio recording and transcribe
+      - terminal_approval_response: User response to terminal approval
+      - terminal_session_response: User response to session mode request
+      - terminal_stop_session: Stop active terminal session
+      - terminal_kill_command: Kill running terminal command
+      - terminal_set_ask_level: Set terminal approval level
+      - terminal_resize: Resize terminal dimensions
 
     Server -> Client broadcast messages (JSON):
       - ready: Server is ready to receive queries
@@ -49,6 +58,14 @@ async def websocket_endpoint(websocket: WebSocket):
       - conversation_deleted: Conversation was deleted
       - conversation_resumed: Conversation was resumed
       - error: Error message
+      - terminal_approval_request: Request user approval for command
+      - terminal_session_request: Request user approval for session mode
+      - terminal_session_started: Terminal session started
+      - terminal_session_ended: Terminal session ended
+      - terminal_running_notice: Long-running command notice
+      - terminal_output: Terminal output chunk
+      - terminal_command_complete: Terminal command finished
+      - transcription_result: Audio transcription result
     """
     await manager.connect(websocket)
     
@@ -77,13 +94,13 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = json.loads(raw)
             except Exception:
-                continue  # Ignore malformed messages
+                print(f"[WS] Ignoring malformed message: {raw[:200]}")
+                continue
             
             try:
                 await handler.handle(data)
             except Exception as e:
                 print(f"[WS] Error handling message type '{data.get('type')}': {e}")
-                import traceback
                 traceback.print_exc()
                 try:
                     await websocket.send_text(json.dumps({

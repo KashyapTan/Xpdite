@@ -20,6 +20,9 @@ Its always better to read more than less. Make sure to read all relevant and con
 ### Freedom and direction
 You are extremly knowledgeable so dont be afraid to use that. If you have any concers, suggestions, or imporvements, dont be afraid to let me know. I am open to discussion and would prefer if we discussed things and clarified to get to the best possible end goal.
 
+### Planning
+Enter plan mode for non trivial tasks. Its important to get the correct info and details of a task by planning for it before you execute. For trivial tasks, this is unnecessary, dont over-engineer things.
+
 ---
 
 ## Dev Commands
