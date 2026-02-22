@@ -85,10 +85,18 @@ async def stream_ollama_chat(
         except Exception as e:
             print(f"[MCP] Tool calling phase failed: {e}")
 
-    # If the MCP phase produced a pre-computed response, broadcast it directly.
-    # (This path is currently unused since handle_mcp_tool_calls always returns
-    # pre_computed_response=None, but kept as a safety net.)
+    # If the MCP phase streamed a response (interleaved text + tools),
+    # everything was already broadcast to the user. Return directly.
     if pre_computed_response:
+        if pre_computed_response.get("already_streamed"):
+            return (
+                pre_computed_response.get("content", ""),
+                pre_computed_response.get(
+                    "token_stats", {"prompt_eval_count": 0, "eval_count": 0}
+                ),
+                tool_calls_list,
+            )
+        # Legacy pre-computed path (safety net)
         return await _broadcast_tool_final_response(
             pre_computed_response, tool_calls_list
         )

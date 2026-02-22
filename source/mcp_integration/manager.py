@@ -4,6 +4,7 @@ MCP Tool Manager.
 Manages MCP server connections and tool routing for the main app.
 """
 
+import asyncio
 import os
 import sys
 from typing import List, Dict, Any
@@ -55,7 +56,14 @@ class McpToolManager:
     async def connect_server(
         self, server_name: str, command: str, args: list, env: dict = None
     ):
-        """Connect to an MCP server by launching it as a subprocess."""
+        """Connect to an MCP server by launching it as a subprocess.
+
+        Spawns a background asyncio Task that holds the stdio + session
+        context managers open.  This ensures ``__aenter__`` and ``__aexit__``
+        always run in the *same* task, avoiding anyio's
+        "cancel scope in a different task" RuntimeError when disconnecting
+        from an HTTP handler.
+        """
         try:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
@@ -82,18 +90,47 @@ class McpToolManager:
 
             server_params = StdioServerParameters(command=command, args=args, env=env)
 
-            # Launch the MCP server subprocess and connect
-            stdio_ctx = stdio_client(server_params)
-            read, write = await stdio_ctx.__aenter__()
+            # -- Background‑task lifecycle pattern --
+            # A dedicated task holds the stdio + session context managers
+            # open and waits on a shutdown event.  disconnect_server() sets
+            # the event so the *same* task exits the scopes cleanly.
+            shutdown_event = asyncio.Event()
+            connected_event = asyncio.Event()
+            connection_data: Dict[str, Any] = {}
 
-            session_ctx = ClientSession(read, write)
-            session = await session_ctx.__aenter__()
-            await session.initialize()
+            async def _server_lifecycle():
+                """Run inside its own asyncio Task."""
+                try:
+                    async with stdio_client(server_params) as (read, write):
+                        async with ClientSession(read, write) as session:
+                            await session.initialize()
+                            connection_data["session"] = session
+                            connected_event.set()
+                            # Keep context managers alive until told to shut down
+                            await shutdown_event.wait()
+                except asyncio.CancelledError:
+                    pass
+                except Exception as exc:
+                    if not connected_event.is_set():
+                        connection_data["error"] = exc
+                        connected_event.set()
+
+            task = asyncio.create_task(
+                _server_lifecycle(), name=f"mcp-server-{server_name}"
+            )
+
+            # Wait for the session to become available (or for an error)
+            await connected_event.wait()
+
+            if "error" in connection_data:
+                raise connection_data["error"]
+
+            session = connection_data["session"]
 
             self._connections[server_name] = {
                 "session": session,
-                "stdio_ctx": stdio_ctx,
-                "session_ctx": session_ctx,
+                "shutdown_event": shutdown_event,
+                "task": task,
             }
 
             # Discover tools
@@ -293,12 +330,27 @@ class McpToolManager:
         if not conn:
             return
 
+        # Signal the background task to exit, which cleanly runs
+        # __aexit__ on the session + stdio context managers in the
+        # same task that entered them.
+        shutdown_event: asyncio.Event = conn["shutdown_event"]
+        task: asyncio.Task = conn["task"]
+
+        shutdown_event.set()
+
         try:
-            await conn["session_ctx"].__aexit__(None, None, None)
-            await conn["stdio_ctx"].__aexit__(None, None, None)
-            print(f"[MCP] Disconnected from '{server_name}'")
+            await asyncio.wait_for(task, timeout=10.0)
+        except asyncio.TimeoutError:
+            print(f"[MCP] Server '{server_name}' did not shut down in time, cancelling")
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
         except Exception as e:
-            print(f"[MCP] Error disconnecting from '{server_name}': {e}")
+            print(f"[MCP] Error shutting down '{server_name}': {e}")
+
+        print(f"[MCP] Disconnected from '{server_name}'")
 
         # Remove from connections
         self._connections.pop(server_name, None)
@@ -388,8 +440,17 @@ class McpToolManager:
         """Disconnect from all MCP servers."""
         for name, conn in list(self._connections.items()):
             try:
-                await conn["session_ctx"].__aexit__(None, None, None)
-                await conn["stdio_ctx"].__aexit__(None, None, None)
+                shutdown_event: asyncio.Event = conn["shutdown_event"]
+                task: asyncio.Task = conn["task"]
+                shutdown_event.set()
+                try:
+                    await asyncio.wait_for(task, timeout=10.0)
+                except asyncio.TimeoutError:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, Exception):
+                        pass
                 print(f"[MCP] Disconnected from '{name}'")
             except Exception as e:
                 print(f"[MCP] Error disconnecting from '{name}': {e}")

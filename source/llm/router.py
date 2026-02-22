@@ -39,8 +39,9 @@ async def route_chat(
     Same return signature as stream_ollama_chat:
         (response_text, token_stats, tool_calls_list)
 
-    For Ollama models, delegates to stream_ollama_chat.
-    For cloud models, handles MCP tool detection, then streams via cloud_provider.
+    For Ollama models, delegates to stream_ollama_chat (MCP tool handling built-in).
+    For cloud models, retrieves relevant tools and passes them to stream_cloud_chat
+    which handles tool execution inline during streaming.
     """
     provider, model = parse_provider(model_name)
 
@@ -51,9 +52,6 @@ async def route_chat(
     from ..core.state import app_state
 
     # Build skills block for system prompt
-    # For now, pass empty retrieved_tools — auto-detection happens based on
-    # whatever tools the retriever selects. We'll pass the actual filtered
-    # tools once available, but forced_skills from slash commands work immediately.
     skills_to_inject = get_skills_to_inject(
         retrieved_tools=[],
         forced_skills=forced_skills or [],
@@ -71,19 +69,16 @@ async def route_chat(
     if provider == "ollama":
         if app_state.stop_streaming:
             return "", {"prompt_eval_count": 0, "eval_count": 0}, []
-            
-        # Use existing Ollama pipeline (MCP tool handling is built-in)
+
         from .ollama_provider import stream_ollama_chat
 
         return await stream_ollama_chat(user_query, image_paths, chat_history, system_prompt)
 
-    # Cloud provider path
+    # ── Cloud provider path ──────────────────────────────────────────
+    # Tools are handled inline during streaming — no separate detection phase.
     from .key_manager import key_manager
     from .cloud_provider import stream_cloud_chat
-    from ..mcp_integration.cloud_tool_handlers import handle_cloud_tool_calls
-    from ..mcp_integration.manager import mcp_manager
 
-    # Get API key
     api_key = key_manager.get_api_key(provider)
     if not api_key:
         from ..core.connection import broadcast_message
@@ -97,73 +92,28 @@ async def route_chat(
             [],
         )
 
-    # MCP tool calling phase (runs before streaming)
-    tool_calls_list: List[Dict[str, Any]] = []
-    
     if app_state.stop_streaming:
         return "", {"prompt_eval_count": 0, "eval_count": 0}, []
 
+    # Get relevant tool names for the streaming function
+    allowed_tool_names: set[str] = set()
     if mcp_manager.has_tools():
-        try:
-            # Preserve images in messages so cloud models can analyze image content
-            # (e.g. extract a URL from a screenshot) when deciding which tools to call
-            messages_for_tools = []
-            for m in chat_history:
-                entry = {"role": m["role"], "content": m["content"]}
-                if m.get("images"):
-                    entry["images"] = m["images"]
-                messages_for_tools.append(entry)
-            user_entry: Dict[str, Any] = {"role": "user", "content": user_query}
-            if image_paths:
-                user_entry["images"] = image_paths
-            messages_for_tools.append(user_entry)
+        from ..mcp_integration.handlers import retrieve_relevant_tools
 
-            _, tool_calls_list, _ = await handle_cloud_tool_calls(
-                provider, model, api_key, messages_for_tools, image_paths
-            )
-        except Exception as e:
-            print(f"[Router] Cloud tool calling phase failed: {e}")
+        filtered_tools = retrieve_relevant_tools(user_query)
+        allowed_tool_names = {t["function"]["name"] for t in filtered_tools}
 
-    # Build updated chat history with tool exchange for context
-    updated_history = list(chat_history)
-    
-    if app_state.stop_streaming:
-        return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list
-
-    if tool_calls_list:
-        # Add tool results as context so the streaming call knows about them
-        tool_summary = "\n".join(
-            f"[Tool: {tc['name']}] Result: {tc['result'][:500]}"
-            for tc in tool_calls_list
-        )
-        # Inject tool results as a system-level context message
-        updated_history = list(chat_history)
-        updated_history.append(
-            {
-                "role": "user",
-                "content": f"[System: The following tool calls were executed to help answer the query]\n{tool_summary}\n\n[Original query: {user_query}]",
-            }
-        )
-        # The streaming call uses the original user_query but with tool context
-        response_text, token_stats, _ = await stream_cloud_chat(
-            provider,
-            model,
-            api_key,
-            f"Based on the tool results above, answer the original query: {user_query}",
-            image_paths,
-            updated_history,
-            system_prompt=system_prompt,
-        )
-    else:
-        # No tools needed — straight streaming
-        response_text, token_stats, _ = await stream_cloud_chat(
-            provider,
-            model,
-            api_key,
-            user_query,
-            image_paths,
-            chat_history,
-            system_prompt=system_prompt,
-        )
+    # Stream with inline tool calling — text and tool results are
+    # interleaved and broadcast to the user in real-time
+    response_text, token_stats, tool_calls_list = await stream_cloud_chat(
+        provider,
+        model,
+        api_key,
+        user_query,
+        image_paths,
+        chat_history,
+        allowed_tool_names=allowed_tool_names if allowed_tool_names else None,
+        system_prompt=system_prompt,
+    )
 
     return response_text, token_stats, tool_calls_list
