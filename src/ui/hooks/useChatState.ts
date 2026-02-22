@@ -4,7 +4,7 @@
  * Manages chat history, current query/response, and conversation state.
  */
 import { useState, useRef, useCallback } from 'react';
-import type { ChatMessage, ToolCall, ContentBlock } from '../types';
+import type { ChatMessage, ToolCall, ContentBlock, TerminalCommandBlock } from '../types';
 
 interface UseChatStateReturn {
   // State
@@ -40,6 +40,9 @@ interface UseChatStateReturn {
   appendResponse: (chunk: string) => void;
   addToolCall: (toolCall: ToolCall) => void;
   updateToolCall: (toolCall: ToolCall) => void;
+  addTerminalBlock: (terminal: TerminalCommandBlock) => void;
+  updateTerminalBlock: (requestId: string, updates: Partial<TerminalCommandBlock>) => void;
+  appendTerminalOutput: (requestId: string, text: string) => void;
   startQuery: (query: string) => void;
   completeResponse: (attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => void;
   resetForNewChat: () => void;
@@ -132,6 +135,42 @@ export function useChatState(): UseChatStateReturn {
         JSON.stringify(block.toolCall.args) === JSON.stringify(updatedToolCall.args)
       ) {
         return { ...block, toolCall: { ...block.toolCall, ...updatedToolCall } };
+      }
+      return block;
+    });
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
+  }, []);
+
+  // ── Terminal block management ─────────────────────────────────
+
+  const addTerminalBlock = useCallback((terminal: TerminalCommandBlock) => {
+    const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'terminal_command', terminal }];
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
+  }, []);
+
+  const updateTerminalBlock = useCallback((requestId: string, updates: Partial<TerminalCommandBlock>) => {
+    const newBlocks = contentBlocksRef.current.map(block => {
+      if (block.type === 'terminal_command' && block.terminal.requestId === requestId) {
+        return { ...block, terminal: { ...block.terminal, ...updates } };
+      }
+      return block;
+    });
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
+  }, []);
+
+  const appendTerminalOutput = useCallback((requestId: string, text: string) => {
+    const newBlocks = contentBlocksRef.current.map(block => {
+      if (block.type === 'terminal_command' && block.terminal.requestId === requestId) {
+        return {
+          ...block,
+          terminal: {
+            ...block.terminal,
+            output: block.terminal.output + text + '\n',
+          },
+        };
       }
       return block;
     });
@@ -269,6 +308,9 @@ export function useChatState(): UseChatStateReturn {
     appendResponse,
     addToolCall,
     updateToolCall,
+    addTerminalBlock,
+    updateTerminalBlock,
+    appendTerminalOutput,
     startQuery,
     completeResponse,
     resetForNewChat,

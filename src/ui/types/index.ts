@@ -16,7 +16,31 @@ export interface ToolCall {
 
 export type ContentBlock =
   | { type: 'text'; content: string }
-  | { type: 'tool_call'; toolCall: ToolCall };
+  | { type: 'tool_call'; toolCall: ToolCall }
+  | { type: 'terminal_command'; terminal: TerminalCommandBlock };
+
+/**
+ * Inline terminal command block — one per run_command invocation.
+ * Rendered as an embedded terminal card inside the chat.
+ */
+export interface TerminalCommandBlock {
+  /** Unique ID — matches the backend request_id */
+  requestId: string;
+  /** The shell command being executed */
+  command: string;
+  /** Working directory */
+  cwd: string;
+  /** Lifecycle state */
+  status: 'pending_approval' | 'denied' | 'running' | 'completed';
+  /** Accumulated stdout/stderr lines */
+  output: string;
+  /** Process exit code (set on completion) */
+  exitCode?: number;
+  /** Duration in ms (set on completion) */
+  durationMs?: number;
+  /** Whether the command timed out */
+  timedOut?: boolean;
+}
 
 export interface MessageImage {
   name: string;

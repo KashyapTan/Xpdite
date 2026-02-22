@@ -27,7 +27,6 @@ import { QueryInput } from '../components/input/QueryInput';
 import { ModeSelector } from '../components/input/ModeSelector';
 import { TokenUsagePopup } from '../components/input/TokenUsagePopup';
 import { ScreenshotChips } from '../components/input/ScreenshotChips';
-import { TerminalPanel } from '../components/terminal/TerminalPanel';
 
 // Types
 import type {
@@ -43,12 +42,10 @@ import type {
   TerminalSessionRequest,
   TerminalOutput,
   TerminalCommandComplete,
-  TerminalRunningNotice,
 } from '../types';
 
 // Assets
 import '../CSS/App.css';
-import '../CSS/Terminal.css';
 import micSignSvg from '../assets/mic-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
@@ -76,14 +73,9 @@ function App() {
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
 
-  // Terminal state
-  const [terminalApproval, setTerminalApproval] = useState<TerminalApprovalRequest | null>(null);
-  const [terminalSessionRequest, setTerminalSessionRequest] = useState<TerminalSessionRequest | null>(null);
+  // Terminal state (minimal — most state is now in chatState.contentBlocks)
   const [terminalSessionActive, setTerminalSessionActive] = useState(false);
-  const [terminalRunningNotice, setTerminalRunningNotice] = useState<TerminalRunningNotice | null>(null);
-  const [terminalCommandRunning, setTerminalCommandRunning] = useState(false);
-  const [terminalAskLevel, setTerminalAskLevel] = useState('on-miss');
-  const [terminalKey, setTerminalKey] = useState(0);
+  const [terminalSessionRequest, setTerminalSessionRequest] = useState<TerminalSessionRequest | null>(null);
 
   // ============================================
   // Refs
@@ -94,6 +86,8 @@ function App() {
   const pendingConversationRef = useRef<string | null>(null);
   const pendingNewChatRef = useRef<boolean>(false);
   const generatingModelRef = useRef<string>('');
+  // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
+  const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
 
   // ============================================
   // Context from Layout
@@ -183,12 +177,8 @@ function App() {
         chatState.resetForNewChat();
         screenshotState.clearScreenshots();
         tokenState.resetTokens();
-        setTerminalApproval(null);
         setTerminalSessionRequest(null);
         setTerminalSessionActive(false);
-        setTerminalRunningNotice(null);
-        setTerminalCommandRunning(false);
-        setTerminalKey(k => k + 1);  // force TerminalPanel remount to clear internal state
         break;
 
       case 'query':
@@ -199,6 +189,21 @@ function App() {
         const tc = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as ToolCallContent;
+
+        // Terminal run_command: use inline terminal blocks instead of generic tool cards
+        if (tc.server === 'terminal' && tc.name === 'run_command') {
+          if (tc.status === 'calling') {
+            chatState.setStatus(`Running command: ${tc.args.command}...`);
+            // Stash command info — the actual terminal block is created when the real
+            // request_id arrives (via terminal_approval_request or terminal_output)
+            pendingTerminalCommandRef.current = {
+              command: String(tc.args.command || ''),
+              cwd: String(tc.args.cwd || ''),
+            };
+          }
+          // For 'complete' status, the terminal_command_complete message handles it
+          break;
+        }
 
         if (tc.status === 'calling') {
           chatState.setStatus(`Calling tool: ${tc.name}...`);
@@ -315,7 +320,14 @@ function App() {
         const approvalData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalApprovalRequest;
-        setTerminalApproval(approvalData);
+        // Create an inline terminal block in pending_approval state
+        chatState.addTerminalBlock({
+          requestId: approvalData.request_id,
+          command: approvalData.command,
+          cwd: approvalData.cwd,
+          status: 'pending_approval',
+          output: '',
+        });
         break;
       }
 
@@ -340,15 +352,26 @@ function App() {
         const outputData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalOutput;
-        setTerminalCommandRunning(true);
-        // Route to the appropriate writer:
-        // - raw=true → writeOutputRaw (term.write, preserves ANSI cursor control for TUI)
-        // - raw=false → writeOutput (term.writeln, line-by-line for standard commands)
-        if (outputData.raw && (window as any).__terminalWriteOutputRaw) {
-          (window as any).__terminalWriteOutputRaw(outputData.text);
-        } else if ((window as any).__terminalWriteOutput) {
-          (window as any).__terminalWriteOutput(outputData.text);
+        // Find existing terminal block by request_id
+        const hasBlock = chatState.contentBlocksRef.current.some(
+          b => b.type === 'terminal_command' && b.terminal.requestId === outputData.request_id
+        );
+        if (!hasBlock) {
+          // Auto-approved command: create terminal block now using stashed info
+          const pending = pendingTerminalCommandRef.current;
+          chatState.addTerminalBlock({
+            requestId: outputData.request_id,
+            command: pending?.command || '',
+            cwd: pending?.cwd || '',
+            status: 'running',
+            output: '',
+          });
+          pendingTerminalCommandRef.current = null;
+        } else {
+          // Update status to running if still pending (approval flow)
+          chatState.updateTerminalBlock(outputData.request_id, { status: 'running' });
         }
+        chatState.appendTerminalOutput(outputData.request_id, outputData.text);
         break;
       }
 
@@ -356,23 +379,18 @@ function App() {
         const completeData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalCommandComplete;
-        setTerminalRunningNotice(null);
-        setTerminalCommandRunning(false);
-        const statusIcon = completeData.exit_code === 0 ? '✓' : '✗';
-        const durationSec = (completeData.duration_ms / 1000).toFixed(1);
-        if ((window as any).__terminalWriteOutput) {
-          (window as any).__terminalWriteOutput(
-            `\x1b[90m${statusIcon} Completed in ${durationSec}s (exit ${completeData.exit_code})\x1b[0m`
-          );
-        }
+        // Update the inline terminal block to completed state
+        chatState.updateTerminalBlock(completeData.request_id, {
+          status: 'completed',
+          exitCode: completeData.exit_code,
+          durationMs: completeData.duration_ms,
+        });
         break;
       }
 
       case 'terminal_running_notice': {
-        const noticeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TerminalRunningNotice;
-        setTerminalRunningNotice(noticeData);
+        // Running notice is now implicit in the inline terminal block's 'running' status
+        // No separate state needed — the block already shows a spinner
         break;
       }
     }
@@ -574,24 +592,34 @@ function App() {
   };
 
   // ── Terminal Action Handlers ────────────────────────────────
-  const handleTerminalApprovalResponse = (requestId: string, approved: boolean, remember: boolean) => {
+  const handleTerminalApprovalResponse = useCallback((requestId: string, approved: boolean, remember: boolean) => {
     wsRef.current?.send(JSON.stringify({
       type: 'terminal_approval_response',
       request_id: requestId,
       approved,
       remember,
     }));
-    setTerminalApproval(null);
 
-    // Write to terminal and mark as running
     if (approved) {
-      setTerminalCommandRunning(true);
-      if ((window as any).__terminalWriteCommand) {
-        const cmd = terminalApproval?.command || '';
-        (window as any).__terminalWriteCommand(cmd);
-      }
+      // Transition inline block to running state
+      chatState.updateTerminalBlock(requestId, { status: 'running' });
+    } else {
+      // Transition inline block to denied state
+      chatState.updateTerminalBlock(requestId, { status: 'denied' });
     }
-  };
+  }, [chatState]);
+
+  const handleTerminalApprove = useCallback((requestId: string) => {
+    handleTerminalApprovalResponse(requestId, true, false);
+  }, [handleTerminalApprovalResponse]);
+
+  const handleTerminalDeny = useCallback((requestId: string) => {
+    handleTerminalApprovalResponse(requestId, false, false);
+  }, [handleTerminalApprovalResponse]);
+
+  const handleTerminalApproveRemember = useCallback((requestId: string) => {
+    handleTerminalApprovalResponse(requestId, true, true);
+  }, [handleTerminalApprovalResponse]);
 
   const handleTerminalSessionResponse = (approved: boolean) => {
     wsRef.current?.send(JSON.stringify({
@@ -608,27 +636,11 @@ function App() {
     setTerminalSessionActive(false);
   };
 
-  const handleKillCommand = () => {
+  const handleKillCommand = useCallback((_requestId: string) => {
     wsRef.current?.send(JSON.stringify({
       type: 'terminal_kill_command',
     }));
-  };
-
-  const handleAskLevelChange = (level: string) => {
-    wsRef.current?.send(JSON.stringify({
-      type: 'terminal_set_ask_level',
-      level,
-    }));
-    setTerminalAskLevel(level);
-  };
-
-  const handleTerminalResize = (cols: number, rows: number) => {
-    wsRef.current?.send(JSON.stringify({
-      type: 'terminal_resize',
-      cols,
-      rows,
-    }));
-  };
+  }, []);
 
   // ============================================
   // Render
@@ -654,25 +666,28 @@ function App() {
         onScrollToBottom={scrollToBottom}
         responseAreaRef={responseAreaRef}
         scrollDownIcon={scrollDownIcon}
-      />
-
-      <TerminalPanel
-        key={terminalKey}
-        approvalRequest={terminalApproval}
-        sessionRequest={terminalSessionRequest}
-        sessionActive={terminalSessionActive}
-        runningNotice={terminalRunningNotice}
-        commandRunning={terminalCommandRunning}
-        askLevel={terminalAskLevel}
-        onApprovalResponse={handleTerminalApprovalResponse}
-        onSessionResponse={handleTerminalSessionResponse}
-        onStopSession={handleStopSession}
-        onKillCommand={handleKillCommand}
-        onAskLevelChange={handleAskLevelChange}
-        onTerminalResize={handleTerminalResize}
+        onTerminalApprove={handleTerminalApprove}
+        onTerminalDeny={handleTerminalDeny}
+        onTerminalApproveRemember={handleTerminalApproveRemember}
+        onTerminalKill={handleKillCommand}
       />
 
       <div className="main-interaction-section">
+        {/* Session mode indicators */}
+        {terminalSessionRequest && (
+          <div className="terminal-session-chip">
+            <span>⚡ Session mode requested</span>
+            <button onClick={() => handleTerminalSessionResponse(true)}>Allow</button>
+            <button onClick={() => handleTerminalSessionResponse(false)}>Deny</button>
+          </div>
+        )}
+        {terminalSessionActive && (
+          <div className="terminal-session-chip">
+            <span>⚡ Session Mode Active</span>
+            <button onClick={handleStopSession}>Stop</button>
+          </div>
+        )}
+
         <div className="query-input-section">
           <QueryInput
             ref={inputRef}

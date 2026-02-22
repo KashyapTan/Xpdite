@@ -41,7 +41,8 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
 export type RenderGroup =
   | { kind: 'text'; content: string }
   | { kind: 'single_tool'; toolCall: ToolCall }
-  | { kind: 'tool_group'; toolCalls: ToolCall[] };
+  | { kind: 'tool_group'; toolCalls: ToolCall[] }
+  | { kind: 'terminal_command'; terminal: import('../../types').TerminalCommandBlock };
 
 export function groupBlocks(blocks: ContentBlock[]): RenderGroup[] {
   const groups: RenderGroup[] = [];
@@ -54,6 +55,9 @@ export function groupBlocks(blocks: ContentBlock[]): RenderGroup[] {
       if (block.content) {
         groups.push({ kind: 'text', content: block.content });
       }
+      i++;
+    } else if (block.type === 'terminal_command') {
+      groups.push({ kind: 'terminal_command', terminal: block.terminal });
       i++;
     } else {
       // Collect consecutive tool_call blocks (empty text blocks don't break the run)

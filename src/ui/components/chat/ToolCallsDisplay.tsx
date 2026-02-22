@@ -3,7 +3,9 @@ import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
+import { InlineTerminalBlock } from './InlineTerminalBlock';
 import { getHumanReadableDescription, groupBlocks } from './toolCallUtils';
+import '../../CSS/InlineTerminal.css';
 
 interface ToolCallsDisplayProps {
   toolCalls: ToolCall[];
@@ -61,7 +63,21 @@ export function InlineToolCard({ toolCall }: InlineToolCardProps) {
 
 // ─── Inline content-block renderer (shared by ChatMessage & ResponseArea) ─────
 
-export function InlineContentBlocks({ blocks }: { blocks: ContentBlock[] }) {
+interface InlineContentBlocksProps {
+  blocks: ContentBlock[];
+  onTerminalApprove?: (requestId: string) => void;
+  onTerminalDeny?: (requestId: string) => void;
+  onTerminalApproveRemember?: (requestId: string) => void;
+  onTerminalKill?: (requestId: string) => void;
+}
+
+export function InlineContentBlocks({
+  blocks,
+  onTerminalApprove,
+  onTerminalDeny,
+  onTerminalApproveRemember,
+  onTerminalKill,
+}: InlineContentBlocksProps) {
   const groups = groupBlocks(blocks);
 
   return (
@@ -79,6 +95,18 @@ export function InlineContentBlocks({ blocks }: { blocks: ContentBlock[] }) {
         }
         if (g.kind === 'single_tool') {
           return <InlineToolCard key={idx} toolCall={g.toolCall} />;
+        }
+        if (g.kind === 'terminal_command') {
+          return (
+            <InlineTerminalBlock
+              key={idx}
+              terminal={g.terminal}
+              onApprove={onTerminalApprove}
+              onDeny={onTerminalDeny}
+              onApproveRemember={onTerminalApproveRemember}
+              onKill={onTerminalKill}
+            />
+          );
         }
         return <ToolCallsDisplay key={idx} toolCalls={g.toolCalls} />;
       })}

@@ -1,0 +1,301 @@
+/* ============================================
+   Inline Terminal Block Styles — Chat-embedded
+   ============================================ */
+
+.terminal-inline-block {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 6px 0 8px 0;
+  background: rgba(0, 0, 0, 0.4);
+  font-family: 'Montserrat', sans-serif;
+}
+
+.terminal-inline-block.status-pending_approval {
+  border-color: rgba(100, 140, 255, 0.25);
+}
+
+.terminal-inline-block.status-denied {
+  border-color: rgba(255, 80, 80, 0.2);
+  opacity: 0.7;
+}
+
+.terminal-inline-block.status-running {
+  border-color: rgba(255, 200, 40, 0.25);
+}
+
+.terminal-inline-block.status-completed {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ── Header ────────────────────────────────── */
+
+.terminal-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.03);
+  transition: background 0.15s ease;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+.terminal-inline-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.terminal-inline-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+.terminal-inline-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Status icons ──────────────────────────── */
+
+.terminal-inline-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.terminal-inline-icon.pending {
+  color: #648cff;
+}
+
+.terminal-inline-icon.denied {
+  color: #ff6060;
+}
+
+.terminal-inline-icon.running-spin {
+  color: #e0a040;
+  animation: terminal-spin 1.5s linear infinite;
+}
+
+.terminal-inline-icon.success {
+  color: #7ee787;
+}
+
+.terminal-inline-icon.error {
+  color: #ff6060;
+}
+
+@keyframes terminal-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Badge & command ───────────────────────── */
+
+.terminal-inline-badge {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.terminal-inline-command {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── Chevron ───────────────────────────────── */
+
+.terminal-inline-chevron {
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.3);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.terminal-inline-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+/* ── Kill button ───────────────────────────── */
+
+.terminal-inline-kill {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(255, 80, 80, 0.5);
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff6060;
+  transition: all 0.15s ease;
+  letter-spacing: 0.3px;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.terminal-inline-kill:hover {
+  background: rgba(255, 80, 80, 0.3);
+  border-color: rgba(255, 80, 80, 0.7);
+}
+
+/* ── Body ──────────────────────────────────── */
+
+.terminal-inline-body {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── Approval prompt ───────────────────────── */
+
+.terminal-inline-approval {
+  padding: 10px 14px;
+  background: rgba(100, 140, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.terminal-inline-approval-info {
+  margin-bottom: 10px;
+}
+
+.terminal-inline-approval-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #c0c0d8;
+  margin-bottom: 4px;
+}
+
+.terminal-inline-approval-cwd {
+  font-size: 11px;
+  color: #7070a0;
+}
+
+.terminal-inline-approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Reuse .btn-deny, .btn-allow, .btn-allow-remember from Terminal.css */
+
+/* ── Denied message ────────────────────────── */
+
+.terminal-inline-denied {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #ff6060;
+  background: rgba(255, 80, 80, 0.04);
+}
+
+/* ── Output area ───────────────────────────── */
+
+.terminal-inline-output {
+  max-height: 250px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: rgba(0, 0, 0, 0.3);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.terminal-inline-output::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.terminal-inline-output::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-inline-output::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+.terminal-inline-output-pre {
+  font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #d4d4d4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 8px 12px;
+}
+
+/* ── Footer ────────────────────────────────── */
+
+.terminal-inline-footer {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: #7070a0;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.terminal-inline-footer.status-completed {
+  color: #7ee787;
+}
+
+.terminal-inline-footer.status-running {
+  color: #e0a040;
+  animation: terminal-footer-pulse 2s ease-in-out infinite;
+}
+
+.terminal-inline-footer.status-denied {
+  color: #ff6060;
+}
+
+@keyframes terminal-footer-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── Session mode chip (rendered in input area or chat) ──── */
+
+.terminal-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  background: rgba(255, 200, 40, 0.1);
+  border: 1px solid rgba(255, 200, 40, 0.25);
+  font-size: 11px;
+  color: #e0c040;
+  font-weight: 500;
+  font-family: 'Montserrat', sans-serif;
+  margin: 4px 0;
+}
+
+.terminal-session-chip button {
+  background: none;
+  border: none;
+  color: #ff6060;
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0 2px;
+  font-weight: 600;
+}
+
+.terminal-session-chip button:hover {
+  color: #ff8080;
+}

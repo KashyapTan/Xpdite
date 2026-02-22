@@ -27,6 +27,11 @@ interface ResponseAreaProps {
   onScrollToBottom: () => void;
   responseAreaRef: React.RefObject<HTMLDivElement | null>;
   scrollDownIcon: string;
+  // Terminal callbacks (passed to InlineTerminalBlock via InlineContentBlocks)
+  onTerminalApprove?: (requestId: string) => void;
+  onTerminalDeny?: (requestId: string) => void;
+  onTerminalApproveRemember?: (requestId: string) => void;
+  onTerminalKill?: (requestId: string) => void;
 }
 
 export function ResponseArea({
@@ -46,6 +51,10 @@ export function ResponseArea({
   onScrollToBottom,
   responseAreaRef,
   scrollDownIcon,
+  onTerminalApprove,
+  onTerminalDeny,
+  onTerminalApproveRemember,
+  onTerminalKill,
 }: ResponseAreaProps) {
   const hasContentBlocks = contentBlocks && contentBlocks.length > 0;
 
@@ -93,7 +102,13 @@ export function ResponseArea({
         {!error && hasContentBlocks && (
           <div className="response">
             <div className="assistant-header">Xpdite • {generatingModel}</div>
-            <InlineContentBlocks blocks={contentBlocks!} />
+            <InlineContentBlocks
+              blocks={contentBlocks!}
+              onTerminalApprove={onTerminalApprove}
+              onTerminalDeny={onTerminalDeny}
+              onTerminalApproveRemember={onTerminalApproveRemember}
+              onTerminalKill={onTerminalKill}
+            />
           </div>
         )}
       </div>
