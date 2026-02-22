@@ -14,6 +14,10 @@ export interface ToolCall {
   status?: 'calling' | 'complete';
 }
 
+export type ContentBlock =
+  | { type: 'text'; content: string }
+  | { type: 'tool_call'; toolCall: ToolCall };
+
 export interface MessageImage {
   name: string;
   thumbnail: string;
@@ -25,6 +29,8 @@ export interface ChatMessage {
   thinking?: string;
   images?: MessageImage[];
   toolCalls?: ToolCall[];
+  /** Interleaved text + tool_call blocks (preferred over toolCalls for rendering) */
+  contentBlocks?: ContentBlock[];
   model?: string;
 }
 

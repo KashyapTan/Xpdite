@@ -4,7 +4,7 @@
  * Manages chat history, current query/response, and conversation state.
  */
 import { useState, useRef, useCallback } from 'react';
-import type { ChatMessage, ToolCall } from '../types';
+import type { ChatMessage, ToolCall, ContentBlock } from '../types';
 
 interface UseChatStateReturn {
   // State
@@ -15,6 +15,7 @@ interface UseChatStateReturn {
   isThinking: boolean;
   thinkingCollapsed: boolean;
   toolCalls: ToolCall[];
+  contentBlocks: ContentBlock[];
   conversationId: string | null;
   query: string;
   canSubmit: boolean;
@@ -26,6 +27,7 @@ interface UseChatStateReturn {
   responseRef: React.RefObject<string>;
   thinkingRef: React.RefObject<string>;
   toolCallsRef: React.RefObject<ToolCall[]>;
+  contentBlocksRef: React.RefObject<ContentBlock[]>;
   
   // Actions
   setQuery: React.Dispatch<React.SetStateAction<string>>;
@@ -55,6 +57,7 @@ export function useChatState(): UseChatStateReturn {
   const [isThinking, setIsThinking] = useState(false);
   const [thinkingCollapsed, setThinkingCollapsed] = useState(true);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);
+  const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
   const [status, setStatus] = useState('Connecting to server...');
   const [error, setError] = useState('');
   const [canSubmit, setCanSubmit] = useState(false);
@@ -69,6 +72,7 @@ export function useChatState(): UseChatStateReturn {
   const responseRef = useRef('');
   const thinkingRef = useRef('');
   const toolCallsRef = useRef<ToolCall[]>([]);
+  const contentBlocksRef = useRef<ContentBlock[]>([]);
 
   const appendThinking = useCallback((chunk: string) => {
     setThinking(prev => prev + chunk);
@@ -78,11 +82,32 @@ export function useChatState(): UseChatStateReturn {
   const appendResponse = useCallback((chunk: string) => {
     setResponse(prev => prev + chunk);
     responseRef.current += chunk;
+
+    // Append to last text block, or create a new one
+    const blocks = contentBlocksRef.current;
+    if (blocks.length > 0 && blocks[blocks.length - 1].type === 'text') {
+      const newBlocks = [...blocks];
+      newBlocks[newBlocks.length - 1] = {
+        type: 'text',
+        content: (newBlocks[newBlocks.length - 1] as { type: 'text'; content: string }).content + chunk,
+      };
+      contentBlocksRef.current = newBlocks;
+      setContentBlocks(newBlocks);
+    } else {
+      const newBlocks: ContentBlock[] = [...blocks, { type: 'text', content: chunk }];
+      contentBlocksRef.current = newBlocks;
+      setContentBlocks(newBlocks);
+    }
   }, []);
 
   const addToolCall = useCallback((toolCall: ToolCall) => {
     setToolCalls(prev => [...prev, toolCall]);
     toolCallsRef.current = [...toolCallsRef.current, toolCall];
+
+    // Append a tool_call block to contentBlocks
+    const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'tool_call', toolCall }];
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
   }, []);
 
   const updateToolCall = useCallback((updatedToolCall: ToolCall) => {
@@ -98,6 +123,20 @@ export function useChatState(): UseChatStateReturn {
         ? { ...tc, ...updatedToolCall }
         : tc
     );
+
+    // Update the matching tool_call block in contentBlocks
+    const newBlocks = contentBlocksRef.current.map(block => {
+      if (
+        block.type === 'tool_call' &&
+        block.toolCall.name === updatedToolCall.name &&
+        JSON.stringify(block.toolCall.args) === JSON.stringify(updatedToolCall.args)
+      ) {
+        return { ...block, toolCall: { ...block.toolCall, ...updatedToolCall } };
+      }
+      return block;
+    });
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
   }, []);
 
   const startQuery = useCallback((queryText: string) => {
@@ -107,9 +146,11 @@ export function useChatState(): UseChatStateReturn {
     setStatus('Thinking...');
     setIsThinking(true);
     setCanSubmit(false);
-    // Reset tool calls for new query
+    // Reset tool calls and content blocks for new query
     setToolCalls([]);
     toolCallsRef.current = [];
+    setContentBlocks([]);
+    contentBlocksRef.current = [];
   }, []);
 
   const completeResponse = useCallback((attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => {
@@ -117,6 +158,7 @@ export function useChatState(): UseChatStateReturn {
     const completedResponse = responseRef.current;
     const completedThinking = thinkingRef.current;
     const completedToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
+    const completedContentBlocks = contentBlocksRef.current.length > 0 ? [...contentBlocksRef.current] : undefined;
 
     // Add to chat history
     setChatHistory(prev => [
@@ -131,6 +173,7 @@ export function useChatState(): UseChatStateReturn {
         content: completedResponse, 
         thinking: completedThinking || undefined, 
         toolCalls: completedToolCalls,
+        contentBlocks: completedContentBlocks,
         model: model
       }
     ]);
@@ -140,12 +183,14 @@ export function useChatState(): UseChatStateReturn {
     setThinking('');
     setCurrentQuery('');
     setToolCalls([]);
+    setContentBlocks([]);
     
     // Reset refs
     currentQueryRef.current = '';
     responseRef.current = '';
     thinkingRef.current = '';
     toolCallsRef.current = [];
+    contentBlocksRef.current = [];
     
     setStatus('Ready for follow-up question.');
     setCanSubmit(true);
@@ -158,6 +203,7 @@ export function useChatState(): UseChatStateReturn {
     setIsThinking(false);
     setThinkingCollapsed(true);
     setToolCalls([]);
+    setContentBlocks([]);
     setError('');
     setQuery('');
     setCurrentQuery('');
@@ -170,6 +216,7 @@ export function useChatState(): UseChatStateReturn {
     responseRef.current = '';
     thinkingRef.current = '';
     toolCallsRef.current = [];
+    contentBlocksRef.current = [];
   }, []);
 
   const loadConversation = useCallback((id: string, messages: ChatMessage[]) => {
@@ -195,6 +242,7 @@ export function useChatState(): UseChatStateReturn {
     response,
     thinking,
     toolCalls,
+    contentBlocks,
     isThinking,
     thinkingCollapsed,
     conversationId,
@@ -208,6 +256,7 @@ export function useChatState(): UseChatStateReturn {
     responseRef,
     thinkingRef,
     toolCallsRef,
+    contentBlocksRef,
     
     // Actions
     setQuery,

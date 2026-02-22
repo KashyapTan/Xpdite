@@ -637,7 +637,7 @@ function App() {
         thinking={chatState.thinking}
         isThinking={chatState.isThinking}
         thinkingCollapsed={chatState.thinkingCollapsed}
-        toolCalls={chatState.toolCalls}
+        contentBlocks={chatState.contentBlocks}
         generatingModel={generatingModelRef.current || selectedModel}
         canSubmit={chatState.canSubmit}
         error={chatState.error}

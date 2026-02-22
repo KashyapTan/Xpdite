@@ -5,7 +5,7 @@
  */
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from './CodeBlock';
-import { ToolCallsDisplay } from './ToolCallsDisplay';
+import { ToolCallsDisplay, InlineContentBlocks } from './ToolCallsDisplay';
 import type { ChatMessage as ChatMessageType } from '../../types';
 
 interface ChatMessageProps {
@@ -20,7 +20,6 @@ export function ChatMessage({ message, selectedModel }: ChatMessageProps) {
         {message.role === 'assistant' && (
           <div className="assistant-header">Xpdite • {message.model || selectedModel}</div>
         )}
-        {message.toolCalls && <ToolCallsDisplay toolCalls={message.toolCalls} />}
         <div className="message-content">
           {message.role === 'user' ? (
             <div className="user-text">
@@ -31,14 +30,17 @@ export function ChatMessage({ message, selectedModel }: ChatMessageProps) {
                 return part;
               })}
             </div>
+          ) : message.contentBlocks && message.contentBlocks.length > 0 ? (
+            /* ── Inline interleaved rendering (preferred) ── */
+            <InlineContentBlocks blocks={message.contentBlocks} />
           ) : (
-            <ReactMarkdown
-              components={{
-                code: CodeBlock as any,
-              }}
-            >
-              {message.content}
-            </ReactMarkdown>
+            /* ── Legacy fallback: tool calls at top, then text ── */
+            <>
+              {message.toolCalls && <ToolCallsDisplay toolCalls={message.toolCalls} />}
+              <ReactMarkdown components={{ code: CodeBlock as any }}>
+                {message.content}
+              </ReactMarkdown>
+            </>
           )}
         </div>
         {message.images && message.images.length > 0 && (

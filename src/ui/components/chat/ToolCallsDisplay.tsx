@@ -1,8 +1,88 @@
 import { useState, useEffect } from 'react';
-import type { ToolCall } from '../../types';
+import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import type { ToolCall, ContentBlock } from '../../types';
+import { CodeBlock } from './CodeBlock';
+import { getHumanReadableDescription, groupBlocks } from './toolCallUtils';
 
 interface ToolCallsDisplayProps {
   toolCalls: ToolCall[];
+}
+
+// ─── Inline single tool card (no outer container) ────────────────────────────
+
+interface InlineToolCardProps {
+  toolCall: ToolCall;
+}
+
+export function InlineToolCard({ toolCall }: InlineToolCardProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+  const { badge, text } = getHumanReadableDescription(toolCall);
+  const isRunning = toolCall.status === 'calling';
+
+  return (
+    <div className="inline-tool-card-wrapper">
+      <div
+        className={`tool-timeline-item ${isRunning ? 'running' : ''} ${isExpanded ? 'expanded' : ''}`}
+        onClick={() => !isRunning && setIsExpanded(!isExpanded)}
+      >
+        <div className="tool-status-icon-wrapper">
+          {isRunning ? (
+            <svg className="tool-spinner" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+            </svg>
+          ) : (
+            <svg className="tool-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          )}
+        </div>
+        <div className="tool-badge">{badge}</div>
+        <div className="tool-desc">{text}</div>
+        {!isRunning && (
+          <svg
+            className={`tool-item-chevron ${isExpanded ? 'expanded' : ''}`}
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        )}
+      </div>
+      {isExpanded && !isRunning && (
+        <div className="tool-details-panel">
+          <div className="tool-details-label">Result:</div>
+          <pre className="tool-details-content">{toolCall.result || 'No output returned.'}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Inline content-block renderer (shared by ChatMessage & ResponseArea) ─────
+
+export function InlineContentBlocks({ blocks }: { blocks: ContentBlock[] }) {
+  const groups = groupBlocks(blocks);
+
+  return (
+    <>
+      {groups.map((g, idx) => {
+        if (g.kind === 'text') {
+          return (
+            <ReactMarkdown
+              key={idx}
+              components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
+            >
+              {g.content}
+            </ReactMarkdown>
+          );
+        }
+        if (g.kind === 'single_tool') {
+          return <InlineToolCard key={idx} toolCall={g.toolCall} />;
+        }
+        return <ToolCallsDisplay key={idx} toolCalls={g.toolCalls} />;
+      })}
+    </>
+  );
 }
 
 export function ToolCallsDisplay({ toolCalls }: ToolCallsDisplayProps) {
@@ -34,45 +114,6 @@ export function ToolCallsDisplay({ toolCalls }: ToolCallsDisplayProps) {
       newSet.add(index);
     }
     setExpandedToolIndices(newSet);
-  };
-
-  const getHumanReadableDescription = (tc: ToolCall): { badge: string, text: string } => {
-    const { server, name, args } = tc;
-    
-    // Default fallback
-    let badge = server.toUpperCase();
-    let text = `${name}(${JSON.stringify(args)})`;
-
-    // Demo Server
-    if (server === 'demo') {
-      badge = 'CALCULATOR';
-      if (name === 'add') text = `Adding ${args.a} + ${args.b}`;
-      if (name === 'divide') text = `Dividing ${args.a} / ${args.b}`;
-    }
-
-    // Filesystem Server
-    else if (server === 'filesystem') {
-      badge = 'FILESYSTEM';
-      if (name === 'list_directory') text = `Listing contents of '${args.path}'`;
-      if (name === 'read_file') text = `Reading file '${args.path}'`;
-      if (name === 'write_file') text = `Writing to file '${args.path}'`;
-      if (name === 'create_folder') text = `Creating folder '${args.folder_name}' in '${args.path}'`;
-      if (name === 'move_file') text = `Moving '${args.source_path}' to '${args.destination_folder}'`;
-      if (name === 'rename_file') text = `Renaming '${args.source_path}' to '${args.new_name}'`;
-    }
-
-    // Websearch Server
-    else if (server === 'websearch') {
-      badge = 'WEBSEARCH';
-      if (name === 'search_web_pages') text = `Searching the web for "${args.query}"`;
-      if (name === 'read_website') text = `Reading website "${args.url}"`;
-    }
-    
-    // Common overrides for clarity if badge is still generic
-    if (badge === 'FILESYSTEM') badge = 'FILE';
-    if (badge === 'WEBSEARCH') badge = 'WEB';
-
-    return { badge, text };
   };
 
   const isAnyRunning = toolCalls.some(tc => tc.status === 'calling');

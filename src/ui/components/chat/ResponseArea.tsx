@@ -4,13 +4,11 @@
  * Container for chat history and current streaming response.
  */
 import React from 'react';
-import ReactMarkdown from 'react-markdown';
 import { ChatMessage } from './ChatMessage';
 import { ThinkingSection } from './ThinkingSection';
-import { CodeBlock } from './CodeBlock';
 import { LoadingDots } from './LoadingDots';
-import { ToolCallsDisplay } from './ToolCallsDisplay';
-import type { ChatMessage as ChatMessageType, ToolCall } from '../../types';
+import { InlineContentBlocks } from './ToolCallsDisplay';
+import type { ChatMessage as ChatMessageType, ContentBlock } from '../../types';
 
 interface ResponseAreaProps {
   chatHistory: ChatMessageType[];
@@ -19,7 +17,7 @@ interface ResponseAreaProps {
   thinking: string;
   isThinking: boolean;
   thinkingCollapsed: boolean;
-  toolCalls?: ToolCall[];
+  contentBlocks?: ContentBlock[];
   generatingModel: string;
   canSubmit: boolean;
   error: string;
@@ -34,11 +32,11 @@ interface ResponseAreaProps {
 export function ResponseArea({
   chatHistory,
   currentQuery,
-  response,
+  response: _response,
   thinking,
   isThinking,
   thinkingCollapsed,
-  toolCalls,
+  contentBlocks,
   generatingModel,
   canSubmit,
   error,
@@ -49,6 +47,8 @@ export function ResponseArea({
   responseAreaRef,
   scrollDownIcon,
 }: ResponseAreaProps) {
+  const hasContentBlocks = contentBlocks && contentBlocks.length > 0;
+
   return (
     <>
       <div className="response-area" ref={responseAreaRef} onScroll={onScroll}>
@@ -71,19 +71,11 @@ export function ResponseArea({
           </div>
         )}
 
-        {/* Loading animation while waiting for response start */}
-        {!error && !canSubmit && !thinking && !response && (!toolCalls || toolCalls.length === 0) && (
-           <div className="response">
-             <div className="assistant-header">Xpdite • {generatingModel}</div>
-             <LoadingDots />
-           </div>
-        )}
-
-        {/* Live Tool Calls */}
-        {!error && toolCalls && toolCalls.length > 0 && (
+        {/* Loading animation while waiting for first content */}
+        {!error && !canSubmit && !thinking && !hasContentBlocks && (
           <div className="response">
-             {!response && <div className="assistant-header">Xpdite • {generatingModel}</div>}
-             <ToolCallsDisplay toolCalls={toolCalls} />
+            <div className="assistant-header">Xpdite • {generatingModel}</div>
+            <LoadingDots />
           </div>
         )}
 
@@ -97,17 +89,11 @@ export function ResponseArea({
           />
         )}
 
-        {/* Current response being streamed */}
-        {!error && response && (
+        {/* Live inline content blocks (text interleaved with tool calls) */}
+        {!error && hasContentBlocks && (
           <div className="response">
             <div className="assistant-header">Xpdite • {generatingModel}</div>
-            <ReactMarkdown
-              components={{
-                code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>>,
-              }}
-            >
-              {response}
-            </ReactMarkdown>
+            <InlineContentBlocks blocks={contentBlocks!} />
           </div>
         )}
       </div>

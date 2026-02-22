@@ -1207,6 +1207,15 @@ textarea,
   overflow: hidden;
 }
 
+/* Standalone inline tool card (single tool, no outer container header) */
+.inline-tool-card-wrapper {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background-color: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  margin: 4px 0 6px 0;
+}
+
 /* Main Container Header */
 .tool-main-header {
   display: flex;
