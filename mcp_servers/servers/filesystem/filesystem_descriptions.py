@@ -51,11 +51,12 @@ PREREQUISITES:
 Use this tool to:
 1. Create new files (e.g., notes, scripts, reports, config files).
 2. Overwrite existing files with updated content.
-3. NOTE: You are writing to a file, so if you are writing code, dont use extrenal delimiters (e.g. ```python or ```javascript).
 
 CRITICAL SAFETY RULES:
 - If the file already exists, this tool will OVERWRITE it completely.
 - Confirm the directory exists before writing.
+
+NOTE: If you are writing code to a file, dont use backticks or markdown formatting in the content. Just write the raw code as it should appear in the file.
 
 CURRENT CONTEXT:
 - Username: {USERNAME}

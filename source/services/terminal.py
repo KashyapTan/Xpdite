@@ -64,6 +64,36 @@ def _strip_ansi(text: str) -> str:
     return _ANSI_RE.sub("", text)
 
 
+def _kill_process_tree(pid: int) -> None:
+    """Kill a process and all its children (process tree).
+
+    On Windows, `process.kill()` only terminates the shell (cmd.exe), not
+    the child processes it spawned. This uses `taskkill /F /T` to kill the
+    entire tree. On Unix, kills the process group via `os.killpg`.
+    """
+    try:
+        if platform.system() == "Windows":
+            import subprocess as sp
+            sp.run(
+                f"taskkill /F /T /PID {pid}",
+                shell=True,
+                capture_output=True,
+                timeout=5,
+            )
+        else:
+            import signal
+            try:
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                os.kill(pid, signal.SIGKILL)
+    except Exception:
+        # Last resort: basic kill
+        try:
+            os.kill(pid, 9)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+
+
 class TerminalSession:
     """
     Manages a single PTY process with async output streaming.
@@ -446,12 +476,9 @@ class TerminalService:
                             process.stdout.readline(), timeout=remaining
                         )
                     except asyncio.TimeoutError:
-                        # Timeout reading — kill the process
+                        # Timeout reading — kill the process tree
                         timed_out = True
-                        try:
-                            process.kill()
-                        except ProcessLookupError:
-                            pass
+                        _kill_process_tree(process.pid)
                         break
 
                     if not line_bytes:
@@ -469,20 +496,14 @@ class TerminalService:
                     await self.broadcast_output(request_id, line, stream=True)
 
             except asyncio.CancelledError:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
+                _kill_process_tree(process.pid)
                 raise
 
             # Wait for process to finish (short timeout for cleanup)
             try:
                 exit_code = await asyncio.wait_for(process.wait(), timeout=5.0)
             except asyncio.TimeoutError:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
+                _kill_process_tree(process.pid)
                 exit_code = -1
                 timed_out = True
 
@@ -524,10 +545,7 @@ class TerminalService:
         request_id = self._active_request_id
 
         if process is not None:
-            try:
-                process.kill()
-            except ProcessLookupError:
-                pass
+            _kill_process_tree(process.pid)
             if request_id:
                 await self.broadcast_output(
                     request_id,
@@ -675,6 +693,15 @@ class TerminalService:
                     session.exit_code = 0
                 session._done_event.set()
 
+                # Broadcast completion so the frontend terminal block
+                # transitions from "running" to "completed"
+                exit_code = session.exit_code or 0
+                duration_ms = session.duration_ms
+                await self.broadcast_complete(request_id, exit_code, duration_ms)
+
+                # Clean up session from registry
+                self._background_sessions.pop(session_id, None)
+
             session.reader_task = asyncio.create_task(_pty_reader())
 
             # Register this session
@@ -805,17 +832,32 @@ class TerminalService:
         """
         session = self._background_sessions.get(session_id)
         if not session:
-            return f"Error: No active session with ID {session_id}"
+            return (
+                f"Error: No active session with ID {session_id}. "
+                f"The process has already exited and been cleaned up. "
+                f"No further action is needed — do NOT call read_output or "
+                f"kill_process on this session_id again."
+            )
 
         output = session.get_recent_output(lines)
-        alive = "running" if session.is_alive else "exited"
         elapsed = session.duration_ms // 1000
 
-        return (
-            f"[Session {session_id} — {alive}, {elapsed}s elapsed]\n"
-            f"--- Output ({lines} lines) ---\n"
-            f"{output}"
-        )
+        if session.is_alive:
+            return (
+                f"[Session {session_id} — RUNNING, {elapsed}s elapsed]\n"
+                f"--- Output ({lines} lines) ---\n"
+                f"{output}"
+            )
+        else:
+            exit_code = session.exit_code if session.exit_code is not None else 0
+            # Clean up finished session from registry
+            self._background_sessions.pop(session_id, None)
+            return (
+                f"[Session {session_id} — EXITED (exit code {exit_code}), {elapsed}s elapsed]\n"
+                f"The process has finished. Do NOT call read_output or kill_process again.\n"
+                f"--- Final Output ({lines} lines) ---\n"
+                f"{output}"
+            )
 
     async def kill_process(self, session_id: str) -> str:
         """

@@ -69,6 +69,7 @@ interface InlineContentBlocksProps {
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
+  onTerminalResize?: (cols: number, rows: number) => void;
 }
 
 export function InlineContentBlocks({
@@ -77,6 +78,7 @@ export function InlineContentBlocks({
   onTerminalDeny,
   onTerminalApproveRemember,
   onTerminalKill,
+  onTerminalResize,
 }: InlineContentBlocksProps) {
   const groups = groupBlocks(blocks);
 
@@ -105,6 +107,7 @@ export function InlineContentBlocks({
               onDeny={onTerminalDeny}
               onApproveRemember={onTerminalApproveRemember}
               onKill={onTerminalKill}
+              onTerminalResize={onTerminalResize}
             />
           );
         }

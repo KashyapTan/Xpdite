@@ -194,7 +194,61 @@
   justify-content: flex-end;
 }
 
-/* Reuse .btn-deny, .btn-allow, .btn-allow-remember from Terminal.css */
+/* ── Approval Buttons ───────────────────────── */
+
+.terminal-inline-approval-actions .btn-deny {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  background: rgba(255, 80, 80, 0.1);
+  color: #ff6060;
+  transition: all 0.15s ease;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.terminal-inline-approval-actions .btn-deny:hover {
+  background: rgba(255, 80, 80, 0.2);
+  border-color: rgba(255, 80, 80, 0.5);
+}
+
+.terminal-inline-approval-actions .btn-allow {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(80, 200, 80, 0.3);
+  background: rgba(80, 200, 80, 0.1);
+  color: #50c850;
+  transition: all 0.15s ease;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.terminal-inline-approval-actions .btn-allow:hover {
+  background: rgba(80, 200, 80, 0.2);
+  border-color: rgba(80, 200, 80, 0.5);
+}
+
+.terminal-inline-approval-actions .btn-allow-remember {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(100, 140, 255, 0.3);
+  background: rgba(100, 140, 255, 0.1);
+  color: #648cff;
+  transition: all 0.15s ease;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.terminal-inline-approval-actions .btn-allow-remember:hover {
+  background: rgba(100, 140, 255, 0.2);
+  border-color: rgba(100, 140, 255, 0.5);
+}
 
 /* ── Denied message ────────────────────────── */
 
@@ -205,7 +259,48 @@
   background: rgba(255, 80, 80, 0.04);
 }
 
-/* ── Output area ───────────────────────────── */
+/* ── xterm.js PTY output area ──────────────── */
+
+.terminal-inline-xterm-wrapper {
+  background: #1a1a2e;
+  min-height: 80px;
+  max-height: 450px;
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-inline-xterm {
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  padding: 4px 0 4px 8px;
+  box-sizing: border-box;
+}
+
+/* xterm.js overrides for inline embedding */
+.terminal-inline-xterm .xterm {
+  padding: 0;
+}
+
+.terminal-inline-xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+  border-radius: 3px;
+}
+
+/* ── Standard output area (non-PTY) ────────── */
 
 .terminal-inline-output {
   max-height: 250px;

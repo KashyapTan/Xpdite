@@ -327,6 +327,8 @@ function App() {
           cwd: approvalData.cwd,
           status: 'pending_approval',
           output: '',
+          outputChunks: [],
+          isPty: false,
         });
         break;
       }
@@ -365,13 +367,15 @@ function App() {
             cwd: pending?.cwd || '',
             status: 'running',
             output: '',
+            outputChunks: [],
+            isPty: !!outputData.raw,
           });
           pendingTerminalCommandRef.current = null;
         } else {
           // Update status to running if still pending (approval flow)
           chatState.updateTerminalBlock(outputData.request_id, { status: 'running' });
         }
-        chatState.appendTerminalOutput(outputData.request_id, outputData.text);
+        chatState.appendTerminalOutput(outputData.request_id, outputData.text, !!outputData.raw);
         break;
       }
 
@@ -642,6 +646,14 @@ function App() {
     }));
   }, []);
 
+  const handleTerminalResize = useCallback((cols: number, rows: number) => {
+    wsRef.current?.send(JSON.stringify({
+      type: 'terminal_resize',
+      cols,
+      rows,
+    }));
+  }, []);
+
   // ============================================
   // Render
   // ============================================
@@ -670,6 +682,7 @@ function App() {
         onTerminalDeny={handleTerminalDeny}
         onTerminalApproveRemember={handleTerminalApproveRemember}
         onTerminalKill={handleKillCommand}
+        onTerminalResize={handleTerminalResize}
       />
 
       <div className="main-interaction-section">

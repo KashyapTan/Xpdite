@@ -32,8 +32,12 @@ export interface TerminalCommandBlock {
   cwd: string;
   /** Lifecycle state */
   status: 'pending_approval' | 'denied' | 'running' | 'completed';
-  /** Accumulated stdout/stderr lines */
+  /** Accumulated stdout/stderr (plain text for non-PTY commands) */
   output: string;
+  /** Buffered output chunks for xterm.js rendering (preserves write order and raw flag) */
+  outputChunks: Array<{ text: string; raw: boolean }>;
+  /** Whether this command uses a PTY (interactive/TUI mode) */
+  isPty: boolean;
   /** Process exit code (set on completion) */
   exitCode?: number;
   /** Duration in ms (set on completion) */

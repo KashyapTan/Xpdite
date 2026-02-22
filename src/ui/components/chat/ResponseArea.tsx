@@ -32,6 +32,7 @@ interface ResponseAreaProps {
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
+  onTerminalResize?: (cols: number, rows: number) => void;
 }
 
 export function ResponseArea({
@@ -55,6 +56,7 @@ export function ResponseArea({
   onTerminalDeny,
   onTerminalApproveRemember,
   onTerminalKill,
+  onTerminalResize,
 }: ResponseAreaProps) {
   const hasContentBlocks = contentBlocks && contentBlocks.length > 0;
 
@@ -108,6 +110,7 @@ export function ResponseArea({
               onTerminalDeny={onTerminalDeny}
               onTerminalApproveRemember={onTerminalApproveRemember}
               onTerminalKill={onTerminalKill}
+              onTerminalResize={onTerminalResize}
             />
           </div>
         )}

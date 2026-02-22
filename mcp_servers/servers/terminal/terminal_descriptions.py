@@ -2,6 +2,8 @@ GET_ENVIRONMENT_DESCRIPTION = """
 Returns the current working directory, OS, Python version, shell,
 and versions of common tools found on PATH (node, npm, git, python, etc.).
 Always call this first before running any commands to understand the environment.
+NOTE: This tool only returns some basic os and computer info and the python, node, npm, git, pip, uv, cargo, and docker versions.
+NOTE: Just because a tool that the user says to use is not listed here does not necessarily mean it is unavailable.
 """
 
 RUN_COMMAND_DESCRIPTION = """
@@ -23,7 +25,7 @@ RUN_COMMAND_DESCRIPTION = """
     - yield_ms: when background=True, how long (ms) to wait before returning
                 control to you. You'll get whatever output appeared so far plus
                 the session_id. Default: 10000 (10 seconds).
-    - PATH QUOTING: Always wrap file paths in double quotes (e.g., "C:/Users/Name With Space/script.py"). 
+    - When running code using file paths: Always wrap file paths in double quotes (e.g., "C:/Users/Name With Space/script.py"). 
       Windows shells split commands at spaces; failing to quote paths containing spaces 
       will cause 'File Not Found' errors.
 

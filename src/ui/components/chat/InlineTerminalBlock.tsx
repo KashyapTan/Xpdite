@@ -5,16 +5,21 @@
  * Each run_command invocation gets its own block showing:
  *   - Command header with status indicator
  *   - Approval buttons (when pending)
- *   - Scrollable output area with ANSI color support
+ *   - Scrollable output area:
+ *       • xterm.js for PTY/interactive commands (full TUI rendering)
+ *       • ansi-to-html for standard (non-PTY) commands
  *   - Completion footer (exit code, duration)
  *
  * Replaces the floating TerminalPanel overlay for a Copilot-like experience.
  */
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { Terminal } from '@xterm/xterm';
+import { FitAddon } from '@xterm/addon-fit';
+import '@xterm/xterm/css/xterm.css';
 import AnsiToHtml from 'ansi-to-html';
 import type { TerminalCommandBlock } from '../../types';
 
-// Shared ANSI converter instance
+// Shared ANSI converter instance (for non-PTY commands only)
 const ansiConverter = new AnsiToHtml({
   fg: '#d4d4d4',
   bg: 'transparent',
@@ -46,6 +51,7 @@ interface InlineTerminalBlockProps {
   onDeny?: (requestId: string) => void;
   onApproveRemember?: (requestId: string) => void;
   onKill?: (requestId: string) => void;
+  onTerminalResize?: (cols: number, rows: number) => void;
 }
 
 export function InlineTerminalBlock({
@@ -54,30 +60,162 @@ export function InlineTerminalBlock({
   onDeny,
   onApproveRemember,
   onKill,
+  onTerminalResize,
 }: InlineTerminalBlockProps) {
   const [isExpanded, setIsExpanded] = useState(true);
+
+  // Refs for non-PTY (ansi-to-html) output
   const outputEndRef = useRef<HTMLDivElement>(null);
   const outputContainerRef = useRef<HTMLDivElement>(null);
 
-  const { requestId, command, cwd, status, output, exitCode, durationMs, timedOut } = terminal;
+  // Refs for PTY (xterm.js) output
+  const xtermContainerRef = useRef<HTMLDivElement>(null);
+  const xtermRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const writtenChunksRef = useRef<number>(0);
 
-  // Auto-scroll output to bottom when new content arrives (only if near bottom)
+  const { requestId, command, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
+
+  // ── xterm.js lifecycle for PTY commands ──────────────────────────
+
+  // Initialize xterm when this is a PTY command and container is ready
   useEffect(() => {
+    if (!isPty || !isExpanded || !xtermContainerRef.current || xtermRef.current) return;
+
+    const term = new Terminal({
+      theme: {
+        background: '#1a1a2e',
+        foreground: '#d4d4d4',
+        cursor: '#d4d4d4',
+        selectionBackground: 'rgba(255, 255, 255, 0.3)',
+      },
+      fontSize: 12,
+      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+      cursorBlink: status === 'running',
+      cursorStyle: 'bar',
+      disableStdin: true,
+      scrollback: 10000,
+      convertEol: false,
+      allowProposedApi: true,
+    });
+
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(xtermContainerRef.current);
+
+    xtermRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    // Fit after browser paint and send size to backend
+    requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+        // Send the actual xterm dimensions to the backend so PTY matches
+        if (onTerminalResize && term.cols && term.rows) {
+          onTerminalResize(term.cols, term.rows);
+        }
+      } catch { /* ignore */ }
+
+      // Flush any chunks that arrived before xterm initialized
+      if (outputChunks && outputChunks.length > 0) {
+        for (const chunk of outputChunks) {
+          if (chunk.raw) {
+            term.write(chunk.text);
+          } else {
+            term.writeln(chunk.text);
+          }
+        }
+        writtenChunksRef.current = outputChunks.length;
+        term.scrollToBottom();
+      }
+    });
+
+    // ResizeObserver to keep xterm fitted
+    const container = xtermContainerRef.current;
+    const resizeObserver = new ResizeObserver(() => {
+      if (container.offsetParent) {
+        try {
+          fitAddon.fit();
+          // Sync new dimensions to backend PTY
+          if (onTerminalResize && term.cols && term.rows) {
+            onTerminalResize(term.cols, term.rows);
+          }
+        } catch { /* ignore */ }
+      }
+    });
+    resizeObserver.observe(container);
+
+    return () => {
+      resizeObserver.disconnect();
+      term.dispose();
+      xtermRef.current = null;
+      fitAddonRef.current = null;
+      writtenChunksRef.current = 0;
+    };
+  }, [isPty, isExpanded]); // Re-init when expanded or isPty changes
+
+  // Write new chunks to xterm as they arrive
+  useEffect(() => {
+    if (!isPty || !xtermRef.current || !outputChunks) return;
+
+    const term = xtermRef.current;
+    const startIdx = writtenChunksRef.current;
+    if (startIdx >= outputChunks.length) return;
+
+    for (let i = startIdx; i < outputChunks.length; i++) {
+      const chunk = outputChunks[i];
+      if (chunk.raw) {
+        term.write(chunk.text);
+      } else {
+        term.writeln(chunk.text);
+      }
+    }
+    writtenChunksRef.current = outputChunks.length;
+
+    // Auto-scroll for non-TUI output
+    if (status === 'running') {
+      term.scrollToBottom();
+    }
+  }, [isPty, outputChunks, status]);
+
+  // Update cursor blink based on status
+  useEffect(() => {
+    if (xtermRef.current) {
+      xtermRef.current.options.cursorBlink = status === 'running';
+    }
+  }, [status]);
+
+  // Re-fit xterm when expand/collapse changes
+  useEffect(() => {
+    if (isPty && isExpanded && fitAddonRef.current) {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          try {
+            fitAddonRef.current?.fit();
+            xtermRef.current?.scrollToBottom();
+          } catch { /* ignore */ }
+        });
+      });
+    }
+  }, [isPty, isExpanded]);
+
+  // ── Non-PTY: auto-scroll for ansi-to-html output ────────────────
+
+  useEffect(() => {
+    if (isPty) return; // Skip for PTY mode
     const container = outputContainerRef.current;
     if (!container || !isExpanded) return;
-    
-    // Auto-scroll if user is near the bottom (within 60px)
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
     if (isNearBottom) {
       outputEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
     }
-  }, [output, isExpanded]);
+  }, [output, isExpanded, isPty]);
 
-  // Convert ANSI output to HTML
+  // Convert ANSI output to HTML (non-PTY only)
   const outputHtml = useMemo(() => {
-    if (!output) return '';
+    if (isPty || !output) return '';
     return ansiConverter.toHtml(output);
-  }, [output]);
+  }, [output, isPty]);
 
   // Status indicator
   const statusIcon = (() => {
@@ -142,7 +280,7 @@ export function InlineTerminalBlock({
       >
         <div className="terminal-inline-header-left">
           {statusIcon}
-          <span className="terminal-inline-badge">TERMINAL</span>
+          <span className="terminal-inline-badge">{isPty ? 'PTY' : 'TERMINAL'}</span>
           <span className="terminal-inline-command" title={command}>
             {command}
           </span>
@@ -208,8 +346,15 @@ export function InlineTerminalBlock({
             </div>
           )}
 
-          {/* Output area */}
-          {output && (
+          {/* PTY output area (xterm.js) */}
+          {isPty && (status === 'running' || status === 'completed') && (
+            <div className="terminal-inline-xterm-wrapper">
+              <div ref={xtermContainerRef} className="terminal-inline-xterm" />
+            </div>
+          )}
+
+          {/* Standard output area (ansi-to-html) */}
+          {!isPty && output && (
             <div className="terminal-inline-output" ref={outputContainerRef}>
               <pre
                 className="terminal-inline-output-pre"

@@ -42,7 +42,7 @@ interface UseChatStateReturn {
   updateToolCall: (toolCall: ToolCall) => void;
   addTerminalBlock: (terminal: TerminalCommandBlock) => void;
   updateTerminalBlock: (requestId: string, updates: Partial<TerminalCommandBlock>) => void;
-  appendTerminalOutput: (requestId: string, text: string) => void;
+  appendTerminalOutput: (requestId: string, text: string, raw?: boolean) => void;
   startQuery: (query: string) => void;
   completeResponse: (attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => void;
   resetForNewChat: () => void;
@@ -145,7 +145,13 @@ export function useChatState(): UseChatStateReturn {
   // ── Terminal block management ─────────────────────────────────
 
   const addTerminalBlock = useCallback((terminal: TerminalCommandBlock) => {
-    const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'terminal_command', terminal }];
+    // Ensure new fields have defaults
+    const block: TerminalCommandBlock = {
+      ...terminal,
+      outputChunks: terminal.outputChunks || [],
+      isPty: terminal.isPty || false,
+    };
+    const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'terminal_command', terminal: block }];
     contentBlocksRef.current = newBlocks;
     setContentBlocks(newBlocks);
   }, []);
@@ -161,14 +167,18 @@ export function useChatState(): UseChatStateReturn {
     setContentBlocks(newBlocks);
   }, []);
 
-  const appendTerminalOutput = useCallback((requestId: string, text: string) => {
+  const appendTerminalOutput = useCallback((requestId: string, text: string, raw: boolean = false) => {
     const newBlocks = contentBlocksRef.current.map(block => {
       if (block.type === 'terminal_command' && block.terminal.requestId === requestId) {
+        // Mark as PTY if we receive raw output
+        const isPty = block.terminal.isPty || raw;
         return {
           ...block,
           terminal: {
             ...block.terminal,
-            output: block.terminal.output + text + '\n',
+            output: block.terminal.output + text + (raw ? '' : '\n'),
+            outputChunks: [...block.terminal.outputChunks, { text, raw }],
+            isPty,
           },
         };
       }
