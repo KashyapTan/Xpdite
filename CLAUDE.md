@@ -33,7 +33,7 @@ Electron (main.ts) -> Window mgmt, Python lifecycle, IPC bridge
               +---> transcription.py -> Voice-to-text (faster-whisper, pyaudio)
               +---> MCP servers -> stdio child processes (demo, filesystem, websearch, gmail, calendar, terminal)
               +---> ollama_provider.py -> Local Ollama streaming
-              +---> cloud_provider.py -> Cloud LLM streaming (Claude, GPT, Gemini)
+              +---> cloud_provider.py -> Cloud LLM streaming with inline tool calling (Claude, GPT, Gemini)
               +---> router.py -> Routes requests to appropriate provider
 ```
 
@@ -89,14 +89,14 @@ source/                    # Python backend
   llm/
     router.py              # Routes requests to Ollama or Cloud providers
     ollama_provider.py     # Ollama streaming bridge
-    cloud_provider.py      # Anthropic/OpenAI/Gemini streaming
+    cloud_provider.py      # Anthropic/OpenAI/Gemini streaming with inline tool calling
     key_manager.py         # Encrypted API key storage
     prompt.py              # Builds the dynamic system prompt with variable interpolation
   mcp_integration/
     manager.py             # MCP server process management + inline tool registration
     retriever.py           # Semantic tool retriever (Top-K selection)
     handlers.py            # Tool call routing loop (up to 30 rounds)
-    cloud_tool_handlers.py # Tool calling logic for cloud providers
+    cloud_tool_handlers.py # Legacy cloud tool handler (superseded by inline tool calling in cloud_provider.py)
     skill_injector.py      # Dynamic skill injection based on tool category
     default_skills.py      # Hardcoded system instructions for default skills
     terminal_executor.py   # Unified terminal tool executor (shared by all providers)
@@ -271,6 +271,7 @@ Components:
 - Fallback: if stream is empty (tool-calling edge case), performs non-streamed `chat` call
 - Handles "unexpected" tool calls that appear mid-text-stream
 - Broadcasts `thinking_chunk`, `response_chunk`, and completion messages
+- Handles `pre_computed_response` with `already_streamed: True` — when the MCP tool loop has already streamed content (interleaved tool calls), skips re-broadcasting the final response
 
 ### `source/llm/prompt.py`
 **System Prompt Builder**
@@ -281,15 +282,18 @@ Components:
 - `McpToolManager`: Launches MCP servers as subprocesses via stdio transport
 - `register_inline_tools(server_name, tools)`: Registers tool schemas without spawning a subprocess (used for terminal tools)
 - Discovers tools via JSON-RPC handshake
-- Converts JSON Schema to Ollama function-calling format
+- Converts JSON Schema to Ollama, Anthropic, OpenAI, and Gemini function-calling formats
 - Routes tool calls to correct server process
 - Active servers on startup: filesystem, websearch (terminal tools registered inline)
+- **Background Task Lifecycle**: Each MCP connection is held open by a dedicated asyncio Task (instead of direct `__aenter__`/`__aexit__` calls), preventing anyio "cancel scope in a different task" `RuntimeError` during shutdown
 
-### `source/mcp_integration/handlers.py` (155 lines)
-**Tool Call Routing Loop**
-- Non-streamed initial call to detect tool requests
-- Executes tools via `McpToolManager`, feeds results back to Ollama
-- Loops up to `MAX_MCP_TOOL_ROUNDS` (30) or until final text response
+### `source/mcp_integration/handlers.py`
+**Ollama Tool Call Loop with Interleaved Streaming**
+- `retrieve_relevant_tools(user_query)`: Shared helper that selects the top-K semantically relevant tools; used by both the Ollama and cloud provider paths via `router.py`
+- **Phase 1** (detection): Non-streamed call with `think=False` to detect tool requests (workaround for Ollama bug #10976: `think+tools=empty output`)
+- **Phase 2** (streaming loop): After tools are detected, `_stream_tool_follow_up()` streams follow-up responses in real-time — the model's intermediate text ("Let me search for that…") appears to the user between tool executions
+- `_stream_tool_follow_up(messages, tools, loop)`: Runs Ollama's streaming generator in a background thread, broadcasts text chunks via `safe_schedule`, collects further tool calls for the next round
+- Returns `pre_computed_response = {"already_streamed": True, ...}` when tools were used, so `ollama_provider.py` skips re-broadcasting the response
 - **Includes images in tool detection calls** so the model can analyze image content (e.g. extract URLs from screenshots) when deciding which tools to call
 - Broadcasts `tool_call` and `tool_result` messages to frontend
 - **Terminal interception**: `run_command` routed through approval flow, `request_session_mode`/`end_session_mode` handled inline
@@ -298,7 +302,7 @@ Components:
 ### `source/mcp_integration/terminal_executor.py`
 **Unified Terminal Tool Executor**
 - Single source of truth for ALL terminal tool execution (run_command, send_input, read_output, kill_process, get_environment, find_files, request_session_mode, end_session_mode)
-- Used by both `handlers.py` (Ollama) and `cloud_tool_handlers.py` (cloud providers)
+- Used by `handlers.py` (Ollama) and directly within `cloud_provider.py` (cloud providers)
 - Handles approval flow, PTY execution, notice task lifecycle (try/finally), and DB persistence
 - `_save_terminal_event()`: Defers DB writes when conversation_id is not yet assigned
 
@@ -493,13 +497,20 @@ uv add <package>           # Add a new Python dependency
 **Purpose**: Give LLM access to external tools via stdio child processes (JSON-RPC).
 
 ### How Tool Calls Work
-1. User query -> Backend performs non-streamed Ollama call to detect tool requests
-2. Ollama returns `tool_call` if needed
-3. Backend routes via `McpToolManager` to correct server subprocess
-4. Server executes tool, returns result via JSON-RPC
-5. Result fed back to Ollama -> loop continues (up to 30 rounds)
-6. Final text response is streamed to user (with images included)
-7. Images are included in tool detection calls so the model can analyze image content when deciding on tools
+
+**Ollama models:**
+1. User query -> Phase 1: non-streamed call (`think=False`) to detect tool requests
+2. If tool calls detected: execute via `McpToolManager`, broadcast `tool_call`/`tool_result` to frontend
+3. Phase 2: follow-up response is **streamed in real-time** — the model's commentary appears live between tool rounds
+4. Loop continues (up to 30 rounds); `pre_computed_response = {already_streamed: True}` signals completion
+5. Images are included in detection calls so the model can analyze visual content when picking tools
+
+**Cloud models (Anthropic / OpenAI / Gemini):**
+1. `router.py` calls `retrieve_relevant_tools()` to select relevant tool names for the query
+2. `stream_cloud_chat()` is called with `allowed_tool_names` — tools are handled **inline during streaming**
+3. Text is broadcast in real-time; when a tool call appears, it is executed and results fed back immediately
+4. Loop continues (up to 30 rounds) until the model produces a response with no tool calls
+5. The user sees the entire process (text → tool → text → tool → text) as one interleaved flow
 
 ### Adding New MCP Tools (3 Steps)
 
@@ -704,7 +715,7 @@ The model needs to see image content to make informed tool-calling decisions. Fo
 Ollama's synchronous generator runs in a background thread; the main async thread consumes chunks via an asyncio queue for non-blocking streaming.
 
 **Why non-streamed initial call for tool detection?**
-Streaming responses can't reliably indicate tool calls; a quick non-streamed check determines if tools are needed before switching to streamed mode.
+Streaming responses can't reliably indicate tool calls (Ollama bug #10976: `think+tools=empty output`); a quick non-streamed Phase 1 check determines if tools are needed. Once detected, Phase 2 follow-up calls are fully **streamed** so the user sees the model's intermediate reasoning in real-time. For cloud providers, tool calls are handled entirely inline during streaming — no separate detection phase is needed.
 
 **Why does terminal approval live in the FastAPI process, not the MCP server?**
 asyncio.Event can't cross process boundaries. The MCP terminal server runs as a stdio child process, so approval blocking must happen in the parent FastAPI process. The MCP server provides defense-in-depth via blocklist only.
@@ -722,8 +733,14 @@ A single `RequestContext` object replaces scattered `stream_lock + is_streaming 
 LLMs reliably request session mode but almost never call `end_session_mode` to release it. Auto-expiring in the `finally` block of `submit_query` guarantees cleanup without depending on LLM behavior. The explicit tool still works for early opt-out.
 
 **Why a unified terminal executor?**
-Both `handlers.py` (Ollama) and `cloud_tool_handlers.py` (cloud providers) need identical terminal logic — approval, PTY execution, notice tasks, DB persistence. Duplicating ~200 lines led to type errors and divergent behavior. `terminal_executor.py` is the single source of truth.
+Both `handlers.py` (Ollama) and `cloud_provider.py` (cloud providers, handling tools inline) need identical terminal logic — approval, PTY execution, notice tasks, DB persistence. `terminal_executor.py` is the single source of truth, called from both the Ollama streaming loop and the inline cloud provider streaming loops.
+
+**Why inline tool calling for cloud providers instead of a separate detection phase?**
+The old approach ran a silent pre-streaming `handle_cloud_tool_calls()` phase, then streamed the response separately. This produced a delay with no user feedback, and tool context was injected as an awkward "system summary" message rather than proper API tool-result messages. Moving tool execution inline gives the user full visibility — text, tool calls, and results appear as one interleaved stream using each SDK's native tool-calling format (`tools=` for Anthropic/OpenAI, `function_declarations` for Gemini).
+
+**Why a background asyncio Task for MCP server lifecycle in manager.py?**
+The `stdio_client` and `ClientSession` context managers must be exited in the **same asyncio Task** that entered them (anyio requirement). The previous approach called `__aenter__`/`__aexit__` from different tasks, causing a "cancel scope in a different task" `RuntimeError` during shutdown. A dedicated background Task holds both context managers open indefinitely, and a `shutdown_event` signals it to exit cleanly.
 
 ---
 
-*Last updated: February 20 2026 | Version: 0.3.0*
+*Last updated: February 21 2026 | Version: 0.3.0*

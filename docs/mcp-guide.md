@@ -14,20 +14,29 @@ The Model Context Protocol is a standardized way to give LLMs access to external
 
 ## How Tool Calls Work
 
-```
-1. User sends query
-2. Backend checks for tool-calling opportunities
-   - If Cloud Model: Uses native tool calling API (Anthropic/OpenAI/Gemini)
-   - If Ollama: Uses non-streamed check first
-3. If LLM returns a tool_call:
-   a. Backend routes to the correct MCP server via McpToolManager
-   b. Server executes the tool and returns the result
-   c. Result is fed back to LLM
-   d. Loop repeats (up to 30 rounds) until LLM gives a final text response
-4. Final response is streamed to the user
-```
+### Ollama Models
 
-**Important**: Tool detection is skipped when images are present in the query for some models, as vision models often struggle with simultaneous tool calling and image analysis.
+1. User sends query
+2. **Phase 1** (detection): Non-streamed call with `think=False` to detect tool requests
+   - Images are included so the model can analyze visual content (e.g., extract a URL from a screenshot)
+3. If tool calls detected:
+   a. Tools executed via `McpToolManager` (or `terminal_executor` for terminal tools)
+   b. `tool_call` and `tool_result` broadcast to the frontend in real-time
+   c. **Phase 2** (streaming loop): Follow-up response is streamed — the model's commentary ("Let me search for that…") appears live between tool rounds
+   d. Loop repeats (up to 30 rounds) until a round contains no tool calls
+4. Returns `{already_streamed: True}` to signal that content has already been broadcast
+
+### Cloud Models (Anthropic / OpenAI / Gemini)
+
+1. User sends query
+2. `router.py` calls `retrieve_relevant_tools()` to select semantically relevant tool names
+3. `stream_cloud_chat()` is called with `allowed_tool_names` — tools handled **inline during streaming**
+4. The provider streams text in real-time; when tool calls appear mid-stream, they are executed inline:
+   a. Tools executed via `McpToolManager` (or `terminal_executor` for terminal tools)
+   b. `tool_call` + `tool_result` broadcast to the frontend
+   c. Results fed back to the model and streaming continues
+5. Loop repeats (up to 30 rounds) until a response round contains no tool calls
+6. The user sees the entire process (text → tool → text → tool → text) as one continuous, transparent flow
 
 ## Inline Tool Registration (Ghost Process Prevention)
 
@@ -307,10 +316,13 @@ Tool calls appear as cards in the UI:
 ```
 source/mcp_integration/
   manager.py        # McpToolManager: launches servers, discovers tools,
-                    #   handles inline registration, routes calls
-  handlers.py       # Tool call loop: detects tool requests, executes them,
-                    #   feeds results back to LLM
-  terminal_executor.py # Unified terminal tool execution logic
+                    #   handles inline registration, routes calls.
+                    #   Uses background asyncio Tasks for stable lifecycle.
+  handlers.py       # Ollama tool loop: Phase 1 detects tool requests (non-streamed),
+                    #   Phase 2 streams follow-up responses in real-time.
+                    #   retrieve_relevant_tools() shared by Ollama and cloud paths.
+  terminal_executor.py # Unified terminal execution logic — used by both
+                    #   handlers.py (Ollama) and cloud_provider.py (cloud models)
 
 mcp_servers/
   client/

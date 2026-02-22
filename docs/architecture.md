@@ -161,14 +161,14 @@ source/
   llm/
     router.py                 # Routes requests to Ollama or Cloud providers
     ollama_provider.py        # Ollama streaming bridge with tool support
-    cloud_provider.py         # Anthropic/OpenAI/Gemini streaming
+    cloud_provider.py         # Anthropic/OpenAI/Gemini streaming with inline tool calling
     key_manager.py            # Encrypted API key storage
     prompt.py                 # System prompt builder with variable interpolation
   mcp_integration/
     manager.py                # MCP server process management + inline tools
     retriever.py              # Semantic tool retrieval (Top-K selection)
     handlers.py               # Tool call routing loop (up to 30 rounds)
-    cloud_tool_handlers.py    # Tool calling for cloud providers
+    cloud_tool_handlers.py    # Legacy cloud tool handler (superseded by inline tool calling in cloud_provider.py)
     skill_injector.py         # Dynamic skill injection based on category
     default_skills.py         # Hardcoded system instructions for tools
     terminal_executor.py      # Unified terminal tool execution logic
@@ -180,7 +180,7 @@ source/
 - `server_loop_holder` stores the asyncio event loop for cross-thread scheduling (hotkey thread -> WebSocket thread)
 - `find_available_port()` probes ports 8000-8009 to avoid conflicts
 - Thread-safe SQLite with `check_same_thread=False`
-- **Hybrid LLM Support**: Routes requests between local Ollama and cloud APIs (Anthropic, OpenAI, Gemini) dynamically based on the selected model.
+- **Hybrid LLM Support**: Routes requests between local Ollama and cloud APIs (Anthropic, OpenAI, Gemini). Cloud providers handle tool execution inline during streaming — the user sees text, tool calls, and results interleaved in real-time.
 - **Skills and Slash Commands**: Dynamic behavioral guidance injected into the system prompt.
 - **Unified Terminal Executor**: Centralizes all terminal tool logic (approval, PTY, notice tracking, DB) in a single module.
 - **Ghost Process Prevention**: Terminal tools are registered inline; no background process is spawned.
@@ -209,18 +209,20 @@ React (App.tsx) --[WS: submit_query]--> Python (websocket.py)
        |                          |                        |
        |                          v                        v
        |                 ollama_provider.py          cloud_provider.py
-       |                  + Tool Detection            + Tool Detection
+       |            Phase 1: non-streamed detect    (inline tool calling)
        |                          |                        |
        |                          v                        v
-       |                 MCP Manager / Handlers      Cloud Tool Handlers
+       |                 MCP Manager / Handlers    Tool Execution inline
+       |            Phase 2: streaming follow-up   (MCP / Terminal)
        |                          |                        |
        |                          v                        v
-       |                     Tool Execution           Tool Execution
-       |                   (MCP / Terminal)          (MCP / Terminal)
-       |                          |                        |
-       |                          v                        v
-       |                   Stream Response          Stream Response
-       |                          |                        |
+       |                     Tool Execution          Stream Response
+       |                   (MCP / Terminal)          (interleaved)
+       |                          |
+       |                          v
+       |                   Stream Response
+       |                    (interleaved)
+       |                          |
        |                          +-----------+------------+
        |                                      |
        |                                      v
@@ -242,7 +244,7 @@ React receives WS messages:         Broadcast results
 LLM returns terminal tool_call (e.g., run_command)
        |
        v
-mcp_integration/handlers.py (or cloud_tool_handlers.py)
+mcp_integration/handlers.py (Ollama) or cloud_provider.py (cloud models)
        |
        v
 mcp_integration/terminal_executor.py
@@ -299,36 +301,39 @@ React receives: screenshot_added
 
 ### MCP Tool Call Flow
 
+**Ollama path:**
+
 ```
-LLM (Ollama or Cloud) returns tool_call
+Phase 1: Non-streamed detection call (think=False)
+  - LLM returns tool_calls list (or empty — falls through to normal streaming)
        |
        v
-mcp_integration/handlers.py (or cloud_tool_handlers.py)
-  - Extract tool name + arguments
-  - Broadcast "tool_call" to frontend
+handlers.py: handle_mcp_tool_calls()
+  - Broadcasts "tool_call" for each detected tool
+  - Executes via mcp_manager.call_tool() or terminal_executor
+  - Broadcasts "tool_result"
+  - Appends tool exchange to messages
        |
        v
-mcp_integration/retriever.py
-  - Semantically select relevant tools for the next round (if enabled)
-       |
-       v
-mcp_integration/manager.py
-  - Route to correct MCP server subprocess (e.g., 'filesystem', 'gmail')
-  - Execute via JSON-RPC over stdio
-       |
-       v
-MCP Server (child process)
-  - Runs tool function (e.g., read_email, list_files)
-  - Returns result
-       |
-       v
-handlers.py
-  - Broadcast "tool_result" to frontend
-  - Feed result back to LLM
+Phase 2: _stream_tool_follow_up()
+  - Follow-up response streamed in real-time (text + possible further tool calls)
   - Loop continues (up to MAX_MCP_TOOL_ROUNDS)
+  - Returns {already_streamed: True} when done
+```
+
+**Cloud path (Anthropic / OpenAI / Gemini):**
+
+```
+router.py: retrieve_relevant_tools() -> allowed_tool_names set
        |
        v
-LLM generates final response
+cloud_provider.py: stream_cloud_chat(allowed_tool_names=...)
+  - Streams text in real-time
+  - When tool calls detected mid-stream, executes them inline
+  - Broadcasts "tool_call" + "tool_result" to frontend
+  - Appends results to messages and loops
+  - Loop continues (up to MAX_MCP_TOOL_ROUNDS)
+  - User sees text → tool → text → tool → text as one continuous flow
 ```
 
 ## Database Schema
