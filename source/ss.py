@@ -9,8 +9,11 @@ import threading
 import sys
 import platform
 import time
+import logging
 from io import BytesIO
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 # Fix for high DPI displays on Windows
 if platform.system() == "Windows":
@@ -131,7 +134,7 @@ def copy_image_to_clipboard(image, dpi_scale=None):
             time.sleep(0.05)
             
     except Exception as e:
-        print(f"Error copying to clipboard: {e}")
+        logger.error("Error copying to clipboard: %s", e)
         
     return False
 
@@ -146,7 +149,7 @@ def copy_file_to_clipboard(filepath):
                        creationflags=0x08000000, check=True)
         return True
     except Exception as e:
-        print(f"PowerShell file copy failed: {e}")
+        logger.error("PowerShell file copy failed: %s", e)
         return False
 
 class ScreenshotService:
@@ -163,11 +166,11 @@ class ScreenshotService:
         try:
             path = take_region_screenshot(save_folder)
             if path:
-                print(f"Screenshot saved: {path}")
+                logger.info("Screenshot saved: %s", path)
                 if self.callback:
                     threading.Thread(target=self.callback, args=(path,), daemon=True).start()
             else:
-                print("Screenshot cancelled.")
+                logger.info("Screenshot cancelled.")
         finally:
             with self._lock:
                 self.capturing = False
@@ -175,8 +178,8 @@ class ScreenshotService:
     def start_listener(self, save_folder="screenshots"):
         """Start listening for Alt+. keyboard shortcut (strict)."""
         self.running = True
-        print("Screenshot service started. Press Alt+. to take a region screenshot.")
-        print("Press Ctrl+C to stop the service.")
+        logger.info("Screenshot service started. Press Alt+. to take a region screenshot.")
+        logger.info("Press Ctrl+C to stop the service.")
 
         def on_activate():
             current_time = time.time()
@@ -190,7 +193,7 @@ class ScreenshotService:
                     return
                 self.capturing = True
                 self._last_trigger_time = current_time
-            print("Hotkey detected! Starting region selection...")
+            logger.info("Hotkey detected! Starting region selection...")
             
             # Call the start callback if provided
             if self.start_callback:
@@ -206,7 +209,7 @@ class ScreenshotService:
             while self.running:
                 time.sleep(0.1)
         except KeyboardInterrupt:
-            print("\nScreenshot service stopped.")
+            logger.info("Screenshot service stopped.")
         finally:
             self.stop_listener()
 
@@ -216,9 +219,9 @@ class ScreenshotService:
         if self.listener:
             try:
                 self.listener.stop()
-                print("Keyboard listener stopped")
+                logger.info("Keyboard listener stopped")
             except Exception as e:
-                print(f"Error stopping keyboard listener: {e}")
+                logger.error("Error stopping keyboard listener: %s", e)
             self.listener = None
 
 def take_region_screenshot(save_folder="screenshots", debug=False):
@@ -277,10 +280,10 @@ def take_region_screenshot(save_folder="screenshots", debug=False):
             scale_y = screen_height / tk_height
             
             if self.debug:
-                print(f"Debug: Screen resolution: {screen_width}x{screen_height}")
-                print(f"Debug: Tkinter resolution: {tk_width}x{tk_height}")
-                print(f"Debug: Scale factors: {scale_x:.3f}x, {scale_y:.3f}y")
-                print(f"Debug: DPI scale: {self.dpi_scale:.3f}")
+                logger.debug("Screen resolution: %dx%d", screen_width, screen_height)
+                logger.debug("Tkinter resolution: %dx%d", tk_width, tk_height)
+                logger.debug("Scale factors: %.3fx, %.3fy", scale_x, scale_y)
+                logger.debug("DPI scale: %.3f", self.dpi_scale)
             
             # Create display version - scale down screen capture to match Tkinter's coordinate system
             # This ensures the preview matches what the user will select
@@ -347,8 +350,8 @@ def take_region_screenshot(save_folder="screenshots", debug=False):
                     actual_y2 = max(0, min(actual_y2, screen_height))
                     
                     if self.debug:
-                        print(f"Debug: Tkinter coords: ({x1},{y1}) to ({x2},{y2})")
-                        print(f"Debug: Actual coords: ({actual_x1},{actual_y1}) to ({actual_x2},{actual_y2})")
+                        logger.debug("Tkinter coords: (%s,%s) to (%s,%s)", x1, y1, x2, y2)
+                        logger.debug("Actual coords: (%s,%s) to (%s,%s)", actual_x1, actual_y1, actual_x2, actual_y2)
                     
                     # Crop from the original full-resolution screen capture
                     region_screenshot = screen.crop((actual_x1, actual_y1, actual_x2, actual_y2))
@@ -363,7 +366,7 @@ def take_region_screenshot(save_folder="screenshots", debug=False):
                     copy_file_to_clipboard(filepath)
                     
                     if self.debug:
-                        print(f"Debug: Saved {region_screenshot.size[0]}x{region_screenshot.size[1]} screenshot")
+                        logger.debug("Saved %dx%d screenshot", region_screenshot.size[0], region_screenshot.size[1])
                 root.destroy()
                 
             def on_escape(event):
@@ -411,7 +414,7 @@ def take_fullscreen_screenshot(save_folder="screenshots"):
         
         # Save the screenshot
         screen.save(filepath)
-        print(f"Fullscreen screenshot saved: {filepath}")
+        logger.info("Fullscreen screenshot saved: %s", filepath)
         
         # Copy to clipboard (both pixels and file reference)
         copy_image_to_clipboard(screen)
@@ -419,7 +422,7 @@ def take_fullscreen_screenshot(save_folder="screenshots"):
         
         return filepath
     except Exception as e:
-        print(f"Error taking fullscreen screenshot: {e}")
+        logger.error("Error taking fullscreen screenshot: %s", e)
         return None
 
 def create_thumbnail(image_path, max_size=(300, 300)):
@@ -441,7 +444,7 @@ def create_thumbnail(image_path, max_size=(300, 300)):
             
             return base64.b64encode(buffer.read()).decode('utf-8')
     except Exception as e:
-        print(f"Error creating thumbnail: {e}")
+        logger.error("Error creating thumbnail: %s", e)
         return None
 
 def start_screenshot_service(save_folder="screenshots", callback=None):
@@ -450,11 +453,11 @@ def start_screenshot_service(save_folder="screenshots", callback=None):
     try:
         service.start_listener(save_folder)
     except KeyboardInterrupt:
-        print("\nService stopped by user.")
+        logger.info("Service stopped by user.")
     return service
 
 if __name__ == "__main__":
-    print("Starting screenshot service...")
-    print("Press Alt+. to take a region screenshot")
-    print("Press Ctrl+C to exit")
+    logger.info("Starting screenshot service...")
+    logger.info("Press Alt+. to take a region screenshot")
+    logger.info("Press Ctrl+C to exit")
     start_screenshot_service("screenshots")

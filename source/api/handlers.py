@@ -5,8 +5,11 @@ Handles all incoming WebSocket message types and routes them to appropriate serv
 """
 
 import json
+import logging
 from typing import Dict, Any
 from fastapi import WebSocket
+
+logger = logging.getLogger(__name__)
 
 from ..core.state import app_state
 from ..services.conversations import ConversationService
@@ -89,7 +92,7 @@ class MessageHandler:
         forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(query_text)
 
         if forced_skills:
-            print(f"[Skills] Slash commands matched: {[s['skill_name'] for s in forced_skills]}")
+            logger.debug("Slash commands matched: %s", [s['skill_name'] for s in forced_skills])
 
         # Use cleaned query (slash commands stripped) for the LLM only
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
@@ -131,7 +134,7 @@ class MessageHandler:
         mode = data.get("mode", "fullscreen")
         if mode in ("fullscreen", "precision", "none"):
             app_state.capture_mode = mode
-            print(f"Capture mode set to: {mode}")
+            logger.debug("Capture mode set to: %s", mode)
 
     async def _handle_stop_streaming(self, data: Dict[str, Any]):
         """Handle stop streaming request — cancels all in-flight work."""

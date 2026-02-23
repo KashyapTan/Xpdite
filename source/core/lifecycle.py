@@ -9,6 +9,9 @@ import glob
 import asyncio
 import signal
 import atexit
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 _cleanup_done = False
@@ -35,10 +38,10 @@ def cleanup_resources():
             from ..mcp_integration.manager import mcp_manager
             from ..config import SCREENSHOT_FOLDER
         except ImportError:
-            print("Warning: Could not import cleanup dependencies")
+            logger.warning("Could not import cleanup dependencies")
             return
     
-    print("Cleaning up resources...")
+    logger.info("Cleaning up resources...")
     
     # Clean up MCP servers
     try:
@@ -49,35 +52,35 @@ def cleanup_resources():
                 fut.result(timeout=5)
             except Exception:
                 pass
-        print("MCP servers cleaned up")
+        logger.info("MCP servers cleaned up")
     except Exception as e:
-        print(f"Error cleaning up MCP: {e}")
+        logger.error("Error cleaning up MCP: %s", e)
     
     # Stop screenshot service
     if app_state.screenshot_service:
         try:
             app_state.screenshot_service.stop_listener()
-            print("Screenshot service stopped")
+            logger.info("Screenshot service stopped")
         except Exception as e:
-            print(f"Error stopping screenshot service: {e}")
+            logger.error("Error stopping screenshot service: %s", e)
     
     # Clean up temporary screenshot folder
     try:
         if os.path.exists("screenshots") and os.path.abspath("screenshots") != os.path.abspath(SCREENSHOT_FOLDER):
             _clear_folder("screenshots")
-            print("Temp screenshots folder cleaned")
+            logger.info("Temp screenshots folder cleaned")
     except Exception as e:
-        print(f"Error cleaning screenshots folder: {e}")
+        logger.error("Error cleaning screenshots folder: %s", e)
     
     # Shut down the thread pool so worker threads don't block exit
     try:
         from .thread_pool import shutdown_thread_pool
         shutdown_thread_pool()
-        print("Thread pool shut down")
+        logger.info("Thread pool shut down")
     except Exception as e:
-        print(f"Error shutting down thread pool: {e}")
+        logger.error("Error shutting down thread pool: %s", e)
 
-    print("Cleanup completed")
+    logger.info("Cleanup completed")
 
 
 def _clear_folder(folder_path: str):
@@ -88,12 +91,12 @@ def _clear_folder(folder_path: str):
                 try:
                     os.remove(file_path)
                 except OSError as e:
-                    print(f"Warning: Could not remove {file_path}: {e}")
+                    logger.warning("Could not remove %s: %s", file_path, e)
 
 
 def signal_handler(signum, frame):
     """Handle shutdown signals."""
-    print(f"Received signal {signum}, shutting down...")
+    logger.info("Received signal %s, shutting down...", signum)
     cleanup_resources()
     sys.exit(0)
 

@@ -12,7 +12,10 @@ from fastapi import APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
+import logging
 import ollama
+
+logger = logging.getLogger(__name__)
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
 
@@ -75,7 +78,7 @@ async def get_ollama_models() -> List[dict]:
             )
         return models
     except Exception as e:
-        print(f"[HTTP] Error fetching Ollama models: {e}")
+        logger.error("Error fetching Ollama models: %s", e)
         return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
 
 
@@ -202,7 +205,7 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
 
     except Exception as e:
         error_msg = str(e)
-        print(f"[HTTP] API key validation failed for {provider}: {error_msg}")
+        logger.warning("API key validation failed for %s: %s", provider, error_msg)
         raise HTTPException(
             status_code=401, detail=f"Invalid API key: {error_msg[:200]}"
         )
@@ -305,7 +308,7 @@ async def connect_google():
     try:
         result = await _run_in_thread(google_auth.start_oauth_flow)
     except Exception as e:
-        print(f"[Google] OAuth error: {e}")
+        logger.error("Google OAuth error: %s", e)
         raise HTTPException(
             status_code=500,
             detail=f"OAuth flow failed: {str(e)[:300]}",
@@ -324,7 +327,7 @@ async def connect_google():
 
         await mcp_manager.connect_google_servers()
     except Exception as e:
-        print(f"[Google] MCP server startup failed (non-fatal): {e}")
+        logger.warning("Google MCP server startup failed (non-fatal): %s", e)
 
     return result
 
@@ -342,7 +345,7 @@ async def disconnect_google():
     try:
         await mcp_manager.disconnect_google_servers()
     except Exception as e:
-        print(f"[Google] MCP server disconnect failed (non-fatal): {e}")
+        logger.warning("Google MCP server disconnect failed (non-fatal): %s", e)
 
     return google_auth.disconnect()
 
@@ -385,7 +388,7 @@ async def get_anthropic_models() -> List[dict]:
             return models
 
     except Exception as e:
-        print(f"[HTTP] Error fetching Anthropic models via API: {e}")
+        logger.error("Error fetching Anthropic models via API: %s", e)
         # Fall through to fallback
 
     # Fallback
@@ -450,7 +453,7 @@ async def get_openai_models() -> List[dict]:
             return models
 
     except Exception as e:
-        print(f"[HTTP] Error fetching OpenAI models: {e}")
+        logger.error("Error fetching OpenAI models: %s", e)
         # Fall through to fallback
 
     # Fallback
@@ -509,7 +512,7 @@ async def get_gemini_models() -> List[dict]:
             return models
 
     except Exception as e:
-        print(f"[HTTP] Error fetching Gemini models: {e}")
+        logger.error("Error fetching Gemini models: %s", e)
         # Fall through to fallback
 
     # Fallback

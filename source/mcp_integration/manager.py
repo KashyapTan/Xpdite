@@ -7,7 +7,10 @@ Manages MCP server connections and tool routing for the main app.
 import asyncio
 import os
 import sys
+import logging
 from typing import List, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from ..config import PROJECT_ROOT
 from .retriever import retriever
@@ -68,10 +71,10 @@ class McpToolManager:
             from mcp import ClientSession, StdioServerParameters
             from mcp.client.stdio import stdio_client
         except ImportError as e:
-            print(f"[MCP] WARNING: mcp import failed: {e}")
-            print(f"[MCP] Run: pip install 'mcp[cli]'")
-            print(
-                f"[MCP] Skipping server '{server_name}'. Tools will not be available."
+            logger.warning("mcp import failed: %s", e)
+            logger.warning("Run: pip install 'mcp[cli]'")
+            logger.warning(
+                "Skipping server '%s'. Tools will not be available.", server_name
             )
             return
 
@@ -163,20 +166,21 @@ class McpToolManager:
                     }
                 )
 
-                print(f"[MCP] Registered tool: {tool.name} (from {server_name})")
+                print_name = tool.name  # noqa: avoid f-string in loop
+                logger.debug("Registered tool: %s (from %s)", tool.name, server_name)
 
-            print(
-                f"[MCP] Connected to '{server_name}' — {len(tools_result.tools)} tool(s)"
+            logger.info(
+                "Connected to '%s' — %d tool(s)", server_name, len(tools_result.tools)
             )
             # Re-embed tools for the retriever (blocking call, run in thread)
             from ..core.thread_pool import run_in_thread
             try:
                 await run_in_thread(retriever.embed_tools, self._ollama_tools)
             except Exception as e:
-                print(f"[MCP] Tool embedding failed (non-fatal): {e}")
+                logger.warning("Tool embedding failed (non-fatal): %s", e)
         except Exception as e:
-            print(f"[MCP] ERROR connecting to '{server_name}': {e}")
-            print(f"[MCP] The server will work without '{server_name}' tools.")
+            logger.error("Error connecting to '%s': %s", server_name, e)
+            logger.warning("The server will work without '%s' tools.", server_name)
 
     def register_inline_tools(
         self, server_name: str, tools: List[Dict[str, Any]]
@@ -219,9 +223,9 @@ class McpToolManager:
                 }
             )
 
-            print(f"[MCP] Registered inline tool: {name} (from {server_name})")
+            logger.debug("Registered inline tool: %s (from %s)", name, server_name)
 
-        print(f"[MCP] Registered {len(tools)} inline tool(s) for '{server_name}'")
+        logger.info("Registered %d inline tool(s) for '%s'", len(tools), server_name)
         # Re-embed tools for the retriever
         retriever.embed_tools(self._ollama_tools)
 
@@ -340,8 +344,8 @@ class McpToolManager:
                 )
             return [types.Tool(function_declarations=declarations)]
         except ImportError:
-            print(
-                "[MCP] google-genai not installed, cannot convert tools to Gemini format"
+            logger.warning(
+                "google-genai not installed, cannot convert tools to Gemini format"
             )
             return None
 
@@ -362,16 +366,16 @@ class McpToolManager:
         try:
             await asyncio.wait_for(task, timeout=10.0)
         except asyncio.TimeoutError:
-            print(f"[MCP] Server '{server_name}' did not shut down in time, cancelling")
+            logger.warning("Server '%s' did not shut down in time, cancelling", server_name)
             task.cancel()
             try:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
         except Exception as e:
-            print(f"[MCP] Error shutting down '{server_name}': {e}")
+            logger.error("Error shutting down '%s': %s", server_name, e)
 
-        print(f"[MCP] Disconnected from '{server_name}'")
+        logger.info("Disconnected from '%s'", server_name)
 
         # Remove from connections
         self._connections.pop(server_name, None)
@@ -395,7 +399,7 @@ class McpToolManager:
             t for t in self._raw_tools if t["name"] not in tools_to_remove
         ]
 
-        print(f"[MCP] Removed {len(tools_to_remove)} tool(s) from '{server_name}'")
+        logger.info("Removed %d tool(s) from '%s'", len(tools_to_remove), server_name)
         # Re-embed tools for the retriever
         retriever.embed_tools(self._ollama_tools)
 
@@ -410,7 +414,7 @@ class McpToolManager:
         import os
 
         if not os.path.exists(GOOGLE_TOKEN_FILE):
-            print("[MCP] Google token not found, skipping Google servers")
+            logger.info("Google token not found, skipping Google servers")
             return
 
         # Build env dict with token path for the child processes
@@ -445,8 +449,8 @@ class McpToolManager:
                 env=env,
             )
 
-        print(
-            f"[MCP] Google servers connected — {len(self._ollama_tools)} total tool(s) available"
+        logger.info(
+            "Google servers connected — %d total tool(s) available", len(self._ollama_tools)
         )
 
     async def disconnect_google_servers(self):
@@ -455,7 +459,7 @@ class McpToolManager:
             await self.disconnect_server("gmail")
         if self.is_server_connected("calendar"):
             await self.disconnect_server("calendar")
-        print("[MCP] Google servers disconnected")
+        logger.info("Google servers disconnected")
 
     async def cleanup(self):
         """Disconnect from all MCP servers."""
@@ -463,7 +467,7 @@ class McpToolManager:
             try:
                 await self.disconnect_server(name)
             except Exception as e:
-                print(f"[MCP] Error disconnecting from '{name}': {e}")
+                logger.error("Error disconnecting from '%s': %s", name, e)
         self._initialized = False
 
 
@@ -485,7 +489,7 @@ async def init_mcp_servers():
     ╚══════════════════════════════════════════════════════════════════╝
     """
     if mcp_manager._initialized:
-        print("[MCP] Already initialized — skipping double init")
+        logger.warning("Already initialized — skipping double init")
         return
 
     # ── Demo server (add two numbers) ──────────────────────────────
@@ -680,4 +684,4 @@ async def init_mcp_servers():
     # )
 
     mcp_manager._initialized = True
-    print(f"[MCP] Ready — {len(mcp_manager._ollama_tools)} total tool(s) available")
+    logger.info("Ready — %d total tool(s) available", len(mcp_manager._ollama_tools))

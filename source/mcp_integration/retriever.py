@@ -1,8 +1,11 @@
 import os
 import sys
+import logging
 import numpy as np
 import ollama
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -76,21 +79,21 @@ class ToolRetriever:
             if found_model:
                 self._embedding_model_type = "ollama"
                 self._ollama_model_name = found_model
-                print(
-                    f"[ToolRetriever] Using Ollama embedding model: {self._ollama_model_name}"
+                logger.info(
+                    "Using Ollama embedding model: %s", self._ollama_model_name
                 )
                 return
         except Exception as e:
-            print(f"[ToolRetriever] Ollama check failed: {e}")
+            logger.warning("Ollama check failed: %s", e)
 
         # 2. Fallback to SentenceTransformers
         if SENTENCE_TRANSFORMERS_AVAILABLE:
             self._embedding_model_type = "sentence-transformers"
-            print("[ToolRetriever] Using sentence-transformers (all-MiniLM-L6-v2)")
+            logger.info("Using sentence-transformers (all-MiniLM-L6-v2)")
             # Load lazily in embed_text to avoid startup delay if not needed
         else:
-            print(
-                "[ToolRetriever] WARNING: No embedding backend available. Retrieval will return all tools."
+            logger.warning(
+                "No embedding backend available. Retrieval will return all tools."
             )
             self._embedding_model_type = "none"
 
@@ -101,7 +104,7 @@ class ToolRetriever:
                 response = ollama.embeddings(model=self._ollama_model_name, prompt=text)
                 return np.array(response["embedding"])
             except Exception as e:
-                print(f"[ToolRetriever] Ollama embedding failed: {e}")
+                logger.warning("Ollama embedding failed: %s", e)
                 return None
 
         elif self._embedding_model_type == "sentence-transformers":
@@ -110,7 +113,7 @@ class ToolRetriever:
                 and SENTENCE_TRANSFORMERS_AVAILABLE
                 and SentenceTransformer
             ):
-                print("[ToolRetriever] Loading sentence-transformers model...")
+                logger.info("Loading sentence-transformers model...")
                 self._st_model = SentenceTransformer("all-MiniLM-L6-v2")  # type: ignore
 
             if self._st_model:
@@ -133,7 +136,7 @@ class ToolRetriever:
         if self._embedding_model_type == "none":
             return
 
-        print(f"[ToolRetriever] Embedding {len(tools)} tools...")
+        logger.info("Embedding %d tools...", len(tools))
         self._tool_embeddings.clear()
 
         for tool in tools:
@@ -153,7 +156,7 @@ class ToolRetriever:
             if embedding is not None:
                 self._tool_embeddings[name] = embedding
 
-        print("[ToolRetriever] Tool embedding complete.")
+        logger.info("Tool embedding complete.")
 
     def retrieve_tools(
         self, query: str, all_tools: List[Dict], always_on: List[str], top_k: int = 5
@@ -214,12 +217,13 @@ class ToolRetriever:
             if t.get("function", {}).get("name") in selected_tool_names
         ]
 
-        print(f"[ToolRetriever] Query: '{query}'")
-        print(
-            f"[ToolRetriever] Selected {len(final_tools)} tools out of {len(all_tools)} available."
+        logger.debug("Query: '%s'", query)
+        logger.debug(
+            "Selected %d tools out of %d available.",
+            len(final_tools), len(all_tools)
         )
         for t in final_tools:
-            print(f" - {t.get('function', {}).get('name')}")
+            logger.debug(" - %s", t.get('function', {}).get('name'))
 
         return final_tools
 

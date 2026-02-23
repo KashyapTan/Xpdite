@@ -5,7 +5,10 @@ Manages screenshot capture, storage, and lifecycle.
 """
 import os
 import asyncio
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from ..core.state import app_state
 from ..core.connection import broadcast_message
@@ -39,7 +42,7 @@ class ScreenshotHandler:
                 return await ScreenshotHandler.add_screenshot(image_path)
             return None
         except Exception as e:
-            print(f"Error taking fullscreen screenshot: {e}")
+            logger.error("Error taking fullscreen screenshot: %s", e)
             return None
     
     @staticmethod
@@ -75,7 +78,7 @@ class ScreenshotHandler:
             "thumbnail": thumbnail
         })
         
-        print(f"Screenshot added: {ss_id}")
+        logger.info("Screenshot added: %s", ss_id)
         return ss_id
     
     @staticmethod
@@ -92,17 +95,17 @@ class ScreenshotHandler:
                     try:
                         os.remove(ss["path"])
                     except Exception as e:
-                        print(f"Error deleting screenshot file: {e}")
+                        logger.error("Error deleting screenshot file: %s", e)
                 
                 # Remove from state
                 app_state.remove_screenshot(screenshot_id)
-                print(f"Screenshot removed: {screenshot_id}")
+                logger.info("Screenshot removed: %s", screenshot_id)
                 
                 # Notify clients
                 await broadcast_message("screenshot_removed", {"id": screenshot_id})
                 return True
         
-        print(f"Screenshot not found: {screenshot_id}")
+        logger.warning("Screenshot not found: %s", screenshot_id)
         return False
     
     @staticmethod
@@ -113,7 +116,7 @@ class ScreenshotHandler:
                 try:
                     os.remove(ss["path"])
                 except Exception as e:
-                    print(f"Error deleting screenshot: {e}")
+                    logger.error("Error deleting screenshot: %s", e)
         
         app_state.screenshot_list.clear()
         await broadcast_message("screenshots_cleared", "")
@@ -123,10 +126,10 @@ class ScreenshotHandler:
         """Called when screenshot capture starts via hotkey."""
         # Only process in precision mode
         if app_state.capture_mode != CaptureMode.PRECISION:
-            print(f"Hotkey capture ignored - not in precision mode")
+            logger.debug("Hotkey capture ignored - not in precision mode")
             return
         
-        print("Screenshot capture starting - hiding window")
+        logger.debug("Screenshot capture starting - hiding window")
         await broadcast_message("screenshot_start", "Screenshot capture starting")
     
     @staticmethod
@@ -134,12 +137,12 @@ class ScreenshotHandler:
         """Called when a screenshot is captured via hotkey."""
         # Only process in precision mode
         if app_state.capture_mode != CaptureMode.PRECISION:
-            print(f"Hotkey capture ignored - not in precision mode")
+            logger.debug("Hotkey capture ignored - not in precision mode")
             if os.path.exists(image_path):
                 try:
                     os.remove(image_path)
                 except Exception as e:
-                    print(f"Error deleting unused screenshot: {e}")
+                    logger.error("Error deleting unused screenshot: %s", e)
             return
         
         ss_id = await ScreenshotHandler.add_screenshot(image_path)
@@ -152,7 +155,7 @@ def process_screenshot_start():
     """Hook for screenshot service thread when capture starts."""
     server_loop = app_state.server_loop_holder.get("loop")
     if server_loop is None:
-        print("Server loop not ready yet.")
+        logger.warning("Server loop not ready yet.")
         return None
 
     def schedule():
@@ -161,7 +164,7 @@ def process_screenshot_start():
     try:
         server_loop.call_soon_threadsafe(schedule)
     except Exception as e:
-        print(f"Failed to schedule screenshot start: {e}")
+        logger.error("Failed to schedule screenshot start: %s", e)
     return None
 
 
@@ -169,7 +172,7 @@ def process_screenshot(image_path: str):
     """Hook for screenshot service thread when screenshot is taken."""
     server_loop = app_state.server_loop_holder.get("loop")
     if server_loop is None:
-        print("Server loop not ready yet.")
+        logger.warning("Server loop not ready yet.")
         return None
 
     def schedule():
@@ -178,5 +181,5 @@ def process_screenshot(image_path: str):
     try:
         server_loop.call_soon_threadsafe(schedule)
     except Exception as e:
-        print(f"Failed to schedule screenshot handling: {e}")
+        logger.error("Failed to schedule screenshot handling: %s", e)
     return None

@@ -42,6 +42,8 @@ const SettingsModels: React.FC = () => {
   // Loading / error states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Ollama-specific warning (e.g. "Ollama is not running")
+  const [ollamaWarning, setOllamaWarning] = useState('');
 
   // --------------------------------------------------
   // Fetch data on mount
@@ -52,12 +54,13 @@ const SettingsModels: React.FC = () => {
       setError('');
       try {
         // Fire all requests in parallel
-        const [models, enabled, keys] = await Promise.all([
+        const [ollamaResult, enabled, keys] = await Promise.all([
           api.getOllamaModels(),
           api.getEnabledModels(),
           api.getApiKeyStatus(),
         ]);
-        setOllamaModels(models);
+        setOllamaModels(ollamaResult.models);
+        setOllamaWarning(ollamaResult.error ?? '');
         setEnabledModels(enabled);
         setKeyStatus(keys);
 
@@ -205,7 +208,12 @@ const SettingsModels: React.FC = () => {
               {error}
             </div>
           )}
-          {!loading && !error && ollamaModels.length === 0 && (
+          {!loading && !error && ollamaWarning && (
+            <div className="settings-models-ollama-model settings-models-error">
+              {ollamaWarning}
+            </div>
+          )}
+          {!loading && !error && !ollamaWarning && ollamaModels.length === 0 && (
             <div className="settings-models-ollama-model settings-models-empty">
               No Ollama models found. Pull one with <code>ollama pull model-name</code>
             </div>

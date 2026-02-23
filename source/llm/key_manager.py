@@ -11,7 +11,10 @@ import hashlib
 import base64
 import getpass
 import socket
+import logging
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -97,7 +100,7 @@ class KeyManager:
             decrypted = self._fernet.decrypt(ciphertext.encode("utf-8"))
             return decrypted.decode("utf-8")
         except (InvalidToken, Exception) as e:
-            print(f"[KeyManager] Decryption failed: {e}")
+            logger.error("Decryption failed: %s", e)
             return None
 
     @staticmethod

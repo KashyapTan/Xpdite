@@ -7,6 +7,9 @@ model name prefix. Cloud models use the format "provider/model-name" (e.g.,
 """
 
 from typing import List, Dict, Any, Optional, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def parse_provider(model_name: str) -> Tuple[str, str]:
@@ -61,7 +64,7 @@ async def route_chat(
     skills_block = build_skills_prompt_block(skills_to_inject)
 
     if skills_to_inject:
-        print(f"[Skills] Injecting {len(skills_to_inject)} skill(s): {[s['skill_name'] for s in skills_to_inject]}")
+        logger.debug("Injecting %d skill(s): %s", len(skills_to_inject), [s['skill_name'] for s in skills_to_inject])
 
     custom_template = db.get_setting("system_prompt_template")
     system_prompt = build_system_prompt(skills_block=skills_block, template=custom_template)

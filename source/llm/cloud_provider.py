@@ -13,7 +13,10 @@ Same return signature as stream_ollama_chat for drop-in compatibility.
 import os
 import base64
 import json
+import logging
 from typing import List, Dict, Any, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 from ..core.connection import broadcast_message
 from ..core.state import app_state
@@ -31,7 +34,7 @@ def _load_image_as_base64(path: str) -> Optional[str]:
         with open(path, "rb") as f:
             return base64.standard_b64encode(f.read()).decode("utf-8")
     except Exception as e:
-        print(f"[Cloud] Failed to load image {path}: {e}")
+        logger.error("Failed to load image %s: %s", path, e)
         return None
 
 
@@ -52,8 +55,144 @@ def _truncate_tool_result(result: str) -> str:
     from ..config import MAX_TOOL_RESULT_LENGTH
     result_str = str(result)
     if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-        print(f"[Cloud] Truncating large tool output ({len(result_str)} chars)")
+        logger.warning("Truncating large tool output (%d chars)", len(result_str))
         return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+    return result_str
+
+
+# ---------------------------------------------------------------------------
+# Shared message builder (Anthropic + OpenAI)
+# ---------------------------------------------------------------------------
+
+
+def _format_anthropic_image(b64: str, media_type: str) -> dict:
+    """Format an image block for the Anthropic API."""
+    return {
+        "type": "image",
+        "source": {"type": "base64", "media_type": media_type, "data": b64},
+    }
+
+
+def _format_openai_image(b64: str, media_type: str) -> dict:
+    """Format an image block for the OpenAI API."""
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:{media_type};base64,{b64}"},
+    }
+
+
+def _build_chat_messages(
+    chat_history: List[Dict[str, Any]],
+    user_query: str,
+    image_paths: List[str],
+    format_image,
+) -> List[Dict[str, Any]]:
+    """Build a provider-agnostic message list from chat history.
+
+    Works for both Anthropic and OpenAI — the only difference is how images
+    are formatted, which is handled by the *format_image* callback.
+
+    Args:
+        format_image: ``(b64_data: str, media_type: str) -> dict``
+    """
+    messages = []
+
+    for msg in chat_history:
+        role = msg["role"]
+        content = msg["content"]
+
+        if role == "tool":
+            continue
+
+        if role == "user" and msg.get("images"):
+            parts: list = []
+            for img_path in msg["images"]:
+                if os.path.exists(img_path):
+                    b64 = _load_image_as_base64(img_path)
+                    if b64:
+                        parts.append(format_image(b64, _guess_media_type(img_path)))
+            parts.append({"type": "text", "text": content})
+            messages.append({"role": "user", "content": parts})
+        else:
+            messages.append({"role": role, "content": content})
+
+    # Current user message
+    existing_images = [p for p in image_paths if os.path.exists(p)]
+    if existing_images:
+        parts = []
+        for img_path in existing_images:
+            b64 = _load_image_as_base64(img_path)
+            if b64:
+                parts.append(format_image(b64, _guess_media_type(img_path)))
+        parts.append({"type": "text", "text": user_query})
+        messages.append({"role": "user", "content": parts})
+    else:
+        messages.append({"role": "user", "content": user_query})
+
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# Shared tool execution helper
+# ---------------------------------------------------------------------------
+
+
+async def _execute_and_broadcast_tool(
+    fn_name: str,
+    fn_args: Dict[str, Any],
+    provider_label: str,
+    tool_calls_list: List[Dict[str, Any]],
+    interleaved_blocks: List[Dict[str, Any]],
+) -> str:
+    """Execute a single MCP tool call, broadcast progress, and record results.
+
+    This is the common core shared by all three cloud providers.  The caller
+    is responsible for any provider-specific follow-up (e.g. appending a
+    ``tool_result`` message in the provider's own format).
+
+    Returns the (possibly truncated) result string.
+    """
+    from ..mcp_integration.manager import mcp_manager
+    from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
+
+    server_name = mcp_manager.get_tool_server_name(fn_name)
+    logger.info("%s tool call: %s(%s) from '%s'", provider_label, fn_name, fn_args, server_name)
+
+    await broadcast_message(
+        "tool_call",
+        json.dumps({
+            "name": fn_name, "args": fn_args,
+            "server": server_name, "status": "calling",
+        }),
+    )
+
+    if is_terminal_tool(fn_name, server_name):
+        result = await execute_terminal_tool(fn_name, fn_args, server_name)
+    else:
+        try:
+            result = await mcp_manager.call_tool(fn_name, dict(fn_args))
+        except Exception as e:
+            result = f"Error executing tool: {e}"
+
+    result_str = _truncate_tool_result(str(result))
+
+    await broadcast_message(
+        "tool_call",
+        json.dumps({
+            "name": fn_name, "args": fn_args, "result": result_str,
+            "server": server_name, "status": "complete",
+        }),
+    )
+
+    tool_calls_list.append({
+        "name": fn_name, "args": fn_args,
+        "result": result_str, "server": server_name,
+    })
+    interleaved_blocks.append({
+        "type": "tool_call", "name": fn_name,
+        "args": fn_args, "server": server_name,
+    })
+
     return result_str
 
 
@@ -68,59 +207,7 @@ def _build_anthropic_messages(
     image_paths: List[str],
 ) -> List[Dict[str, Any]]:
     """Convert chat history to Anthropic message format."""
-    messages = []
-
-    for msg in chat_history:
-        role = msg["role"]
-        content = msg["content"]
-
-        if role == "tool":
-            continue
-
-        if role == "user" and msg.get("images"):
-            blocks: list = []
-            for img_path in msg["images"]:
-                if os.path.exists(img_path):
-                    b64 = _load_image_as_base64(img_path)
-                    if b64:
-                        blocks.append(
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": _guess_media_type(img_path),
-                                    "data": b64,
-                                },
-                            }
-                        )
-            blocks.append({"type": "text", "text": content})
-            messages.append({"role": "user", "content": blocks})
-        else:
-            messages.append({"role": role, "content": content})
-
-    # Add current user message
-    existing_images = [p for p in image_paths if os.path.exists(p)]
-    if existing_images:
-        blocks = []
-        for img_path in existing_images:
-            b64 = _load_image_as_base64(img_path)
-            if b64:
-                blocks.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": _guess_media_type(img_path),
-                            "data": b64,
-                        },
-                    }
-                )
-        blocks.append({"type": "text", "text": user_query})
-        messages.append({"role": "user", "content": blocks})
-    else:
-        messages.append({"role": "user", "content": user_query})
-
-    return messages
+    return _build_chat_messages(chat_history, user_query, image_paths, _format_anthropic_image)
 
 
 async def _stream_anthropic(
@@ -141,7 +228,6 @@ async def _stream_anthropic(
     """
     import anthropic
     from ..mcp_integration.manager import mcp_manager
-    from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
 
     anthropic_msgs = _build_anthropic_messages(chat_history, user_query, image_paths)
     tool_calls_list: List[Dict[str, Any]] = []
@@ -249,47 +335,14 @@ async def _stream_anthropic(
                     fn_name = getattr(block, "name", "")
                     fn_args = getattr(block, "input", None) or {}
                     tool_use_id = getattr(block, "id", "")
-                    server_name = mcp_manager.get_tool_server_name(fn_name)
-
-                    print(f"[Cloud/Anthropic] Tool call: {fn_name}({fn_args}) from '{server_name}'")
 
                     if app_state.stop_streaming:
                         break
 
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args,
-                            "server": server_name, "status": "calling",
-                        }),
+                    result_str = await _execute_and_broadcast_tool(
+                        fn_name, fn_args, "Anthropic",
+                        tool_calls_list, interleaved_blocks,
                     )
-
-                    if is_terminal_tool(fn_name, server_name):
-                        result = await execute_terminal_tool(fn_name, fn_args, server_name)
-                    else:
-                        try:
-                            result = await mcp_manager.call_tool(fn_name, dict(fn_args))
-                        except Exception as e:
-                            result = f"Error executing tool: {e}"
-
-                    result_str = _truncate_tool_result(str(result))
-
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args, "result": result_str,
-                            "server": server_name, "status": "complete",
-                        }),
-                    )
-
-                    tool_calls_list.append({
-                        "name": fn_name, "args": fn_args,
-                        "result": result_str, "server": server_name,
-                    })
-                    interleaved_blocks.append({
-                        "type": "tool_call", "name": fn_name,
-                        "args": fn_args, "server": server_name,
-                    })
 
                     tool_results.append({
                         "type": "tool_result",
@@ -310,7 +363,7 @@ async def _stream_anthropic(
         await broadcast_message("token_usage", json.dumps(total_token_stats))
 
         if tool_calls_list:
-            print(f"[Cloud/Anthropic] Tool loop complete after {rounds} round(s)")
+            logger.info("Anthropic tool loop complete after %d round(s)", rounds)
         # Flush any remaining text from the final (non-tool) round
         if current_round_text:
             interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
@@ -319,7 +372,7 @@ async def _stream_anthropic(
 
     except Exception as e:
         error_msg = f"LLM API error ({type(e).__name__})"
-        print(f"[Cloud/Anthropic] Full error: {e}")
+        logger.error("Anthropic error: %s", e)
         await broadcast_message("error", error_msg)
         return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
@@ -335,57 +388,7 @@ def _build_openai_messages(
     image_paths: List[str],
 ) -> List[Dict[str, Any]]:
     """Convert chat history to OpenAI message format."""
-    messages = []
-
-    for msg in chat_history:
-        role = msg["role"]
-        content = msg["content"]
-
-        if role == "tool":
-            continue
-
-        if role == "user" and msg.get("images"):
-            parts: list = []
-            for img_path in msg["images"]:
-                if os.path.exists(img_path):
-                    b64 = _load_image_as_base64(img_path)
-                    if b64:
-                        media_type = _guess_media_type(img_path)
-                        parts.append(
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{media_type};base64,{b64}",
-                                },
-                            }
-                        )
-            parts.append({"type": "text", "text": content})
-            messages.append({"role": "user", "content": parts})
-        else:
-            messages.append({"role": role, "content": content})
-
-    # Current user message
-    existing_images = [p for p in image_paths if os.path.exists(p)]
-    if existing_images:
-        parts = []
-        for img_path in existing_images:
-            b64 = _load_image_as_base64(img_path)
-            if b64:
-                media_type = _guess_media_type(img_path)
-                parts.append(
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:{media_type};base64,{b64}",
-                        },
-                    }
-                )
-        parts.append({"type": "text", "text": user_query})
-        messages.append({"role": "user", "content": parts})
-    else:
-        messages.append({"role": "user", "content": user_query})
-
-    return messages
+    return _build_chat_messages(chat_history, user_query, image_paths, _format_openai_image)
 
 
 async def _stream_openai(
@@ -406,7 +409,6 @@ async def _stream_openai(
     """
     from openai import AsyncOpenAI
     from ..mcp_integration.manager import mcp_manager
-    from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
 
     openai_msgs = _build_openai_messages(chat_history, user_query, image_paths)
     if system_prompt:
@@ -536,47 +538,13 @@ async def _stream_openai(
                     except json.JSONDecodeError:
                         fn_args = {}
 
-                    server_name = mcp_manager.get_tool_server_name(fn_name)
-
-                    print(f"[Cloud/OpenAI] Tool call: {fn_name}({fn_args}) from '{server_name}'")
-
                     if app_state.stop_streaming:
                         break
 
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args,
-                            "server": server_name, "status": "calling",
-                        }),
+                    result_str = await _execute_and_broadcast_tool(
+                        fn_name, fn_args, "OpenAI",
+                        tool_calls_list, interleaved_blocks,
                     )
-
-                    if is_terminal_tool(fn_name, server_name):
-                        result = await execute_terminal_tool(fn_name, fn_args, server_name)
-                    else:
-                        try:
-                            result = await mcp_manager.call_tool(fn_name, dict(fn_args))
-                        except Exception as e:
-                            result = f"Error executing tool: {e}"
-
-                    result_str = _truncate_tool_result(str(result))
-
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args, "result": result_str,
-                            "server": server_name, "status": "complete",
-                        }),
-                    )
-
-                    tool_calls_list.append({
-                        "name": fn_name, "args": fn_args,
-                        "result": result_str, "server": server_name,
-                    })
-                    interleaved_blocks.append({
-                        "type": "tool_call", "name": fn_name,
-                        "args": fn_args, "server": server_name,
-                    })
 
                     openai_msgs.append({
                         "role": "tool",
@@ -594,7 +562,7 @@ async def _stream_openai(
         await broadcast_message("token_usage", json.dumps(total_token_stats))
 
         if tool_calls_list:
-            print(f"[Cloud/OpenAI] Tool loop complete after {rounds} round(s)")
+            logger.info("OpenAI tool loop complete after %d round(s)", rounds)
         if current_round_text:
             interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
 
@@ -602,7 +570,7 @@ async def _stream_openai(
 
     except Exception as e:
         error_msg = f"LLM API error ({type(e).__name__})"
-        print(f"[Cloud/OpenAI] Full error: {e}")
+        logger.error("OpenAI error: %s", e)
         await broadcast_message("error", error_msg)
         return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 
@@ -700,7 +668,6 @@ async def _stream_gemini(
     from google import genai
     from google.genai import types
     from ..mcp_integration.manager import mcp_manager
-    from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
 
     contents = _build_gemini_contents(chat_history, user_query, image_paths)
     tool_calls_list: List[Dict[str, Any]] = []
@@ -845,47 +812,14 @@ async def _stream_gemini(
                 for fc_data in round_fn_calls:
                     fn_name = fc_data["name"]
                     fn_args = fc_data["args"]
-                    server_name = mcp_manager.get_tool_server_name(fn_name)
-
-                    print(f"[Cloud/Gemini] Tool call: {fn_name}({fn_args}) from '{server_name}'")
 
                     if app_state.stop_streaming:
                         break
 
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args,
-                            "server": server_name, "status": "calling",
-                        }),
+                    result_str = await _execute_and_broadcast_tool(
+                        fn_name, fn_args, "Gemini",
+                        tool_calls_list, interleaved_blocks,
                     )
-
-                    if is_terminal_tool(fn_name, server_name):
-                        result = await execute_terminal_tool(fn_name, fn_args, server_name)
-                    else:
-                        try:
-                            result = await mcp_manager.call_tool(fn_name, dict(fn_args))
-                        except Exception as e:
-                            result = f"Error executing tool: {e}"
-
-                    result_str = _truncate_tool_result(str(result))
-
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": fn_name, "args": fn_args, "result": result_str,
-                            "server": server_name, "status": "complete",
-                        }),
-                    )
-
-                    tool_calls_list.append({
-                        "name": fn_name, "args": fn_args,
-                        "result": result_str, "server": server_name,
-                    })
-                    interleaved_blocks.append({
-                        "type": "tool_call", "name": fn_name,
-                        "args": fn_args, "server": server_name,
-                    })
 
                     fn_response_parts.append(
                         types.Part.from_function_response(
@@ -907,7 +841,7 @@ async def _stream_gemini(
         await broadcast_message("token_usage", json.dumps(total_token_stats))
 
         if tool_calls_list:
-            print(f"[Cloud/Gemini] Tool loop complete after {rounds} round(s)")
+            logger.info("Gemini tool loop complete after %d round(s)", rounds)
         if current_round_text:
             interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
 
@@ -915,7 +849,7 @@ async def _stream_gemini(
 
     except Exception as e:
         error_msg = f"LLM API error ({type(e).__name__})"
-        print(f"[Cloud/Gemini] Full error: {e}")
+        logger.error("Gemini error: %s", e)
         await broadcast_message("error", error_msg)
         return "", {"prompt_eval_count": 0, "eval_count": 0}, tool_calls_list, None
 

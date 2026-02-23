@@ -9,10 +9,13 @@ import time
 import queue
 import tempfile
 import os
+import logging
 import asyncio
 import pyaudio
 import wave
 from faster_whisper import WhisperModel
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionService:
@@ -35,16 +38,16 @@ class TranscriptionService:
     def _load_model(self):
         """Load the Whisper model if not already loaded."""
         if self.model is None:
-            print(f"Loading Whisper model: {self.model_size}...")
+            logger.info("Loading Whisper model: %s...", self.model_size)
             # Run on CPU by default for broad compatibility, or CUDA if available
             # We'll use "int8" quantization for speed
             try:
                 self.model = WhisperModel(
                     self.model_size, device="auto", compute_type="int8"
                 )
-                print("Whisper model loaded successfully.")
+                logger.info("Whisper model loaded successfully.")
             except Exception as e:
-                print(f"Error loading Whisper model: {e}")
+                logger.error("Error loading Whisper model: %s", e)
 
     def start_recording(self) -> None:
         """Start recording audio in a background thread."""
@@ -58,14 +61,14 @@ class TranscriptionService:
 
         self.recording_thread = threading.Thread(target=self._record_audio, daemon=True)
         self.recording_thread.start()
-        print("Recording started...")
+        logger.info("Recording started...")
 
     def stop_recording(self) -> str | None:
         """Stop recording and return the transcribed text."""
         if not self.is_recording:
             return None
 
-        print("Stopping recording...")
+        logger.info("Stopping recording...")
         self.is_recording = False
         self.stop_recording_event.set()
 
@@ -99,7 +102,7 @@ class TranscriptionService:
             stream.stop_stream()
             stream.close()
         except Exception as e:
-            print(f"Error recording audio: {e}")
+            logger.error("Error recording audio: %s", e)
             self._recording_error = str(e)
         finally:
             p.terminate()
@@ -135,15 +138,15 @@ class TranscriptionService:
             wf.close()
 
             # Transcribe
-            print(f"Transcribing {len(frames)} chunks...")
+            logger.info("Transcribing %d chunks...", len(frames))
             segments, info = self.model.transcribe(temp_filename, beam_size=5)
 
             text = " ".join([segment.text for segment in segments]).strip()
-            print(f"Transcription result: {text}")
+            logger.info("Transcription result: %s", text)
             return text
 
         except Exception as e:
-            print(f"Transcription error: {e}")
+            logger.error("Transcription error: %s", e)
             return f"Error: {str(e)}"
         finally:
             # Cleanup temp file

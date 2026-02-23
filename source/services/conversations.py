@@ -7,7 +7,10 @@ Handles conversation lifecycle, persistence, and query processing.
 import os
 import copy
 import json
+import logging
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from ..core.state import app_state
 from ..core.request_context import RequestContext
@@ -83,7 +86,7 @@ class ConversationService:
         # Reset terminal service state (ends session mode, clears tracking)
         terminal_service.reset()
 
-        print("Context cleared: screenshots and chat history reset")
+        logger.info("Context cleared: screenshots and chat history reset")
         await broadcast_message(
             "context_cleared", "Context cleared. Ready for new conversation."
         )
@@ -124,8 +127,9 @@ class ConversationService:
                 msg["images"] = thumbnails
             app_state.chat_history.append(entry)
 
-        print(
-            f"Resumed conversation {conversation_id} with {len(app_state.chat_history)} messages"
+        logger.info(
+            "Resumed conversation %s with %d messages",
+            conversation_id, len(app_state.chat_history)
         )
 
         # Notify client
@@ -160,8 +164,9 @@ class ConversationService:
         from ..ss import take_fullscreen_screenshot, create_thumbnail
 
         current_model = app_state.selected_model
-        print(
-            f"[DEBUG] submit_query: model={current_model}, capture_mode={capture_mode}, screenshots={len(app_state.screenshot_list)}"
+        logger.debug(
+            "submit_query: model=%s, capture_mode=%s, screenshots=%d",
+            current_model, capture_mode, len(app_state.screenshot_list)
         )
 
         # ── Request lifecycle: create context ─────────────────────────
@@ -215,7 +220,7 @@ class ConversationService:
             if app_state.conversation_id is None:
                 title = user_query[:50] + ("..." if len(user_query) > 50 else "")
                 app_state.conversation_id = db.start_new_conversation(title)
-                print(f"Created conversation: {app_state.conversation_id}")
+                logger.info("Created conversation: %s", app_state.conversation_id)
 
                 # Flush any terminal events that were queued before conversation existed
                 from .terminal import terminal_service
@@ -230,7 +235,7 @@ class ConversationService:
                         app_state.conversation_id, input_tokens, output_tokens
                     )
                 except Exception as e:
-                    print(f"Error saving token usage: {e}")
+                    logger.error("Error saving token usage: %s", e)
 
             # Broadcast tool calls summary
             if tool_calls:
@@ -265,8 +270,8 @@ class ConversationService:
                 }
                 app_state.chat_history.append(assistant_msg)
                 response_text = fallback_text
-                print(
-                    f"[WARN] Empty response after tool calls — saved fallback message"
+                logger.warning(
+                    "Empty response after tool calls — saved fallback message"
                 )
 
             # Persist to database
@@ -316,7 +321,7 @@ class ConversationService:
                 json.dumps({"conversation_id": app_state.conversation_id}),
             )
 
-            print(f"Chat history: {len(app_state.chat_history)} messages")
+            logger.debug("Chat history: %d messages", len(app_state.chat_history))
 
             # Clear screenshots after embedding in history
             if image_paths and len(app_state.screenshot_list) > 0:
@@ -339,7 +344,7 @@ class ConversationService:
 
             if terminal_service.session_mode:
                 await terminal_service.end_session()
-                print("[Terminal] Session mode auto-expired after turn")
+                logger.info("Session mode auto-expired after turn")
 
     @staticmethod
     def get_conversations(limit: int = 50, offset: int = 0) -> List[Dict]:

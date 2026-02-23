@@ -8,7 +8,10 @@ between tool execution rounds.
 
 import json
 import asyncio
+import logging
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from ollama import chat
 
@@ -56,8 +59,9 @@ def retrieve_relevant_tools(user_query: str) -> list:
     )
 
     if len(filtered_tools) < len(all_tools):
-        print(
-            f"[MCP] Retriever selected {len(filtered_tools)}/{len(all_tools)} tools for query: '{user_query[:30]}...'"
+        logger.debug(
+            "Retriever selected %d/%d tools for query: '%s...'",
+            len(filtered_tools), len(all_tools), user_query[:30]
         )
 
     return filtered_tools
@@ -67,7 +71,7 @@ def _truncate_result(result: str) -> str:
     """Truncate excessively large tool results."""
     result_str = str(result)
     if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-        print(f"[MCP] Truncating large tool output ({len(result_str)} chars)")
+        logger.warning("Truncating large tool output (%d chars)", len(result_str))
         return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
     return result_str
 
@@ -129,7 +133,7 @@ async def handle_mcp_tool_calls(
             think=False,
         )
     except Exception as e:
-        print(f"[MCP] Error in tool detection call: {e}")
+        logger.error("Error in tool detection call: %s", e)
         return messages, tool_calls_made, None
 
     # No tool calls detected — fall through to normal streaming (with thinking)
@@ -157,12 +161,12 @@ async def handle_mcp_tool_calls(
         rounds += 1
 
         if app_state.stop_streaming:
-            print("[MCP] Stop requested — aborting tool call loop")
+            logger.info("Stop requested — aborting tool call loop")
             break
 
         ctx = app_state.current_request
         if ctx and ctx.cancelled:
-            print("[MCP] Request cancelled — aborting tool call loop")
+            logger.info("Request cancelled — aborting tool call loop")
             break
 
         # Broadcast text from this round
@@ -195,7 +199,7 @@ async def handle_mcp_tool_calls(
             fn_args = tc["args"]
             server_name = mcp_manager.get_tool_server_name(fn_name)
 
-            print(f"[MCP] Tool call: {fn_name}({fn_args}) from server '{server_name}'")
+            logger.info("Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name)
 
             if app_state.stop_streaming:
                 break
@@ -222,7 +226,7 @@ async def handle_mcp_tool_calls(
                     result = f"Error executing tool: {e}"
 
             result_str = _truncate_result(str(result))
-            print(f"[MCP] Tool result:\n{result_str[:100]}...")
+            logger.debug("Tool result:\n%s...", result_str[:100])
 
             await broadcast_message(
                 "tool_call",
@@ -282,8 +286,8 @@ async def handle_mcp_tool_calls(
     if tool_calls_made:
         await broadcast_message("response_complete", "")
         await broadcast_message("token_usage", json.dumps(total_token_stats))
-        print(
-            f"[MCP] Tool loop complete after {rounds} round(s) with interleaved streaming"
+        logger.info(
+            "Tool loop complete after %d round(s) with interleaved streaming", rounds
         )
         return messages, tool_calls_made, {
             "content": "".join(all_accumulated_text),
@@ -360,7 +364,7 @@ async def _stream_tool_follow_up(
                         getattr(chunk, "eval_count", 0) or 0
                     )
         except Exception as e:
-            print(f"[MCP] Error in streaming follow-up: {e}")
+            logger.error("Error in streaming follow-up: %s", e)
             safe_schedule(
                 broadcast_message("error", f"Tool follow-up streaming error: {e}")
             )

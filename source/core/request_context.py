@@ -21,7 +21,10 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Any, Callable, Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 class RequestContext:
@@ -65,7 +68,7 @@ class RequestContext:
             try:
                 cb()
             except Exception as e:
-                print(f"[RequestContext] Cancel callback failed: {e}")
+                logger.debug("Cancel callback failed: %s", e)
 
     def mark_done(self) -> None:
         """Mark the request as completed (success or failure)."""

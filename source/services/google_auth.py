@@ -19,6 +19,7 @@ https://developers.google.com/identity/protocols/oauth2/native-app).
 
 import os
 import json
+import logging
 import threading
 from typing import Optional
 
@@ -27,6 +28,9 @@ from ..config import (
     GOOGLE_TOKEN_FILE,
     GOOGLE_SCOPES,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class GoogleAuthService:
@@ -70,7 +74,7 @@ class GoogleAuthService:
                     if email:
                         status["email"] = email
         except Exception as e:
-            print(f"[Google Auth] Error checking status: {e}")
+            logger.error("Error checking status: %s", e)
 
         return status
 
@@ -92,11 +96,11 @@ class GoogleAuthService:
                 with open(GOOGLE_TOKEN_FILE, "w") as token_file:
                     token_file.write(creds.to_json())
             except Exception as e:
-                print(f"[Google Auth] Token refresh failed: {e}")
+                logger.error("Token refresh failed: %s", e)
                 # Remove invalid token to avoid a "connected but broken" state
                 try:
                     os.remove(GOOGLE_TOKEN_FILE)
-                    print("[Google Auth] Removed expired/invalid token file")
+                    logger.info("Removed expired/invalid token file")
                 except OSError:
                     pass
                 return None
@@ -155,7 +159,7 @@ class GoogleAuthService:
             with open(GOOGLE_TOKEN_FILE, "w") as token_file:
                 token_file.write(creds.to_json())
 
-            print("[Google Auth] OAuth flow completed successfully")
+            logger.info("OAuth flow completed successfully")
 
             # Get email
             email = self._get_email_from_token(creds)
@@ -164,7 +168,7 @@ class GoogleAuthService:
 
         except Exception as e:
             error_msg = str(e)
-            print(f"[Google Auth] OAuth flow failed: {error_msg}")
+            logger.error("OAuth flow failed: %s", error_msg)
             return {"success": False, "error": error_msg}
 
         finally:
@@ -193,17 +197,17 @@ class GoogleAuthService:
                             },
                         )
                 except Exception as e:
-                    print(f"[Google Auth] Token revocation failed (non-fatal): {e}")
+                    logger.warning("Token revocation failed (non-fatal): %s", e)
 
                 # Delete token file regardless
                 os.remove(GOOGLE_TOKEN_FILE)
-                print("[Google Auth] Token removed")
+                logger.info("Token removed")
 
             return {"success": True}
 
         except Exception as e:
             error_msg = str(e)
-            print(f"[Google Auth] Disconnect failed: {error_msg}")
+            logger.error("Disconnect failed: %s", error_msg)
             return {"success": False, "error": error_msg}
 
 

@@ -5,7 +5,10 @@ Handles bidirectional WebSocket connections with the frontend.
 """
 import json
 import traceback
+import logging
 from fastapi import WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger(__name__)
 
 from ..core.connection import manager
 from ..core.state import app_state
@@ -94,14 +97,13 @@ async def websocket_endpoint(websocket: WebSocket):
             try:
                 data = json.loads(raw)
             except Exception:
-                print(f"[WS] Ignoring malformed message: {raw[:200]}")
+                logger.warning("Ignoring malformed message: %s", raw[:200])
                 continue
             
             try:
                 await handler.handle(data)
             except Exception as e:
-                print(f"[WS] Error handling message type '{data.get('type')}': {e}")
-                traceback.print_exc()
+                logger.error("Error handling message type '%s': %s", data.get('type'), e, exc_info=True)
                 try:
                     await websocket.send_text(json.dumps({
                         "type": "error",

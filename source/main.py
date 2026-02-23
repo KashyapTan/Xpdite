@@ -48,7 +48,15 @@ import socket
 import threading
 import time
 import asyncio
+import logging
 import uvicorn
+
+# Configure logging before anything else
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 # Import configuration (relative to source package)
 from .config import SCREENSHOT_FOLDER, DEFAULT_PORT, MAX_PORT_ATTEMPTS
@@ -87,9 +95,9 @@ def start_server():
     """Start FastAPI server in the current thread & store its loop."""
     try:
         port = find_available_port()
-        print(f"Starting server on port {port}")
+        logger.info("Starting server on port %d", port)
     except RuntimeError as e:
-        print(f"Error finding available port: {e}")
+        logger.error("Error finding available port: %s", e)
         return
 
     loop = asyncio.new_event_loop()
@@ -101,7 +109,7 @@ def start_server():
     try:
         loop.run_until_complete(init_mcp_servers())
     except Exception as e:
-        print(f"[MCP] Failed to initialize servers (non-fatal): {e}")
+        logger.warning("MCP server initialization failed (non-fatal): %s", e)
 
     # Conditionally start Google MCP servers if user has connected their account
     try:
@@ -112,11 +120,11 @@ def start_server():
             from .mcp_integration.manager import mcp_manager
 
             loop.run_until_complete(mcp_manager.connect_google_servers())
-            print("[Google] Gmail & Calendar MCP servers started (token found)")
+            logger.info("Gmail & Calendar MCP servers started (token found)")
         else:
-            print("[Google] No Google token found — skipping Gmail & Calendar servers")
+            logger.info("No Google token found — skipping Gmail & Calendar servers")
     except Exception as e:
-        print(f"[Google] Failed to start Google servers (non-fatal): {e}")
+        logger.warning("Failed to start Google servers (non-fatal): %s", e)
 
     # Start uvicorn server
     config = uvicorn.Config(
@@ -140,9 +148,9 @@ def start_screenshot_service():
             daemon=True,
         )
         app_state.service_thread.start()
-        print("Screenshot service started")
+        logger.info("Screenshot service started")
     except Exception as e:
-        print(f"Error starting screenshot service: {e}")
+        logger.error("Error starting screenshot service: %s", e)
 
 
 def start_transcription_service():
@@ -152,9 +160,9 @@ def start_transcription_service():
 
         # Initialize the service (model loads lazily on first use)
         app_state.transcription_service = TranscriptionService()
-        print("Transcription service initialized")
+        logger.info("Transcription service initialized")
     except Exception as e:
-        print(f"Error starting transcription service: {e}")
+        logger.error("Error starting transcription service: %s", e)
 
 
 def main():
@@ -162,11 +170,10 @@ def main():
     # Register signal handlers for graceful shutdown
     register_signal_handlers()
 
-    print("=" * 50)
-    print("  XPDITE - AI Desktop Assistant")
-    print("=" * 50)
-    print()
-    print("Starting services...")
+    logger.info("=" * 50)
+    logger.info("  XPDITE - AI Desktop Assistant")
+    logger.info("=" * 50)
+    logger.info("Starting services...")
 
     # Start FastAPI server in background thread
     app_state.server_thread = threading.Thread(target=start_server, daemon=True)
@@ -185,7 +192,7 @@ def main():
     poll_thread = threading.Thread(target=_poll_server_ready, daemon=True)
     poll_thread.start()
     if not server_ready.wait(timeout=5.0):
-        print("Warning: server loop not initialized; continuing anyway.")
+        logger.warning("Server loop not initialized; continuing anyway.")
 
     port = app_state.server_loop_holder.get("port", DEFAULT_PORT)
 
@@ -198,22 +205,18 @@ def main():
     # Start transcription service
     start_transcription_service()
 
-    print()
-    print(f"Server running at: http://localhost:{port}")
-    print(f"WebSocket endpoint: ws://localhost:{port}/ws")
-    print()
-    print("Hotkeys:")
-    print("  Alt + . - Take region screenshot")
-    print()
-    print("Press Ctrl+C to stop")
-    print("=" * 50)
+    logger.info("Server running at: http://localhost:%d", port)
+    logger.info("WebSocket endpoint: ws://localhost:%d/ws", port)
+    logger.info("Hotkeys: Alt + . - Take region screenshot")
+    logger.info("Press Ctrl+C to stop")
+    logger.info("=" * 50)
 
     # Keep main thread alive
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        logger.info("Shutting down...")
         from .core.lifecycle import cleanup_resources
 
         cleanup_resources()

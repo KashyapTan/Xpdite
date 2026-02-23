@@ -8,7 +8,10 @@ import os
 import threading
 import asyncio
 import json
+import logging
 from typing import List, Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from ollama import chat
 
@@ -85,7 +88,7 @@ async def stream_ollama_chat(
             ) = await handle_mcp_tool_calls(messages.copy(), image_paths)
             messages = updated_messages
         except Exception as e:
-            print(f"[MCP] Tool calling phase failed: {e}")
+            logger.error("Tool calling phase failed: %s", e)
 
     # If the MCP phase streamed a response (interleaved text + tools),
     # everything was already broadcast to the user. Return directly.
@@ -232,7 +235,7 @@ async def stream_ollama_chat(
             elif not accumulated and not app_state.stop_streaming:
                 # Fallback to non-streaming call if streaming yielded nothing
                 try:
-                    print("[Ollama] Stream empty. Attempting non-streamed fallback...")
+                    logger.warning("Stream empty. Attempting non-streamed fallback...")
                     fallback_kwargs: Dict[str, Any] = {
                         "model": app_state.selected_model,
                         "messages": messages,
@@ -284,7 +287,7 @@ async def stream_ollama_chat(
 
         except Exception as e:
             error_msg = f"LLM API error ({type(e).__name__})"
-            print(f"[Ollama] Full error: {e}")
+            logger.error("Ollama error: %s", e)
             safe_schedule(broadcast_message("error", error_msg))
             if not done_future.done():
                 loop.call_soon_threadsafe(

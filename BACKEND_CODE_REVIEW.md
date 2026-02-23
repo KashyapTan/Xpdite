@@ -691,7 +691,7 @@ async def run_in_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
 ## Phase 5 — Cross-Cutting Improvements (not bugs, but important for open-source quality)
 
 ### X1. Replace all `print()` with structured logging
-- [ ] **Scope:** All files under `source/`
+- [x] **Scope:** All files under `source/`
 - **Problem:** The entire backend uses `print()` statements. For an open-source project, `logging.getLogger(__name__)` with proper log levels is essential.
 - **Fix:** At the top of each module:
 ```python
@@ -713,12 +713,12 @@ Replace `print(f"...")` with `logger.info(...)`, `logger.debug(...)`, `logger.wa
   - `50 * 1024` → `TERMINAL_MAX_OUTPUT_SIZE`
 
 ### X4. Deduplicate cloud provider code (~400+ lines removable)
-- [ ] **File:** `source/llm/cloud_provider.py` (954 lines)
+- [x] **File:** `source/llm/cloud_provider.py` (954→734 lines, ~236 lines removed)
 - **Problem:** The three `_build_*_messages` functions (~250 lines), three tool execution blocks (~120 lines), and broadcasting patterns are near-identical across providers.
-- **Fix:** Extract:
-  1. `_build_messages(history, query, images, format_image_fn)` — generic message builder
-  2. `_execute_and_broadcast_tool(...)` — shared tool execution + broadcast
-  3. Each provider supplies only SDK-specific details (client factory, stream iterator, tool-call extractor).
+- **Fix:** Extracted:
+  1. `_build_chat_messages(history, query, images, format_image_fn)` — generic message builder used by Anthropic + OpenAI (Gemini stays separate due to `types.Content` SDK objects)
+  2. `_format_anthropic_image()` / `_format_openai_image()` — thin image-format callbacks
+  3. `_execute_and_broadcast_tool(fn_name, fn_args, provider_label, ...)` — shared tool execution + broadcast + recording (was ~30 identical lines × 3 providers)
 
 ### X5. Deduplicate `cloud_tool_handlers.py` similarly
 - [ ] **File:** `source/mcp_integration/cloud_tool_handlers.py`
@@ -731,13 +731,15 @@ Replace `print(f"...")` with `logger.info(...)`, `logger.debug(...)`, `logger.wa
 - **Fix:** Extract a `_row_to_skill(row) -> dict` helper.
 
 ### X7. Add basic test coverage
-- [ ] **Priority test targets:**
-  1. `DatabaseManager` CRUD operations
-  2. `route_chat` dispatch logic
-  3. `RequestContext` cancellation lifecycle
-  4. `_normalize_command` in approval_history
-  5. `ToolRetriever` similarity scoring
-  6. `_decode_safe_escapes` (after H10 fix)
+- [x] **67 tests across 6 test files — all passing.**
+- **Test files created in `tests/`:**
+  1. `test_database.py` — DatabaseManager CRUD: conversations, messages, tokens, settings, search (14 tests)
+  2. `test_router.py` — `parse_provider` parsing + `route_chat` dispatch to Ollama/cloud/missing-key (9 tests)
+  3. `test_request_context.py` — `RequestContext` cancellation lifecycle, idempotency, callback semantics (10 tests)
+  4. `test_approval_history.py` — `_normalize_command` for prefixed/non-prefixed/edge cases (15 tests)
+  5. `test_retriever.py` — `ToolRetriever` similarity scoring, threshold, top-k, always-on (6 tests)
+  6. `test_terminal.py` — `_decode_safe_escapes` for `\n`, `\r`, `\t`, `\\`, hex escapes, edge cases (13 tests)
+- **Infrastructure:** `pytest + pytest-asyncio` added to dev dependencies, `asyncio_mode = "auto"` configured in `pyproject.toml`.
 
 ### X8. CORS `allow_origins=["*"]` should be documented
 - [x] **File:** `source/app.py`
@@ -786,33 +788,32 @@ Replace `print(f"...")` with `logger.info(...)`, `logger.debug(...)`, `logger.wa
 
 ## Remaining Work
 
+**All deferred backend issues are now resolved.**
+
+| Issue | Status |
+|-------|--------|
+| **X1** — Replace `print()` with structured logging | ✅ Complete — All 18 source files migrated. `logging.basicConfig()` in `main.py`, `logger = logging.getLogger(__name__)` in each module. Only `main_old.py` (dead legacy file) retains `print()`. |
+| **X4** — Deduplicate cloud provider code | ✅ Complete — `cloud_provider.py` reduced from 970→734 lines (~236 lines removed). Extracted `_build_chat_messages()` (shared Anthropic/OpenAI message builder), `_format_anthropic_image()`/`_format_openai_image()`, and `_execute_and_broadcast_tool()` (shared tool execution + broadcast). |
+| **X5** — Deduplicate `cloud_tool_handlers.py` | N/A — File was deleted (confirmed unused). |
+| **X7** — Add basic test coverage | ✅ Complete — 67 tests across 6 files, all passing. Covers: DatabaseManager CRUD, `parse_provider`/`route_chat`, `RequestContext` cancellation, `_normalize_command`, `ToolRetriever` scoring, `_decode_safe_escapes`. |
+
 ### Frontend Changes Required
 
 These backend fixes changed wire-format or behaviour and need matching frontend updates:
 
-1. **M2 — Double JSON serialization removed** (Priority: High)
+1. **M2 — Double JSON serialization removed** ✅ Complete
    - **What changed:** `source/api/handlers.py` — the inner `json.dumps()` was removed from 4 WebSocket responses: `conversations_list`, `conversation_messages`, `skills_list`, `skill_content`.
-   - **What the frontend needs:** Stop calling `JSON.parse()` on `message.content` for these 4 message types — `content` is now a native object, not a JSON string. Search the frontend for `JSON.parse` calls on these message types.
-   - **Files to check:** `src/ui/services/api.ts` or wherever WebSocket message handlers live.
+   - **Fixed:** `src/ui/pages/ChatHistory.tsx` — removed `JSON.parse(data.content)` on `conversations_list` and `conversation_deleted` handlers. The page was stuck on "Loading conversations..." because the double-parse threw an error before `setLoading(false)` could run.
+   - **Already safe:** `src/ui/pages/App.tsx` uses the defensive pattern `typeof data.content === 'string' ? JSON.parse(data.content) : data.content` for all its handlers — no changes needed there.
+   - **Verified:** No other active pages/components do a raw `JSON.parse(data.content)` on `conversation_messages`, `skills_list`, or `skill_content`. These message types are only handled in `App.tsx` (already guarded). `App_old.tsx` has 3 unguarded calls but is a dead legacy file — not in use.
 
-2. **L11 — Ollama failure now returns error key**
-   - **What changed:** `source/api/http.py` — when Ollama is unreachable, the response is now `{"models": [], "error": "Ollama is not running..."}` instead of just `{"models": []}`.
-   - **What the frontend needs:** Optionally display the error message to the user. No breakage — the `models` array is still present.
+2. **L11 — Ollama failure now returns error key** ✅ Complete
+   - **What changed (backend):** `source/api/http.py` — when Ollama is unreachable, the response is now `{"models": [], "error": "Ollama is not running..."}` instead of just `{"models": []}`.
+   - **What changed (frontend):** `src/ui/services/api.ts` — `getOllamaModels()` now returns `{ models, error? }` instead of a plain array. `src/ui/components/settings/SettingsModels.tsx` — displays the Ollama error string as a warning under the Ollama section header when present.
 
 3. **M3 — Terminal ask level returns 400 on invalid input**
    - **What changed:** `source/api/terminal.py` — invalid `level` values now raise HTTP 400 instead of returning `{"error": ...}` with status 200.
    - **What the frontend needs:** Handle 400 status from the `PUT /api/terminal/ask-level` endpoint (likely already handled if using standard fetch error handling).
-
-### Deferred Backend Issues (Intentionally Skipped)
-
-| Issue | Reason |
-|-------|--------|
-| **X1** — Replace `print()` with structured logging | Large scope, low risk. Best done as a dedicated pass. |
-| **X4** — Deduplicate cloud provider code (~400 lines) | Refactor-only. Risky without test coverage. Save for after X7. |
-| **X5** — Deduplicate `cloud_tool_handlers.py` | File was deleted (confirmed unused). Issue is now N/A. |
-| **X7** — Add basic test coverage | Requires test infrastructure setup. Separate workstream. |
-
-### Notes
 
 - `source/mcp_integration/cloud_tool_handlers.py` was **deleted** — it was entirely unused dead code. Issues M8 (partial), M9, M11 (partial), M12, M13 (partial) that referenced it were resolved by deletion.
 - A **critical bug** was found and fixed in `source/core/state.py` that was NOT in this review: several `__init__` assignments (`selected_model`, `chat_history`, `conversation_id`, service references) were placed after a `return` statement inside the `stream_lock` property, making them unreachable. These were moved into `__init__` before the property definitions.

@@ -135,14 +135,22 @@ export const api = {
    * Fetch all Ollama models installed on the user's machine.
    * Calls GET /api/models/ollama on the Python backend,
    * which in turn calls `ollama.list()`.
+   *
+   * Returns { models, error? } — when Ollama is unreachable the backend
+   * sends `{ models: [], error: "..." }` so we surface the message.
    */
-  async getOllamaModels(): Promise<{ name: string; size: number; parameter_size: string; quantization: string }[]> {
+  async getOllamaModels(): Promise<{ models: { name: string; size: number; parameter_size: string; quantization: string }[]; error?: string }> {
     try {
       const response = await fetch(`${HTTP_BASE_URL}/api/models/ollama`);
       if (!response.ok) throw new Error('Failed to fetch Ollama models');
-      return response.json();
+      const data = await response.json();
+      // Backend may return { models: [...], error: "..." } or just an array
+      if (Array.isArray(data)) {
+        return { models: data };
+      }
+      return { models: data.models ?? [], error: data.error };
     } catch {
-      return [];
+      return { models: [] };
     }
   },
 
