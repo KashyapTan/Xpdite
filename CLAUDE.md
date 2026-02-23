@@ -85,6 +85,51 @@ uv run <file_name>                            # run python files for testing
 
 ---
 
+## Testing
+
+### When to add tests
+Always add tests when:
+- Adding a new public method or utility function to `source/` (pure logic, algorithms, data transforms)
+- Adding a new DB method to `DatabaseManager`
+- Fixing a bug — add a test that would have caught it before writing the fix
+
+Skip tests for thin glue code (WS handlers that just call a service, REST endpoints that just delegate, UI components).
+
+### How to run tests
+```bash
+uv run python -m pytest tests/ -v          # run all tests
+uv run python -m pytest tests/test_foo.py  # run a single file
+```
+
+### Test file conventions
+- One file per source module: `source/services/terminal.py` → `tests/test_terminal.py`
+- Class-per-concern inside the file: `class TestMyFeature:`
+- Fixtures live in `tests/conftest.py`; keep them minimal — one `db_manager` fixture backed by `tmp_path` covers all DB tests
+
+### The circular-import problem
+`source/` has a circular import involving `mcp_integration.handlers` → `services` → `llm` → `mcp_integration.handlers`. This would crash pytest collection.
+
+**`tests/conftest.py` breaks the cycle** by pre-stubbing `source.mcp_integration.handlers` in `sys.modules` before any test file is collected. The stub is a `MagicMock` with `handle_mcp_tool_calls` set. The real package (`source.mcp_integration`) and all other real submodules (`retriever`, `manager`, etc.) remain importable normally.
+
+**Rule**: if you add a test file that imports a module deep in the source tree and pytest crashes at collection with an `ImportError`, check whether the module chains into the circular path. If yes, add a targeted `sys.modules.setdefault(...)` stub in `conftest.py` for the specific module causing the problem — **never** stub entire packages.
+
+### DB tests — fixture pattern
+```python
+from unittest.mock import patch
+import pytest
+
+@pytest.fixture()
+def db_manager(tmp_path):
+    db_path = str(tmp_path / "test.db")
+    with patch("source.database.DatabaseManager._seed_default_skills"):
+        from source.database import DatabaseManager
+        mgr = DatabaseManager(database_path=db_path)
+    return mgr
+```
+The fixture is already defined in `conftest.py` — just accept `db_manager` as a parameter.
+
+---
+
 ## Sub-file Index
 
 | File | Contents |

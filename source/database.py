@@ -154,6 +154,95 @@ class DatabaseManager:
             )
         """)
 
+        # --- FTS5 VIRTUAL TABLES FOR SEARCH ---
+        # unicode61 tokenizer handles accented characters and case-folding.
+        # NOTE: `content_blocks` (tool call args/results) is intentionally NOT
+        # indexed here — it's large, JSON-encoded, and noisy for search purposes.
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS conversations_fts USING fts5(
+                conversation_id UNINDEXED,
+                title,
+                tokenize="unicode61"
+            )
+        """)
+
+        cursor.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+                conversation_id UNINDEXED,
+                content,
+                tokenize="unicode61"
+            )
+        """)
+
+        # --- TRIGGERS TO KEEP FTS TABLES IN SYNC ---
+        # Using rowid linking so FTS deletes/updates are O(1) by rowid.
+
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS conversations_fts_ai
+            AFTER INSERT ON conversations BEGIN
+                INSERT INTO conversations_fts(rowid, conversation_id, title)
+                VALUES (new.rowid, new.id, new.title);
+            END
+        """)
+
+        # Only fires when title changes — NOT on every updated_at write.
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS conversations_fts_au
+            AFTER UPDATE OF title ON conversations BEGIN
+                DELETE FROM conversations_fts WHERE rowid = old.rowid;
+                INSERT INTO conversations_fts(rowid, conversation_id, title)
+                VALUES (new.rowid, new.id, new.title);
+            END
+        """)
+
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS conversations_fts_ad
+            AFTER DELETE ON conversations BEGIN
+                DELETE FROM conversations_fts WHERE rowid = old.rowid;
+            END
+        """)
+
+        # messages.num_messages is INTEGER PRIMARY KEY AUTOINCREMENT == rowid.
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS messages_fts_ai
+            AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts(rowid, conversation_id, content)
+                VALUES (new.rowid, new.conversation_id, new.content);
+            END
+        """)
+
+        cursor.execute("""
+            CREATE TRIGGER IF NOT EXISTS messages_fts_ad
+            AFTER DELETE ON messages BEGIN
+                DELETE FROM messages_fts WHERE rowid = old.rowid;
+            END
+        """)
+
+        # --- ONE-TIME BACKFILL FOR EXISTING DATABASES ---
+        # Triggers only fire on future writes, so populate each FTS table
+        # independently the first time this schema version is applied.
+        # NULL titles/content are harmless in FTS5 (no tokens indexed) and
+        # are included so the backfill stays consistent with the triggers.
+        cursor.execute("SELECT COUNT(*) FROM conversations_fts")
+        fts_conv_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM conversations")
+        conv_count = cursor.fetchone()[0]
+        if fts_conv_count == 0 and conv_count > 0:
+            cursor.execute("""
+                INSERT INTO conversations_fts(rowid, conversation_id, title)
+                SELECT rowid, id, title FROM conversations
+            """)
+
+        cursor.execute("SELECT COUNT(*) FROM messages_fts")
+        fts_msg_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM messages")
+        msg_count = cursor.fetchone()[0]
+        if fts_msg_count == 0 and msg_count > 0:
+            cursor.execute("""
+                INSERT INTO messages_fts(rowid, conversation_id, content)
+                SELECT rowid, conversation_id, content FROM messages
+            """)
+
         connection.commit()
         connection.close()
 
@@ -340,24 +429,64 @@ class DatabaseManager:
         connection.commit()
         connection.close()
 
+    @staticmethod
+    def _fts5_phrase(term: str) -> str:
+        """
+        Wrap a raw user string in FTS5 double-quote phrase syntax.
+        Internal double-quotes are escaped by doubling them ("" → literal ").
+        This prevents FTS5 operator injection (*, -, AND/OR, parentheses, etc.)
+        for arbitrary user input.
+        """
+        return '"' + term.replace('"', '""') + '"'
+
     def search_conversations(self, search_term: str, limit: int = 20) -> List[Dict]:
         """
-        Search conversations by title or by message content.
-        Returns matching conversation metadata.
+        Search conversations by title or message content using FTS5.
+
+        FTS5 path: subquery on conversations_fts (by rowid) UNION subquery on
+        messages_fts (by conversation_id column), joined back to conversations
+        for metadata. Falls back to LIKE if the FTS tables are unavailable or
+        the query is malformed.
         """
+        if not search_term or not search_term.strip():
+            return []
+
         connection = self._get_connection()
         cursor = connection.cursor()
 
-        # Search in conversation titles AND message content
-        cursor.execute(
-            """SELECT DISTINCT c.id, c.title, c.updated_at 
-               FROM conversations c
-               LEFT JOIN messages m ON c.id = m.conversation_id
-               WHERE c.title LIKE ? OR m.content LIKE ?
-               ORDER BY c.updated_at DESC
-               LIMIT ?""",
-            (f"%{search_term}%", f"%{search_term}%", limit),
-        )
+        fts_query = self._fts5_phrase(search_term)
+
+        try:
+            cursor.execute(
+                """SELECT DISTINCT c.id, c.title, c.updated_at
+                   FROM conversations c
+                   WHERE c.rowid IN (
+                       SELECT rowid FROM conversations_fts WHERE conversations_fts MATCH ?
+                   )
+                   OR c.id IN (
+                       SELECT conversation_id FROM messages_fts WHERE messages_fts MATCH ?
+                   )
+                   ORDER BY c.updated_at DESC
+                   LIMIT ?""",
+                (fts_query, fts_query, limit),
+            )
+        except sqlite3.OperationalError:
+            # Fallback: FTS tables missing or query is malformed.
+            # Escape LIKE wildcards so % and _ in the term are treated literally.
+            escaped = (
+                search_term.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_")
+            )
+            cursor.execute(
+                """SELECT DISTINCT c.id, c.title, c.updated_at
+                   FROM conversations c
+                   LEFT JOIN messages m ON c.id = m.conversation_id
+                   WHERE c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\'
+                   ORDER BY c.updated_at DESC
+                   LIMIT ?""",
+                (f"%{escaped}%", f"%{escaped}%", limit),
+            )
 
         rows = cursor.fetchall()
         connection.close()
