@@ -178,9 +178,9 @@ class ToolRetriever:
             else "all-MiniLM-L6-v2"
         )
 
-        logger.info("Embedding %d tools...", len(tools))
         self._tool_embeddings.clear()
-        cache_updated = False
+        cache_hits = 0
+        cache_misses = 0
 
         for tool in tools:
             func = tool.get("function", {})
@@ -196,6 +196,7 @@ class ToolRetriever:
             # Use cached embedding if available
             if key in self._embedding_cache:
                 self._tool_embeddings[name] = self._embedding_cache[key]
+                cache_hits += 1
                 continue
 
             # Cache miss — compute and store
@@ -203,12 +204,16 @@ class ToolRetriever:
             if embedding is not None:
                 self._tool_embeddings[name] = embedding
                 self._embedding_cache[key] = embedding
-                cache_updated = True
+                cache_misses += 1
 
-        if cache_updated:
+        if cache_misses > 0:
             self._save_cache()
-
-        logger.info("Tool embedding complete.")
+            logger.info(
+                "Embedded %d new tool(s), %d from cache (%d total).",
+                cache_misses, cache_hits, cache_hits + cache_misses,
+            )
+        else:
+            logger.info("All %d tool embeddings loaded from cache.", cache_hits)
 
     def retrieve_tools(
         self, query: str, all_tools: List[Dict], always_on: List[str], top_k: int = 5
