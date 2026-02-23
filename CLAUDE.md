@@ -62,6 +62,7 @@ uv run <file_name>                            # run python files for testing
 - Never call `sqlite3.connect()` outside `DatabaseManager._get_connection()` — and always pass `check_same_thread=False`
 - New DB columns: ADD via `ALTER TABLE ... ADD COLUMN` inside a `try/except OperationalError` migration block in `_init_db()`, not by changing the CREATE TABLE statement
 - Never put business logic in `api/` layer — it belongs in `services/`
+- Tests are in the tests folder
 
 **Never do**
 - Don't add a new WS message type on the Python side without updating the client → server or server → client reference in `source/api/websocket.py`'s docstring

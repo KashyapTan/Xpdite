@@ -1,10 +1,12 @@
 import os
 import sys
+import hashlib
 import logging
 import numpy as np
 import ollama
 from typing import List, Dict, Any, Optional
 
+# logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 try:
@@ -14,6 +16,11 @@ try:
 except ImportError:
     SENTENCE_TRANSFORMERS_AVAILABLE = False
     SentenceTransformer = None
+
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_CACHE_DIR = os.path.join(_PROJECT_ROOT, "user_data", "cache")
+_CACHE_FILE = os.path.join(_CACHE_DIR, "tool_embeddings.npz")
 
 
 class ToolRetriever:
@@ -29,7 +36,9 @@ class ToolRetriever:
         self._embedding_model_type = "unknown"  # "ollama" or "sentence-transformers"
         self._st_model = None
         self._ollama_model_name = "nomic-embed-text"
+        self._embedding_cache: Dict[str, np.ndarray] = {}
         self._check_embedding_backend()
+        self._load_cache()
 
     def _check_embedding_backend(self):
         """Determine which embedding backend to use."""
@@ -125,24 +134,55 @@ class ToolRetriever:
 
         return None
 
+    # ------------------------------------------------------------------
+    # Disk cache helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cache_key(model_name: str, text: str) -> str:
+        """Deterministic key: hash of model name + description text."""
+        return hashlib.sha256(f"{model_name}|{text}".encode()).hexdigest()
+
+    def _load_cache(self) -> None:
+        """Load cached embeddings from disk (if file exists)."""
+        try:
+            if os.path.exists(_CACHE_FILE):
+                data = np.load(_CACHE_FILE, allow_pickle=False)
+                self._embedding_cache = {k: data[k] for k in data.files}
+                logger.info("Loaded %d cached embeddings.", len(self._embedding_cache))
+        except Exception as e:
+            logger.warning("Could not load embedding cache: %s", e)
+            self._embedding_cache = {}
+
+    def _save_cache(self) -> None:
+        """Persist current cache dict to disk."""
+        try:
+            os.makedirs(_CACHE_DIR, exist_ok=True)
+            np.savez(_CACHE_FILE, **self._embedding_cache)
+        except Exception as e:
+            logger.warning("Could not save embedding cache: %s", e)
+
     def embed_tools(self, tools: List[Dict]):
         """
         Embed tool descriptions and cache them.
 
-        Args:
-            tools: List of tool definitions (Ollama format or similar dicts
-                   with 'function' -> 'name', 'description')
+        Uses a disk cache keyed on (model_name, description_text) so only
+        new or changed tools require an API call on subsequent launches.
         """
         if self._embedding_model_type == "none":
             return
 
+        model_name = (
+            self._ollama_model_name
+            if self._embedding_model_type == "ollama"
+            else "all-MiniLM-L6-v2"
+        )
+
         logger.info("Embedding %d tools...", len(tools))
         self._tool_embeddings.clear()
+        cache_updated = False
 
         for tool in tools:
-            # Handle different tool formats if necessary, assuming Ollama format for now
-            # {'type': 'function', 'function': {'name': '...', 'description': '...'}}
-
             func = tool.get("function", {})
             name = func.get("name")
             description = func.get("description", "")
@@ -150,11 +190,23 @@ class ToolRetriever:
             if not name:
                 continue
 
-            # Combine name and description for better semantic match
             text_to_embed = f"{name}: {description}"
+            key = self._cache_key(model_name, text_to_embed)
+
+            # Use cached embedding if available
+            if key in self._embedding_cache:
+                self._tool_embeddings[name] = self._embedding_cache[key]
+                continue
+
+            # Cache miss — compute and store
             embedding = self._get_embedding(text_to_embed)
             if embedding is not None:
                 self._tool_embeddings[name] = embedding
+                self._embedding_cache[key] = embedding
+                cache_updated = True
+
+        if cache_updated:
+            self._save_cache()
 
         logger.info("Tool embedding complete.")
 

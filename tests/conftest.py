@@ -1,5 +1,5 @@
 """Shared pytest fixtures."""
-
+# uv run python -m pytest tests/ -v
 import os
 import sys
 import tempfile
