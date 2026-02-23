@@ -70,7 +70,7 @@ src/ui/
     App.tsx                   # Main chat interface
     ChatHistory.tsx           # Conversation browser with search
     Settings.tsx              # Tabbed settings interface
-    MeetingAlbum.tsx          # Screenshot gallery view
+    MeetingAlbum.tsx          # Place holder for meeting recorder transcriptions
   components/
     Layout.tsx                # App shell with mini mode transitions
     TitleBar.tsx              # Custom draggable title bar
