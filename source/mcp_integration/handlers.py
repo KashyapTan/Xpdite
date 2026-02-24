@@ -9,11 +9,12 @@ between tool execution rounds.
 import json
 import asyncio
 import logging
+import threading
 from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from ollama import chat
+from ollama import chat, Client as OllamaClient
 
 from .manager import mcp_manager
 from .retriever import retriever
@@ -82,7 +83,9 @@ def _truncate_result(result: str) -> str:
 
 
 async def handle_mcp_tool_calls(
-    messages: List[Dict[str, Any]], image_paths: List[str]
+    messages: List[Dict[str, Any]],
+    image_paths: List[str],
+    client: Optional[OllamaClient] = None,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Check for and execute MCP tool calls from Ollama with interleaved streaming.
@@ -118,6 +121,9 @@ async def handle_mcp_tool_calls(
     if not filtered_tools:
         return messages, tool_calls_made, None
 
+    # Use provided client or fall back to module-level chat function
+    chat_fn = client.chat if client else chat
+
     if app_state.stop_streaming:
         return messages, tool_calls_made, None
 
@@ -126,7 +132,7 @@ async def handle_mcp_tool_calls(
     # Images are included so the model can analyze image content
     try:
         response = await run_in_thread(
-            chat,
+            chat_fn,
             model=app_state.selected_model,
             messages=messages,
             tools=filtered_tools,
@@ -266,7 +272,7 @@ async def handle_mcp_tool_calls(
         # ── Stream follow-up call ─────────────────────────────────
         # Text is broadcast to the user in real-time inside this call
         current_content, current_tool_calls, round_stats = (
-            await _stream_tool_follow_up(messages, filtered_tools, loop)
+            await _stream_tool_follow_up(messages, filtered_tools, loop, client=client)
         )
 
         total_token_stats["prompt_eval_count"] += round_stats.get(
@@ -303,6 +309,7 @@ async def _stream_tool_follow_up(
     messages: List[Dict[str, Any]],
     tools: list,
     loop: asyncio.AbstractEventLoop,
+    client: Optional[OllamaClient] = None,
 ) -> tuple[str, List[Dict[str, Any]], Dict[str, int]]:
     """
     Stream a follow-up Ollama call during the tool loop.
@@ -317,6 +324,30 @@ async def _stream_tool_follow_up(
     tool_calls_found: List[Dict[str, Any]] = []
     token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
 
+    # Use provided client or fall back to module-level chat function
+    chat_fn = client.chat if client else chat
+
+    # ── Cancellation support (same pattern as ollama_provider) ───
+    stop_event = threading.Event()
+    generator_ref: list = [None]
+
+    ctx = app_state.current_request
+
+    def _abort():
+        # Note: the outer _abort in stream_ollama_chat also closes the shared
+        # client._client transport, which will interrupt this connection too.
+        # This callback is belt-and-suspenders for generator cleanup.
+        stop_event.set()
+        gen = generator_ref[0]
+        if gen is not None and hasattr(gen, 'close'):
+            try:
+                gen.close()  # type: ignore[union-attr]
+            except Exception:
+                pass
+
+    if ctx is not None:
+        ctx.on_cancel(_abort)
+
     def safe_schedule(coro):
         try:
             asyncio.run_coroutine_threadsafe(coro, loop)
@@ -325,15 +356,17 @@ async def _stream_tool_follow_up(
 
     def _do_stream():
         try:
-            generator = chat(
+            generator = chat_fn(
                 model=app_state.selected_model,
                 messages=messages,
                 tools=tools,
                 stream=True,
                 think=False,
             )
+            generator_ref[0] = generator
+
             for chunk in generator:
-                if app_state.stop_streaming:
+                if stop_event.is_set() or app_state.stop_streaming:
                     break
 
                 # Extract and broadcast text tokens
@@ -364,10 +397,19 @@ async def _stream_tool_follow_up(
                         getattr(chunk, "eval_count", 0) or 0
                     )
         except Exception as e:
-            logger.error("Error in streaming follow-up: %s", e)
-            safe_schedule(
-                broadcast_message("error", f"Tool follow-up streaming error: {e}")
-            )
+            if not stop_event.is_set():
+                logger.error("Error in streaming follow-up: %s", e)
+                safe_schedule(
+                    broadcast_message("error", f"Tool follow-up streaming error: {e}")
+                )
+        finally:
+            gen = generator_ref[0]
+            if gen is not None and hasattr(gen, 'close'):
+                try:
+                    gen.close()  # type: ignore[union-attr]
+                except Exception:
+                    pass
+                generator_ref[0] = None
 
     await run_in_thread(_do_stream)
     return "".join(text_chunks), tool_calls_found, token_stats

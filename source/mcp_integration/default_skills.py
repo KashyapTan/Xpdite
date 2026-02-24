@@ -17,7 +17,7 @@ DEFAULT_SKILLS = [
 
 **Workflow:**
 - Always call get_environment first on a new task to understand the OS, shell, and available tools.
-- For multi-step tasks (3+ commands), call request_session_mode before starting — not mid-way through.
+- Then ALWAYS call request_session_mode.
 - Prefer find_files over run_command for file discovery — it never requires approval.
 - After a command fails, read the full output and exit code before retrying.
 

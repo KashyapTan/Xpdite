@@ -214,6 +214,103 @@ class ConversationService:
 
             # Check if request was cancelled during route_chat
             if ctx.cancelled:
+                # ── Save interrupted conversation ────────────────────
+                # Even though the response was cut short, persist the
+                # user message and whatever partial output was generated
+                # so the conversation is not lost.
+                if app_state.conversation_id is None:
+                    title = user_query[:50] + ("..." if len(user_query) > 50 else "")
+                    app_state.conversation_id = db.start_new_conversation(title)
+                    logger.info("Created conversation (interrupted): %s", app_state.conversation_id)
+
+                    from .terminal import terminal_service
+                    terminal_service.flush_pending_events(app_state.conversation_id)
+
+                # Persist any token usage that was collected
+                input_tokens = token_stats.get("prompt_eval_count", 0)
+                output_tokens = token_stats.get("eval_count", 0)
+                if input_tokens or output_tokens:
+                    try:
+                        db.add_token_usage(
+                            app_state.conversation_id, input_tokens, output_tokens
+                        )
+                    except Exception as e:
+                        logger.error("Error saving token usage (interrupted): %s", e)
+
+                # Broadcast tool calls summary if any ran before interruption
+                if tool_calls:
+                    await broadcast_message("tool_calls_summary", json.dumps(tool_calls))
+
+                # Build interrupted assistant text
+                if response_text.strip():
+                    interrupted_text = response_text + "\n\n[Response interrupted]"
+                else:
+                    interrupted_text = "[Response interrupted]"
+
+                # Build content_blocks (mirrors the normal path)
+                content_blocks_data: List[Dict] | None = None
+                if interleaved_blocks_from_llm:
+                    content_blocks_data = [
+                        {k: v for k, v in block.items() if k != "result"}
+                        for block in interleaved_blocks_from_llm
+                    ]
+                elif tool_calls:
+                    content_blocks_data = [
+                        {
+                            "type": "tool_call",
+                            "name": tc["name"],
+                            "args": tc.get("args", {}),
+                            "server": tc.get("server", ""),
+                        }
+                        for tc in tool_calls
+                    ]
+                    if response_text.strip():
+                        content_blocks_data.append(
+                            {"type": "text", "content": response_text}
+                        )
+
+                # Add to in-memory chat history (memory first, then DB)
+                user_msg: Dict[str, Any] = {"role": "user", "content": user_query}
+                if image_paths:
+                    user_msg["images"] = image_paths
+                app_state.chat_history.append(user_msg)
+
+                assistant_msg: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": interrupted_text,
+                    "model": current_model,
+                }
+                if tool_calls:
+                    assistant_msg["tool_calls"] = tool_calls
+                app_state.chat_history.append(assistant_msg)
+
+                # Persist to database
+                db.add_message(
+                    app_state.conversation_id,
+                    "user",
+                    user_query,
+                    image_paths if image_paths else None,
+                )
+                db.add_message(
+                    app_state.conversation_id,
+                    "assistant",
+                    interrupted_text,
+                    model=current_model,
+                    content_blocks=content_blocks_data,
+                )
+
+                await broadcast_message(
+                    "conversation_saved",
+                    json.dumps({"conversation_id": app_state.conversation_id}),
+                )
+
+                logger.info("Saved interrupted conversation: %s", app_state.conversation_id)
+
+                # Clear screenshots (they were embedded in the user message)
+                if image_paths and len(app_state.screenshot_list) > 0:
+                    app_state.screenshot_list.clear()
+                    await broadcast_message("screenshots_cleared", "")
+
                 return
 
             # 1. Create conversation entry if it doesn't exist

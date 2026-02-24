@@ -209,6 +209,25 @@ export function useChatState(): UseChatStateReturn {
     const completedToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
     const completedContentBlocks = contentBlocksRef.current.length > 0 ? [...contentBlocksRef.current] : undefined;
 
+    // Guard: if nothing was generated (cancelled before any output, or duplicate
+    // response_complete), just reset state without adding empty messages.
+    if (!completedResponse && !completedThinking && !completedToolCalls) {
+      setResponse('');
+      setThinking('');
+      setCurrentQuery('');
+      setIsThinking(false);
+      setToolCalls([]);
+      setContentBlocks([]);
+      currentQueryRef.current = '';
+      responseRef.current = '';
+      thinkingRef.current = '';
+      toolCallsRef.current = [];
+      contentBlocksRef.current = [];
+      setStatus('Ready');
+      setCanSubmit(true);
+      return;
+    }
+
     // Add to chat history
     setChatHistory(prev => [
       ...prev,

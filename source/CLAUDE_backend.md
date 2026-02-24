@@ -58,6 +58,7 @@ source/
 - **`ss.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups.
 - **`services/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text.
 - **`services/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket.
+- **`services/conversations.py`** — `submit_query` orchestrates the full turn. When the user cancels mid-generation (`ctx.cancelled`), the method still persists the user prompt and partial assistant response (with `[Response interrupted]` appended) to the DB, creates a conversation record if needed, and broadcasts `conversation_saved`. Tool calls and content blocks executed before cancellation are preserved in the saved message.
 - **`services/terminal.py`** — terminal events that fire before the first assistant message (no `conversation_id` yet) are queued via `queue_terminal_event()` and flushed to the DB after the conversation record is created via `flush_pending_events(conversation_id)`. Without this, tool calls on message 1 would be orphaned.
 
 ---

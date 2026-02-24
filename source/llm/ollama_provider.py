@@ -13,7 +13,7 @@ from typing import List, Dict, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from ollama import chat
+from ollama import chat, Client as OllamaClient
 
 from ..core.connection import broadcast_message
 from ..core.state import app_state
@@ -75,8 +75,61 @@ async def stream_ollama_chat(
     if system_prompt:
         messages.insert(0, {"role": "system", "content": system_prompt})
 
-    # ── MCP Tool Calling Phase (runs on the event loop, not in producer thread) ──
+    # ── Per-request Ollama client + cancellation ─────────────────
+    # Creating our own Client lets us close its HTTP transport on cancel,
+    # which immediately severs the connection to Ollama and stops GPU work
+    # — even when the producer thread is blocked waiting for the first chunk.
+    client = OllamaClient()
+
+    stop_event = threading.Event()
+    done_future_ref: list = [None]        # set once we enter streaming phase
+    generator_ref: list = [None]          # mutable slot for cancel callback
+    cancel_cleanup_done = threading.Event()
     tool_calls_list: List[Dict[str, Any]] = []
+
+    ctx = app_state.current_request
+    _empty_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+
+    def _abort():
+        """Cancel callback — fires on event loop thread when user clicks Stop.
+
+        Closes the HTTP client to immediately abort any blocked request
+        (both non-streaming MCP detection and streaming token generation).
+        """
+        stop_event.set()
+        # Sever the HTTP transport — blocked recv() errors out instantly
+        try:
+            client._client.close()  # type: ignore[union-attr]
+        except Exception:
+            pass
+        cancel_cleanup_done.set()
+        # Close streaming generator if it exists
+        gen = generator_ref[0]
+        if gen is not None:
+            try:
+                gen.close()
+            except Exception:
+                pass
+        # Resolve the streaming future if we got that far
+        df = done_future_ref[0]
+        if df is not None and not df.done():
+            try:
+                df.set_result(("", _empty_stats.copy(), tool_calls_list, None))
+            except asyncio.InvalidStateError:
+                pass
+        # Notify frontend immediately
+        try:
+            loop.call_soon_threadsafe(
+                asyncio.create_task,
+                broadcast_message("response_complete", ""),
+            )
+        except RuntimeError:
+            pass
+
+    if ctx is not None:
+        ctx.on_cancel(_abort)
+
+    # ── MCP Tool Calling Phase (runs on the event loop, not in producer thread) ──
     pre_computed_response: Optional[Dict[str, Any]] = None
 
     if mcp_manager.has_tools():
@@ -85,10 +138,18 @@ async def stream_ollama_chat(
                 updated_messages,
                 tool_calls_list,
                 pre_computed_response,
-            ) = await handle_mcp_tool_calls(messages.copy(), image_paths)
+            ) = await handle_mcp_tool_calls(messages.copy(), image_paths, client=client)
             messages = updated_messages
         except Exception as e:
+            if stop_event.is_set():
+                # Cancelled during MCP — _abort already notified frontend
+                logger.info("MCP phase interrupted by user cancel")
+                return ("", _empty_stats.copy(), tool_calls_list, None)
             logger.error("Tool calling phase failed: %s", e)
+
+    # If cancelled during MCP (detection completed but stop was requested)
+    if stop_event.is_set():
+        return ("", _empty_stats.copy(), tool_calls_list, None)
 
     # If the MCP phase streamed a response (interleaved text + tools),
     # everything was already broadcast to the user. Return directly.
@@ -116,15 +177,29 @@ async def stream_ollama_chat(
     # delivery and thinking support. Don't pass tools — they're handled above.
     should_pass_tools = False
 
-    done_future: asyncio.Future[tuple[str, Dict[str, int], List[Dict[str, Any]]]] = (
-        loop.create_future()
-    )
+    done_future: asyncio.Future[
+        tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]
+    ] = loop.create_future()
+    done_future_ref[0] = done_future
 
     def safe_schedule(coro):
         try:
             loop.call_soon_threadsafe(asyncio.create_task, coro)
         except RuntimeError:
             pass
+
+    def _safe_resolve_future(result):
+        """Resolve done_future exactly once (event-loop thread)."""
+        if not done_future.done():
+            try:
+                done_future.set_result(result)
+            except asyncio.InvalidStateError:
+                pass
+
+    # If already cancelled (e.g. during MCP phase), resolve immediately
+    if stop_event.is_set():
+        done_future.set_result(("", _empty_stats.copy(), tool_calls_list, None))
+        return await done_future
 
     def producer():
         accumulated: list[str] = []
@@ -145,11 +220,16 @@ async def stream_ollama_chat(
             if should_pass_tools:
                 chat_kwargs["tools"] = mcp_manager.get_ollama_tools()
 
-            generator = chat(**chat_kwargs)
+            generator = client.chat(**chat_kwargs)
+            generator_ref[0] = generator
+
+            # Check cancellation before entering the blocking iteration loop
+            if stop_event.is_set() or app_state.stop_streaming:
+                return
 
             for idx, chunk in enumerate(generator):
                 # Check if stop was requested
-                if app_state.stop_streaming:
+                if stop_event.is_set() or app_state.stop_streaming:
                     break
 
                 content_token, thinking_token = _extract_token(chunk)
@@ -232,7 +312,7 @@ async def stream_ollama_chat(
                 safe_schedule(
                     broadcast_message("response_chunk", final_message_content)
                 )
-            elif not accumulated and not app_state.stop_streaming:
+            elif not accumulated and not stop_event.is_set() and not app_state.stop_streaming:
                 # Fallback to non-streaming call if streaming yielded nothing
                 try:
                     logger.warning("Stream empty. Attempting non-streamed fallback...")
@@ -243,7 +323,7 @@ async def stream_ollama_chat(
                         "options": {"num_ctx": OLLAMA_CTX_SIZE},
                     }
                     # Don't pass tools in fallback - just get a text response
-                    fallback = chat(**fallback_kwargs)
+                    fallback = client.chat(**fallback_kwargs)
 
                     content_str = ""
                     if hasattr(fallback, "message"):
@@ -279,21 +359,42 @@ async def stream_ollama_chat(
                         )
                     )
 
-            safe_schedule(broadcast_message("response_complete", ""))
+            if not cancel_cleanup_done.is_set():
+                safe_schedule(broadcast_message("response_complete", ""))
             loop.call_soon_threadsafe(
-                done_future.set_result,
+                _safe_resolve_future,
                 ("".join(accumulated), collected_token_stats, tool_calls_list, None),
             )
 
         except Exception as e:
-            error_msg = f"LLM API error ({type(e).__name__})"
-            logger.error("Ollama error: %s", e)
-            safe_schedule(broadcast_message("error", error_msg))
+            if stop_event.is_set():
+                logger.info("Ollama stream aborted by user cancel")
+            else:
+                error_msg = f"LLM API error ({type(e).__name__})"
+                logger.error("Ollama error: %s", e)
+                safe_schedule(broadcast_message("error", error_msg))
+            if not cancel_cleanup_done.is_set():
+                safe_schedule(broadcast_message("response_complete", ""))
             if not done_future.done():
                 loop.call_soon_threadsafe(
-                    done_future.set_result,
-                    ("", collected_token_stats, tool_calls_list, None),
+                    _safe_resolve_future,
+                    ("".join(accumulated) if accumulated else "", collected_token_stats, tool_calls_list, None),
                 )
+
+        finally:
+            # Always close the generator and the per-request client
+            # to sever HTTP connections so Ollama stops GPU work.
+            gen = generator_ref[0]
+            if gen is not None:
+                try:
+                    gen.close()
+                except Exception:
+                    pass
+                generator_ref[0] = None
+            try:
+                client._client.close()  # type: ignore[union-attr]
+            except Exception:
+                pass
 
     threading.Thread(target=producer, daemon=True).start()
     return await done_future

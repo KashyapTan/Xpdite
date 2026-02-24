@@ -7,12 +7,16 @@ Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a 
 ## Workflow
 
 ### Sub-agents for Information Gathering
-Spawn a sub-agent for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
+Spawn as many sub-agent as you need for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
 
 ### Sub-agents for Self-Review
-After finishing any coding task, spawn a fresh sub-agent to review the work before considering it done. The reviewer should:
-Read the CODE_REVIEW_GUIDE.md and follow that file for its review.
+After finishing any coding task, spawn a fresh sub-agent(s) to review the work before considering it done. The reviewer should:
+The reviewer sub-agent(s) should read and follow the CODE_REVIEW_GUIDE.md for its review.
 Incorporate the reviewer's findings before responding. The goal is production-ready output on the first pass.
+
+### Post review action
+Read the testing section and see if new tests are needed based on the changes made.
+Once you finish your entire task, make sure to update any relevalant claude and documentation files with the changes made. 
 
 ### Read more than less
 Its always better to read more than less. Make sure to read all relevant and connected files so you have a comprehensive understanding of how things work before writing new code.
