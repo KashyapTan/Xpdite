@@ -12,28 +12,33 @@ src/
 │   └── utils.ts         # isDev() — checks NODE_ENV === 'development'
 │
 └── ui/
-    ├── main.tsx         # React entry, router, WebSocketProvider wrap
+    ├── main.tsx         # React entry, router, TabProvider + WebSocketProvider wrap
     ├── pages/
-    │   ├── App.tsx      # Main chat page (query input, response, tool calls, screenshots)
+    │   ├── App.tsx      # Main chat page (query input, response, tool calls, screenshots, tab routing)
     │   ├── Settings.tsx # Settings page (models, API keys, MCP, skills, system prompt)
     │   ├── ChatHistory.tsx  # Past conversations browser
     │   └── MeetingAlbum.tsx # Screenshot/meeting album view
     ├── components/
     │   ├── Layout.tsx        # Shell with nav, page routing slot
     │   ├── TitleBar.tsx      # Draggable custom title bar + mini-mode toggle
+    │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), create/close/switch
     │   ├── WebSocketContext.tsx  # Global WS context (window hide for screenshots, ready state)
     │   ├── chat/             # Message rendering (thinking blocks, tool calls, markdown)
     │   ├── input/            # Query input bar, model selector, capture mode controls
     │   ├── settings/         # Settings panel sub-components (per-tab components)
     │   └── terminal/         # Terminal approval UI, PTY output renderer
+    ├── contexts/
+    │   └── TabContext.tsx    # TabProvider: tab list, active tab, switch/close/create with callbacks
     ├── hooks/
     │   ├── useWebSocket.ts   # Low-level WS hook: connect, reconnect, send
-    │   ├── useChatState.ts   # All in-flight and history chat state
-    │   ├── useScreenshots.ts # Screenshot list management
-    │   └── useTokenUsage.ts  # Token count display
+    │   ├── useChatState.ts   # All in-flight and history chat state (+ getSnapshot/restoreSnapshot)
+    │   ├── useScreenshots.ts # Screenshot list management (+ getSnapshot/restoreSnapshot)
+    │   └── useTokenUsage.ts  # Token count display (+ getSnapshot/restoreSnapshot)
     ├── services/
     │   └── api.ts        # createApiService (WS helpers) + singleton `api` (HTTP helpers)
-    ├── types/            # Shared TypeScript interfaces (ChatMessage, ToolCall, ContentBlock…)
+    ├── types/            # Shared TypeScript interfaces (ChatMessage, ToolCall, ContentBlock, TabSnapshot…)
+    ├── CSS/
+    │   └── TabBar.css    # Dark theme tab bar styles (28px height)
     └── utils/            # Misc helpers
 ```
 
@@ -46,6 +51,22 @@ src/
 - **`WebSocketContext`** — a second, always-open WS connection used for global concerns only: hiding the window during screenshot capture (`isHidden`), tracking `canSubmit`, and propagating `ready`. Kept separate so screenshot hiding works even when the chat page is unmounted.
 
 Never call `ws.send()` directly. Use `createApiService(send)` to build a typed message sender.
+
+### Multi-Tab Architecture
+- **TabContext** (`contexts/TabContext.tsx`) manages the list of open tabs, active tab ID, and per-tab queue items. Pure UI state — no chat/token/screenshot data here.
+- **State registry** (`App.tsx → tabRegistryRef`) is a `Map<string, TabSnapshot>` held in a ref. On tab switch, the outgoing tab's state is snapshot'ed (via hook `.getSnapshot()` methods) and the incoming tab's state is restored (via `.restoreSnapshot()`).
+- **Three-tier WS routing** in `App.tsx`:
+  1. **Global messages** (e.g., `screenshot_added`, `ready`) — applied regardless of tab
+  2. **Active tab messages** — routed to live React state via hooks
+  3. **Background tab messages** — applied to the registry via `applyToBackgroundTab()` mini-reducer
+- **`wsSend`** helper auto-injects `tab_id: activeTabIdRef.current` as a default, but explicit `tab_id` fields in the message object override it (spread order: `{ tab_id: default, ...msg }`).
+- **Tab lifecycle**: `TabBar` creates/closes tabs; `TitleBar`'s "new chat" button creates a new tab. Max 10 tabs. Tabs are ephemeral (don't survive app restart). TabBar is hidden when only 1 tab is open.
+- **Cleanup**: When a tab is closed, `registerOnTabClosed` fires a callback that deletes the tab's snapshot from `tabRegistryRef`.
+
+### Stale closure prevention — ref-based WS handler
+The WebSocket `useEffect` in `App.tsx` has an empty dependency array (`[]`) to avoid reconnecting on every render. To prevent stale closures in `onmessage`, a `handleWebSocketMessageRef` is kept in sync with the latest `handleWebSocketMessage` on every render. The effect's `onmessage` calls `handleWebSocketMessageRef.current(data)` instead of the stale closure.
+
+Similarly, `handleSubmit` displays the user query optimistically via `chatState.startQuery(queryText)` when `canSubmit` is true (non-queued). A guard in `handleActiveTabMessage`'s `query` case prevents the WS echo from calling `startQuery` again (which would reset in-flight tool calls / content blocks).
 
 ### Streaming state — state + refs dual pattern
 `useChatState` holds every field in both `useState` (drives re-renders) **and** `useRef` (for mutation inside async callbacks mid-stream). The refs are the source of truth during a stream; state is synced from them. On response complete, refs are read to commit to `chatHistory`, then both are reset.

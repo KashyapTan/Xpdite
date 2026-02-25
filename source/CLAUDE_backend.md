@@ -43,6 +43,10 @@ source/
     ├── conversations.py # ConversationService.submit_query — orchestrates the full turn
     ├── screenshots.py   # ScreenshotHandler — manage screenshot lifecycle + state
     ├── terminal.py      # TerminalService — PTY sessions, approval queue, history
+    ├── query_queue.py   # Per-tab async message queue (QueuedQuery, ConversationQueue)
+    ├── tab_manager.py   # TabState, TabSession, TabManager — per-tab state isolation
+    ├── ollama_global_queue.py  # Global Ollama request serializer (GPU is single-tenant)
+    ├── tab_manager_instance.py # Lazy singleton + _process_fn bridging queue → ConversationService
     ├── google_auth.py   # OAuth2 flow for Gmail/Calendar
     └── transcription.py # Audio transcription (if enabled)
 ```
@@ -52,7 +56,12 @@ source/
 ## Key File Responsibilities
 
 - **`state.py`** is a simple mutable singleton — it is *not* thread-safe for writes. All mutations happen inside the asyncio event loop from WS handler tasks, which is sufficient. `server_loop_holder["loop"]` stores the running asyncio event loop so that non-async threads (screenshot, lifecycle) can schedule coroutines via `asyncio.run_coroutine_threadsafe()`. Required because the Windows Proactor loop is not accessible from threads spawned outside uvicorn.
-- **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop.
+- **`connection.py`** — `wrap_with_tab_ctx(tab_id, coro)` wraps a coroutine so that `_current_tab_id` is set for its duration. Used whenever scheduling a broadcast from a background thread (e.g., Ollama streaming) back to the event loop via `call_soon_threadsafe` or `run_coroutine_threadsafe`. Without this wrapper, new tasks lose the contextvar and broadcast messages arrive without `tab_id`, routing them to the wrong tab on the frontend. See the "Why `wrap_with_tab_ctx`" architecture decision below.
+- **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop. Provides `ContextVar`-based `set_current_request()` / `is_current_request_cancelled()` for per-task cancellation, and `set_current_model()` / `get_current_model()` so the LLM layer picks up the correct model per-request without reading the global `app_state.selected_model`.
+- **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully.
+- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs.
+- **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`.
+- **`tab_manager_instance.py`** — lazy singleton initialized in `app.py` startup. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing Ollama models through the global queue.
 - **`thread_pool.py → run_in_thread`** is mandatory for anything that calls a synchronous SDK (e.g., `ollama.chat`, `ollama.list`). Calling them directly will block uvicorn's single event loop.
 - **`terminal_executor.py`** handles terminal tools *inline* — it never calls the MCP subprocess for terminal actions. The `terminal` MCP server's `server.py` exists only as a schema/description source.
 - **`ss.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups.
@@ -83,21 +92,24 @@ source/
 
 | `type` | Key fields | Handler |
 |---|---|---|
-| `submit_query` | `content`, `capture_mode`, `model` | `_handle_submit_query` |
-| `clear_context` | — | `_handle_clear_context` |
+| `submit_query` | `content`, `capture_mode`, `model`, `tab_id` | `_handle_submit_query` |
+| `clear_context` | `tab_id` | `_handle_clear_context` |
 | `remove_screenshot` | `id` | `_handle_remove_screenshot` |
 | `set_capture_mode` | `mode` (`fullscreen`/`precision`/`none`) | `_handle_set_capture_mode` |
-| `stop_streaming` | — | `_handle_stop_streaming` |
+| `stop_streaming` | `tab_id` | `_handle_stop_streaming` |
 | `get_conversations` | `limit`, `offset` | `_handle_get_conversations` |
 | `load_conversation` | `conversation_id` | `_handle_load_conversation` |
 | `delete_conversation` | `conversation_id` | `_handle_delete_conversation` |
 | `search_conversations` | `query` | `_handle_search_conversations` |
-| `resume_conversation` | `conversation_id` | `_handle_resume_conversation` |
+| `resume_conversation` | `conversation_id`, `tab_id` | `_handle_resume_conversation` |
 | `stop_recording` | — | `_handle_stop_recording` |
 | `terminal_approval_response` | `request_id`, `approved`, `remember` | `_handle_terminal_approval_response` |
 | `terminal_session_response` | `approved` | `_handle_terminal_session_response` |
 | `terminal_stop_session` | — | `_handle_terminal_stop_session` |
 | `terminal_set_ask_level` | `level` (`always`/`on-miss`/`off`) | `_handle_terminal_set_ask_level` |
+| `tab_created` | `tab_id` | `_handle_tab_created` |
+| `tab_closed` | `tab_id` | `_handle_tab_closed` |
+| `cancel_queued_item` | `tab_id`, `item_id` | `_handle_cancel_queued_item` |
 
 ### Server → Client
 
@@ -121,7 +133,11 @@ source/
 | `terminal_output` | PTY output chunks during execution |
 | `terminal_command_complete` | Command finished (`exit_code`, `duration_ms`) |
 | `terminal_running_notice` | Broadcast 10s after command starts if still running |
+| `queue_updated` | Queue items changed for a tab (`tab_id`, `items`) |
+| `ollama_queue_status` | Ollama global queue position broadcast |
 | `error` | Any unhandled exception |
+
+**Note:** All server→client messages include a `tab_id` field stamped automatically by `broadcast_message()` via the `_current_tab_id` contextvar.
 
 ---
 
@@ -172,11 +188,20 @@ Terminal commands need approval UI, PTY streaming, cancellation, and DB persiste
 **Why is `RequestContext` separate from `AppState`?**
 `AppState` is long-lived (entire process). `RequestContext` is per-request and garbage-collected after each turn. This makes cancellation scoping clean — cancelling the current request doesn't corrupt state for the next one.
 
+**Why use ContextVars for request context and model instead of passing them as parameters?**
+The call chain from `submit_query` → `route_chat` → `stream_ollama_chat` → `handle_mcp_tool_calls` is deep, and some callsites (MCP tool detection, Ollama fallback) would need threading the model/request through 4+ function signatures. ContextVars provide implicit per-async-task scoping without changing any function signatures, and they naturally isolate concurrent tabs running on the same event loop.
+
+**Why does the Ollama global queue exist?**
+Ollama's GPU can only serve one inference request at a time. Without serialization, concurrent tabs sending Ollama requests would cause GPU contention, timeouts, and garbled responses. Cloud providers (Anthropic, OpenAI, Gemini) don't have this limitation and run concurrently.
+
 **Why does `McpToolManager.connect_server` use a background asyncio Task?**
 `anyio` (used by `mcp`) requires that `stdio_client` and `ClientSession` context managers enter and exit on the *same* task. Using a dedicated background task per server avoids the "cancel scope in a different task" RuntimeError when disconnecting from an HTTP handler.
 
 **Why does `ollama_provider.py` use a producer thread + asyncio queue?**
 Ollama's Python SDK returns a synchronous generator that blocks the calling thread. It runs in a `daemon=True` background thread and pushes chunks into an `asyncio.Queue`. The event loop consumes the queue without blocking. Calling `ollama.chat(stream=True)` directly on the event loop thread would freeze uvicorn.
+
+**Why `wrap_with_tab_ctx` in `connection.py`?**
+Python's `contextvars.ContextVar` propagates automatically through `await` chains on the same task, but does NOT carry over when scheduling a new task from a background thread via `loop.call_soon_threadsafe(asyncio.create_task, coro)` or `asyncio.run_coroutine_threadsafe(coro, loop)`. The new task gets the event loop's root context, which has no `_current_tab_id`. Since Ollama streaming runs in a background thread and schedules `broadcast_message()` back to the loop, every chunk would arrive without a `tab_id`. `wrap_with_tab_ctx` captures the tab_id in the async scope *before* entering the thread, and applies it as a thin wrapper around every coroutine scheduled back. Cloud providers (Anthropic, OpenAI, Gemini) are fully async and don't cross a thread boundary, so they don't need this wrapper.
 
 **Why does terminal approval live in the FastAPI process, not the MCP subprocess?**
 `asyncio.Event` can't cross process boundaries. The MCP terminal server runs as a stdio child process, so blocking until the user confirms must happen in the parent FastAPI process where the WebSocket connection lives.

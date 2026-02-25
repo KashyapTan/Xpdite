@@ -67,6 +67,7 @@ uv run <file_name>                            # run python files for testing
 - New DB columns: ADD via `ALTER TABLE ... ADD COLUMN` inside a `try/except OperationalError` migration block in `_init_db()`, not by changing the CREATE TABLE statement
 - Never put business logic in `api/` layer — it belongs in `services/`
 - Tests are in the tests folder
+- **Multi-tab state isolation**: per-request state (model, cancellation) uses ContextVars (`set_current_request()`, `set_current_model()`). Never read `app_state.stop_streaming` or `app_state.selected_model` from LLM/MCP layers — use `is_current_request_cancelled()` and `get_current_model()` instead.
 
 **Never do**
 - Don't add a new WS message type on the Python side without updating the client → server or server → client reference in `source/api/websocket.py`'s docstring
