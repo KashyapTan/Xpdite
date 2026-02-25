@@ -19,7 +19,7 @@ from typing import List, Dict, Any, Optional, Set
 logger = logging.getLogger(__name__)
 
 from ..core.connection import broadcast_message
-from ..core.state import app_state
+from ..core.request_context import is_current_request_cancelled
 from ..config import MAX_MCP_TOOL_ROUNDS, ANTHROPIC_THINKING_KEYWORDS, GEMINI_THINKING_KEYWORDS, CLOUD_MAX_TOKENS
 
 
@@ -249,18 +249,14 @@ async def _stream_anthropic(
     try:
         client = anthropic.AsyncAnthropic(api_key=api_key, timeout=300.0)
 
-        if app_state.stop_streaming:
+        if is_current_request_cancelled():
             return "", total_token_stats, tool_calls_list, None
 
         rounds = 0
         has_more = True
 
         while has_more and rounds < MAX_MCP_TOOL_ROUNDS:
-            if app_state.stop_streaming:
-                break
-
-            ctx = app_state.current_request
-            if ctx and ctx.cancelled:
+            if is_current_request_cancelled():
                 break
 
             rounds += 1
@@ -286,7 +282,7 @@ async def _stream_anthropic(
 
             async with client.messages.stream(**create_kwargs) as stream:
                 async for event in stream:
-                    if app_state.stop_streaming:
+                    if is_current_request_cancelled():
                         break
 
                     if event.type == "content_block_start":
@@ -336,7 +332,7 @@ async def _stream_anthropic(
                     fn_args = getattr(block, "input", None) or {}
                     tool_use_id = getattr(block, "id", "")
 
-                    if app_state.stop_streaming:
+                    if is_current_request_cancelled():
                         break
 
                     result_str = await _execute_and_broadcast_tool(
@@ -433,18 +429,14 @@ async def _stream_openai(
     try:
         client = AsyncOpenAI(api_key=api_key, timeout=300.0)
 
-        if app_state.stop_streaming:
+        if is_current_request_cancelled():
             return "", total_token_stats, tool_calls_list, None
 
         rounds = 0
         has_more = True
 
         while has_more and rounds < MAX_MCP_TOOL_ROUNDS:
-            if app_state.stop_streaming:
-                break
-
-            ctx = app_state.current_request
-            if ctx and ctx.cancelled:
+            if is_current_request_cancelled():
                 break
 
             rounds += 1
@@ -465,7 +457,7 @@ async def _stream_openai(
             finish_reason = None
 
             async for chunk in stream:
-                if app_state.stop_streaming:
+                if is_current_request_cancelled():
                     break
 
                 # Usage-only final chunk
@@ -538,7 +530,7 @@ async def _stream_openai(
                     except json.JSONDecodeError:
                         fn_args = {}
 
-                    if app_state.stop_streaming:
+                    if is_current_request_cancelled():
                         break
 
                     result_str = await _execute_and_broadcast_tool(
@@ -694,7 +686,7 @@ async def _stream_gemini(
     try:
         client = genai.Client(api_key=api_key)
 
-        if app_state.stop_streaming:
+        if is_current_request_cancelled():
             return "", total_token_stats, tool_calls_list, None
 
         config_kwargs: Dict[str, Any] = {}
@@ -719,11 +711,7 @@ async def _stream_gemini(
         has_more = True
 
         while has_more and rounds < MAX_MCP_TOOL_ROUNDS:
-            if app_state.stop_streaming:
-                break
-
-            ctx = app_state.current_request
-            if ctx and ctx.cancelled:
+            if is_current_request_cancelled():
                 break
 
             rounds += 1
@@ -739,7 +727,7 @@ async def _stream_gemini(
                 contents=contents,
                 config=generate_config,
             ):
-                if app_state.stop_streaming:
+                if is_current_request_cancelled():
                     break
 
                 if not chunk.candidates:
@@ -813,7 +801,7 @@ async def _stream_gemini(
                     fn_name = fc_data["name"]
                     fn_args = fc_data["args"]
 
-                    if app_state.stop_streaming:
+                    if is_current_request_cancelled():
                         break
 
                     result_str = await _execute_and_broadcast_tool(

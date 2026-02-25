@@ -4,7 +4,7 @@
  * Manages screenshot state and provides actions for screenshot operations.
  */
 import { useState, useRef, useCallback } from 'react';
-import type { Screenshot, CaptureMode } from '../types';
+import type { Screenshot, CaptureMode, ScreenshotSnapshot } from '../types';
 
 interface UseScreenshotsReturn {
   // State
@@ -22,6 +22,8 @@ interface UseScreenshotsReturn {
   setCaptureMode: (mode: CaptureMode) => void;
   setMeetingRecordingMode: (enabled: boolean) => void;
   getImageData: () => Array<{name: string; thumbnail: string}>;
+  getSnapshot: () => ScreenshotSnapshot;
+  restoreSnapshot: (snapshot: ScreenshotSnapshot) => void;
 }
 
 export function useScreenshots(): UseScreenshotsReturn {
@@ -60,6 +62,19 @@ export function useScreenshots(): UseScreenshotsReturn {
     }));
   }, []);
 
+  const getSnapshot = useCallback((): ScreenshotSnapshot => ({
+    screenshots: [...screenshotsRef.current],
+    captureMode,
+    meetingRecordingMode,
+  }), [captureMode, meetingRecordingMode]);
+
+  const restoreSnapshot = useCallback((s: ScreenshotSnapshot) => {
+    setScreenshots(s.screenshots);
+    screenshotsRef.current = [...s.screenshots];
+    setCaptureMode(s.captureMode);
+    setMeetingRecordingMode(s.meetingRecordingMode);
+  }, []);
+
   return {
     screenshots,
     captureMode,
@@ -71,5 +86,7 @@ export function useScreenshots(): UseScreenshotsReturn {
     setCaptureMode,
     setMeetingRecordingMode,
     getImageData,
+    getSnapshot,
+    restoreSnapshot,
   };
 }

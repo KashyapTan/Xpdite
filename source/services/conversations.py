@@ -8,7 +8,7 @@ import os
 import copy
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,10 @@ from ..llm.router import route_chat
 from ..config import SCREENSHOT_FOLDER, CaptureMode
 from .screenshots import ScreenshotHandler
 from ..database import db
+
+if TYPE_CHECKING:
+    from .tab_manager import TabState
+    from .query_queue import ConversationQueue
 
 
 # Conversations service logic
@@ -75,13 +79,21 @@ class ConversationService:
         return await run_in_thread(_extract_skill_slash_commands_sync, message)
 
     @staticmethod
-    async def clear_context():
-        """Clear screenshots and chat history for a fresh start."""
+    async def clear_context(tab_state: Optional["TabState"] = None):
+        """Clear screenshots and chat history for a fresh start.
+
+        If *tab_state* is provided, clears per-tab state instead of global.
+        """
         from .terminal import terminal_service
 
-        await ScreenshotHandler.clear_screenshots()
-        app_state.chat_history = []
-        app_state.conversation_id = None
+        if tab_state is not None:
+            tab_state.screenshot_list.clear()
+            tab_state.chat_history = []
+            tab_state.conversation_id = None
+        else:
+            await ScreenshotHandler.clear_screenshots()
+            app_state.chat_history = []
+            app_state.conversation_id = None
 
         # Reset terminal service state (ends session mode, clears tracking)
         terminal_service.reset()
@@ -92,18 +104,30 @@ class ConversationService:
         )
 
     @staticmethod
-    async def resume_conversation(conversation_id: str):
-        """Resume a previously saved conversation."""
+    async def resume_conversation(conversation_id: str, tab_state: Optional["TabState"] = None):
+        """Resume a previously saved conversation.
+
+        If *tab_state* is provided, loads into per-tab state.
+        """
         from .terminal import terminal_service
         from ..ss import create_thumbnail
 
+        # Resolve state target
+        chat_history_target = tab_state.chat_history if tab_state else app_state.chat_history
+
         # Clear current state
-        app_state.chat_history = []
-        await ScreenshotHandler.clear_screenshots()
+        chat_history_target.clear()
+        if tab_state is not None:
+            tab_state.screenshot_list.clear()
+        else:
+            await ScreenshotHandler.clear_screenshots()
 
         # Load conversation from database
         messages = db.get_full_conversation(conversation_id)
-        app_state.conversation_id = conversation_id
+        if tab_state is not None:
+            tab_state.conversation_id = conversation_id
+        else:
+            app_state.conversation_id = conversation_id
 
         # Rebuild in-memory chat history
         for msg in messages:
@@ -125,11 +149,12 @@ class ConversationService:
                             {"name": os.path.basename(img_path), "thumbnail": None}
                         )
                 msg["images"] = thumbnails
-            app_state.chat_history.append(entry)
+            chat_history_target.append(entry)
 
+        chat_history_len = len(tab_state.chat_history) if tab_state else len(app_state.chat_history)
         logger.info(
             "Resumed conversation %s with %d messages",
-            conversation_id, len(app_state.chat_history)
+            conversation_id, chat_history_len
         )
 
         # Notify client
@@ -151,7 +176,10 @@ class ConversationService:
         capture_mode: str = "none",
         forced_skills: list[dict] | None = None,
         llm_query: str | None = None,
-    ):
+        tab_state: Optional["TabState"] = None,
+        queue: Optional["ConversationQueue"] = None,
+        model: Optional[str] = None,
+    ) -> Optional[str]:
         """
         Handle query submission from a client.
 
@@ -160,47 +188,79 @@ class ConversationService:
             capture_mode: 'fullscreen', 'precision', or 'none'
             forced_skills: Skills forced via slash commands (e.g. /terminal)
             llm_query: Cleaned query without slash commands (for the LLM). Uses user_query if None.
+            tab_state: Per-tab state container. Falls back to app_state if None.
+            queue: The ConversationQueue managing this request (for registering ctx).
+            model: Explicit model override (e.g. from queued query).
+
+        Returns:
+            The conversation_id (str) or None on failure.
         """
         from ..ss import take_fullscreen_screenshot, create_thumbnail
 
-        current_model = app_state.selected_model
+        # ── Resolve state targets ─────────────────────────────────────
+        _chat_history = tab_state.chat_history if tab_state else app_state.chat_history
+        _get_conv_id: Callable[[], Optional[str]] = lambda: tab_state.conversation_id if tab_state else app_state.conversation_id
+        _set_conv_id = lambda v: (setattr(tab_state, "conversation_id", v) if tab_state else setattr(app_state, "conversation_id", v))
+
+        def _require_conv_id() -> str:
+            """Return conversation_id or raise — used after we know it's been set."""
+            cid = _get_conv_id()
+            assert cid is not None, "conversation_id should be set by this point"
+            return cid
+
+        _screenshot_list = tab_state.screenshot_list if tab_state else app_state.screenshot_list
+        _request_lock = tab_state._request_lock if tab_state else app_state._request_lock
+
+        current_model = model or app_state.selected_model
+
         logger.debug(
             "submit_query: model=%s, capture_mode=%s, screenshots=%d",
-            current_model, capture_mode, len(app_state.screenshot_list)
+            current_model, capture_mode, len(_screenshot_list)
         )
 
         # ── Request lifecycle: create context ─────────────────────────
-        async with app_state._request_lock:
-            if (
-                app_state.current_request is not None
-                and not app_state.current_request.is_done
-            ):
+        async with _request_lock:
+            current_req = tab_state.current_request if tab_state else app_state.current_request
+            if current_req is not None and not current_req.is_done:
                 await broadcast_message("error", "Already streaming. Please wait.")
-                return
+                return None
             ctx = RequestContext()
             ctx.forced_skills = forced_skills or []
-            app_state.current_request = ctx
-            # Legacy sync
-            app_state.is_streaming = True
-            app_state.stop_streaming = False
+            if tab_state:
+                tab_state.current_request = ctx
+                tab_state.is_streaming = True
+                tab_state.stop_streaming = False
+            else:
+                app_state.current_request = ctx
+                app_state.is_streaming = True
+                app_state.stop_streaming = False
+
+        # Set contextvars so LLM layer gets per-task request + model
+        from ..core.request_context import set_current_request, set_current_model
+        _ctx_token = set_current_request(ctx)
+        _model_token = set_current_model(current_model)
+
+        # Register ctx on the queue so stop_current works
+        if queue is not None:
+            queue.set_active_ctx(ctx)
 
         try:
             # Auto-capture fullscreen on first message of new conversation
             if (
                 capture_mode == CaptureMode.FULLSCREEN
-                and len(app_state.screenshot_list) == 0
-                and len(app_state.chat_history) == 0
+                and len(_screenshot_list) == 0
+                and len(_chat_history) == 0
             ):
                 await ScreenshotHandler.capture_fullscreen()
 
             # Get image paths
-            image_paths = app_state.get_image_paths()
+            if tab_state:
+                image_paths = tab_state.get_image_paths()
+            else:
+                image_paths = app_state.get_image_paths()
 
             # Echo query to clients
             await broadcast_message("query", user_query)
-
-            # Reset stop flag (use the context now)
-            app_state.stop_streaming = False
 
             # Stream the response — use cleaned query (without slash commands) for the LLM
             query_for_llm = llm_query if llm_query else user_query
@@ -208,32 +268,27 @@ class ConversationService:
                 current_model,
                 query_for_llm,
                 image_paths,
-                copy.deepcopy(app_state.chat_history),
+                copy.deepcopy(_chat_history),
                 forced_skills=ctx.forced_skills,
             )
 
             # Check if request was cancelled during route_chat
             if ctx.cancelled:
                 # ── Save interrupted conversation ────────────────────
-                # Even though the response was cut short, persist the
-                # user message and whatever partial output was generated
-                # so the conversation is not lost.
-                if app_state.conversation_id is None:
+                if _get_conv_id() is None:
                     title = user_query[:50] + ("..." if len(user_query) > 50 else "")
-                    app_state.conversation_id = db.start_new_conversation(title)
-                    logger.info("Created conversation (interrupted): %s", app_state.conversation_id)
+                    _set_conv_id(db.start_new_conversation(title))
+                    logger.info("Created conversation (interrupted): %s", _require_conv_id())
 
                     from .terminal import terminal_service
-                    terminal_service.flush_pending_events(app_state.conversation_id)
+                    terminal_service.flush_pending_events(_require_conv_id())
 
                 # Persist any token usage that was collected
                 input_tokens = token_stats.get("prompt_eval_count", 0)
                 output_tokens = token_stats.get("eval_count", 0)
                 if input_tokens or output_tokens:
                     try:
-                        db.add_token_usage(
-                            app_state.conversation_id, input_tokens, output_tokens
-                        )
+                        db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)
                     except Exception as e:
                         logger.error("Error saving token usage (interrupted): %s", e)
 
@@ -269,11 +324,11 @@ class ConversationService:
                             {"type": "text", "content": response_text}
                         )
 
-                # Add to in-memory chat history (memory first, then DB)
+                # Add to in-memory chat history
                 user_msg: Dict[str, Any] = {"role": "user", "content": user_query}
                 if image_paths:
                     user_msg["images"] = image_paths
-                app_state.chat_history.append(user_msg)
+                _chat_history.append(user_msg)
 
                 assistant_msg: Dict[str, Any] = {
                     "role": "assistant",
@@ -282,17 +337,17 @@ class ConversationService:
                 }
                 if tool_calls:
                     assistant_msg["tool_calls"] = tool_calls
-                app_state.chat_history.append(assistant_msg)
+                _chat_history.append(assistant_msg)
 
                 # Persist to database
                 db.add_message(
-                    app_state.conversation_id,
+                    _require_conv_id(),
                     "user",
                     user_query,
                     image_paths if image_paths else None,
                 )
                 db.add_message(
-                    app_state.conversation_id,
+                    _require_conv_id(),
                     "assistant",
                     interrupted_text,
                     model=current_model,
@@ -301,36 +356,34 @@ class ConversationService:
 
                 await broadcast_message(
                     "conversation_saved",
-                    json.dumps({"conversation_id": app_state.conversation_id}),
+                    json.dumps({"conversation_id": _require_conv_id()}),
                 )
 
-                logger.info("Saved interrupted conversation: %s", app_state.conversation_id)
+                logger.info("Saved interrupted conversation: %s", _require_conv_id())
 
                 # Clear screenshots (they were embedded in the user message)
-                if image_paths and len(app_state.screenshot_list) > 0:
-                    app_state.screenshot_list.clear()
+                if image_paths and len(_screenshot_list) > 0:
+                    _screenshot_list.clear()
                     await broadcast_message("screenshots_cleared", "")
 
-                return
+                return _require_conv_id()
 
             # 1. Create conversation entry if it doesn't exist
-            if app_state.conversation_id is None:
+            if _get_conv_id() is None:
                 title = user_query[:50] + ("..." if len(user_query) > 50 else "")
-                app_state.conversation_id = db.start_new_conversation(title)
-                logger.info("Created conversation: %s", app_state.conversation_id)
+                _set_conv_id(db.start_new_conversation(title))
+                logger.info("Created conversation: %s", _require_conv_id())
 
                 # Flush any terminal events that were queued before conversation existed
                 from .terminal import terminal_service
-                terminal_service.flush_pending_events(app_state.conversation_id)
+                terminal_service.flush_pending_events(_require_conv_id())
 
             # Persist token usage
             input_tokens = token_stats.get("prompt_eval_count", 0)
             output_tokens = token_stats.get("eval_count", 0)
             if input_tokens or output_tokens:
                 try:
-                    db.add_token_usage(
-                        app_state.conversation_id, input_tokens, output_tokens
-                    )
+                    db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)
                 except Exception as e:
                     logger.error("Error saving token usage: %s", e)
 
@@ -342,7 +395,7 @@ class ConversationService:
             user_msg: Dict[str, Any] = {"role": "user", "content": user_query}
             if image_paths:
                 user_msg["images"] = image_paths
-            app_state.chat_history.append(user_msg)
+            _chat_history.append(user_msg)
 
             if response_text.strip():
                 assistant_msg: Dict[str, Any] = {
@@ -352,10 +405,8 @@ class ConversationService:
                 }
                 if tool_calls:
                     assistant_msg["tool_calls"] = tool_calls
-                app_state.chat_history.append(assistant_msg)
+                _chat_history.append(assistant_msg)
             elif tool_calls:
-                # Safety net: tool calls were made but response was empty.
-                # Save a fallback message so conversation history isn't broken.
                 fallback_text = (
                     "[Tool calls completed but model returned empty response]"
                 )
@@ -365,7 +416,7 @@ class ConversationService:
                     "model": current_model,
                     "tool_calls": tool_calls,
                 }
-                app_state.chat_history.append(assistant_msg)
+                _chat_history.append(assistant_msg)
                 response_text = fallback_text
                 logger.warning(
                     "Empty response after tool calls — saved fallback message"
@@ -373,17 +424,14 @@ class ConversationService:
 
             # Persist to database
             db.add_message(
-                app_state.conversation_id,
+                _require_conv_id(),
                 "user",
                 user_query,
                 image_paths if image_paths else None,
             )
             if response_text.strip() or tool_calls:
-                # Use interleaved blocks from LLM if available (preserves actual text↔tool order).
-                # Fall back to flat construction (all tools then text) for legacy/edge cases.
                 content_blocks_data: List[Dict] | None = None
                 if interleaved_blocks_from_llm:
-                    # Drop results from tool_call blocks — they are not stored to save space
                     content_blocks_data = [
                         {k: v for k, v in block.items() if k != "result"}
                         for block in interleaved_blocks_from_llm
@@ -405,7 +453,7 @@ class ConversationService:
 
                 save_text = response_text if response_text.strip() else "[Tool calls completed]"
                 db.add_message(
-                    app_state.conversation_id,
+                    _require_conv_id(),
                     "assistant",
                     save_text,
                     model=current_model,
@@ -415,28 +463,40 @@ class ConversationService:
             # Notify frontend
             await broadcast_message(
                 "conversation_saved",
-                json.dumps({"conversation_id": app_state.conversation_id}),
+                json.dumps({"conversation_id": _require_conv_id()}),
             )
 
-            logger.debug("Chat history: %d messages", len(app_state.chat_history))
+            logger.debug("Chat history: %d messages", len(_chat_history))
 
             # Clear screenshots after embedding in history
-            if image_paths and len(app_state.screenshot_list) > 0:
-                app_state.screenshot_list.clear()
+            if image_paths and len(_screenshot_list) > 0:
+                _screenshot_list.clear()
                 await broadcast_message("screenshots_cleared", "")
+
+            return _require_conv_id()
 
         except Exception as e:
             await broadcast_message("error", f"Error processing: {e}")
+            return None
         finally:
             # ── Request lifecycle: mark done ──────────────────────────
             ctx.mark_done()
-            async with app_state._request_lock:
-                app_state.current_request = None
-                # Legacy sync
-                app_state.is_streaming = False
+            set_current_request(None)  # Clear contextvars
+            set_current_model(None)
 
-            # Auto-expire session mode after each turn so the LLM
-            # doesn't need to remember to call end_session_mode.
+            async with _request_lock:
+                if tab_state:
+                    tab_state.current_request = None
+                    tab_state.is_streaming = False
+                else:
+                    app_state.current_request = None
+                    app_state.is_streaming = False
+
+            # Unregister from queue
+            if queue is not None:
+                queue.clear_active_ctx()
+
+            # Auto-expire session mode after each turn
             from .terminal import terminal_service
 
             if terminal_service.session_mode:

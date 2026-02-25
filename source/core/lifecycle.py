@@ -80,6 +80,27 @@ def cleanup_resources():
     except Exception as e:
         logger.error("Error shutting down thread pool: %s", e)
 
+    # Drain all tab queues
+    try:
+        from source.services.tab_manager_instance import tab_manager
+        if tab_manager is not None:
+            loop = None
+            try:
+                if 'source.core.state' in sys.modules:
+                    from source.core.state import app_state
+                    loop = app_state.server_loop_holder.get("loop")
+            except Exception:
+                pass
+            if loop and loop.is_running():
+                fut = asyncio.run_coroutine_threadsafe(tab_manager.close_all(), loop)
+                try:
+                    fut.result(timeout=5)
+                except Exception:
+                    pass
+            logger.info("Tab manager closed all tabs")
+    except Exception as e:
+        logger.error("Error closing tab manager: %s", e)
+
     logger.info("Cleanup completed")
 
 

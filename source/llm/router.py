@@ -52,11 +52,19 @@ async def route_chat(
     from .prompt import build_system_prompt
     from ..mcp_integration.skill_injector import get_skills_to_inject, build_skills_prompt_block
     from ..mcp_integration.manager import mcp_manager
-    from ..core.state import app_state
+    from ..core.request_context import is_current_request_cancelled
+
+    # Retrieve tools FIRST so the skill injector can auto-detect the
+    # dominant tool category and inject the matching skill.
+    retrieved_tools: list = []
+    if mcp_manager.has_tools():
+        from ..mcp_integration.handlers import retrieve_relevant_tools
+
+        retrieved_tools = retrieve_relevant_tools(user_query)
 
     # Build skills block for system prompt
     skills_to_inject = get_skills_to_inject(
-        retrieved_tools=[],
+        retrieved_tools=retrieved_tools,
         forced_skills=forced_skills or [],
         db=db,
         mcp_manager=mcp_manager,
@@ -70,7 +78,7 @@ async def route_chat(
     system_prompt = build_system_prompt(skills_block=skills_block, template=custom_template)
 
     if provider == "ollama":
-        if app_state.stop_streaming:
+        if is_current_request_cancelled():
             return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
 
         from .ollama_provider import stream_ollama_chat
@@ -96,16 +104,13 @@ async def route_chat(
             None,
         )
 
-    if app_state.stop_streaming:
+    if is_current_request_cancelled():
         return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
 
-    # Get relevant tool names for the streaming function
-    allowed_tool_names: set[str] = set()
-    if mcp_manager.has_tools():
-        from ..mcp_integration.handlers import retrieve_relevant_tools
-
-        filtered_tools = retrieve_relevant_tools(user_query)
-        allowed_tool_names = {t["function"]["name"] for t in filtered_tools}
+    # Reuse tools already retrieved above for skill injection
+    allowed_tool_names: set[str] = {
+        t["function"]["name"] for t in retrieved_tools
+    } if retrieved_tools else set()
 
     # Stream with inline tool calling — text and tool results are
     # interleaved and broadcast to the user in real-time

@@ -56,23 +56,31 @@ export interface ApiService {
   removeScreenshot: (id: string) => void;
   setCaptureMode: (mode: string) => void;
   stopStreaming: () => void;
+  cancelQueuedItem: (itemId: string) => void;
   getConversations: (limit?: number, offset?: number) => void;
   searchConversations: (query: string) => void;
   resumeConversation: (conversationId: string) => void;
   deleteConversation: (conversationId: string) => void;
-
-  // HTTP methods (examples for future use)
-  // getModels: () => Promise<string[]>;
-  // getHealth: () => Promise<{ status: string }>;
+  tabCreated: (tabId: string) => void;
+  tabClosed: (tabId: string) => void;
 }
 
 /**
  * Creates an API service bound to a WebSocket send function.
+ *
+ * All messages are stamped with ``tab_id`` via the ``getTabId`` callback
+ * so the backend can route them to the correct tab session.
  */
-export function createApiService(send: (message: Record<string, unknown>) => void): ApiService {
+export function createApiService(
+  send: (message: Record<string, unknown>) => void,
+  getTabId: () => string = () => 'default',
+): ApiService {
+  /** Helper: send with auto-injected tab_id. */
+  const tabSend = (msg: Record<string, unknown>) => send({ ...msg, tab_id: getTabId() });
+
   return {
     submitQuery(query: string, captureMode: string) {
-      send({
+      tabSend({
         type: 'submit_query',
         content: query,
         capture_mode: captureMode,
@@ -80,19 +88,23 @@ export function createApiService(send: (message: Record<string, unknown>) => voi
     },
 
     clearContext() {
-      send({ type: 'clear_context' });
+      tabSend({ type: 'clear_context' });
     },
 
     removeScreenshot(id: string) {
-      send({ type: 'remove_screenshot', id });
+      tabSend({ type: 'remove_screenshot', id });
     },
 
     setCaptureMode(mode: string) {
-      send({ type: 'set_capture_mode', mode });
+      tabSend({ type: 'set_capture_mode', mode });
     },
 
     stopStreaming() {
-      send({ type: 'stop_streaming' });
+      tabSend({ type: 'stop_streaming' });
+    },
+
+    cancelQueuedItem(itemId: string) {
+      tabSend({ type: 'cancel_queued_item', item_id: itemId });
     },
 
     getConversations(limit = 50, offset = 0) {
@@ -104,11 +116,19 @@ export function createApiService(send: (message: Record<string, unknown>) => voi
     },
 
     resumeConversation(conversationId: string) {
-      send({ type: 'resume_conversation', conversation_id: conversationId });
+      tabSend({ type: 'resume_conversation', conversation_id: conversationId });
     },
 
     deleteConversation(conversationId: string) {
       send({ type: 'delete_conversation', conversation_id: conversationId });
+    },
+
+    tabCreated(tabId: string) {
+      send({ type: 'tab_created', tab_id: tabId });
+    },
+
+    tabClosed(tabId: string) {
+      send({ type: 'tab_closed', tab_id: tabId });
     },
 
     // HTTP API examples (uncomment and implement as needed):

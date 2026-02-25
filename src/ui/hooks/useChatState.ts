@@ -4,7 +4,7 @@
  * Manages chat history, current query/response, and conversation state.
  */
 import { useState, useRef, useCallback } from 'react';
-import type { ChatMessage, ToolCall, ContentBlock, TerminalCommandBlock } from '../types';
+import type { ChatMessage, ToolCall, ContentBlock, TerminalCommandBlock, ChatStateSnapshot } from '../types';
 
 interface UseChatStateReturn {
   // State
@@ -48,6 +48,10 @@ interface UseChatStateReturn {
   resetForNewChat: () => void;
   loadConversation: (id: string, messages: ChatMessage[]) => void;
   setConversationId: (id: string | null) => void;
+
+  // Snapshot / restore for tab switching
+  getSnapshot: () => ChatStateSnapshot;
+  restoreSnapshot: (snapshot: ChatStateSnapshot) => void;
 }
 
 const DEFAULT_TOKEN_LIMIT = 128000;
@@ -303,6 +307,47 @@ export function useChatState(): UseChatStateReturn {
     setCanSubmit(true);
   }, []);
 
+  // ── Snapshot / restore for tab switching ─────────────────────
+
+  const getSnapshot = useCallback((): ChatStateSnapshot => {
+    return {
+      chatHistory,
+      currentQuery: currentQueryRef.current,
+      response: responseRef.current,
+      thinking: thinkingRef.current,
+      isThinking,
+      thinkingCollapsed,
+      toolCalls: [...toolCallsRef.current],
+      contentBlocks: [...contentBlocksRef.current],
+      conversationId,
+      query,
+      canSubmit,
+      status,
+      error,
+    };
+  }, [chatHistory, isThinking, thinkingCollapsed, conversationId, query, canSubmit, status, error]);
+
+  const restoreSnapshot = useCallback((s: ChatStateSnapshot) => {
+    setChatHistory(s.chatHistory);
+    setCurrentQuery(s.currentQuery);
+    currentQueryRef.current = s.currentQuery;
+    setResponse(s.response);
+    responseRef.current = s.response;
+    setThinking(s.thinking);
+    thinkingRef.current = s.thinking;
+    setIsThinking(s.isThinking);
+    setThinkingCollapsed(s.thinkingCollapsed);
+    setToolCalls(s.toolCalls);
+    toolCallsRef.current = [...s.toolCalls];
+    setContentBlocks(s.contentBlocks);
+    contentBlocksRef.current = [...s.contentBlocks];
+    setConversationId(s.conversationId);
+    setQuery(s.query);
+    setCanSubmit(s.canSubmit);
+    setStatus(s.status);
+    setError(s.error);
+  }, []);
+
   return {
     // State
     chatHistory,
@@ -345,5 +390,7 @@ export function useChatState(): UseChatStateReturn {
     resetForNewChat,
     loadConversation,
     setConversationId,
+    getSnapshot,
+    restoreSnapshot,
   };
 }

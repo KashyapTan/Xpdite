@@ -41,7 +41,13 @@ def create_app() -> FastAPI:
     
     # Register terminal API routes (e.g., /api/terminal/settings)
     app.include_router(terminal_router)
-    
+
+    # ── Tab manager initialization ────────────────────────────────
+    @app.on_event("startup")
+    async def _init_tab_manager():
+        from .services.tab_manager_instance import init_tab_manager
+        init_tab_manager()
+
     return app
 
 

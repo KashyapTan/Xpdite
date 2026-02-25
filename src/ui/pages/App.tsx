@@ -19,18 +19,23 @@ import { useOutletContext, useLocation } from 'react-router-dom';
 import { useChatState } from '../hooks/useChatState';
 import { useScreenshots } from '../hooks/useScreenshots';
 import { useTokenUsage } from '../hooks/useTokenUsage';
+import { useTabs } from '../contexts/TabContext';
 
 // Components
 import TitleBar from '../components/TitleBar';
+import TabBar from '../components/TabBar';
 import { ResponseArea } from '../components/chat/ResponseArea';
 import { QueryInput } from '../components/input/QueryInput';
+import { QueueDropdown } from '../components/input/QueueDropdown';
 import { ModeSelector } from '../components/input/ModeSelector';
 import { TokenUsagePopup } from '../components/input/TokenUsagePopup';
 import { ScreenshotChips } from '../components/input/ScreenshotChips';
+import '../CSS/QueueDropdown.css';
 
 // Types
 import type {
   WebSocketMessage,
+  TabSnapshot,
   ScreenshotAddedContent,
   ScreenshotRemovedContent,
   ConversationSavedContent,
@@ -90,6 +95,16 @@ function App() {
   const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
 
   // ============================================
+  // Tab Management
+  // ============================================
+  const {
+    activeTabId, createTab, switchTab, updateTabTitle,
+    queueMap, setQueueItems, registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
+  } = useTabs();
+  const activeTabIdRef = useRef(activeTabId);
+  const tabRegistryRef = useRef<Map<string, TabSnapshot>>(new Map());
+
+  // ============================================
   // Context from Layout
   // ============================================
   const { setMini, setIsHidden } = useOutletContext<{
@@ -99,6 +114,288 @@ function App() {
   }>();
 
   const location = useLocation();
+
+  // ============================================
+  // Tab-scoped WS send helper
+  // ============================================
+  const wsSend = useCallback((msg: Record<string, unknown>) => {
+    if (wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ tab_id: activeTabIdRef.current, ...msg }));
+    }
+  }, []);
+
+  // ============================================
+  // Tab switch: snapshot / restore state registry
+  // ============================================
+
+  /** Create a fresh TabSnapshot with default values. */
+  const freshSnapshot = useCallback((): TabSnapshot => ({
+    chat: {
+      chatHistory: [],
+      currentQuery: '',
+      response: '',
+      thinking: '',
+      isThinking: false,
+      thinkingCollapsed: true,
+      toolCalls: [],
+      contentBlocks: [],
+      conversationId: null,
+      query: '',
+      canSubmit: true,
+      status: 'Ready to chat.',
+      error: '',
+    },
+    screenshots: {
+      screenshots: [],
+      captureMode: 'precision',
+      meetingRecordingMode: false,
+    },
+    tokens: {
+      tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 },
+    },
+    terminal: {
+      terminalSessionActive: false,
+      terminalSessionRequest: null,
+    },
+    generatingModel: '',
+  }), []);
+
+  /** Save current React state into the registry for the given tab. */
+  const saveTabState = useCallback((tabId: string) => {
+    tabRegistryRef.current.set(tabId, {
+      chat: chatState.getSnapshot(),
+      screenshots: screenshotState.getSnapshot(),
+      tokens: tokenState.getSnapshot(),
+      terminal: {
+        terminalSessionActive,
+        terminalSessionRequest,
+      },
+      generatingModel: generatingModelRef.current,
+    });
+  }, [chatState, screenshotState, tokenState, terminalSessionActive, terminalSessionRequest]);
+
+  /** Restore React state from the registry for the given tab. */
+  const restoreTabState = useCallback((tabId: string) => {
+    const snap = tabRegistryRef.current.get(tabId) ?? freshSnapshot();
+    chatState.restoreSnapshot(snap.chat);
+    screenshotState.restoreSnapshot(snap.screenshots);
+    tokenState.restoreSnapshot(snap.tokens);
+    setTerminalSessionActive(snap.terminal.terminalSessionActive);
+    setTerminalSessionRequest(snap.terminal.terminalSessionRequest);
+    generatingModelRef.current = snap.generatingModel;
+  }, [chatState, screenshotState, tokenState, freshSnapshot]);
+
+  // Register tab switch callbacks with TabContext
+  useEffect(() => {
+    registerBeforeSwitch((oldTabId: string) => {
+      saveTabState(oldTabId);
+    });
+    registerAfterSwitch((newTabId: string) => {
+      activeTabIdRef.current = newTabId;
+      restoreTabState(newTabId);
+    });
+    registerOnTabClosed((closedTabId: string) => {
+      tabRegistryRef.current.delete(closedTabId);
+    });
+  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState]);
+
+  // Keep activeTabIdRef in sync when activeTabId changes (e.g. from external triggers)
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+  }, [activeTabId]);
+
+  // ============================================
+  // Background tab message handler
+  // ============================================
+  /**
+   * Apply a WS message to a background tab's snapshot in the registry.
+   * Only the subset of message types that affect persistent state are handled;
+   * UI-only messages (screenshot_start, terminal_running_notice, etc.) are ignored.
+   */
+  const applyToBackgroundTab = useCallback((tabId: string, data: WebSocketMessage) => {
+    const snap = tabRegistryRef.current.get(tabId) ?? freshSnapshot();
+    const chat = { ...snap.chat };
+
+    switch (data.type) {
+      case 'query':
+        chat.currentQuery = String(data.content);
+        chat.error = '';
+        chat.status = 'Thinking...';
+        chat.isThinking = true;
+        chat.canSubmit = false;
+        chat.toolCalls = [];
+        chat.contentBlocks = [];
+        break;
+
+      case 'thinking_chunk':
+        chat.thinking += String(data.content);
+        break;
+
+      case 'thinking_complete':
+        chat.isThinking = false;
+        chat.status = 'Receiving response...';
+        break;
+
+      case 'response_chunk': {
+        const chunk = String(data.content);
+        chat.response += chunk;
+        const blocks = [...chat.contentBlocks];
+        if (blocks.length > 0 && blocks[blocks.length - 1].type === 'text') {
+          blocks[blocks.length - 1] = {
+            type: 'text',
+            content: (blocks[blocks.length - 1] as { type: 'text'; content: string }).content + chunk,
+          };
+        } else {
+          blocks.push({ type: 'text', content: chunk });
+        }
+        chat.contentBlocks = blocks;
+        break;
+      }
+
+      case 'response_complete': {
+        if (chat.response || chat.thinking || chat.toolCalls.length > 0) {
+          chat.chatHistory = [
+            ...chat.chatHistory,
+            { role: 'user', content: chat.currentQuery },
+            {
+              role: 'assistant',
+              content: chat.response,
+              thinking: chat.thinking || undefined,
+              toolCalls: chat.toolCalls.length > 0 ? [...chat.toolCalls] : undefined,
+              contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
+              model: snap.generatingModel || undefined,
+            },
+          ];
+        }
+        chat.response = '';
+        chat.thinking = '';
+        chat.currentQuery = '';
+        chat.isThinking = false;
+        chat.toolCalls = [];
+        chat.contentBlocks = [];
+        chat.canSubmit = true;
+        chat.status = 'Ready for follow-up question.';
+        break;
+      }
+
+      case 'context_cleared':
+        chat.chatHistory = [];
+        chat.currentQuery = '';
+        chat.response = '';
+        chat.thinking = '';
+        chat.isThinking = false;
+        chat.toolCalls = [];
+        chat.contentBlocks = [];
+        chat.conversationId = null;
+        chat.canSubmit = true;
+        chat.status = 'Context cleared.';
+        chat.error = '';
+        chat.query = '';
+        break;
+
+      case 'conversation_saved': {
+        const sd = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as ConversationSavedContent;
+        chat.conversationId = sd.conversation_id;
+        break;
+      }
+
+      case 'error':
+        chat.error = String(data.content);
+        chat.status = 'An error occurred.';
+        chat.canSubmit = true;
+        break;
+
+      case 'tool_call': {
+        const tc = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as ToolCallContent;
+        // Terminal tool calls: create/update inline terminal blocks
+        if (tc.server === 'terminal' && tc.name === 'run_command') {
+          if (tc.status === 'calling') {
+            chat.contentBlocks = [...chat.contentBlocks, {
+              type: 'terminal_command',
+              terminal: {
+                requestId: '', command: String(tc.args.command || ''), cwd: String(tc.args.cwd || ''),
+                status: 'running', output: '', outputChunks: [], isPty: false,
+              },
+            }];
+          }
+          break;
+        }
+        if (tc.status === 'calling') {
+          chat.toolCalls = [...chat.toolCalls, { name: tc.name, args: tc.args, server: tc.server, status: 'calling' }];
+          chat.contentBlocks = [...chat.contentBlocks, { type: 'tool_call', toolCall: { name: tc.name, args: tc.args, server: tc.server, status: 'calling' } }];
+        } else if (tc.status === 'complete' && tc.result) {
+          chat.toolCalls = chat.toolCalls.map(t =>
+            t.name === tc.name && JSON.stringify(t.args) === JSON.stringify(tc.args)
+              ? { ...t, ...tc } : t
+          );
+          chat.contentBlocks = chat.contentBlocks.map(b =>
+            b.type === 'tool_call' && b.toolCall.name === tc.name && JSON.stringify(b.toolCall.args) === JSON.stringify(tc.args)
+              ? { ...b, toolCall: { ...b.toolCall, ...tc } } : b
+          );
+        }
+        break;
+      }
+
+      case 'terminal_output': {
+        const to = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalOutput;
+        chat.contentBlocks = chat.contentBlocks.map(b => {
+          if (b.type === 'terminal_command' && b.terminal.requestId === to.request_id) {
+            return { ...b, terminal: { ...b.terminal, output: b.terminal.output + to.text + (to.raw ? '' : '\n'), outputChunks: [...b.terminal.outputChunks, { text: to.text, raw: !!to.raw }], isPty: b.terminal.isPty || !!to.raw } };
+          }
+          // Also match by empty requestId (created from tool_call before real id arrived)
+          if (b.type === 'terminal_command' && !b.terminal.requestId) {
+            return { ...b, terminal: { ...b.terminal, requestId: to.request_id, output: b.terminal.output + to.text + (to.raw ? '' : '\n'), outputChunks: [...b.terminal.outputChunks, { text: to.text, raw: !!to.raw }], isPty: b.terminal.isPty || !!to.raw } };
+          }
+          return b;
+        });
+        break;
+      }
+
+      case 'terminal_command_complete': {
+        const tc2 = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalCommandComplete;
+        chat.contentBlocks = chat.contentBlocks.map(b =>
+          b.type === 'terminal_command' && b.terminal.requestId === tc2.request_id
+            ? { ...b, terminal: { ...b.terminal, status: 'completed', exitCode: tc2.exit_code, durationMs: tc2.duration_ms } }
+            : b
+        );
+        break;
+      }
+
+      case 'terminal_approval_request': {
+        const ar = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalApprovalRequest;
+        chat.contentBlocks = [...chat.contentBlocks, {
+          type: 'terminal_command',
+          terminal: { requestId: ar.request_id, command: ar.command, cwd: ar.cwd, status: 'pending_approval', output: '', outputChunks: [], isPty: false },
+        }];
+        break;
+      }
+
+      case 'token_usage': {
+        const stats = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as TokenUsageContent;
+        const input = stats.prompt_eval_count || 0;
+        const output = stats.eval_count || 0;
+        const tu = { ...snap.tokens.tokenUsage };
+        tu.total = (tu.total || 0) + input + output;
+        tu.input = (tu.input || 0) + input;
+        tu.output = (tu.output || 0) + output;
+        tabRegistryRef.current.set(tabId, { ...snap, chat, tokens: { tokenUsage: tu } });
+        return;
+      }
+
+      case 'queue_updated': {
+        const qData = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as { tab_id: string; items: { item_id: string; preview: string; position: number }[] };
+        setQueueItems(qData.tab_id, qData.items);
+        return; // Don't update chat snapshot
+      }
+
+      default:
+        return; // Ignore other types for background tabs
+    }
+
+    tabRegistryRef.current.set(tabId, { ...snap, chat });
+  }, [freshSnapshot, setQueueItems]);
 
   // ============================================
   // Fetch enabled models on mount & when returning from Settings
@@ -117,9 +414,11 @@ function App() {
   }, [location.pathname]); // re-fetch when user navigates back from Settings
 
   // ============================================
-  // WebSocket Message Handler
+  // WebSocket Message Handler (tab-aware)
   // ============================================
-  const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
+
+  /** Handle messages that apply globally (not tab-scoped). */
+  const handleGlobalMessage = useCallback((data: WebSocketMessage): boolean => {
     switch (data.type) {
       case 'ready':
         chatState.setStatus(String(data.content) || 'Ready to chat.');
@@ -128,28 +427,28 @@ function App() {
 
         // Handle pending operations
         if (pendingConversationRef.current) {
-          wsRef.current?.send(JSON.stringify({
+          wsSend({
             type: 'resume_conversation',
             conversation_id: pendingConversationRef.current,
-          }));
+          });
           pendingConversationRef.current = null;
           window.history.replaceState({}, '');
         } else if (pendingNewChatRef.current) {
-          wsRef.current?.send(JSON.stringify({ type: 'clear_context' }));
+          wsSend({ type: 'clear_context' });
           pendingNewChatRef.current = false;
           window.history.replaceState({}, '');
         }
-        break;
+        return true;
 
       case 'screenshot_start':
         setIsHidden(true);
-        break;
+        return true;
 
       case 'screenshot_ready':
         chatState.setStatus('Screenshot captured!');
         chatState.setError('');
         setIsHidden(false);
-        break;
+        return true;
 
       case 'screenshot_added': {
         const ssData = (typeof data.content === 'string'
@@ -158,7 +457,7 @@ function App() {
         screenshotState.addScreenshot(ssData);
         chatState.setStatus('Screenshot added to context.');
         setIsHidden(false);
-        break;
+        return true;
       }
 
       case 'screenshot_removed': {
@@ -166,13 +465,41 @@ function App() {
           ? JSON.parse(data.content)
           : data.content) as unknown as ScreenshotRemovedContent;
         screenshotState.removeScreenshot(removeData.id);
-        break;
+        return true;
       }
 
       case 'screenshots_cleared':
         screenshotState.clearScreenshots();
-        break;
+        return true;
 
+      case 'transcription_result':
+        chatState.setQuery((prev) => prev + (prev ? ' ' : '') + String(data.content));
+        setIsRecording(false);
+        chatState.setStatus('Transcription complete.');
+        return true;
+
+      case 'queue_updated': {
+        const qData = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as { tab_id: string; items: { item_id: string; preview: string; position: number }[] };
+        setQueueItems(qData.tab_id, qData.items);
+        return true;
+      }
+
+      case 'ollama_queue_status':
+        // TODO: display Ollama serialization status in UI
+        return true;
+
+      case 'queue_full':
+        chatState.setError('Queue is full. Please wait for current queries to finish.');
+        return true;
+
+      default:
+        return false; // Not a global message
+    }
+  }, [chatState, screenshotState, setIsHidden, wsSend, setQueueItems]);
+
+  /** Handle tab-scoped messages for the active tab. */
+  const handleActiveTabMessage = useCallback((data: WebSocketMessage) => {
+    switch (data.type) {
       case 'context_cleared':
         chatState.resetForNewChat();
         screenshotState.clearScreenshots();
@@ -181,27 +508,29 @@ function App() {
         setTerminalSessionActive(false);
         break;
 
-      case 'query':
-        chatState.startQuery(String(data.content));
+      case 'query': {
+        // Guard: skip if we already started this query via optimistic update
+        // (prevents resetting toolCalls/contentBlocks that may have arrived).
+        const echoText = String(data.content);
+        if (chatState.currentQueryRef.current !== echoText) {
+          chatState.startQuery(echoText);
+        }
         break;
+      }
 
       case 'tool_call': {
         const tc = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as ToolCallContent;
 
-        // Terminal run_command: use inline terminal blocks instead of generic tool cards
         if (tc.server === 'terminal' && tc.name === 'run_command') {
           if (tc.status === 'calling') {
             chatState.setStatus(`Running command: ${tc.args.command}...`);
-            // Stash command info — the actual terminal block is created when the real
-            // request_id arrives (via terminal_approval_request or terminal_output)
             pendingTerminalCommandRef.current = {
               command: String(tc.args.command || ''),
               cwd: String(tc.args.cwd || ''),
             };
           }
-          // For 'complete' status, the terminal_command_complete message handles it
           break;
         }
 
@@ -268,6 +597,11 @@ function App() {
           ? JSON.parse(data.content)
           : data.content) as unknown as ConversationSavedContent;
         chatState.setConversationId(saveData.conversation_id);
+        // Use first user message as tab title
+        if (chatState.chatHistory.length === 0 && chatState.currentQueryRef.current) {
+          const title = chatState.currentQueryRef.current.slice(0, 30) || 'Chat';
+          updateTabTitle(activeTabIdRef.current, title);
+        }
         break;
       }
 
@@ -309,18 +643,11 @@ function App() {
         chatState.setCanSubmit(true);
         break;
 
-      case 'transcription_result':
-        chatState.setQuery((prev) => prev + (prev ? ' ' : '') + String(data.content));
-        setIsRecording(false);
-        chatState.setStatus('Transcription complete.');
-        break;
-
       // ── Terminal messages ──────────────────────────────
       case 'terminal_approval_request': {
         const approvalData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalApprovalRequest;
-        // Create an inline terminal block in pending_approval state
         chatState.addTerminalBlock({
           requestId: approvalData.request_id,
           command: approvalData.command,
@@ -354,12 +681,10 @@ function App() {
         const outputData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalOutput;
-        // Find existing terminal block by request_id
         const hasBlock = chatState.contentBlocksRef.current.some(
           b => b.type === 'terminal_command' && b.terminal.requestId === outputData.request_id
         );
         if (!hasBlock) {
-          // Auto-approved command: create terminal block now using stashed info
           const pending = pendingTerminalCommandRef.current;
           chatState.addTerminalBlock({
             requestId: outputData.request_id,
@@ -372,7 +697,6 @@ function App() {
           });
           pendingTerminalCommandRef.current = null;
         } else {
-          // Update status to running if still pending (approval flow)
           chatState.updateTerminalBlock(outputData.request_id, { status: 'running' });
         }
         chatState.appendTerminalOutput(outputData.request_id, outputData.text, !!outputData.raw);
@@ -383,7 +707,6 @@ function App() {
         const completeData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as TerminalCommandComplete;
-        // Update the inline terminal block to completed state
         chatState.updateTerminalBlock(completeData.request_id, {
           status: 'completed',
           exitCode: completeData.exit_code,
@@ -392,13 +715,30 @@ function App() {
         break;
       }
 
-      case 'terminal_running_notice': {
-        // Running notice is now implicit in the inline terminal block's 'running' status
-        // No separate state needed — the block already shows a spinner
+      case 'terminal_running_notice':
         break;
-      }
     }
-  }, [chatState, screenshotState, tokenState, setIsHidden]);
+  }, [chatState, screenshotState, tokenState, setIsHidden, updateTabTitle]);
+
+  /** Top-level WS message router: global → active tab → background tab. */
+  const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
+    // Global messages are handled first regardless of tab_id
+    if (handleGlobalMessage(data)) return;
+
+    // Determine which tab this message is for
+    const messageTabId = (data as Record<string, unknown>).tab_id as string | undefined ?? 'default';
+
+    if (messageTabId === activeTabIdRef.current) {
+      handleActiveTabMessage(data);
+    } else {
+      applyToBackgroundTab(messageTabId, data);
+    }
+  }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab]);
+
+  // Keep WS handler in a ref so the WS effect always calls the latest version
+  // without needing to reconnect when callbacks change.
+  const handleWebSocketMessageRef = useRef(handleWebSocketMessage);
+  handleWebSocketMessageRef.current = handleWebSocketMessage;
 
   // ============================================
   // WebSocket Connection
@@ -413,13 +753,13 @@ function App() {
       ws.onopen = () => {
         chatState.setStatus('Connected to server');
         chatState.setError('');
-        ws?.send(JSON.stringify({ type: 'set_capture_mode', mode: screenshotState.captureMode }));
+        wsSend({ type: 'set_capture_mode', mode: screenshotState.captureMode });
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          handleWebSocketMessage(data);
+          handleWebSocketMessageRef.current(data);
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e);
         }
@@ -453,17 +793,17 @@ function App() {
 
     if (state?.conversationId) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
+        wsSend({
           type: 'resume_conversation',
           conversation_id: state.conversationId,
-        }));
+        });
         window.history.replaceState({}, '');
       } else {
         pendingConversationRef.current = state.conversationId;
       }
     } else if (state?.newChat) {
       if (wsRef.current?.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({ type: 'clear_context' }));
+        wsSend({ type: 'clear_context' });
         window.history.replaceState({}, '');
       } else {
         pendingNewChatRef.current = true;
@@ -514,35 +854,53 @@ function App() {
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!chatState.query.trim()) return;
+
+    const queryText = chatState.query.trim();
+    if (!queryText) return;
 
     chatState.setQuery('');
+
+    // Optimistic update: show the query immediately instead of waiting
+    // for the server echo.  Only for non-queued queries (canSubmit===true)
+    // to avoid overwriting in-flight state for queued messages.
+    if (chatState.canSubmit) {
+      chatState.startQuery(queryText);
+    }
+
     setTimeout(scrollToBottom, 50);
 
     generatingModelRef.current = selectedModel;
 
-    wsRef.current.send(JSON.stringify({
+    wsSend({
       type: 'submit_query',
-      content: chatState.query.trim(),
+      content: queryText,
       capture_mode: screenshotState.captureMode,
       model: selectedModel,
-    }));
+    });
   };
 
   const handleStopStreaming = () => {
-    wsRef.current?.send(JSON.stringify({ type: 'stop_streaming' }));
+    wsSend({ type: 'stop_streaming' });
   };
 
   const handleClearContext = () => {
-    wsRef.current?.send(JSON.stringify({ type: 'clear_context' }));
+    wsSend({ type: 'clear_context' });
   };
 
+  /** Create a new tab and notify the backend. */
+  const handleNewTab = useCallback(() => {
+    const id = createTab();
+    if (id) {
+      wsSend({ type: 'tab_created', tab_id: id });
+    }
+  }, [createTab, wsSend]);
+
   const handleRemoveScreenshot = (id: string) => {
-    wsRef.current?.send(JSON.stringify({ type: 'remove_screenshot', id }));
+    wsSend({ type: 'remove_screenshot', id });
   };
 
   const sendCaptureMode = (mode: 'fullscreen' | 'precision' | 'none') => {
-    wsRef.current?.send(JSON.stringify({ type: 'set_capture_mode', mode }));
+    wsSend({ type: 'set_capture_mode', mode });
   };
 
   const fullscreenModeEnabled = () => {
@@ -584,12 +942,10 @@ function App() {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
     if (isRecording) {
-      // Stop recording
-      wsRef.current.send(JSON.stringify({ type: 'stop_recording' }));
+      wsSend({ type: 'stop_recording' });
       chatState.setStatus('Transcribing...');
     } else {
-      // Start recording
-      wsRef.current.send(JSON.stringify({ type: 'start_recording' }));
+      wsSend({ type: 'start_recording' });
       setIsRecording(true);
       chatState.setStatus('Listening...');
     }
@@ -597,12 +953,12 @@ function App() {
 
   // ── Terminal Action Handlers ────────────────────────────────
   const handleTerminalApprovalResponse = useCallback((requestId: string, approved: boolean, remember: boolean) => {
-    wsRef.current?.send(JSON.stringify({
+    wsSend({
       type: 'terminal_approval_response',
       request_id: requestId,
       approved,
       remember,
-    }));
+    });
 
     if (approved) {
       // Transition inline block to running state
@@ -626,40 +982,41 @@ function App() {
   }, [handleTerminalApprovalResponse]);
 
   const handleTerminalSessionResponse = (approved: boolean) => {
-    wsRef.current?.send(JSON.stringify({
+    wsSend({
       type: 'terminal_session_response',
       approved,
-    }));
+    });
     setTerminalSessionRequest(null);
   };
 
   const handleStopSession = () => {
-    wsRef.current?.send(JSON.stringify({
+    wsSend({
       type: 'terminal_stop_session',
-    }));
+    });
     setTerminalSessionActive(false);
   };
 
   const handleKillCommand = useCallback((_requestId: string) => {
-    wsRef.current?.send(JSON.stringify({
+    wsSend({
       type: 'terminal_kill_command',
-    }));
+    });
   }, []);
 
   const handleTerminalResize = useCallback((cols: number, rows: number) => {
-    wsRef.current?.send(JSON.stringify({
+    wsSend({
       type: 'terminal_resize',
       cols,
       rows,
-    }));
-  }, []);
+    });
+  }, [wsSend]);
 
   // ============================================
   // Render
   // ============================================
   return (
     <div className="content-container" style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <TitleBar onClearContext={handleClearContext} setMini={setMini} />
+      <TitleBar onClearContext={handleNewTab} setMini={setMini} />
+      <TabBar wsSend={wsSend} />
 
       <ResponseArea
         chatHistory={chatState.chatHistory}
@@ -700,6 +1057,11 @@ function App() {
             <button onClick={handleStopSession}>Stop</button>
           </div>
         )}
+
+        <QueueDropdown
+          items={queueMap[activeTabId] ?? []}
+          onCancel={(itemId) => wsSend({ type: 'cancel_queued_item', item_id: itemId })}
+        />
 
         <div className="query-input-section">
           <QueryInput

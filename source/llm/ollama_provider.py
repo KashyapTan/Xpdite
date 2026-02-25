@@ -15,8 +15,9 @@ logger = logging.getLogger(__name__)
 
 from ollama import chat, Client as OllamaClient
 
-from ..core.connection import broadcast_message
+from ..core.connection import broadcast_message, get_current_tab_id, set_current_tab_id, wrap_with_tab_ctx
 from ..core.state import app_state
+from ..core.request_context import get_current_model, get_current_request
 from ..config import OLLAMA_CTX_SIZE
 from ..mcp_integration.handlers import handle_mcp_tool_calls
 from ..mcp_integration.manager import mcp_manager
@@ -70,6 +71,14 @@ async def stream_ollama_chat(
     """
     loop = asyncio.get_running_loop()
 
+    # ── Capture tab_id for thread→eventloop context propagation ────
+    # The _current_tab_id contextvar is set by the caller (submit_query
+    # via set_current_tab_id).  Background threads and tasks created via
+    # call_soon_threadsafe / create_task do NOT inherit it, so we capture
+    # it here and inject it into every coroutine we schedule from the
+    # producer thread.
+    _tab_id = get_current_tab_id()
+
     # Build messages
     messages = _build_messages(chat_history, user_query, image_paths)
     if system_prompt:
@@ -87,7 +96,7 @@ async def stream_ollama_chat(
     cancel_cleanup_done = threading.Event()
     tool_calls_list: List[Dict[str, Any]] = []
 
-    ctx = app_state.current_request
+    ctx = get_current_request() or app_state.current_request
     _empty_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
 
     def _abort():
@@ -121,7 +130,7 @@ async def stream_ollama_chat(
         try:
             loop.call_soon_threadsafe(
                 asyncio.create_task,
-                broadcast_message("response_complete", ""),
+                wrap_with_tab_ctx(_tab_id, broadcast_message("response_complete", "")),
             )
         except RuntimeError:
             pass
@@ -183,10 +192,11 @@ async def stream_ollama_chat(
     done_future_ref[0] = done_future
 
     def safe_schedule(coro):
+        wrapped = wrap_with_tab_ctx(_tab_id, coro)
         try:
-            loop.call_soon_threadsafe(asyncio.create_task, coro)
+            loop.call_soon_threadsafe(asyncio.create_task, wrapped)
         except RuntimeError:
-            pass
+            wrapped.close()  # prevent RuntimeWarning on shutdown
 
     def _safe_resolve_future(result):
         """Resolve done_future exactly once (event-loop thread)."""
@@ -212,7 +222,7 @@ async def stream_ollama_chat(
 
         try:
             chat_kwargs: Dict[str, Any] = {
-                "model": app_state.selected_model,
+                "model": get_current_model() or app_state.selected_model,
                 "messages": messages,
                 "stream": True,
                 "options": {"num_ctx": OLLAMA_CTX_SIZE},
@@ -224,12 +234,12 @@ async def stream_ollama_chat(
             generator_ref[0] = generator
 
             # Check cancellation before entering the blocking iteration loop
-            if stop_event.is_set() or app_state.stop_streaming:
+            if stop_event.is_set():
                 return
 
             for idx, chunk in enumerate(generator):
                 # Check if stop was requested
-                if stop_event.is_set() or app_state.stop_streaming:
+                if stop_event.is_set():
                     break
 
                 content_token, thinking_token = _extract_token(chunk)
@@ -312,12 +322,12 @@ async def stream_ollama_chat(
                 safe_schedule(
                     broadcast_message("response_chunk", final_message_content)
                 )
-            elif not accumulated and not stop_event.is_set() and not app_state.stop_streaming:
+            elif not accumulated and not stop_event.is_set():
                 # Fallback to non-streaming call if streaming yielded nothing
                 try:
                     logger.warning("Stream empty. Attempting non-streamed fallback...")
                     fallback_kwargs: Dict[str, Any] = {
-                        "model": app_state.selected_model,
+                        "model": get_current_model() or app_state.selected_model,
                         "messages": messages,
                         "stream": False,
                         "options": {"num_ctx": OLLAMA_CTX_SIZE},

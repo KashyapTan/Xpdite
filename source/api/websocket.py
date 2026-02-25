@@ -19,12 +19,17 @@ async def websocket_endpoint(websocket: WebSocket):
     """
     Bidirectional WebSocket endpoint.
 
+    All messages now carry a ``tab_id`` field (default ``"default"``).
+    Server → client messages are stamped with ``tab_id`` automatically
+    via the contextvar in ``connection.py``.
+
     Client -> Server messages (JSON):
       - submit_query: Submit a query with optional capture mode
       - clear_context: Clear screenshots and chat history
       - remove_screenshot: Remove specific screenshot from context
       - set_capture_mode: Set capture mode (fullscreen/precision/none)
       - stop_streaming: Stop the current streaming response
+      - cancel_queued_item: Cancel a specific queued (not yet running) item
       - get_conversations: Fetch conversation list
       - load_conversation: Load a specific conversation's messages
       - delete_conversation: Delete a conversation
@@ -32,6 +37,8 @@ async def websocket_endpoint(websocket: WebSocket):
       - resume_conversation: Resume a previous conversation
       - start_recording: Start audio recording for transcription
       - stop_recording: Stop audio recording and transcribe
+      - tab_created: Notify backend of a new tab
+      - tab_closed: Notify backend a tab was closed
       - terminal_approval_response: User response to terminal approval
       - terminal_session_response: User response to session mode request
       - terminal_stop_session: Stop active terminal session
@@ -61,6 +68,10 @@ async def websocket_endpoint(websocket: WebSocket):
       - conversation_deleted: Conversation was deleted
       - conversation_resumed: Conversation was resumed
       - error: Error message
+      - queue_full: Tab queue is at capacity
+      - query_queued: A query was added to the queue
+      - queue_updated: Queue state snapshot changed
+      - ollama_queue_status: Ollama global serialization status
       - terminal_approval_request: Request user approval for command
       - terminal_session_request: Request user approval for session mode
       - terminal_session_started: Terminal session started

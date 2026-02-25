@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from source.core.connection import ConnectionManager
+from source.core.connection import ConnectionManager, wrap_with_tab_ctx, get_current_tab_id, set_current_tab_id
 
 
 class _FakeWebSocket:
@@ -87,3 +87,55 @@ class TestConnectionManager:
     async def test_broadcast_empty_connections(self):
         mgr = ConnectionManager()
         await mgr.broadcast("no-one listening")  # should not raise
+
+
+class TestWrapWithTabCtx:
+    @pytest.mark.asyncio
+    async def test_sets_tab_id_during_execution(self):
+        """Wrapped coroutine should see the correct tab_id."""
+        captured = []
+
+        async def capture():
+            captured.append(get_current_tab_id())
+
+        wrapped = wrap_with_tab_ctx("tab-42", capture())
+        await wrapped
+        assert captured == ["tab-42"]
+
+    @pytest.mark.asyncio
+    async def test_restores_previous_tab_id(self):
+        """After wrapped coroutine completes, the outer tab_id is restored."""
+        tok = set_current_tab_id("outer")
+        try:
+            async def inner():
+                assert get_current_tab_id() == "inner"
+
+            await wrap_with_tab_ctx("inner", inner())
+            assert get_current_tab_id() == "outer"
+        finally:
+            set_current_tab_id(None)
+
+    @pytest.mark.asyncio
+    async def test_none_tab_id_returns_coro_unchanged(self):
+        """When tab_id is None, the original coroutine is returned (no wrapper)."""
+        async def noop():
+            pass
+
+        coro = noop()
+        result = wrap_with_tab_ctx(None, coro)
+        assert result is coro
+        await result  # avoid RuntimeWarning
+
+    @pytest.mark.asyncio
+    async def test_restores_on_exception(self):
+        """Tab ID is restored even if the inner coroutine raises."""
+        tok = set_current_tab_id("before")
+        try:
+            async def failing():
+                raise ValueError("boom")
+
+            with pytest.raises(ValueError, match="boom"):
+                await wrap_with_tab_ctx("error-tab", failing())
+            assert get_current_tab_id() == "before"
+        finally:
+            set_current_tab_id(None)

@@ -237,4 +237,61 @@ declare global {
   }
 }
 
+// ============================================
+// Tab Types
+// ============================================
+
+export interface TabInfo {
+  id: string;
+  title: string;
+}
+
+/** Queued item reported by the backend. */
+export interface QueueItem {
+  item_id: string;
+  preview: string;
+  position: number;
+}
+
+/** Snapshot of all per-tab React state for the state registry. */
+export interface ChatStateSnapshot {
+  chatHistory: ChatMessage[];
+  currentQuery: string;
+  response: string;
+  thinking: string;
+  isThinking: boolean;
+  thinkingCollapsed: boolean;
+  toolCalls: ToolCall[];
+  contentBlocks: ContentBlock[];
+  conversationId: string | null;
+  query: string;
+  canSubmit: boolean;
+  status: string;
+  error: string;
+}
+
+export interface ScreenshotSnapshot {
+  screenshots: Screenshot[];
+  captureMode: CaptureMode;
+  meetingRecordingMode: boolean;
+}
+
+export interface TokenUsageSnapshot {
+  tokenUsage: TokenUsage;
+}
+
+export interface TerminalSnapshot {
+  terminalSessionActive: boolean;
+  terminalSessionRequest: TerminalSessionRequest | null;
+}
+
+/** Full per-tab state snapshot stored in the registry. */
+export interface TabSnapshot {
+  chat: ChatStateSnapshot;
+  screenshots: ScreenshotSnapshot;
+  tokens: TokenUsageSnapshot;
+  terminal: TerminalSnapshot;
+  generatingModel: string;
+}
+
 export { };

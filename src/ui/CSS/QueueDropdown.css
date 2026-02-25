@@ -1,0 +1,127 @@
+/* ── Queue dropdown (above input box) ────────────────── */
+.queue-dropdown {
+  width: 100%;
+  margin-bottom: 4px;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.queue-dropdown-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: rgba(120, 160, 255, 0.08);
+  border: 1px solid rgba(120, 160, 255, 0.2);
+  border-radius: 8px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-family: inherit;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.queue-dropdown-header:hover {
+  background: rgba(120, 160, 255, 0.14);
+}
+
+.queue-dropdown-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 9px;
+  background: rgba(120, 160, 255, 0.35);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 0 5px;
+  flex-shrink: 0;
+}
+
+.queue-dropdown-label {
+  font-size: 11px;
+  font-weight: 500;
+  flex: 1;
+  text-align: left;
+}
+
+.queue-dropdown-chevron {
+  font-size: 14px;
+  font-weight: 700;
+  transition: transform 0.2s;
+  transform: rotate(90deg);
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.queue-dropdown-chevron.open {
+  transform: rotate(270deg);
+}
+
+/* ── Item list ───────────────────────────────────────── */
+.queue-dropdown-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.queue-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  transition: background 0.12s;
+}
+
+.queue-dropdown-item:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.queue-dropdown-pos {
+  font-size: 10px;
+  font-weight: 700;
+  color: rgba(120, 160, 255, 0.7);
+  flex-shrink: 0;
+  min-width: 18px;
+}
+
+.queue-dropdown-preview {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.65);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.queue-dropdown-cancel {
+  background: none;
+  border: none;
+  color: rgba(255, 100, 100, 0.6);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 3px;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+  line-height: 1;
+}
+
+.queue-dropdown-item:hover .queue-dropdown-cancel {
+  opacity: 1;
+}
+
+.queue-dropdown-cancel:hover {
+  color: #ff8080;
+}

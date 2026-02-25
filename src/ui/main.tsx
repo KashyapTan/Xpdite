@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-// CHANGE 1: Import createHashRouter instead of createBrowserRouter
 import { createHashRouter, RouterProvider } from 'react-router-dom'
+import { TabProvider } from './contexts/TabContext'
 import Layout from './components/Layout.tsx'
 import App from './pages/App.tsx'
 import Settings from './pages/Settings.tsx'
@@ -36,6 +36,8 @@ const router = createHashRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <RouterProvider router={router} />
+    <TabProvider>
+      <RouterProvider router={router} />
+    </TabProvider>
   </StrictMode>,
 )

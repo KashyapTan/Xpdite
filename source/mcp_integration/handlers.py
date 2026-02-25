@@ -19,8 +19,9 @@ from ollama import chat, Client as OllamaClient
 from .manager import mcp_manager
 from .retriever import retriever
 from .terminal_executor import is_terminal_tool, execute_terminal_tool
-from ..core.connection import broadcast_message
+from ..core.connection import broadcast_message, get_current_tab_id, set_current_tab_id, wrap_with_tab_ctx
 from ..core.state import app_state
+from ..core.request_context import is_current_request_cancelled, get_current_model, get_current_request
 from ..core.thread_pool import run_in_thread
 from ..config import MAX_TOOL_RESULT_LENGTH
 
@@ -124,7 +125,7 @@ async def handle_mcp_tool_calls(
     # Use provided client or fall back to module-level chat function
     chat_fn = client.chat if client else chat
 
-    if app_state.stop_streaming:
+    if is_current_request_cancelled():
         return messages, tool_calls_made, None
 
     # ── Phase 1: Non-streamed detection call ──────────────────────
@@ -133,7 +134,7 @@ async def handle_mcp_tool_calls(
     try:
         response = await run_in_thread(
             chat_fn,
-            model=app_state.selected_model,
+            model=get_current_model() or app_state.selected_model,
             messages=messages,
             tools=filtered_tools,
             think=False,
@@ -166,12 +167,7 @@ async def handle_mcp_tool_calls(
     while current_tool_calls and rounds < MAX_MCP_TOOL_ROUNDS:
         rounds += 1
 
-        if app_state.stop_streaming:
-            logger.info("Stop requested — aborting tool call loop")
-            break
-
-        ctx = app_state.current_request
-        if ctx and ctx.cancelled:
+        if is_current_request_cancelled():
             logger.info("Request cancelled — aborting tool call loop")
             break
 
@@ -207,7 +203,7 @@ async def handle_mcp_tool_calls(
 
             logger.info("Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name)
 
-            if app_state.stop_streaming:
+            if is_current_request_cancelled():
                 break
 
             await broadcast_message(
@@ -266,7 +262,7 @@ async def handle_mcp_tool_calls(
 
             messages.append({"role": "tool", "content": result_str, "name": fn_name})
 
-        if app_state.stop_streaming:
+        if is_current_request_cancelled():
             break
 
         # ── Stream follow-up call ─────────────────────────────────
@@ -327,11 +323,14 @@ async def _stream_tool_follow_up(
     # Use provided client or fall back to module-level chat function
     chat_fn = client.chat if client else chat
 
+    # ── Capture tab_id for thread→eventloop context propagation ───
+    _tab_id = get_current_tab_id()
+
     # ── Cancellation support (same pattern as ollama_provider) ───
     stop_event = threading.Event()
     generator_ref: list = [None]
 
-    ctx = app_state.current_request
+    ctx = get_current_request() or app_state.current_request
 
     def _abort():
         # Note: the outer _abort in stream_ollama_chat also closes the shared
@@ -349,15 +348,16 @@ async def _stream_tool_follow_up(
         ctx.on_cancel(_abort)
 
     def safe_schedule(coro):
+        wrapped = wrap_with_tab_ctx(_tab_id, coro)
         try:
-            asyncio.run_coroutine_threadsafe(coro, loop)
+            asyncio.run_coroutine_threadsafe(wrapped, loop)
         except RuntimeError:
-            pass
+            wrapped.close()  # prevent RuntimeWarning on shutdown
 
     def _do_stream():
         try:
             generator = chat_fn(
-                model=app_state.selected_model,
+                model=get_current_model() or app_state.selected_model,
                 messages=messages,
                 tools=tools,
                 stream=True,
@@ -366,7 +366,7 @@ async def _stream_tool_follow_up(
             generator_ref[0] = generator
 
             for chunk in generator:
-                if stop_event.is_set() or app_state.stop_streaming:
+                if stop_event.is_set() or is_current_request_cancelled():
                     break
 
                 # Extract and broadcast text tokens

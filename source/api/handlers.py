@@ -2,6 +2,8 @@
 WebSocket message handlers.
 
 Handles all incoming WebSocket message types and routes them to appropriate services.
+Every handler extracts ``tab_id`` from the incoming message (defaulting to ``"default"``).
+Tab-scoped operations are routed through the ``TabManager`` singleton.
 """
 
 import json
@@ -12,43 +14,11 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 from ..core.state import app_state
+from ..core.connection import set_current_tab_id, broadcast_to_tab
 from ..services.conversations import ConversationService
 from ..services.screenshots import ScreenshotHandler
 from ..services.terminal import terminal_service
 from ..database import db
-
-
-def extract_skill_slash_commands(message: str) -> tuple[list[dict], str]:
-    """
-    Extract slash commands from a user message and match to skills.
-
-    Returns (matched_skills, cleaned_message).
-    Removes matched slash commands from the message text.
-    If a slash command is recognized but the skill is disabled, strip it
-    from the message silently and skip injection.
-    """
-    all_skills = db.get_all_skills()
-    slash_map = {s["slash_command"]: s for s in all_skills}
-
-    tokens = message.split()
-    matched_skills = []
-    remaining_tokens = []
-
-    for token in tokens:
-        if token.startswith("/"):
-            cmd = token[1:].lower()
-            if cmd in slash_map:
-                skill = slash_map[cmd]
-                if skill["enabled"]:
-                    matched_skills.append(skill)
-                # disabled skill: strip from message, skip injection silently
-            else:
-                remaining_tokens.append(token)  # unknown slash command, leave it
-        else:
-            remaining_tokens.append(token)
-
-    cleaned_message = " ".join(remaining_tokens)
-    return matched_skills, cleaned_message
 
 
 class MessageHandler:
@@ -56,6 +26,7 @@ class MessageHandler:
     Handles incoming WebSocket messages and routes them to appropriate services.
 
     Each method handles a specific message type from the client.
+    All tab-scoped handlers extract ``tab_id`` to route through the TabManager.
     """
 
     def __init__(self, websocket: WebSocket):
@@ -70,21 +41,50 @@ class MessageHandler:
             await handler(data)
         # Silently ignore unknown types
 
-    async def _handle_submit_query(self, data: Dict[str, Any]):
-        """Handle query submission."""
-        import asyncio
+    # ── Helpers ───────────────────────────────────────────────────
 
+    def _get_tab_id(self, data: Dict[str, Any]) -> str:
+        return data.get("tab_id", "default")
+
+    def _get_tab_manager(self):
+        from ..services.tab_manager_instance import tab_manager
+        return tab_manager
+
+    # ── Tab lifecycle ─────────────────────────────────────────────
+
+    async def _handle_tab_created(self, data: Dict[str, Any]):
+        """Handle new tab creation from frontend."""
+        tab_id = self._get_tab_id(data)
+        try:
+            self._get_tab_manager().create_tab(tab_id)
+        except ValueError as e:
+            await self.websocket.send_text(
+                json.dumps({"type": "error", "content": str(e), "tab_id": tab_id})
+            )
+
+    async def _handle_tab_closed(self, data: Dict[str, Any]):
+        """Handle tab close from frontend."""
+        tab_id = self._get_tab_id(data)
+        await self._get_tab_manager().close_tab(tab_id)
+
+    # ── Query submission (via queue) ──────────────────────────────
+
+    async def _handle_submit_query(self, data: Dict[str, Any]):
+        """Handle query submission — routes through the per-tab queue."""
+        from ..services.query_queue import QueuedQuery, QueueFullError
+
+        tab_id = self._get_tab_id(data)
         query_text = data.get("content", "").strip()
         capture_mode = data.get("capture_mode", "none")
         model = data.get("model", "")
 
-        # Update the selected model in global state so the LLM provider uses it
+        # Update the selected model in global state
         if model:
             app_state.selected_model = model
 
         if not query_text:
             await self.websocket.send_text(
-                json.dumps({"type": "error", "content": "Empty query"})
+                json.dumps({"type": "error", "content": "Empty query", "tab_id": tab_id})
             )
             return
 
@@ -94,34 +94,75 @@ class MessageHandler:
         if forced_skills:
             logger.debug("Slash commands matched: %s", [s['skill_name'] for s in forced_skills])
 
-        # Use cleaned query (slash commands stripped) for the LLM only
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
 
-        # Run as background task — pass original text for display/save, cleaned for LLM
-        asyncio.create_task(
-            self._safe_submit_query(
-                query_text, capture_mode, forced_skills, llm_query=llm_query
-            )
+        session = self._get_tab_manager().get_or_create(tab_id)
+
+        queued = QueuedQuery(
+            tab_id=tab_id,
+            content=query_text,
+            model=model or app_state.selected_model,
+            capture_mode=capture_mode,
+            forced_skills=forced_skills,
+            llm_query=llm_query,
         )
 
-    async def _safe_submit_query(self, *args, **kwargs):
-        """Wrapper around submit_query that catches and reports errors."""
         try:
-            await ConversationService.submit_query(*args, **kwargs)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            try:
-                await self.websocket.send_text(json.dumps({
-                    "type": "error",
-                    "content": f"Query failed: {str(e)[:200]}"
-                }))
-            except Exception:
-                pass
+            await session.queue.enqueue(queued)
+        except QueueFullError:
+            await broadcast_to_tab(tab_id, "queue_full", {"tab_id": tab_id})
+
+    # ── Stop / cancel ─────────────────────────────────────────────
+
+    async def _handle_stop_streaming(self, data: Dict[str, Any]):
+        """Handle stop streaming request — stops current item, queue continues."""
+        tab_id = self._get_tab_id(data)
+        session = self._get_tab_manager().get_session(tab_id)
+        if session:
+            await session.queue.stop_current()
+
+        # Cancel any pending terminal approvals/sessions so tool loop unblocks
+        terminal_service.cancel_all_pending()
+
+    async def _handle_cancel_queued_item(self, data: Dict[str, Any]):
+        """Handle cancellation of a specific queued (not yet running) item."""
+        tab_id = self._get_tab_id(data)
+        item_id = data.get("item_id", "")
+        session = self._get_tab_manager().get_session(tab_id)
+        if session and item_id:
+            await session.queue.cancel_item(item_id)
+
+    # ── Context management ────────────────────────────────────────
 
     async def _handle_clear_context(self, data: Dict[str, Any]):
-        """Handle context clearing."""
-        await ConversationService.clear_context()
+        """Handle context clearing — per-tab."""
+        tab_id = self._get_tab_id(data)
+        session = self._get_tab_manager().get_session(tab_id)
+        tab_state = session.state if session else None
+
+        token = set_current_tab_id(tab_id)
+        try:
+            await ConversationService.clear_context(tab_state=tab_state)
+        finally:
+            set_current_tab_id(None)
+
+        # Reset the queue's resolved conversation_id
+        if session:
+            session.queue.reset_conversation()
+
+    async def _handle_resume_conversation(self, data: Dict[str, Any]):
+        """Handle conversation resumption — per-tab."""
+        tab_id = self._get_tab_id(data)
+        conv_id = data.get("conversation_id")
+        if conv_id:
+            session = self._get_tab_manager().get_or_create(tab_id)
+            token = set_current_tab_id(tab_id)
+            try:
+                await ConversationService.resume_conversation(conv_id, tab_state=session.state)
+                # Update the queue's resolved conversation_id
+                session.queue.resolved_conversation_id = conv_id
+            finally:
+                set_current_tab_id(None)
 
     async def _handle_remove_screenshot(self, data: Dict[str, Any]):
         """Handle screenshot removal."""
@@ -135,19 +176,6 @@ class MessageHandler:
         if mode in ("fullscreen", "precision", "none"):
             app_state.capture_mode = mode
             logger.debug("Capture mode set to: %s", mode)
-
-    async def _handle_stop_streaming(self, data: Dict[str, Any]):
-        """Handle stop streaming request — cancels all in-flight work."""
-        # Cancel via RequestContext (new path)
-        ctx = app_state.current_request
-        if ctx is not None:
-            ctx.cancel()
-
-        # Legacy flag for subsystems not yet migrated
-        app_state.stop_streaming = True
-
-        # Cancel any pending terminal approvals/sessions so tool loop unblocks
-        terminal_service.cancel_all_pending()
 
     async def _handle_get_conversations(self, data: Dict[str, Any]):
         """Handle conversation list request."""
@@ -203,12 +231,6 @@ class MessageHandler:
         await self.websocket.send_text(
             json.dumps({"type": "conversations_list", "content": results})
         )
-
-    async def _handle_resume_conversation(self, data: Dict[str, Any]):
-        """Handle conversation resumption."""
-        conv_id = data.get("conversation_id")
-        if conv_id:
-            await ConversationService.resume_conversation(conv_id)
 
     async def _handle_start_recording(self, data: Dict[str, Any]):
         """Handle start recording request."""

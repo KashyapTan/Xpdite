@@ -4,7 +4,7 @@
  * Manages token usage statistics for context window monitoring.
  */
 import { useState, useCallback } from 'react';
-import type { TokenUsage } from '../types';
+import type { TokenUsage, TokenUsageSnapshot } from '../types';
 
 const DEFAULT_LIMIT = 128000;
 
@@ -15,6 +15,8 @@ interface UseTokenUsageReturn {
   addTokens: (input: number, output: number) => void;
   resetTokens: () => void;
   setTokenUsage: (usage: Partial<TokenUsage>) => void;
+  getSnapshot: () => TokenUsageSnapshot;
+  restoreSnapshot: (snapshot: TokenUsageSnapshot) => void;
 }
 
 export function useTokenUsage(): UseTokenUsageReturn {
@@ -51,6 +53,14 @@ export function useTokenUsage(): UseTokenUsageReturn {
     }));
   }, []);
 
+  const getSnapshot = useCallback((): TokenUsageSnapshot => ({
+    tokenUsage: { ...tokenUsage },
+  }), [tokenUsage]);
+
+  const restoreSnapshot = useCallback((s: TokenUsageSnapshot) => {
+    setTokenUsageState({ ...s.tokenUsage });
+  }, []);
+
   return {
     tokenUsage,
     showTokenPopup,
@@ -58,5 +68,7 @@ export function useTokenUsage(): UseTokenUsageReturn {
     addTokens,
     resetTokens,
     setTokenUsage,
+    getSnapshot,
+    restoreSnapshot,
   };
 }

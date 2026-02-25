@@ -21,10 +21,52 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# ── ContextVar: per-task current request ──────────────────────────
+_current_request_ctx: contextvars.ContextVar[Optional[RequestContext]] = contextvars.ContextVar(
+    "current_request_ctx", default=None
+)
+
+# ── ContextVar: per-task current model ────────────────────────────
+_current_model_ctx: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "current_model_ctx", default=None
+)
+
+
+def set_current_request(ctx: Optional[RequestContext]) -> contextvars.Token:
+    """Set the current RequestContext for this async task."""
+    return _current_request_ctx.set(ctx)
+
+
+def get_current_request() -> Optional[RequestContext]:
+    """Get the current RequestContext for this async task."""
+    return _current_request_ctx.get()
+
+
+def is_current_request_cancelled() -> bool:
+    """Check if the current request is cancelled.
+
+    Safe to call from any async context.  Returns False if no request
+    is active.  This replaces all ``app_state.stop_streaming`` checks
+    in the LLM / tool layers.
+    """
+    ctx = _current_request_ctx.get()
+    return ctx is not None and ctx.cancelled
+
+
+def set_current_model(model: Optional[str]) -> contextvars.Token:
+    """Set the model for this async task (per-request, not global)."""
+    return _current_model_ctx.set(model)
+
+
+def get_current_model() -> Optional[str]:
+    """Get the model for this async task.  Returns None if not set."""
+    return _current_model_ctx.get()
 
 
 class RequestContext:
