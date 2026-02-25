@@ -56,9 +56,9 @@ const TabBar: React.FC<TabBarProps> = ({ wsSend }) => {
           </div>
         ))}
       </div>
-      <button className="tab-bar-new" onClick={handleCreate} title="New tab">
+      {/* <button className="tab-bar-new" onClick={handleCreate} title="New tab">
         <img src={newChatIcon} alt="New Tab" className="tab-bar-new-icon" />
-      </button>
+      </button> */}
     </div>
   );
 };

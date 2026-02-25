@@ -3,14 +3,16 @@
   display: flex;
   align-items: center;
   height: 28px;
-  background: rgba(255, 255, 255, 0.04);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  /* border-top: 1px solid rgba(255, 255, 255, 0.08); */
   padding: 0 4px;
   gap: 2px;
   -webkit-user-select: none;
   user-select: none;
-  flex-shrink: 0;
+  flex-shrink: 1;
   margin-top: 30px;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .tab-bar-tabs {
@@ -23,7 +25,7 @@
 }
 
 /* Hide scrollbar but keep scrollability */
-.tab-bar-tabs::-webkit-scrollbar {
+.tab-bar::-webkit-scrollbar {
   display: none;
 }
 

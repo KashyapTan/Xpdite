@@ -56,6 +56,28 @@ class TabState:
             if os.path.exists(ss.get("path", ""))
         ]
 
+    def add_screenshot(self, screenshot_data: Dict[str, Any]) -> str:
+        """Add a screenshot and return its ID.
+
+        Uses the global ``app_state.screenshot_counter`` for unique IDs
+        across all tabs.
+        """
+        from ..core.state import app_state
+
+        app_state.screenshot_counter += 1
+        ss_id = f"ss_{app_state.screenshot_counter}"
+        screenshot_data["id"] = ss_id
+        self.screenshot_list.append(screenshot_data)
+        return ss_id
+
+    def remove_screenshot(self, screenshot_id: str) -> bool:
+        """Remove a screenshot by ID. Returns True if found and removed."""
+        original_len = len(self.screenshot_list)
+        self.screenshot_list = [
+            ss for ss in self.screenshot_list if ss["id"] != screenshot_id
+        ]
+        return len(self.screenshot_list) < original_len
+
 
 @dataclass
 class TabSession:

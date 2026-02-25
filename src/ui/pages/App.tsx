@@ -193,6 +193,8 @@ function App() {
     registerAfterSwitch((newTabId: string) => {
       activeTabIdRef.current = newTabId;
       restoreTabState(newTabId);
+      // Notify the backend so hotkey-captured screenshots route to the correct tab
+      wsSend({ type: 'tab_activated', tab_id: newTabId });
     });
     registerOnTabClosed((closedTabId: string) => {
       tabRegistryRef.current.delete(closedTabId);

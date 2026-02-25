@@ -40,6 +40,10 @@ class AppState:
         # Capture mode: 'fullscreen' | 'precision' | 'none'
         self.capture_mode: str = "fullscreen"
 
+        # Active tab — updated from every incoming WS message so that
+        # background-thread screenshot captures route to the correct tab.
+        self.active_tab_id: str = "default"
+
         # Currently selected model (updated when user picks from dropdown)
         # deferred: avoid circular import with config.py
         from ..config import DEFAULT_MODEL

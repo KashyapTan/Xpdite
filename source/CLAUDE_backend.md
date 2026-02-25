@@ -55,11 +55,11 @@ source/
 
 ## Key File Responsibilities
 
-- **`state.py`** is a simple mutable singleton — it is *not* thread-safe for writes. All mutations happen inside the asyncio event loop from WS handler tasks, which is sufficient. `server_loop_holder["loop"]` stores the running asyncio event loop so that non-async threads (screenshot, lifecycle) can schedule coroutines via `asyncio.run_coroutine_threadsafe()`. Required because the Windows Proactor loop is not accessible from threads spawned outside uvicorn.
+- **`state.py`** is a simple mutable singleton — it is *not* thread-safe for writes. All mutations happen inside the asyncio event loop from WS handler tasks, which is sufficient. `server_loop_holder["loop"]` stores the running asyncio event loop so that non-async threads (screenshot, lifecycle) can schedule coroutines via `asyncio.run_coroutine_threadsafe()`. Required because the Windows Proactor loop is not accessible from threads spawned outside uvicorn. Also tracks `active_tab_id` — updated by `MessageHandler.handle()` on every incoming WS message so that background-thread screenshot captures (precision-mode hotkey) route to the correct tab.
 - **`connection.py`** — `wrap_with_tab_ctx(tab_id, coro)` wraps a coroutine so that `_current_tab_id` is set for its duration. Used whenever scheduling a broadcast from a background thread (e.g., Ollama streaming) back to the event loop via `call_soon_threadsafe` or `run_coroutine_threadsafe`. Without this wrapper, new tasks lose the contextvar and broadcast messages arrive without `tab_id`, routing them to the wrong tab on the frontend. See the "Why `wrap_with_tab_ctx`" architecture decision below.
 - **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop. Provides `ContextVar`-based `set_current_request()` / `is_current_request_cancelled()` for per-task cancellation, and `set_current_model()` / `get_current_model()` so the LLM layer picks up the correct model per-request without reading the global `app_state.selected_model`.
 - **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully.
-- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs.
+- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs.
 - **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`.
 - **`tab_manager_instance.py`** — lazy singleton initialized in `app.py` startup. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing Ollama models through the global queue.
 - **`thread_pool.py → run_in_thread`** is mandatory for anything that calls a synchronous SDK (e.g., `ollama.chat`, `ollama.list`). Calling them directly will block uvicorn's single event loop.
@@ -109,6 +109,7 @@ source/
 | `terminal_set_ask_level` | `level` (`always`/`on-miss`/`off`) | `_handle_terminal_set_ask_level` |
 | `tab_created` | `tab_id` | `_handle_tab_created` |
 | `tab_closed` | `tab_id` | `_handle_tab_closed` |
+| `tab_activated` | `tab_id` | `_handle_tab_activated` |
 | `cancel_queued_item` | `tab_id`, `item_id` | `_handle_cancel_queued_item` |
 
 ### Server → Client
@@ -203,7 +204,8 @@ Ollama's Python SDK returns a synchronous generator that blocks the calling thre
 **Why `wrap_with_tab_ctx` in `connection.py`?**
 Python's `contextvars.ContextVar` propagates automatically through `await` chains on the same task, but does NOT carry over when scheduling a new task from a background thread via `loop.call_soon_threadsafe(asyncio.create_task, coro)` or `asyncio.run_coroutine_threadsafe(coro, loop)`. The new task gets the event loop's root context, which has no `_current_tab_id`. Since Ollama streaming runs in a background thread and schedules `broadcast_message()` back to the loop, every chunk would arrive without a `tab_id`. `wrap_with_tab_ctx` captures the tab_id in the async scope *before* entering the thread, and applies it as a thin wrapper around every coroutine scheduled back. Cloud providers (Anthropic, OpenAI, Gemini) are fully async and don't cross a thread boundary, so they don't need this wrapper.
 
-**Why does terminal approval live in the FastAPI process, not the MCP subprocess?**
+**Why are screenshots stored per-tab instead of globally?**
+Each tab is an independent conversation. Screenshots attached in one tab should not appear in another tab's context. `ScreenshotHandler` writes to `tab_state.screenshot_list` (resolved via explicit parameter, `_current_tab_id` contextvar, or `app_state.active_tab_id` fallback). The `active_tab_id` is tracked by `MessageHandler.handle()` on every incoming WS message. For precision-mode hotkey captures (background thread), `process_screenshot` snapshots `active_tab_id` at schedule time and wraps the event-loop coroutine with `wrap_with_tab_ctx` so both the contextvar and the active-tab lookup resolve correctly.
 `asyncio.Event` can't cross process boundaries. The MCP terminal server runs as a stdio child process, so blocking until the user confirms must happen in the parent FastAPI process where the WebSocket connection lives.
 
 **Why are 3 of the 4 terminal security layers invisible?**

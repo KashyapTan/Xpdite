@@ -63,6 +63,7 @@ export interface ApiService {
   deleteConversation: (conversationId: string) => void;
   tabCreated: (tabId: string) => void;
   tabClosed: (tabId: string) => void;
+  tabActivated: (tabId: string) => void;
 }
 
 /**
@@ -129,6 +130,10 @@ export function createApiService(
 
     tabClosed(tabId: string) {
       send({ type: 'tab_closed', tab_id: tabId });
+    },
+
+    tabActivated(tabId: string) {
+      send({ type: 'tab_activated', tab_id: tabId });
     },
 
     // HTTP API examples (uncomment and implement as needed):

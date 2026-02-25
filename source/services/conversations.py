@@ -87,7 +87,7 @@ class ConversationService:
         from .terminal import terminal_service
 
         if tab_state is not None:
-            tab_state.screenshot_list.clear()
+            await ScreenshotHandler.clear_screenshots(tab_state=tab_state)
             tab_state.chat_history = []
             tab_state.conversation_id = None
         else:
@@ -118,7 +118,7 @@ class ConversationService:
         # Clear current state
         chat_history_target.clear()
         if tab_state is not None:
-            tab_state.screenshot_list.clear()
+            await ScreenshotHandler.clear_screenshots(tab_state=tab_state)
         else:
             await ScreenshotHandler.clear_screenshots()
 
@@ -251,7 +251,7 @@ class ConversationService:
                 and len(_screenshot_list) == 0
                 and len(_chat_history) == 0
             ):
-                await ScreenshotHandler.capture_fullscreen()
+                await ScreenshotHandler.capture_fullscreen(tab_state=tab_state)
 
             # Get image paths
             if tab_state:

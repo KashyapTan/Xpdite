@@ -34,6 +34,13 @@ class MessageHandler:
 
     async def handle(self, data: Dict[str, Any]):
         """Route a message to the appropriate handler."""
+        # Track the active tab — every WS message comes from the tab the
+        # user is currently interacting with.  Used by ScreenshotHandler to
+        # route hotkey-captured screenshots to the correct tab.
+        tab_id = data.get("tab_id")
+        if tab_id:
+            app_state.active_tab_id = tab_id
+
         msg_type = data.get("type")
         handler = getattr(self, f"_handle_{msg_type}", None)
 
@@ -66,6 +73,12 @@ class MessageHandler:
         """Handle tab close from frontend."""
         tab_id = self._get_tab_id(data)
         await self._get_tab_manager().close_tab(tab_id)
+
+    async def _handle_tab_activated(self, data: Dict[str, Any]):
+        """Handle tab switch from frontend — updates active_tab_id."""
+        tab_id = self._get_tab_id(data)
+        app_state.active_tab_id = tab_id
+        logger.debug("Active tab set to: %s", tab_id)
 
     # ── Query submission (via queue) ──────────────────────────────
 
@@ -165,10 +178,12 @@ class MessageHandler:
                 set_current_tab_id(None)
 
     async def _handle_remove_screenshot(self, data: Dict[str, Any]):
-        """Handle screenshot removal."""
+        """Handle screenshot removal — routes to the correct tab's screenshot list."""
         screenshot_id = data.get("id")
         if screenshot_id:
-            await ScreenshotHandler.remove_screenshot(screenshot_id)
+            tab_id = self._get_tab_id(data)
+            tab_state = self._get_tab_manager().get_state(tab_id)
+            await ScreenshotHandler.remove_screenshot(screenshot_id, tab_state=tab_state)
 
     async def _handle_set_capture_mode(self, data: Dict[str, Any]):
         """Handle capture mode change."""

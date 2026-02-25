@@ -39,6 +39,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - stop_recording: Stop audio recording and transcribe
       - tab_created: Notify backend of a new tab
       - tab_closed: Notify backend a tab was closed
+      - tab_activated: Notify backend the user switched to a tab
       - terminal_approval_response: User response to terminal approval
       - terminal_session_response: User response to session mode request
       - terminal_stop_session: Stop active terminal session
@@ -89,7 +90,29 @@ async def websocket_endpoint(websocket: WebSocket):
         "content": "Server ready. You can start chatting or take a screenshot (Alt+.)"
     }))
     
-    # Send any existing screenshots to newly connected client
+    # Send any existing screenshots to newly connected client.
+    # Screenshots now live per-tab; send each tab's screenshots tagged
+    # with the tab_id so the frontend can route them correctly.
+    try:
+        from ..services.tab_manager_instance import tab_manager
+        if tab_manager is not None:
+            for tid in tab_manager.get_all_tab_ids():
+                ts = tab_manager.get_state(tid)
+                if ts is not None:
+                    for ss in ts.screenshot_list:
+                        await websocket.send_text(json.dumps({
+                            "type": "screenshot_added",
+                            "tab_id": tid,
+                            "content": {
+                                "id": ss["id"],
+                                "name": ss["name"],
+                                "thumbnail": ss["thumbnail"]
+                            }
+                        }))
+    except Exception:
+        pass  # tab_manager may not be initialized yet on first connect
+
+    # Fallback: also send any global screenshots (startup edge case)
     for ss in app_state.screenshot_list:
         await websocket.send_text(json.dumps({
             "type": "screenshot_added",
