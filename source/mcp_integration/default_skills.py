@@ -42,7 +42,8 @@ DEFAULT_SKILLS = [
 
 **Workflow:**
 - List directory contents before reading or writing to understand the existing structure.
-- Prefer reading a file fully before making targeted edits — partial context leads to errors.
+- Always read a file fully before making edits — partial context leads to errors.
+- NEVER write to a file without reading it.
 - When writing, preserve the original file encoding and line endings.
 - Use move/rename rather than write+delete for file restructuring.
 
