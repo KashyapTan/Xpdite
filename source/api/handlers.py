@@ -83,8 +83,14 @@ class MessageHandler:
     # ── Query submission (via queue) ──────────────────────────────
 
     async def _handle_submit_query(self, data: Dict[str, Any]):
-        """Handle query submission — routes through the per-tab queue."""
+        """Handle query submission — routes through the per-tab queue.
+
+        Fullscreen screenshots are captured HERE (before enqueuing) so they
+        happen immediately without being blocked by the Ollama global queue
+        or another tab's in-flight LLM request.
+        """
         from ..services.query_queue import QueuedQuery, QueueFullError
+        from ..config import CaptureMode
 
         tab_id = self._get_tab_id(data)
         query_text = data.get("content", "").strip()
@@ -110,6 +116,20 @@ class MessageHandler:
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
 
         session = self._get_tab_manager().get_or_create(tab_id)
+
+        # ── Capture fullscreen screenshot BEFORE enqueuing ────────
+        # This runs immediately on the event loop so it isn't blocked by
+        # the Ollama global queue or another tab's in-flight request.
+        if (
+            capture_mode == CaptureMode.FULLSCREEN
+            and len(session.state.screenshot_list) == 0
+            and len(session.state.chat_history) == 0
+        ):
+            token = set_current_tab_id(tab_id)
+            try:
+                await ScreenshotHandler.capture_fullscreen(tab_state=session.state)
+            finally:
+                set_current_tab_id(None)
 
         queued = QueuedQuery(
             tab_id=tab_id,

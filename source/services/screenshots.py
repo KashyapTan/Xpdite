@@ -75,6 +75,8 @@ class ScreenshotHandler:
         
         Returns the screenshot ID if successful, None otherwise.
         """
+        from ..core.thread_pool import run_in_thread
+
         try:
             # Import here to avoid circular imports
             from ..ss import take_fullscreen_screenshot, create_thumbnail
@@ -85,8 +87,8 @@ class ScreenshotHandler:
             # Give the UI time to hide
             await asyncio.sleep(0.4)
             
-            # Take the screenshot
-            image_path = take_fullscreen_screenshot(SCREENSHOT_FOLDER)
+            # Take the screenshot in a thread to avoid blocking the event loop
+            image_path = await run_in_thread(take_fullscreen_screenshot, SCREENSHOT_FOLDER)
             
             if image_path and os.path.exists(image_path):
                 return await ScreenshotHandler.add_screenshot(image_path, tab_state=tab_state)

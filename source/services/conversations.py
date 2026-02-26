@@ -17,7 +17,6 @@ from ..core.request_context import RequestContext
 from ..core.connection import broadcast_message
 from ..core.thread_pool import run_in_thread
 from ..llm.router import route_chat
-from ..config import SCREENSHOT_FOLDER, CaptureMode
 from .screenshots import ScreenshotHandler
 from ..database import db
 
@@ -195,7 +194,6 @@ class ConversationService:
         Returns:
             The conversation_id (str) or None on failure.
         """
-        from ..ss import take_fullscreen_screenshot, create_thumbnail
 
         # ── Resolve state targets ─────────────────────────────────────
         _chat_history = tab_state.chat_history if tab_state else app_state.chat_history
@@ -245,13 +243,9 @@ class ConversationService:
             queue.set_active_ctx(ctx)
 
         try:
-            # Auto-capture fullscreen on first message of new conversation
-            if (
-                capture_mode == CaptureMode.FULLSCREEN
-                and len(_screenshot_list) == 0
-                and len(_chat_history) == 0
-            ):
-                await ScreenshotHandler.capture_fullscreen(tab_state=tab_state)
+            # NOTE: Fullscreen auto-capture is now done in the handler
+            # (_handle_submit_query) BEFORE enqueuing, so screenshots are
+            # taken immediately without being blocked by the Ollama queue.
 
             # Get image paths
             if tab_state:
@@ -361,11 +355,6 @@ class ConversationService:
 
                 logger.info("Saved interrupted conversation: %s", _require_conv_id())
 
-                # Clear screenshots (they were embedded in the user message)
-                if image_paths and len(_screenshot_list) > 0:
-                    _screenshot_list.clear()
-                    await broadcast_message("screenshots_cleared", "")
-
                 return _require_conv_id()
 
             # 1. Create conversation entry if it doesn't exist
@@ -468,17 +457,19 @@ class ConversationService:
 
             logger.debug("Chat history: %d messages", len(_chat_history))
 
-            # Clear screenshots after embedding in history
-            if image_paths and len(_screenshot_list) > 0:
-                _screenshot_list.clear()
-                await broadcast_message("screenshots_cleared", "")
-
             return _require_conv_id()
 
         except Exception as e:
             await broadcast_message("error", f"Error processing: {e}")
             return None
         finally:
+            # ── Always clear screenshots that were consumed ───────────
+            # Covers normal, cancelled, AND exception paths so the
+            # frontend chip container is never left stale.
+            if _screenshot_list:
+                _screenshot_list.clear()
+                await broadcast_message("screenshots_cleared", "")
+
             # ── Request lifecycle: mark done ──────────────────────────
             ctx.mark_done()
             set_current_request(None)  # Clear contextvars

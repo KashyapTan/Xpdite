@@ -36,6 +36,7 @@ import '../CSS/QueueDropdown.css';
 import type {
   WebSocketMessage,
   TabSnapshot,
+  Screenshot,
   ScreenshotAddedContent,
   ScreenshotRemovedContent,
   ConversationSavedContent,
@@ -392,6 +393,34 @@ function App() {
         return; // Don't update chat snapshot
       }
 
+      // ── Screenshot messages for background tabs ──────────────
+      case 'screenshot_added': {
+        const ssData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as ScreenshotAddedContent;
+        const screenshots = { ...snap.screenshots };
+        screenshots.screenshots = [...screenshots.screenshots, ssData as unknown as Screenshot];
+        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        return;
+      }
+
+      case 'screenshot_removed': {
+        const removeData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as ScreenshotRemovedContent;
+        const screenshots = { ...snap.screenshots };
+        screenshots.screenshots = screenshots.screenshots.filter(ss => ss.id !== removeData.id);
+        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        return;
+      }
+
+      case 'screenshots_cleared': {
+        const screenshots = { ...snap.screenshots };
+        screenshots.screenshots = [];
+        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        return;
+      }
+
       default:
         return; // Ignore other types for background tabs
     }
@@ -452,28 +481,6 @@ function App() {
         setIsHidden(false);
         return true;
 
-      case 'screenshot_added': {
-        const ssData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotAddedContent;
-        screenshotState.addScreenshot(ssData);
-        chatState.setStatus('Screenshot added to context.');
-        setIsHidden(false);
-        return true;
-      }
-
-      case 'screenshot_removed': {
-        const removeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotRemovedContent;
-        screenshotState.removeScreenshot(removeData.id);
-        return true;
-      }
-
-      case 'screenshots_cleared':
-        screenshotState.clearScreenshots();
-        return true;
-
       case 'transcription_result':
         chatState.setQuery((prev) => prev + (prev ? ' ' : '') + String(data.content));
         setIsRecording(false);
@@ -497,7 +504,7 @@ function App() {
       default:
         return false; // Not a global message
     }
-  }, [chatState, screenshotState, setIsHidden, wsSend, setQueueItems]);
+  }, [chatState, setIsHidden, wsSend, setQueueItems]);
 
   /** Handle tab-scoped messages for the active tab. */
   const handleActiveTabMessage = useCallback((data: WebSocketMessage) => {
@@ -508,6 +515,29 @@ function App() {
         tokenState.resetTokens();
         setTerminalSessionRequest(null);
         setTerminalSessionActive(false);
+        break;
+
+      // ── Screenshot messages (tab-scoped) ──────────────────
+      case 'screenshot_added': {
+        const ssData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as ScreenshotAddedContent;
+        screenshotState.addScreenshot(ssData);
+        chatState.setStatus('Screenshot added to context.');
+        setIsHidden(false);
+        break;
+      }
+
+      case 'screenshot_removed': {
+        const removeData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as ScreenshotRemovedContent;
+        screenshotState.removeScreenshot(removeData.id);
+        break;
+      }
+
+      case 'screenshots_cleared':
+        screenshotState.clearScreenshots();
         break;
 
       case 'query': {

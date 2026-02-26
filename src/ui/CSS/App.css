@@ -131,6 +131,14 @@ textarea,
   scroll-behavior: smooth;
 }
 
+/* When the tab bar is visible (>1 tab), shrink the response area
+   by the tab bar's 28px height and drop the extra top margin
+   (the tab bar already provides the 30px offset from the title bar). */
+.tab-bar + .response-area {
+  margin-top: 0;
+  height: calc(100% - 188px);
+}
+
 .response-area::-webkit-scrollbar {
   width: 0;
   height: 0;
