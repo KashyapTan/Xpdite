@@ -1,0 +1,169 @@
+/* MeetingRecorderSettings.css */
+
+.meeting-settings {
+    padding: 20px 24px;
+    max-width: 560px;
+}
+
+.meeting-settings-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.95);
+    margin: 0 0 24px;
+}
+
+/* ── Section ── */
+.meeting-settings-section {
+    margin-bottom: 28px;
+}
+
+.meeting-settings-label {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.meeting-settings-hint {
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.4);
+    margin: 6px 0 0;
+    line-height: 1.4;
+}
+
+/* ── GPU display ── */
+.meeting-settings-gpu-display {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.gpu-badge {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+.gpu-cuda {
+    background: rgba(118, 185, 0, 0.15);
+}
+
+.gpu-cpu {
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.gpu-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.75);
+}
+
+/* ── Select dropdown ── */
+.meeting-settings-select {
+    width: 100%;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    color: rgba(255, 255, 255, 0.85);
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='rgba(255,255,255,0.4)' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    transition: border-color 0.2s;
+}
+
+.meeting-settings-select:hover {
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.meeting-settings-select:focus {
+    border-color: rgba(79, 140, 255, 0.5);
+}
+
+.meeting-settings-select option {
+    background: #1e1e1e;
+    color: rgba(255, 255, 255, 0.85);
+}
+
+/* ── Toggle switch ── */
+.meeting-settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.meeting-settings-toggle input[type='checkbox'] {
+    display: none;
+}
+
+.toggle-slider {
+    width: 40px;
+    height: 22px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 11px;
+    position: relative;
+    transition: background 0.25s;
+    flex-shrink: 0;
+}
+
+.toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 16px;
+    height: 16px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 50%;
+    transition: transform 0.25s, background 0.25s;
+}
+
+.meeting-settings-toggle input:checked+.toggle-slider {
+    background: rgba(79, 140, 255, 0.5);
+}
+
+.meeting-settings-toggle input:checked+.toggle-slider::after {
+    transform: translateX(18px);
+    background: #4f8cff;
+}
+
+.toggle-label {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Saving indicator ── */
+.meeting-settings-saving {
+    font-size: 0.78rem;
+    color: rgba(79, 140, 255, 0.7);
+    margin-top: 8px;
+    animation: meetingSettingsPulse 1s ease-in-out infinite;
+}
+
+@keyframes meetingSettingsPulse {
+
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}

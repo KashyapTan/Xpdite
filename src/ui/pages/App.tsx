@@ -125,6 +125,12 @@ function App() {
     }
   }, []);
 
+  // Expose wsSend globally so non-App pages (MeetingAlbum, etc.) can send messages
+  useEffect(() => {
+    (window as any).__xpditeWsSend = wsSend;
+    return () => { delete (window as any).__xpditeWsSend; };
+  }, [wsSend]);
+
   // ============================================
   // Tab switch: snapshot / restore state registry
   // ============================================
@@ -501,6 +507,47 @@ function App() {
         chatState.setError('Queue is full. Please wait for current queries to finish.');
         return true;
 
+      // ── Meeting Recording messages (global, not tab-scoped) ──
+      case 'meeting_recording_started':
+      case 'meeting_recording_stopped':
+      case 'meeting_transcript_chunk':
+      case 'meeting_recording_error':
+      case 'meeting_recording_status': {
+        // Route to MeetingRecorderContext handlers
+        const handlers = (window as any).__meetingRecorderHandlers;
+        if (handlers) {
+          const content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
+          if (data.type === 'meeting_recording_started') handlers.handleRecordingStarted(content);
+          else if (data.type === 'meeting_recording_stopped') handlers.handleRecordingStopped(content);
+          else if (data.type === 'meeting_transcript_chunk') handlers.handleTranscriptChunk(content);
+        }
+        return true;
+      }
+
+      case 'meeting_recordings_list':
+      case 'meeting_recording_loaded':
+      case 'meeting_recording_deleted':
+      case 'meeting_processing_progress':
+      case 'meeting_analysis_started':
+      case 'meeting_analysis_complete':
+      case 'meeting_analysis_error':
+      case 'meeting_action_result': {
+        // Route to MeetingAlbum and MeetingRecordingDetail page handlers
+        const albumHandler = (window as any).__meetingAlbumHandler;
+        if (albumHandler) albumHandler(data);
+        const detailHandler = (window as any).__meetingDetailHandler;
+        if (detailHandler) detailHandler(data);
+        return true;
+      }
+
+      case 'meeting_compute_info':
+      case 'meeting_settings': {
+        // Route to MeetingRecorderSettings handler
+        const settingsHandler = (window as any).__meetingSettingsHandler;
+        if (settingsHandler) settingsHandler(data);
+        return true;
+      }
+
       default:
         return false; // Not a global message
     }
@@ -649,10 +696,10 @@ function App() {
           model: m.model,
           contentBlocks: m.content_blocks
             ? m.content_blocks.map((b) =>
-                b.type === 'tool_call'
-                  ? { type: 'tool_call' as const, toolCall: { name: b.name!, args: b.args ?? {}, server: b.server ?? '', status: 'complete' as const } }
-                  : { type: 'text' as const, content: b.content ?? '' }
-              )
+              b.type === 'tool_call'
+                ? { type: 'tool_call' as const, toolCall: { name: b.name!, args: b.args ?? {}, server: b.server ?? '', status: 'complete' as const } }
+                : { type: 'text' as const, content: b.content ?? '' }
+            )
             : undefined,
         }));
 

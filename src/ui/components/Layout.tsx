@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { MeetingRecorderProvider } from '../contexts/MeetingRecorderContext';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
 import '../CSS/App.css';
 
@@ -17,25 +18,28 @@ const Layout: React.FC = () => {
   };
 
   return (
-    <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
-      <div
-        className="mini-container"
-        title="Restore Xpdite"
-        onClick={() => toggleMini(false)}
-      >
-        <img
-          src={xpditeLogo}
-          alt="Xpdite Logo"
-          className="xpdite-logo"
-        />
-      </div>
+    <MeetingRecorderProvider>
+      <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
+        <div
+          className="mini-container"
+          title="Restore Xpdite"
+          onClick={() => toggleMini(false)}
+        >
+          <img
+            src={xpditeLogo}
+            alt="Xpdite Logo"
+            className="xpdite-logo"
+          />
+        </div>
 
-      <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
-        <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
+        <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
+          <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
+        </div>
       </div>
-    </div>
+    </MeetingRecorderProvider>
   );
 };
 
 export default Layout;
 export { Layout };
+

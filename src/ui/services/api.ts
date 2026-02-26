@@ -64,6 +64,13 @@ export interface ApiService {
   tabCreated: (tabId: string) => void;
   tabClosed: (tabId: string) => void;
   tabActivated: (tabId: string) => void;
+  // Meeting recording methods
+  startMeetingRecording: () => void;
+  stopMeetingRecording: () => void;
+  getMeetingRecordings: (limit?: number, offset?: number) => void;
+  searchMeetingRecordings: (query: string) => void;
+  deleteMeetingRecording: (id: string) => void;
+  getMeetingRecordingStatus: () => void;
 }
 
 /**
@@ -134,6 +141,31 @@ export function createApiService(
 
     tabActivated(tabId: string) {
       send({ type: 'tab_activated', tab_id: tabId });
+    },
+
+    // Meeting recording methods
+    startMeetingRecording() {
+      send({ type: 'meeting_start_recording' });
+    },
+
+    stopMeetingRecording() {
+      send({ type: 'meeting_stop_recording' });
+    },
+
+    getMeetingRecordings(limit = 50, offset = 0) {
+      send({ type: 'get_meeting_recordings', limit, offset });
+    },
+
+    searchMeetingRecordings(query: string) {
+      send({ type: 'search_meeting_recordings', query });
+    },
+
+    deleteMeetingRecording(id: string) {
+      send({ type: 'delete_meeting_recording', recording_id: id });
+    },
+
+    getMeetingRecordingStatus() {
+      send({ type: 'meeting_get_status' });
     },
 
     // HTTP API examples (uncomment and implement as needed):

@@ -46,6 +46,19 @@ async def websocket_endpoint(websocket: WebSocket):
       - terminal_kill_command: Kill running terminal command
       - terminal_set_ask_level: Set terminal approval level
       - terminal_resize: Resize terminal dimensions
+      - meeting_start_recording: Start a meeting recording session
+      - meeting_stop_recording: Stop the active meeting recording
+      - meeting_audio_chunk: Send base64-encoded PCM audio data
+      - get_meeting_recordings: Fetch meeting recording list
+      - load_meeting_recording: Load a specific meeting recording detail
+      - delete_meeting_recording: Delete a meeting recording
+      - search_meeting_recordings: Search meeting recordings by title
+      - meeting_get_status: Get current meeting recording status
+      - meeting_get_compute_info: Get GPU compute backend info
+      - meeting_get_settings: Get meeting recorder settings
+      - meeting_update_settings: Update meeting recorder settings
+      - meeting_generate_analysis: Generate AI summary and action suggestions
+      - meeting_execute_action: Execute a suggested action via MCP tools
 
     Server -> Client broadcast messages (JSON):
       - ready: Server is ready to receive queries
@@ -81,6 +94,21 @@ async def websocket_endpoint(websocket: WebSocket):
       - terminal_output: Terminal output chunk
       - terminal_command_complete: Terminal command finished
       - transcription_result: Audio transcription result
+      - meeting_recording_started: Meeting recording began
+      - meeting_recording_stopped: Meeting recording ended
+      - meeting_transcript_chunk: Live transcript segment
+      - meeting_recordings_list: List of meeting recordings
+      - meeting_recording_loaded: Meeting recording detail loaded
+      - meeting_recording_deleted: Meeting recording was deleted
+      - meeting_recording_status: Current meeting recording status
+      - meeting_recording_error: Error during meeting recording
+      - meeting_processing_progress: Tier 2 processing progress update
+      - meeting_compute_info: GPU compute backend information
+      - meeting_settings: Meeting recorder settings values
+      - meeting_analysis_started: AI analysis generation started
+      - meeting_analysis_complete: AI summary and actions ready
+      - meeting_analysis_error: AI analysis generation failed
+      - meeting_action_result: MCP action execution result
     """
     await manager.connect(websocket)
     

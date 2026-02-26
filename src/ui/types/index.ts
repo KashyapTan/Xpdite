@@ -233,6 +233,8 @@ declare global {
     electronAPI?: {
       focusWindow: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
+      enableLoopbackAudio: () => Promise<void>;
+      disableLoopbackAudio: () => Promise<void>;
     };
   }
 }

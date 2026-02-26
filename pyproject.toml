@@ -30,6 +30,9 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "sentence-transformers>=5.2.3",
     "pywinpty>=3.0.3",
+    "whisperx>=3.8.1",
+    "speechbrain>=1.0.3",
+    "torchaudio>=2.8.0",
 ]
 
 [dependency-groups]

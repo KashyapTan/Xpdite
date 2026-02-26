@@ -14,7 +14,7 @@ from fastapi import WebSocket
 logger = logging.getLogger(__name__)
 
 from ..core.state import app_state
-from ..core.connection import set_current_tab_id, broadcast_to_tab
+from ..core.connection import set_current_tab_id, broadcast_to_tab, broadcast_message
 from ..services.conversations import ConversationService
 from ..services.screenshots import ScreenshotHandler
 from ..services.terminal import terminal_service
@@ -287,8 +287,272 @@ class MessageHandler:
             )
 
     # ---------------------------------------------------------
-    # Terminal Handlers
+    # Meeting Recording Handlers
     # ---------------------------------------------------------
+
+    async def _handle_meeting_start_recording(self, data: Dict[str, Any]):
+        """Start a new meeting recording session."""
+        from ..services.meeting_recorder import meeting_recorder_service
+
+        try:
+            result = await meeting_recorder_service.start_recording()
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_recording_started", "content": result})
+            )
+        except RuntimeError as e:
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_recording_error", "content": str(e)})
+            )
+
+    async def _handle_meeting_stop_recording(self, data: Dict[str, Any]):
+        """Stop the active meeting recording."""
+        from ..services.meeting_recorder import meeting_recorder_service
+
+        try:
+            result = await meeting_recorder_service.stop_recording()
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_recording_stopped", "content": result})
+            )
+        except RuntimeError as e:
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_recording_error", "content": str(e)})
+            )
+
+    async def _handle_meeting_audio_chunk(self, data: Dict[str, Any]):
+        """Receive a base64-encoded PCM audio chunk from the renderer."""
+        import base64
+        from ..services.meeting_recorder import meeting_recorder_service
+
+        audio_b64 = data.get("audio", "")
+        if audio_b64:
+            pcm_data = base64.b64decode(audio_b64)
+            meeting_recorder_service.handle_audio_chunk(pcm_data)
+
+    async def _handle_get_meeting_recordings(self, data: Dict[str, Any]):
+        """List meeting recordings."""
+        limit = data.get("limit", 50)
+        offset = data.get("offset", 0)
+        recordings = db.get_meeting_recordings(limit=limit, offset=offset)
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_recordings_list", "content": recordings})
+        )
+
+    async def _handle_load_meeting_recording(self, data: Dict[str, Any]):
+        """Load full detail for a single meeting recording."""
+        recording_id = data.get("recording_id", "")
+        if recording_id:
+            recording = db.get_meeting_recording(recording_id)
+            await self.websocket.send_text(
+                json.dumps(
+                    {"type": "meeting_recording_loaded", "content": recording}
+                )
+            )
+
+    async def _handle_delete_meeting_recording(self, data: Dict[str, Any]):
+        """Delete a meeting recording."""
+        recording_id = data.get("recording_id", "")
+        if recording_id:
+            # Also delete the audio file if it exists
+            recording = db.get_meeting_recording(recording_id)
+            if recording and recording.get("audio_file_path"):
+                import os
+                try:
+                    os.remove(recording["audio_file_path"])
+                except OSError:
+                    pass
+            db.delete_meeting_recording(recording_id)
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "meeting_recording_deleted",
+                        "content": {"recording_id": recording_id},
+                    }
+                )
+            )
+
+    async def _handle_search_meeting_recordings(self, data: Dict[str, Any]):
+        """Search meeting recordings by title."""
+        search_term = data.get("query", "")
+        if search_term:
+            results = db.search_meeting_recordings(search_term)
+        else:
+            results = db.get_meeting_recordings(limit=50)
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_recordings_list", "content": results})
+        )
+
+    async def _handle_meeting_get_status(self, data: Dict[str, Any]):
+        """Get current meeting recording status."""
+        from ..services.meeting_recorder import meeting_recorder_service
+
+        status = meeting_recorder_service.get_status()
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_recording_status", "content": status})
+        )
+
+    async def _handle_meeting_get_compute_info(self, data: Dict[str, Any]):
+        """Get GPU compute backend info for settings display."""
+        from ..services.gpu_detector import get_compute_info
+
+        info = get_compute_info()
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_compute_info", "content": info})
+        )
+
+    async def _handle_meeting_get_settings(self, data: Dict[str, Any]):
+        """Get current meeting recorder settings."""
+        settings = {
+            "whisper_model": db.get_setting("meeting_whisper_model") or "base",
+            "keep_audio": db.get_setting("meeting_keep_audio") or "false",
+            "diarization_enabled": db.get_setting("meeting_diarization_enabled") or "true",
+        }
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_settings", "content": settings})
+        )
+
+    async def _handle_meeting_update_settings(self, data: Dict[str, Any]):
+        """Save meeting recorder settings."""
+        from ..services.meeting_recorder import meeting_recorder_service
+
+        settings = data.get("settings", {})
+        if "whisper_model" in settings:
+            model = settings["whisper_model"]
+            if model in ("tiny", "base", "small"):
+                db.set_setting("meeting_whisper_model", model)
+                meeting_recorder_service.set_model_size(model)
+        if "keep_audio" in settings:
+            db.set_setting("meeting_keep_audio", settings["keep_audio"])
+        if "diarization_enabled" in settings:
+            db.set_setting("meeting_diarization_enabled", settings["diarization_enabled"])
+
+        # Return updated settings
+        updated = {
+            "whisper_model": db.get_setting("meeting_whisper_model") or "base",
+            "keep_audio": db.get_setting("meeting_keep_audio") or "false",
+            "diarization_enabled": db.get_setting("meeting_diarization_enabled") or "true",
+        }
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_settings", "content": updated})
+        )
+
+    async def _handle_meeting_generate_analysis(self, data: Dict[str, Any]):
+        """Generate AI summary and action suggestions for a recording."""
+        import asyncio
+        from ..services.meeting_recorder import meeting_analysis_service
+
+        recording_id = data.get("recording_id")
+        if not recording_id:
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_analysis_error", "content": {"error": "Missing recording_id"}})
+            )
+            return
+
+        # Run in background to avoid blocking WS
+        async def _run_analysis():
+            try:
+                result = await meeting_analysis_service.generate_analysis(recording_id)
+                if "error" in result and result.get("summary") is None:
+                    await broadcast_message("meeting_analysis_error", {
+                        "recording_id": recording_id,
+                        "error": result["error"],
+                    })
+                else:
+                    await broadcast_message("meeting_analysis_complete", {
+                        "recording_id": recording_id,
+                        "summary": result.get("summary"),
+                        "actions": result.get("actions", []),
+                        "parse_error": result.get("parse_error", False),
+                    })
+            except Exception as e:
+                logger.error("Analysis handler error: %s", e)
+                await broadcast_message("meeting_analysis_error", {
+                    "recording_id": recording_id,
+                    "error": str(e),
+                })
+
+        asyncio.create_task(_run_analysis())
+
+        # Acknowledge request was received
+        await self.websocket.send_text(
+            json.dumps({"type": "meeting_analysis_started", "content": {"recording_id": recording_id}})
+        )
+
+    async def _handle_meeting_execute_action(self, data: Dict[str, Any]):
+        """Execute an action suggestion via MCP tools."""
+        from ..mcp_integration.manager import mcp_manager
+
+        recording_id = data.get("recording_id", "")
+        action = data.get("action", {})
+        action_type = action.get("type", "")
+        action_index = data.get("action_index", 0)
+
+        try:
+            result = ""
+            success = True
+
+            if action_type == "calendar_event":
+                # Map to Google Calendar MCP tool
+                # Server signature: create_event(title, start, end, description, location, attendees)
+                result = await mcp_manager.call_tool("create_event", {
+                    "title": action.get("title", "Meeting Follow-up"),
+                    "start": f"{action.get('date', '')}T{action.get('time', '09:00')}:00",
+                    "end": self._calc_end_time(
+                        action.get("date", ""),
+                        action.get("time", "09:00"),
+                        action.get("duration_minutes", 30),
+                    ),
+                    "description": action.get("description", ""),
+                })
+
+            elif action_type == "email":
+                # Map to Gmail MCP tool
+                result = await mcp_manager.call_tool("create_draft", {
+                    "to": action.get("to", ""),
+                    "subject": action.get("subject", ""),
+                    "body": action.get("body", ""),
+                })
+
+            else:
+                result = f"Action type '{action_type}' is not executable via MCP"
+                success = False
+
+            # MCP call_tool returns "Error: ..." on failure
+            if result.startswith("Error:"):
+                success = False
+
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_action_result", "content": {
+                    "recording_id": recording_id,
+                    "action_type": action_type,
+                    "action_index": action_index,
+                    "success": success,
+                    "result": result,
+                }})
+            )
+
+        except Exception as e:
+            logger.error("Action execution failed: %s", e)
+            await self.websocket.send_text(
+                json.dumps({"type": "meeting_action_result", "content": {
+                    "recording_id": recording_id,
+                    "action_type": action_type,
+                    "action_index": action_index,
+                    "success": False,
+                    "result": str(e),
+                }})
+            )
+
+    @staticmethod
+    def _calc_end_time(date: str, time: str, duration_minutes: int) -> str:
+        """Calculate end time from start date/time + duration."""
+        try:
+            from datetime import datetime, timedelta
+            dt = datetime.fromisoformat(f"{date}T{time}:00")
+            end = dt + timedelta(minutes=duration_minutes)
+            return end.isoformat()
+        except Exception:
+            return f"{date}T{time}:00"
+
 
     async def _handle_terminal_approval_response(self, data: Dict[str, Any]):
         """Handle user's response to a terminal approval request."""

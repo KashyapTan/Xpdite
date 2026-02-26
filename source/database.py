@@ -154,6 +154,25 @@ class DatabaseManager:
             )
         """)
 
+        # --- TABLE 6: MEETING RECORDINGS ---
+        # Stores meeting recordings with transcripts and AI analysis.
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS meeting_recordings (
+                id TEXT PRIMARY KEY,
+                title TEXT,
+                started_at REAL,
+                ended_at REAL,
+                duration_seconds INTEGER,
+                status TEXT DEFAULT 'recording',
+                audio_file_path TEXT,
+                tier1_transcript TEXT DEFAULT '',
+                tier2_transcript_json TEXT,
+                ai_summary TEXT,
+                ai_actions_json TEXT,
+                ai_title_generated INTEGER DEFAULT 0
+            )
+        """)
+
         # --- FTS5 VIRTUAL TABLES FOR SEARCH ---
         # unicode61 tokenizer handles accented characters and case-folding.
         # NOTE: `content_blocks` (tool call args/results) is intentionally NOT
@@ -903,6 +922,167 @@ class DatabaseManager:
         )
         connection.commit()
         connection.close()
+
+    # ---------------------------------------------------------
+    # MEETING RECORDING OPERATIONS
+    # ---------------------------------------------------------
+
+    def create_meeting_recording(self, title: str, started_at: float) -> str:
+        """Create a new meeting recording entry. Returns the recording ID."""
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        recording_id = str(uuid.uuid4())
+        cursor.execute(
+            """INSERT INTO meeting_recordings (id, title, started_at, status)
+               VALUES (?, ?, ?, 'recording')""",
+            (recording_id, title, started_at),
+        )
+        connection.commit()
+        connection.close()
+        return recording_id
+
+    def update_meeting_recording(self, recording_id: str, **fields) -> None:
+        """Update one or more fields on a meeting recording.
+
+        Accepted fields: title, ended_at, duration_seconds, status,
+        audio_file_path, tier1_transcript, tier2_transcript_json,
+        ai_summary, ai_actions_json, ai_title_generated.
+        """
+        allowed = {
+            "title", "ended_at", "duration_seconds", "status",
+            "audio_file_path", "tier1_transcript", "tier2_transcript_json",
+            "ai_summary", "ai_actions_json", "ai_title_generated",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [recording_id]
+
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            f"UPDATE meeting_recordings SET {set_clause} WHERE id = ?", values
+        )
+        connection.commit()
+        connection.close()
+
+    def append_tier1_transcript(self, recording_id: str, text: str) -> None:
+        """Append a live transcript chunk to the tier1_transcript field."""
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            """UPDATE meeting_recordings
+               SET tier1_transcript = COALESCE(tier1_transcript, '') || ?
+               WHERE id = ?""",
+            (text, recording_id),
+        )
+        connection.commit()
+        connection.close()
+
+    def get_meeting_recordings(
+        self, limit: int = 50, offset: int = 0
+    ) -> List[Dict]:
+        """List meeting recordings (metadata only, no transcripts)."""
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            """SELECT id, title, started_at, ended_at, duration_seconds, status
+               FROM meeting_recordings
+               ORDER BY started_at DESC
+               LIMIT ? OFFSET ?""",
+            (limit, offset),
+        )
+        rows = cursor.fetchall()
+        connection.close()
+        return [
+            {
+                "id": r[0],
+                "title": r[1],
+                "started_at": r[2],
+                "ended_at": r[3],
+                "duration_seconds": r[4],
+                "status": r[5],
+            }
+            for r in rows
+        ]
+
+    def get_meeting_recording(self, recording_id: str) -> Dict | None:
+        """Get full meeting recording detail including transcripts."""
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            """SELECT id, title, started_at, ended_at, duration_seconds, status,
+                      audio_file_path, tier1_transcript, tier2_transcript_json,
+                      ai_summary, ai_actions_json, ai_title_generated
+               FROM meeting_recordings WHERE id = ?""",
+            (recording_id,),
+        )
+        r = cursor.fetchone()
+        connection.close()
+        if not r:
+            return None
+        return {
+            "id": r[0],
+            "title": r[1],
+            "started_at": r[2],
+            "ended_at": r[3],
+            "duration_seconds": r[4],
+            "status": r[5],
+            "audio_file_path": r[6],
+            "tier1_transcript": r[7] or "",
+            "tier2_transcript_json": json.loads(r[8]) if r[8] else None,
+            "ai_summary": r[9],
+            "ai_actions_json": json.loads(r[10]) if r[10] else None,
+            "ai_title_generated": bool(r[11]),
+        }
+
+    def delete_meeting_recording(self, recording_id: str) -> None:
+        """Delete a meeting recording."""
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        cursor.execute(
+            "DELETE FROM meeting_recordings WHERE id = ?", (recording_id,)
+        )
+        connection.commit()
+        connection.close()
+
+    def search_meeting_recordings(
+        self, search_term: str, limit: int = 20
+    ) -> List[Dict]:
+        """Search meeting recordings by title."""
+        if not search_term or not search_term.strip():
+            return []
+
+        connection = self._get_connection()
+        cursor = connection.cursor()
+        escaped = (
+            search_term.replace("\\", "\\\\")
+            .replace("%", "\\%")
+            .replace("_", "\\_")
+        )
+        cursor.execute(
+            """SELECT id, title, started_at, ended_at, duration_seconds, status
+               FROM meeting_recordings
+               WHERE title LIKE ? ESCAPE '\\'
+               ORDER BY started_at DESC
+               LIMIT ?""",
+            (f"%{escaped}%", limit),
+        )
+        rows = cursor.fetchall()
+        connection.close()
+        return [
+            {
+                "id": r[0],
+                "title": r[1],
+                "started_at": r[2],
+                "ended_at": r[3],
+                "duration_seconds": r[4],
+                "status": r[5],
+            }
+            for r in rows
+        ]
 
 
 # Global singleton instance so all modules share the same DB connection logic

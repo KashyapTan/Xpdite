@@ -7,8 +7,9 @@ import App from './pages/App.tsx'
 import Settings from './pages/Settings.tsx'
 import ChatHistory from './pages/ChatHistory.tsx'
 import MeetingAlbum from './pages/MeetingAlbum.tsx'
+import MeetingRecorder from './pages/MeetingRecorder.tsx'
+import MeetingRecordingDetail from './pages/MeetingRecordingDetail.tsx'
 
-// CHANGE 2: Use createHashRouter here
 const router = createHashRouter([
   {
     path: '/',
@@ -29,7 +30,15 @@ const router = createHashRouter([
       {
         path: '/album',
         element: <MeetingAlbum />,
-      }
+      },
+      {
+        path: '/recorder',
+        element: <MeetingRecorder />,
+      },
+      {
+        path: '/recording/:id',
+        element: <MeetingRecordingDetail />,
+      },
     ]
   }
 ])

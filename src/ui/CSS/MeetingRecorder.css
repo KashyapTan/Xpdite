@@ -1,0 +1,147 @@
+.meeting-recorder-container {
+  width: 100%;
+  height: 100%;
+  padding: 2rem;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.meeting-recorder-content {
+  margin-top: 60px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow: hidden;
+}
+
+/* ── Controls ─────────────────────────── */
+
+.meeting-recorder-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 20px 0;
+}
+
+.meeting-record-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 28px;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 30px;
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-family: 'Montserrat', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.meeting-record-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.meeting-record-btn.recording {
+  border-color: rgba(255, 80, 80, 0.5);
+  background: rgba(255, 80, 80, 0.1);
+}
+
+.meeting-record-btn.recording:hover {
+  background: rgba(255, 80, 80, 0.2);
+  border-color: rgba(255, 80, 80, 0.7);
+}
+
+.meeting-record-btn-icon {
+  font-size: 1.2rem;
+  color: #ff5050;
+}
+
+.meeting-record-btn-label {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.meeting-recorder-timer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.meeting-recorder-pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ff5050;
+  animation: meeting-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes meeting-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.8); }
+}
+
+/* ── Transcript ───────────────────────── */
+
+.meeting-recorder-transcript-header {
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 0 5px;
+}
+
+.meeting-recorder-transcript {
+  flex: 1;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.15);
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.meeting-recorder-transcript::-webkit-scrollbar {
+  display: none;
+}
+
+.meeting-recorder-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  opacity: 0.4;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.meeting-transcript-chunk {
+  padding: 6px 0;
+  line-height: 1.5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.meeting-transcript-chunk:last-child {
+  border-bottom: none;
+}
+
+.meeting-transcript-time {
+  color: rgba(255, 255, 255, 0.35);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  margin-right: 8px;
+}
+
+.meeting-transcript-text {
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9rem;
+}

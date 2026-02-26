@@ -1,8 +1,9 @@
-import {app, BrowserWindow, ipcMain, screen} from 'electron';
+import { app, BrowserWindow, ipcMain, screen } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import {isDev} from './utils.js';
+import { isDev } from './utils.js';
 import { startPythonServer, stopPythonServer } from './pythonApi.js';
+import { initMain } from 'electron-audio-loopback';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,7 +11,11 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let normalBounds = { width: 450, height: 450, x: 100, y: 100 };
 
-app.on('ready', async ()=>{
+// Initialize electron-audio-loopback BEFORE app is ready.
+// This registers IPC handlers: 'enable-loopback-audio' / 'disable-loopback-audio'.
+initMain();
+
+app.on('ready', async () => {
     // Only start Python server in production mode
     // In development, the dev:pyserver script handles this
     if (!isDev()) {
@@ -61,7 +66,7 @@ app.on('ready', async ()=>{
     ipcMain.handle('set-mini-mode', (_event, mini: boolean) => {
         console.log('IPC set-mini-mode called with:', mini);
         console.log('Current Bounds before action:', mainWindow?.getBounds());
-        
+
         if (!mainWindow) {
             console.log('mainWindow is null');
             return;
@@ -71,14 +76,14 @@ app.on('ready', async ()=>{
             const currentBounds = mainWindow.getBounds();
             // Only update normalBounds if we are currently "large"
             if (currentBounds.width > 100 || currentBounds.height > 100) {
-              normalBounds = currentBounds;
-              console.log('Saved normalBounds:', normalBounds);
+                normalBounds = currentBounds;
+                console.log('Saved normalBounds:', normalBounds);
             }
-            
+
             // Calculate position: top-right of the current window
             const newX = normalBounds.x + normalBounds.width - 52;
             const newY = normalBounds.y;
-            
+
             mainWindow.setResizable(true); // Ensure we can resize
             mainWindow.setMinimumSize(52, 52);
             mainWindow.setSize(52, 52, false); // false to disable animation which can sometimes bug out size setting
@@ -87,11 +92,11 @@ app.on('ready', async ()=>{
         } else {
             console.log('Restoring to normalBounds:', normalBounds);
             mainWindow.setMinimumSize(30, 20);
-            
+
             // Explicitly set size and position separately if setBounds fails
             mainWindow.setSize(normalBounds.width, normalBounds.height, false);
             mainWindow.setPosition(normalBounds.x, normalBounds.y, false);
-            
+
             console.log('Window restored. New Bounds:', mainWindow.getBounds());
         }
     });
@@ -118,10 +123,10 @@ app.on('ready', async ()=>{
         await stopPythonServer();
     });
 
-    if (isDev()){
+    if (isDev()) {
         mainWindow.loadURL('http://localhost:5123');
     }
-    else{
+    else {
         mainWindow.loadFile(path.join(app.getAppPath(), '/dist-react/index.html'));
     }
 })
