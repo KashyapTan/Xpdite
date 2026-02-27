@@ -12,27 +12,30 @@ src/
 │   └── utils.ts         # isDev() — checks NODE_ENV === 'development'
 │
 └── ui/
-    ├── main.tsx         # React entry, router, TabProvider + WebSocketProvider wrap
+    ├── main.tsx         # React entry, router, TabProvider wrap
     ├── pages/
     │   ├── App.tsx      # Main chat page (query input, response, tool calls, screenshots, tab routing)
     │   ├── Settings.tsx # Settings page (models, API keys, MCP, skills, system prompt)
     │   ├── ChatHistory.tsx  # Past conversations browser
-    │   └── MeetingAlbum.tsx # Screenshot/meeting album view
+    │   ├── MeetingRecorder.tsx # Live meeting recording UI
+    │   ├── MeetingAlbum.tsx   # Past meeting recordings list
+    │   └── MeetingRecordingDetail.tsx # Individual recording detail + AI analysis
     ├── components/
-    │   ├── Layout.tsx        # Shell with nav, page routing slot
+    │   ├── Layout.tsx        # Shell with nav, WebSocketProvider + MeetingRecorderProvider wrap
     │   ├── TitleBar.tsx      # Draggable custom title bar + mini-mode toggle
     │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), create/close/switch
-    │   ├── WebSocketContext.tsx  # Global WS context (window hide for screenshots, ready state)
     │   ├── chat/             # Message rendering (thinking blocks, tool calls, markdown)
     │   ├── input/            # Query input bar, model selector, capture mode controls
     │   ├── settings/         # Settings panel sub-components (per-tab components)
     │   └── terminal/         # Terminal approval UI, PTY output renderer
     ├── contexts/
+    │   ├── WebSocketContext.tsx  # Single WS connection provider (send, subscribe, isConnected)
+    │   ├── MeetingRecorderContext.tsx # Recording state (persists across routes)
     │   └── TabContext.tsx    # TabProvider: tab list, active tab, switch/close/create with callbacks
     ├── hooks/
-    │   ├── useWebSocket.ts   # Low-level WS hook: connect, reconnect, send
     │   ├── useChatState.ts   # All in-flight and history chat state (+ getSnapshot/restoreSnapshot)
     │   ├── useScreenshots.ts # Screenshot list management (+ getSnapshot/restoreSnapshot)
+    │   ├── useAudioCapture.ts # System audio capture for meeting recording
     │   └── useTokenUsage.ts  # Token count display (+ getSnapshot/restoreSnapshot)
     ├── services/
     │   └── api.ts        # createApiService (WS helpers) + singleton `api` (HTTP helpers)
@@ -46,11 +49,14 @@ src/
 
 ## Key Patterns
 
-### WebSocket — two layers, different purposes
-- **`useWebSocket` hook** (`hooks/useWebSocket.ts`) — reconnecting WS connection used by the main chat page. Returns `send`, `isConnected`, and `wsRef`. Each page that needs WS creates its own via this hook.
-- **`WebSocketContext`** — a second, always-open WS connection used for global concerns only: hiding the window during screenshot capture (`isHidden`), tracking `canSubmit`, and propagating `ready`. Kept separate so screenshot hiding works even when the chat page is unmounted.
+### WebSocket — single provider, pub/sub dispatch
+- **`WebSocketProvider`** (`contexts/WebSocketContext.tsx`) manages the one and only WebSocket connection. It lives in `Layout.tsx` so the connection survives route changes (e.g., navigating from `/` to `/recorder`).
+- **API**: `send(msg)` sends raw JSON; `subscribe(handler)` returns an unsubscribe function. Every subscriber receives every message — each consumer filters by `data.type`.
+- **Pseudo-messages**: `{ type: '__ws_connected' }` and `{ type: '__ws_disconnected' }` are dispatched by the provider so subscribers can react to connection lifecycle events.
+- **`App.tsx`** subscribes and handles chat / screenshot / queue messages. It wraps the raw `send` with `tab_id` injection as `wsSend`.
+- **`MeetingRecorderContext`** subscribes directly for `meeting_recording_*` messages. Meeting pages (Album, Detail, Settings) each subscribe for their own message types.
 
-Never call `ws.send()` directly. Use `createApiService(send)` to build a typed message sender.
+Never call `ws.send()` directly in a component — go through `useWebSocket().send`.
 
 ### Multi-Tab Architecture
 - **TabContext** (`contexts/TabContext.tsx`) manages the list of open tabs, active tab ID, and per-tab queue items. Pure UI state — no chat/token/screenshot data here.
@@ -64,7 +70,7 @@ Never call `ws.send()` directly. Use `createApiService(send)` to build a typed m
 - **Cleanup**: When a tab is closed, `registerOnTabClosed` fires a callback that deletes the tab's snapshot from `tabRegistryRef`.
 
 ### Stale closure prevention — ref-based WS handler
-The WebSocket `useEffect` in `App.tsx` has an empty dependency array (`[]`) to avoid reconnecting on every render. To prevent stale closures in `onmessage`, a `handleWebSocketMessageRef` is kept in sync with the latest `handleWebSocketMessage` on every render. The effect's `onmessage` calls `handleWebSocketMessageRef.current(data)` instead of the stale closure.
+`App.tsx` subscribes to the WebSocket via `wsSubscribe` with an empty-ish dependency array to avoid re-subscribing on every render. To prevent stale closures, a `handleWebSocketMessageRef` is kept in sync with the latest `handleWebSocketMessage` on every render. The subscription callback calls `handleWebSocketMessageRef.current(data)` instead of the stale closure. The same pattern is used by `MeetingRecorderContext` via `handlersRef`.
 
 Similarly, `handleSubmit` displays the user query optimistically via `chatState.startQuery(queryText)` when `canSubmit` is true (non-queued). A guard in `handleActiveTabMessage`'s `query` case prevents the WS echo from calling `startQuery` again (which would reset in-flight tool calls / content blocks).
 
@@ -114,7 +120,7 @@ Do not add IPC channels without updating both `preload.ts` (expose) and `main.ts
 Add a component under `src/ui/components/settings/` and render it conditionally inside `src/ui/pages/Settings.tsx`.
 
 ### New WS message type (server → client)
-Handle the new `type` string inside the `onMessage` callback in the relevant hook or page. Update `websocket.py`'s protocol docstring on the Python side.
+Handle the new `type` string inside a `subscribe()` callback in the relevant context or page component. Update `websocket.py`'s protocol docstring on the Python side.
 
 ### New HTTP endpoint call
 Add a method to the `api` singleton at the bottom of `src/ui/services/api.ts`. Use the existing `fetch` + error handling pattern already there.

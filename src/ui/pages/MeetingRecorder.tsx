@@ -17,6 +17,8 @@ const MeetingRecorder: React.FC = () => {
         recordingDuration,
         startRecording,
         stopRecording,
+        error,
+        clearError,
     } = useMeetingRecorder();
 
     const transcriptEndRef = useRef<HTMLDivElement>(null);
@@ -49,6 +51,12 @@ const MeetingRecorder: React.FC = () => {
             <div className="meeting-recorder-content">
                 {/* Recording Control */}
                 <div className="meeting-recorder-controls">
+                    {error && (
+                        <div className="meeting-recorder-error" role="alert" onClick={clearError}>
+                            {error}
+                            <span className="meeting-recorder-error-dismiss">×</span>
+                        </div>
+                    )}
                     <button
                         className={`meeting-record-btn ${isRecording ? 'recording' : ''}`}
                         onClick={isRecording ? stopRecording : startRecording}

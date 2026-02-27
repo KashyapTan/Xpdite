@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
+import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
 import '../CSS/MeetingRecordingDetail.css';
 
@@ -51,8 +52,7 @@ const MeetingRecordingDetail: React.FC = () => {
     }>();
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
-
-    const sendMessage = (window as any).__xpditeWsSend as ((msg: Record<string, unknown>) => void) | undefined;
+    const { send: sendMessage, subscribe } = useWebSocket();
 
     const [recording, setRecording] = useState<MeetingRecording | null>(null);
     const [loading, setLoading] = useState(true);
@@ -68,13 +68,13 @@ const MeetingRecordingDetail: React.FC = () => {
 
     // Load recording detail
     useEffect(() => {
-        if (sendMessage && id) {
+        if (id) {
             sendMessage({ type: 'load_meeting_recording', recording_id: id });
         }
 
-        (window as any).__meetingDetailHandler = (msg: any) => {
+        return subscribe((msg) => {
             if (msg.type === 'meeting_recording_loaded' && msg.content) {
-                const rec = msg.content;
+                const rec = msg.content as MeetingRecording;
                 setRecording(rec);
                 setLoading(false);
                 // Restore existing analysis
@@ -92,52 +92,53 @@ const MeetingRecordingDetail: React.FC = () => {
                 if (progress.recording_id === id) {
                     if (progress.step === 'complete') {
                         setProcessingProgress(null);
-                        if (sendMessage) sendMessage({ type: 'load_meeting_recording', recording_id: id });
+                        sendMessage({ type: 'load_meeting_recording', recording_id: id });
                     } else {
                         setProcessingProgress(progress);
                     }
                 }
             } else if (msg.type === 'meeting_analysis_started') {
-                if (msg.content?.recording_id === id) setAnalyzing(true);
+                const content = msg.content as { recording_id?: string } | null;
+                if (content?.recording_id === id) setAnalyzing(true);
             } else if (msg.type === 'meeting_analysis_complete') {
-                if (msg.content?.recording_id === id) {
+                const content = msg.content as { recording_id?: string; summary?: string; actions?: ActionSuggestion[] } | null;
+                if (content?.recording_id === id) {
                     setAnalyzing(false);
                     setAnalysisError(null);
-                    setAiSummary(msg.content.summary || null);
-                    setAiActions(msg.content.actions || []);
+                    setAiSummary(content.summary || null);
+                    setAiActions(content.actions || []);
                 }
             } else if (msg.type === 'meeting_analysis_error') {
-                if (msg.content?.recording_id === id) {
+                const content = msg.content as { recording_id?: string; error?: string } | null;
+                if (content?.recording_id === id) {
                     setAnalyzing(false);
-                    setAnalysisError(msg.content.error || 'Unknown error');
+                    setAnalysisError(content.error || 'Unknown error');
                 }
             } else if (msg.type === 'meeting_action_result') {
-                if (msg.content?.recording_id === id) {
-                    const idx = msg.content.action_index ?? 0;
+                const content = msg.content as { recording_id?: string; action_index?: number; success: boolean; result: string } | null;
+                if (content?.recording_id === id) {
+                    const idx = content.action_index ?? 0;
                     setActionResults((prev) => ({
                         ...prev,
                         [idx]: {
-                            success: msg.content.success,
-                            result: msg.content.result,
+                            success: content.success,
+                            result: content.result,
                         },
                     }));
                 }
             }
-        };
-
-        return () => { delete (window as any).__meetingDetailHandler; };
-    }, [sendMessage, id]);
+        });
+    }, [sendMessage, subscribe, id]);
 
     const handleSummarize = () => {
-        if (sendMessage && id) {
-            setAnalyzing(true);
-            setAnalysisError(null);
-            sendMessage({ type: 'meeting_generate_analysis', recording_id: id });
-        }
+        if (!id) return;
+        setAnalyzing(true);
+        setAnalysisError(null);
+        sendMessage({ type: 'meeting_generate_analysis', recording_id: id });
     };
 
     const handleExecuteAction = (idx: number) => {
-        if (!sendMessage || !id) return;
+        if (!id) return;
         const action = editingActions[idx] || aiActions[idx];
         sendMessage({ type: 'meeting_execute_action', recording_id: id, action, action_index: idx });
     };

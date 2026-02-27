@@ -5,10 +5,10 @@ live transcription (Tier 1 via faster-whisper), and recording state management.
 Includes Tier 2 post-processing pipeline for higher-quality transcription with
 word-level timestamps, speaker diarization, and AI title generation.
 
-Audio capture happens in the Electron renderer via electron-audio-loopback.
-Raw PCM audio chunks are streamed to this service over WebSocket. This service
-handles mixing, file writing, and transcription — no audio processing in the
-renderer.
+Audio capture happens in the Electron renderer via the Web Audio API.
+The main process uses setDisplayMediaRequestHandler with audio:'loopback'
+(WASAPI) to capture system audio. Raw PCM audio chunks are streamed to this
+service over WebSocket. This service handles file writing and transcription.
 """
 
 import asyncio

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
 import '../CSS/ChatHistory.css'; // Reuse chat history styles
 
@@ -24,30 +25,22 @@ const MeetingAlbum: React.FC = () => {
     setMini: (val: boolean) => void;
   }>();
   const navigate = useNavigate();
-
-  // Use the global WS send function exposed by App.tsx
-  const sendMessage = (window as any).__xpditeWsSend as ((msg: Record<string, unknown>) => void) | undefined;
+  const { send: sendMessage, subscribe } = useWebSocket();
 
   const [recordings, setRecordings] = useState<MeetingRecordingSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [processingProgress, setProcessingProgress] = useState<Record<string, ProcessingProgress>>({});
 
-  // Fetch recordings on mount
+  // Subscribe first, then send the initial fetch — avoids a race where the
+  // server responds before the listener is installed.
   useEffect(() => {
-    if (sendMessage) {
-      sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
-    }
-  }, [sendMessage]);
-
-  // Listen for WS responses
-  useEffect(() => {
-    // Register via global handler (will be wired up from useWebSocket)
-    (window as any).__meetingAlbumHandler = (msg: any) => {
+    const unsubscribe = subscribe((msg) => {
       if (msg.type === 'meeting_recordings_list') {
-        setRecordings(msg.content || []);
+        setRecordings(msg.content as MeetingRecordingSummary[] || []);
       } else if (msg.type === 'meeting_recording_deleted') {
+        const content = msg.content as { recording_id: string };
         setRecordings((prev: MeetingRecordingSummary[]) =>
-          prev.filter((r) => r.id !== msg.content.recording_id)
+          prev.filter((r) => r.id !== content.recording_id)
         );
       } else if (msg.type === 'meeting_processing_progress') {
         const progress = msg.content as ProcessingProgress;
@@ -58,9 +51,7 @@ const MeetingAlbum: React.FC = () => {
             delete next[progress.recording_id];
             return next;
           });
-          if (sendMessage) {
-            sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
-          }
+          sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
         } else {
           setProcessingProgress((prev) => ({
             ...prev,
@@ -68,29 +59,24 @@ const MeetingAlbum: React.FC = () => {
           }));
         }
       }
-    };
+    });
 
-    return () => {
-      delete (window as any).__meetingAlbumHandler;
-    };
-  }, [sendMessage]);
+    sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
+    return unsubscribe;
+  }, [subscribe, sendMessage]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
-    if (sendMessage) {
-      if (searchQuery.trim()) {
-        sendMessage({ type: 'search_meeting_recordings', query: searchQuery });
-      } else {
-        sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
-      }
+    if (searchQuery.trim()) {
+      sendMessage({ type: 'search_meeting_recordings', query: searchQuery });
+    } else {
+      sendMessage({ type: 'get_meeting_recordings', limit: 50, offset: 0 });
     }
   };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (sendMessage) {
-      sendMessage({ type: 'delete_meeting_recording', recording_id: id });
-    }
+    sendMessage({ type: 'delete_meeting_recording', recording_id: id });
   };
 
   const formatDate = (timestamp: number) => {

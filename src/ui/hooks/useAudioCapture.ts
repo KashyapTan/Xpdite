@@ -1,14 +1,15 @@
 /**
  * useAudioCapture hook.
  *
- * Captures system audio (via electron-audio-loopback) and microphone,
+ * Captures system audio (via Electron's built-in WASAPI loopback, configured in
+ * main.ts via setDisplayMediaRequestHandler with audio:'loopback') and microphone,
  * mixes them into a single mono 16kHz 16-bit PCM stream, and sends
  * chunks to the Python backend as base64-encoded JSON messages over WebSocket.
  *
- * WGC is disabled at the Electron level (see main.ts) to avoid continuous
- * "ProcessFrame failed" errors on Windows. Chromium falls back to DXGI
- * Output Duplication, which is more reliable. Video tracks are stripped
- * per the electron-audio-loopback README.
+ * The main process auto-approves getDisplayMedia requests and provides tab
+ * capture (request.frame) as the video source — this uses Chromium's compositor
+ * instead of WGC/DXGI, avoiding GPU-specific capture failures on Windows.
+ * Video tracks are stripped immediately since we only need system audio.
  */
 import { useRef, useCallback } from 'react';
 
@@ -61,29 +62,26 @@ export function useAudioCapture(
         }
 
         try {
-            // 1. Enable loopback audio via electron-audio-loopback
-            await window.electronAPI?.enableLoopbackAudio();
-
-            // 2. Get system audio stream via getDisplayMedia.
-            //    video: true is required by Chromium — it fails without it.
+            // 1. Get system audio stream via getDisplayMedia.
+            //    The main process's setDisplayMediaRequestHandler auto-approves
+            //    this and provides audio: 'loopback' (WASAPI system audio).
+            //    video: true is required by Chromium — the main process provides
+            //    tab capture (compositor-based, no WGC) that we immediately strip.
             const loopbackStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
                 audio: true,
             });
 
-            // Per electron-audio-loopback README: remove video tracks we don't
-            // need. With WGC disabled (main.ts), the DXGI capture session tears
-            // down cleanly when video tracks are stopped.
+            // Strip video tracks — we only need audio.
             loopbackStream.getVideoTracks().forEach((track) => {
                 track.stop();
                 loopbackStream.removeTrack(track);
             });
             loopbackStreamRef.current = loopbackStream;
 
-            // Disable loopback override so normal getDisplayMedia works again
-            await window.electronAPI?.disableLoopbackAudio();
+            const hasLoopbackAudio = loopbackStream.getAudioTracks().length > 0;
 
-            // 3. Get microphone stream
+            // 2. Get microphone stream
             let micStream: MediaStream | null = null;
             try {
                 micStream = await navigator.mediaDevices.getUserMedia({
@@ -99,7 +97,13 @@ export function useAudioCapture(
                 console.warn('Microphone not available, recording system audio only:', err);
             }
 
-            // 4. Create AudioContext and mix streams
+            // Verify at least one audio source is available
+            const hasMicAudio = micStream !== null && micStream.getAudioTracks().length > 0;
+            if (!hasLoopbackAudio && !hasMicAudio) {
+                throw new Error('No audio sources available — neither system audio nor microphone could be captured');
+            }
+
+            // 3. Create AudioContext and mix streams
             const ctx = new AudioContext({ sampleRate: TARGET_SAMPLE_RATE });
             audioContextRef.current = ctx;
 
@@ -117,7 +121,7 @@ export function useAudioCapture(
                 micSource.connect(destination);
             }
 
-            // 5. Set up ScriptProcessorNode to capture PCM data
+            // 4. Set up ScriptProcessorNode to capture PCM data
             const processor = ctx.createScriptProcessor(4096, 1, 1);
             processorRef.current = processor;
 
@@ -135,7 +139,7 @@ export function useAudioCapture(
                 pcmBufferRef.current.push(new Float32Array(inputData));
             };
 
-            // 6. Send chunks at regular intervals
+            // 5. Send chunks at regular intervals
             chunkerIntervalRef.current = setInterval(() => {
                 const chunks = pcmBufferRef.current;
                 if (chunks.length === 0) return;

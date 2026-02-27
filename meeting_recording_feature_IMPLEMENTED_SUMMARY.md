@@ -8,11 +8,12 @@ This document details all the changes made across Phases 1, 2, and 3 to implemen
 
 The goal of Phase 1 was to establish the bedrock of the recording feature: capturing system and microphone audio without external drivers, streaming it to the backend, live transcribing it, and saving it to the database.
 
-### 1. Dual-Stream Audio Capture (`electron-audio-loopback`)
-- Integrated `electron-audio-loopback` in the Electron renderer to capture both the system output (what the user hears) and the microphone input simultaneously.
+### 1. Dual-Stream Audio Capture (Electron WASAPI Loopback)
+- Uses Electron's built-in `session.setDisplayMediaRequestHandler` with `audio: 'loopback'` to capture system output audio via WASAPI — no third-party packages required.
+- Microphone input is captured simultaneously via `getUserMedia`.
+- Both streams are mixed in an `AudioContext` in the renderer process.
 - Established a binary WebSocket pipeline to stream 16kHz, 16-bit PCM raw audio chunks from the frontend to the backend every 500ms.
-- Built a Python-side audio mixer to combine the mic and loopback tracks to prevent clipping.
-- Incremental archiving: Audio is streamed directly into an OPUS (`.opus`) file incrementally, preventing data loss if the app crashes mid-meeting.
+- Incremental archiving: Audio is streamed directly into a WAV file incrementally, preventing data loss if the app crashes mid-meeting.
 
 ### 2. Tier 1 Live Transcription (`faster-whisper`)
 - Implemented real-time transcription using `faster-whisper` (`base` or `small` models).
@@ -108,3 +109,15 @@ The goal of Phase 3 was to harness LLMs to process the finalized text transcript
   2. `TestExtractTranscriptText` (8 tests — fallback logic).
   3. `TestCalcEndTime` (6 tests — string date math).
   4. `TestBuildAnalysisPrompt` (4 tests).
+
+---
+
+## WebSocket Architecture (Post-Implementation Fix)
+
+The original implementation routed all meeting WS messages through `App.tsx` via `window.__meetingRecorderHandlers` globals. This broke when navigating away from the chat page (`/`) to the recorder page (`/recorder`) because `App.tsx` unmounted, closing the WebSocket and deleting the send function.
+
+### Fix: Layout-level `WebSocketProvider`
+- Created `contexts/WebSocketContext.tsx` — a single WS provider at the `Layout` level that persists across all route changes.
+- Each meeting component (`MeetingRecorderContext`, `MeetingAlbum`, `MeetingRecordingDetail`, `MeetingRecorderSettings`) subscribes directly to the WS via `useWebSocket().subscribe()` for its own message types.
+- All `window.__xpditeWsSend` / `window.__meetingRecorderHandlers` / `window.__meetingAlbumHandler` / etc. globals have been eliminated in favor of the context-based pub/sub pattern.
+- `App.tsx` no longer owns the WebSocket connection — it consumes `useWebSocket()` like any other page.

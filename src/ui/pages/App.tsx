@@ -20,6 +20,7 @@ import { useChatState } from '../hooks/useChatState';
 import { useScreenshots } from '../hooks/useScreenshots';
 import { useTokenUsage } from '../hooks/useTokenUsage';
 import { useTabs } from '../contexts/TabContext';
+import { useWebSocket } from '../contexts/WebSocketContext';
 
 // Components
 import TitleBar from '../components/TitleBar';
@@ -86,7 +87,6 @@ function App() {
   // ============================================
   // Refs
   // ============================================
-  const wsRef = useRef<WebSocket | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const responseAreaRef = useRef<HTMLDivElement | null>(null);
   const pendingConversationRef = useRef<string | null>(null);
@@ -118,21 +118,14 @@ function App() {
   const navigate = useNavigate();
 
   // ============================================
-  // Tab-scoped WS send helper
+  // WebSocket (from Layout-level provider)
   // ============================================
+  const { send: wsSendRaw, subscribe: wsSubscribe, isConnected } = useWebSocket();
+
+  // Tab-scoped WS send helper — injects active tab_id into every message.
   const wsSend = useCallback((msg: Record<string, unknown>) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ tab_id: activeTabIdRef.current, ...msg }));
-    }
-  }, []);
-
-  // Expose wsSend globally so non-App pages (MeetingAlbum, etc.) can send messages
-  useEffect(() => {
-    (window as any).__xpditeWsSend = wsSend;
-    return () => { delete (window as any).__xpditeWsSend; };
-  }, [wsSend]);
-
-  // ============================================
+    wsSendRaw({ tab_id: activeTabIdRef.current, ...msg });
+  }, [wsSendRaw]);
   // Tab switch: snapshot / restore state registry
   // ============================================
 
@@ -508,23 +501,13 @@ function App() {
         chatState.setError('Queue is full. Please wait for current queries to finish.');
         return true;
 
-      // ── Meeting Recording messages (global, not tab-scoped) ──
+      // ── Meeting messages are handled directly by their respective
+      // components via WebSocketContext subscriptions — no routing needed here. ──
       case 'meeting_recording_started':
       case 'meeting_recording_stopped':
       case 'meeting_transcript_chunk':
       case 'meeting_recording_error':
-      case 'meeting_recording_status': {
-        // Route to MeetingRecorderContext handlers
-        const handlers = (window as any).__meetingRecorderHandlers;
-        if (handlers) {
-          const content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
-          if (data.type === 'meeting_recording_started') handlers.handleRecordingStarted(content);
-          else if (data.type === 'meeting_recording_stopped') handlers.handleRecordingStopped(content);
-          else if (data.type === 'meeting_transcript_chunk') handlers.handleTranscriptChunk(content);
-        }
-        return true;
-      }
-
+      case 'meeting_recording_status':
       case 'meeting_recordings_list':
       case 'meeting_recording_loaded':
       case 'meeting_recording_deleted':
@@ -532,22 +515,10 @@ function App() {
       case 'meeting_analysis_started':
       case 'meeting_analysis_complete':
       case 'meeting_analysis_error':
-      case 'meeting_action_result': {
-        // Route to MeetingAlbum and MeetingRecordingDetail page handlers
-        const albumHandler = (window as any).__meetingAlbumHandler;
-        if (albumHandler) albumHandler(data);
-        const detailHandler = (window as any).__meetingDetailHandler;
-        if (detailHandler) detailHandler(data);
-        return true;
-      }
-
+      case 'meeting_action_result':
       case 'meeting_compute_info':
-      case 'meeting_settings': {
-        // Route to MeetingRecorderSettings handler
-        const settingsHandler = (window as any).__meetingSettingsHandler;
-        if (settingsHandler) settingsHandler(data);
+      case 'meeting_settings':
         return true;
-      }
 
       default:
         return false; // Not a global message
@@ -815,55 +786,32 @@ function App() {
     }
   }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab]);
 
-  // Keep WS handler in a ref so the WS effect always calls the latest version
-  // without needing to reconnect when callbacks change.
+  // Keep WS handler in a ref so the subscription callback always calls
+  // the latest version without needing to re-subscribe.
   const handleWebSocketMessageRef = useRef(handleWebSocketMessage);
   handleWebSocketMessageRef.current = handleWebSocketMessage;
 
   // ============================================
-  // WebSocket Connection
+  // WebSocket Subscription (connection managed by WebSocketProvider)
   // ============================================
   useEffect(() => {
-    let ws: WebSocket | null = null;
-
-    const connect = () => {
-      ws = new WebSocket('ws://localhost:8000/ws');
-      wsRef.current = ws;
-
-      ws.onopen = () => {
+    return wsSubscribe((data) => {
+      if (data.type === '__ws_connected') {
+        // Connection (re-)established — run onopen logic
         chatState.setStatus('Connected to server');
         chatState.setError('');
         wsSend({ type: 'set_capture_mode', mode: screenshotState.captureMode });
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          handleWebSocketMessageRef.current(data);
-        } catch (e) {
-          console.error('Failed to parse WebSocket message:', e);
-        }
-      };
-
-      ws.onclose = () => {
-        chatState.setStatus('Disconnected. Retrying...');
-        setTimeout(connect, 2000);
-      };
-
-      ws.onerror = (err) => {
-        console.error('WebSocket error:', err);
-      };
-    };
-
-    connect();
-
-    return () => {
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
+        return;
       }
-    };
-  }, []);
+      if (data.type === '__ws_disconnected') {
+        chatState.setStatus('Disconnected. Retrying...');
+        return;
+      }
+      // Route all real messages through the existing handler
+      handleWebSocketMessageRef.current(data as WebSocketMessage);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wsSubscribe]);
 
   // ============================================
   // Navigation Handler
@@ -872,7 +820,7 @@ function App() {
     const state = location.state as { conversationId?: string; newChat?: boolean } | null;
 
     if (state?.conversationId) {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      if (isConnected) {
         wsSend({
           type: 'resume_conversation',
           conversation_id: state.conversationId,
@@ -882,7 +830,7 @@ function App() {
         pendingConversationRef.current = state.conversationId;
       }
     } else if (state?.newChat) {
-      if (wsRef.current?.readyState === WebSocket.OPEN) {
+      if (isConnected) {
         wsSend({ type: 'clear_context' });
         window.history.replaceState({}, '');
       } else {
@@ -933,7 +881,7 @@ function App() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!isConnected) return;
 
     const queryText = chatState.query.trim();
     if (!queryText) return;
@@ -1020,7 +968,7 @@ function App() {
   };
 
   const handleMicClick = () => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!isConnected) return;
 
     if (isRecording) {
       wsSend({ type: 'stop_recording' });

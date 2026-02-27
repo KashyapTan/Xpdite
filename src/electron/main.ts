@@ -1,9 +1,8 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
 import { startPythonServer, stopPythonServer } from './pythonApi.js';
-import { initMain } from 'electron-audio-loopback';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -11,23 +10,26 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 let normalBounds = { width: 450, height: 450, x: 100, y: 100 };
 
-// Initialize electron-audio-loopback BEFORE app is ready.
-// This registers IPC handlers: 'enable-loopback-audio' / 'disable-loopback-audio'.
-//
-// Disable WGC (Windows Graphics Capture) for screen capture. On some Windows
-// GPU/driver combos, WGC's ProcessFrame fails continuously with E_FAIL
-// (-2147467259) when getDisplayMedia creates a video+audio session — even
-// though we only need audio. Forcing DXGI Output Duplication fallback avoids
-// this. Audio loopback is unaffected (uses WASAPI, not WGC).
-const existingDisabled = app.commandLine.getSwitchValue('disable-features');
-const wgcFlags = 'WebRtcAllowWgcScreenCapturer,WebRtcAllowWgcWindowCapturer';
-app.commandLine.appendSwitch(
-    'disable-features',
-    existingDisabled ? `${existingDisabled},${wgcFlags}` : wgcFlags,
-);
-initMain();
-
 app.on('ready', async () => {
+    // Auto-approve getDisplayMedia requests for meeting recording.
+    // Uses tab capture (request.frame) for the mandatory video track and
+    // Electron's built-in WASAPI loopback for system audio capture.
+    //
+    // Tab capture goes through Chromium's compositor (CopyOutputRequest),
+    // completely bypassing WGC (Windows Graphics Capture) which fails with
+    // E_FAIL on some GPU/driver combos. The renderer strips the video track
+    // immediately — only the WASAPI audio loopback is used.
+    session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+        if (request.frame) {
+            callback({ video: request.frame, audio: 'loopback' });
+        } else {
+            // request.frame should always exist for renderer-initiated calls.
+            // Deny the request — causes getDisplayMedia to reject with NotAllowedError.
+            console.error('setDisplayMediaRequestHandler: request.frame is null — denying request');
+            callback({});
+        }
+    });
+
     // Only start Python server in production mode
     // In development, the dev:pyserver script handles this
     if (!isDev()) {
@@ -47,19 +49,19 @@ app.on('ready', async () => {
     console.log('__dirname:', __dirname);
 
     mainWindow = new BrowserWindow({
-        width: 450,
-        height: 450,
+        width: 850,
+        height: 850,
         minWidth: 30,
         minHeight: 20,
         title: 'Xpdite',
-        frame: false,
+        // frame: false,
         transparent: true,
         resizable: true,
         alwaysOnTop: true,
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
-        skipTaskbar: true,
+        // skipTaskbar: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,

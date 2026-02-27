@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from 'react';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 import '../../CSS/MeetingRecorderSettings.css';
-
-declare global {
-    interface Window {
-        __xpditeWsSend?: (msg: Record<string, unknown>) => void;
-        __meetingSettingsHandler?: (data: { type: string; content: unknown }) => void;
-    }
-}
 
 interface ComputeInfo {
     backend: string;
@@ -22,6 +16,7 @@ interface MeetingSettings {
 }
 
 const MeetingRecorderSettings: React.FC = () => {
+    const { send, subscribe } = useWebSocket();
     const [computeInfo, setComputeInfo] = useState<ComputeInfo | null>(null);
     const [settings, setSettings] = useState<MeetingSettings>({
         whisper_model: 'base',
@@ -31,37 +26,29 @@ const MeetingRecorderSettings: React.FC = () => {
     const [saving, setSaving] = useState(false);
 
     useEffect(() => {
-        // Register handler for WS responses
-        window.__meetingSettingsHandler = (data: { type: string; content: unknown }) => {
+        // Subscribe for WS responses
+        const unsubscribe = subscribe((data) => {
             if (data.type === 'meeting_compute_info') {
                 setComputeInfo(data.content as ComputeInfo);
             } else if (data.type === 'meeting_settings') {
                 setSettings(data.content as MeetingSettings);
                 setSaving(false);
             }
-        };
+        });
 
         // Request current settings and compute info
-        const send = window.__xpditeWsSend;
-        if (send) {
-            send({ type: 'meeting_get_compute_info' });
-            send({ type: 'meeting_get_settings' });
-        }
+        send({ type: 'meeting_get_compute_info' });
+        send({ type: 'meeting_get_settings' });
 
-        return () => {
-            window.__meetingSettingsHandler = undefined;
-        };
-    }, []);
+        return unsubscribe;
+    }, [send, subscribe]);
 
     const updateSetting = (key: string, value: string) => {
         setSaving(true);
-        const send = window.__xpditeWsSend;
-        if (send) {
-            send({
-                type: 'meeting_update_settings',
-                settings: { [key]: value },
-            });
-        }
+        send({
+            type: 'meeting_update_settings',
+            settings: { [key]: value },
+        });
         // Optimistic update
         setSettings((prev) => ({ ...prev, [key]: value }));
     };
