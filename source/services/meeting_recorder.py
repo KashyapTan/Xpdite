@@ -705,13 +705,20 @@ class PostProcessingPipeline:
         return result.get("segments", result.get("word_segments", []))
 
     def _diarize(self, audio_path: str, backend: str) -> dict | None:
-        """SpeechBrain speaker diarization via WhisperX wrapper.
+        """Speaker diarization via pyannote/whisperx.
 
         Requires a Hugging Face auth token (HF_TOKEN env-var) because the
         underlying pyannote models are gated.  The token is loaded from
         the .env file at project root.
+
+        Note: pyannote/speaker-diarization-3.1 uses AgglomerativeClustering
+        which does NOT need PLDA, but pyannote's SpeakerDiarization.__init__
+        still tries to download PLDA params from the gated
+        pyannote/speaker-diarization-community-1 repo by default.  We
+        monkey-patch ``get_plda`` to make that download failure non-fatal.
         """
         try:
+            from whisperx.diarize import DiarizationPipeline
             import whisperx
             import torch
         except ImportError:
@@ -728,9 +735,36 @@ class PostProcessingPipeline:
 
         device = "cuda" if backend == "cuda" and torch.cuda.is_available() else "cpu"
 
-        diarize_model = whisperx.DiarizationPipeline(
-            use_auth_token=hf_token, device=device
-        )
+        # ------------------------------------------------------------------
+        # Patch: make PLDA loading non-fatal.
+        # pyannote ≥4 SpeakerDiarization.__init__ always tries to load PLDA
+        # from the gated community-1 repo even when the chosen clustering
+        # algorithm (AgglomerativeClustering) never uses it.  We patch
+        # get_plda at the module where it's actually called so a 403 /
+        # download error returns None instead of crashing the pipeline.
+        # ------------------------------------------------------------------
+        import pyannote.audio.pipelines.speaker_diarization as _sd_module
+        _orig_get_plda = _sd_module.get_plda
+
+        def _safe_get_plda(plda, **kwargs):
+            try:
+                return _orig_get_plda(plda, **kwargs)
+            except Exception:
+                logger.debug(
+                    "PLDA download failed — not needed for AgglomerativeClustering, continuing."
+                )
+                return None
+
+        _sd_module.get_plda = _safe_get_plda
+        try:
+            diarize_model = DiarizationPipeline(
+                model_name="pyannote/speaker-diarization-3.1",
+                token=hf_token,
+                device=device,
+            )
+        finally:
+            _sd_module.get_plda = _orig_get_plda
+
         audio = whisperx.load_audio(audio_path)
         diarize_segments = diarize_model(audio)
 
@@ -798,14 +832,8 @@ class PostProcessingPipeline:
         )
 
         try:
-            import ollama
-            from ..core.state import app_state
-
-            response = ollama.chat(
-                model=app_state.selected_model,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            title = response["message"]["content"].strip().strip('"').strip("'")
+            title = MeetingAnalysisService._call_llm(prompt)
+            title = title.strip('"').strip("'")
             if 1 <= len(title.split()) <= 10:
                 return title
             logger.warning("AI title too long/short: '%s'", title)
@@ -884,7 +912,7 @@ class MeetingAnalysisService:
             # Run blocking LLM call in a thread to avoid event loop stall
             loop = asyncio.get_running_loop()
             raw_response = await loop.run_in_executor(
-                None, self._call_ollama, prompt, model
+                None, self._call_llm, prompt, model
             )
 
             # Parse structured response
@@ -904,17 +932,65 @@ class MeetingAnalysisService:
             return {"error": str(e), "summary": None, "actions": []}
 
     @staticmethod
-    def _call_ollama(prompt: str, model: str | None = None) -> str:
-        """Blocking Ollama call — run in a thread executor."""
-        import ollama
+    def _call_llm(prompt: str, model: str | None = None) -> str:
+        """Provider-agnostic blocking LLM call — run in a thread executor.
+
+        Routes to the correct provider (Ollama, Anthropic, OpenAI, Gemini)
+        based on the model name prefix (e.g. ``anthropic/claude-...``).
+        Falls back to ``app_state.selected_model`` when *model* is ``None``.
+        """
         from ..core.state import app_state
+        from ..llm.router import parse_provider
 
         use_model = model or app_state.selected_model
-        response = ollama.chat(
-            model=use_model,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return response["message"]["content"].strip()
+        provider, bare_model = parse_provider(use_model)
+        messages = [{"role": "user", "content": prompt}]
+
+        if provider == "ollama":
+            import ollama
+
+            response = ollama.chat(model=bare_model, messages=messages)
+            return (response.message.content or "").strip()
+
+        # Cloud providers — fetch API key
+        from ..llm.key_manager import key_manager
+
+        api_key = key_manager.get_api_key(provider)
+        if not api_key:
+            raise ValueError(f"No API key configured for provider '{provider}'")
+
+        if provider == "anthropic":
+            import anthropic
+
+            client = anthropic.Anthropic(api_key=api_key)
+            resp = client.messages.create(
+                model=bare_model,
+                max_tokens=4096,
+                messages=messages,
+            )
+            return resp.content[0].text.strip()
+
+        if provider == "openai":
+            import openai
+
+            client = openai.OpenAI(api_key=api_key)
+            resp = client.chat.completions.create(
+                model=bare_model,
+                messages=messages,
+            )
+            return (resp.choices[0].message.content or "").strip()
+
+        if provider == "gemini":
+            from google import genai
+
+            client = genai.Client(api_key=api_key)
+            resp = client.models.generate_content(
+                model=bare_model,
+                contents=prompt,
+            )
+            return (resp.text or "").strip()
+
+        raise ValueError(f"Unsupported provider: {provider}")
 
     def _extract_transcript_text(self, recording: dict) -> str:
         """Extract plain text from the best available transcript."""
