@@ -705,7 +705,12 @@ class PostProcessingPipeline:
         return result.get("segments", result.get("word_segments", []))
 
     def _diarize(self, audio_path: str, backend: str) -> dict | None:
-        """SpeechBrain speaker diarization via WhisperX wrapper."""
+        """SpeechBrain speaker diarization via WhisperX wrapper.
+
+        Requires a Hugging Face auth token (HF_TOKEN env-var) because the
+        underlying pyannote models are gated.  The token is loaded from
+        the .env file at project root.
+        """
         try:
             import whisperx
             import torch
@@ -713,9 +718,19 @@ class PostProcessingPipeline:
             logger.warning("whisperx not installed — skipping diarization")
             return None
 
+        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        if not hf_token:
+            logger.warning(
+                "HF_TOKEN not set — skipping diarization. "
+                "Add HF_TOKEN=hf_xxx to the .env file at the project root."
+            )
+            return None
+
         device = "cuda" if backend == "cuda" and torch.cuda.is_available() else "cpu"
 
-        diarize_model = whisperx.DiarizationPipeline(device=device)
+        diarize_model = whisperx.DiarizationPipeline(
+            use_auth_token=hf_token, device=device
+        )
         audio = whisperx.load_audio(audio_path)
         diarize_segments = diarize_model(audio)
 
@@ -727,7 +742,11 @@ class PostProcessingPipeline:
         aligned_segments: list[dict] | None,
         diarization_result: dict | None,
     ) -> list[dict]:
-        """Merge transcription, alignment, and diarization into unified JSON."""
+        """Merge transcription, alignment, and diarization into unified JSON.
+
+        After speaker assignment, maps raw pyannote labels (``SPEAKER_00``,
+        ``SPEAKER_01``, …) to friendlier names (``Speaker 1``, ``Speaker 2``, …).
+        """
         base_segments = aligned_segments if aligned_segments else transcript_segments
 
         if diarization_result is not None:
@@ -737,7 +756,20 @@ class PostProcessingPipeline:
                 result = whisperx.assign_word_speakers(
                     diarization_result, {"segments": base_segments}
                 )
-                return result.get("segments", base_segments)
+                merged = result.get("segments", base_segments)
+
+                # Map SPEAKER_XX → "Speaker N" for a friendlier UI
+                speaker_map: dict[str, str] = {}
+                counter = 1
+                for seg in merged:
+                    raw = seg.get("speaker", "")
+                    if raw and raw not in speaker_map:
+                        speaker_map[raw] = f"Speaker {counter}"
+                        counter += 1
+                    if raw:
+                        seg["speaker"] = speaker_map[raw]
+
+                return merged
             except Exception as e:
                 logger.warning("Speaker assignment failed: %s", e)
 
@@ -767,9 +799,10 @@ class PostProcessingPipeline:
 
         try:
             import ollama
+            from ..core.state import app_state
 
             response = ollama.chat(
-                model="llama3.2",
+                model=app_state.selected_model,
                 messages=[{"role": "user", "content": prompt}],
             )
             title = response["message"]["content"].strip().strip('"').strip("'")
@@ -819,8 +852,12 @@ class MeetingAnalysisService:
     def __init__(self, recorder_service: MeetingRecorderService) -> None:
         self._service = recorder_service
 
-    async def generate_analysis(self, recording_id: str) -> dict[str, Any]:
+    async def generate_analysis(self, recording_id: str, model: str | None = None) -> dict[str, Any]:
         """Generate AI summary and action suggestions for a recording.
+
+        Args:
+            recording_id: The recording to analyse.
+            model: Optional model override.  Falls back to app_state.selected_model.
 
         Returns dict with {summary, actions[], error?}.
         """
@@ -847,7 +884,7 @@ class MeetingAnalysisService:
             # Run blocking LLM call in a thread to avoid event loop stall
             loop = asyncio.get_running_loop()
             raw_response = await loop.run_in_executor(
-                None, self._call_ollama, prompt
+                None, self._call_ollama, prompt, model
             )
 
             # Parse structured response
@@ -867,13 +904,14 @@ class MeetingAnalysisService:
             return {"error": str(e), "summary": None, "actions": []}
 
     @staticmethod
-    def _call_ollama(prompt: str) -> str:
+    def _call_ollama(prompt: str, model: str | None = None) -> str:
         """Blocking Ollama call — run in a thread executor."""
         import ollama
         from ..core.state import app_state
 
+        use_model = model or app_state.selected_model
         response = ollama.chat(
-            model=app_state.selected_model,
+            model=use_model,
             messages=[{"role": "user", "content": prompt}],
         )
         return response["message"]["content"].strip()

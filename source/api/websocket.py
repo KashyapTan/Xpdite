@@ -57,7 +57,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - meeting_get_compute_info: Get GPU compute backend info
       - meeting_get_settings: Get meeting recorder settings
       - meeting_update_settings: Update meeting recorder settings
-      - meeting_generate_analysis: Generate AI summary and action suggestions
+      - meeting_generate_analysis: Generate AI summary and action suggestions (optional: model)
       - meeting_execute_action: Execute a suggested action via MCP tools
 
     Server -> Client broadcast messages (JSON):

@@ -441,6 +441,7 @@ class MessageHandler:
         from ..services.meeting_recorder import meeting_analysis_service
 
         recording_id = data.get("recording_id")
+        model = data.get("model")  # Optional model override from frontend
         if not recording_id:
             await self.websocket.send_text(
                 json.dumps({"type": "meeting_analysis_error", "content": {"error": "Missing recording_id"}})
@@ -450,7 +451,7 @@ class MessageHandler:
         # Run in background to avoid blocking WS
         async def _run_analysis():
             try:
-                result = await meeting_analysis_service.generate_analysis(recording_id)
+                result = await meeting_analysis_service.generate_analysis(recording_id, model=model)
                 if "error" in result and result.get("summary") is None:
                     await broadcast_message("meeting_analysis_error", {
                         "recording_id": recording_id,

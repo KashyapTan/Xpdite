@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
+import { api } from '../services/api';
 import TitleBar from '../components/TitleBar';
 import '../CSS/MeetingRecordingDetail.css';
 
@@ -66,11 +67,21 @@ const MeetingRecordingDetail: React.FC = () => {
     const [editingActions, setEditingActions] = useState<Record<number, ActionSuggestion>>({});
     const [actionResults, setActionResults] = useState<Record<number, { success: boolean; result: string }>>({});
 
+    // Model selection state
+    const [enabledModels, setEnabledModels] = useState<string[]>([]);
+    const [selectedModel, setSelectedModel] = useState<string>('');
+
     // Load recording detail
     useEffect(() => {
         if (id) {
             sendMessage({ type: 'load_meeting_recording', recording_id: id });
         }
+
+        // Fetch enabled models for the analysis model picker
+        api.getEnabledModels().then((models) => {
+            setEnabledModels(models);
+            if (models.length > 0) setSelectedModel(models[0]);
+        });
 
         return subscribe((msg) => {
             if (msg.type === 'meeting_recording_loaded' && msg.content) {
@@ -134,7 +145,11 @@ const MeetingRecordingDetail: React.FC = () => {
         if (!id) return;
         setAnalyzing(true);
         setAnalysisError(null);
-        sendMessage({ type: 'meeting_generate_analysis', recording_id: id });
+        sendMessage({
+            type: 'meeting_generate_analysis',
+            recording_id: id,
+            model: selectedModel || undefined,
+        });
     };
 
     const handleExecuteAction = (idx: number) => {
@@ -363,12 +378,24 @@ const MeetingRecordingDetail: React.FC = () => {
 
                         {/* AI Analysis */}
                         <div className="meeting-detail-section">
-                            <h3 className="meeting-detail-section-title">AI Analysis</h3>
+                            <h3 className="meeting-detail-section-title">Xpdite Analysis</h3>
 
                             {!aiSummary && !analyzing && canAnalyze && (
                                 <div className="meeting-detail-analysis-prompt">
-                                    <button className="meeting-detail-summarize-btn" onClick={handleSummarize} disabled={analyzing}>
-                                        ✨ Summarize with AI
+                                    <select
+                                        className="meeting-detail-model-select"
+                                        value={selectedModel}
+                                        onChange={(e) => setSelectedModel(e.target.value)}
+                                    >
+                                        {enabledModels.length === 0 && (
+                                            <option value="" disabled>No models enabled</option>
+                                        )}
+                                        {enabledModels.map((modelName) => (
+                                            <option key={modelName} value={modelName}>{modelName}</option>
+                                        ))}
+                                    </select>
+                                    <button className="meeting-detail-summarize-btn" onClick={handleSummarize} disabled={analyzing || !selectedModel}>
+                                        Summarize Recording
                                     </button>
                                     {!hasTier2 && recording.tier1_transcript && (
                                         <span className="meeting-detail-analysis-note">Based on live transcript (may be less accurate)</span>

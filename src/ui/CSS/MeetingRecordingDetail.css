@@ -208,6 +208,30 @@
     flex-wrap: wrap;
 }
 
+.meeting-detail-model-select {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.85);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.82rem;
+    font-family: 'Montserrat', sans-serif;
+    cursor: pointer;
+    min-width: 160px;
+    max-width: 260px;
+    transition: border-color 0.2s ease;
+}
+
+.meeting-detail-model-select:focus {
+    outline: none;
+    border-color: rgba(79, 140, 255, 0.5);
+}
+
+.meeting-detail-model-select option {
+    background: #1a1a2e;
+    color: #fff;
+}
+
 .meeting-detail-summarize-btn {
     background: linear-gradient(135deg, rgba(79, 140, 255, 0.15), rgba(153, 102, 255, 0.15));
     border: 1px solid rgba(79, 140, 255, 0.3);

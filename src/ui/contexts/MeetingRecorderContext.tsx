@@ -132,6 +132,7 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
         setIsRecording(false);
         setRecordingId(null);
         setStartedAt(null);
+        setLiveTranscript([]);
         if (durationIntervalRef.current) {
             clearInterval(durationIntervalRef.current);
             durationIntervalRef.current = null;
