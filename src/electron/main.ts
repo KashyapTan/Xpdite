@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, session } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
-import { startPythonServer, stopPythonServer } from './pythonApi.js';
+import { startPythonServer, stopPythonServer, getServerPort } from './pythonApi.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -49,19 +49,19 @@ app.on('ready', async () => {
     console.log('__dirname:', __dirname);
 
     mainWindow = new BrowserWindow({
-        width: 550,
-        height: 550,
+        width: 850,
+        height: 850,
         minWidth: 30,
         minHeight: 20,
         title: 'Xpdite',
-        frame: false,
+        // frame: false,
         transparent: true,
         resizable: true,
         alwaysOnTop: true,
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
-        skipTaskbar: true,
+        // skipTaskbar: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -121,20 +121,17 @@ app.on('ready', async () => {
         mainWindow.focus();
     });
 
+    // IPC: Get the Python server port
+    ipcMain.handle('get-server-port', () => {
+        return getServerPort();
+    });
+
     // Show across virtual desktops / fullscreen spaces:
     // mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
-    // Handle window closed event
-    mainWindow.on('closed', async () => {
-        console.log('Main window closed, cleaning up...');
-        await stopPythonServer();
+    // Handle window closed event — cleanup handled by app-level quit handlers.
+    mainWindow.on('closed', () => {
         mainWindow = null;
-    });
-
-    // Handle window close event (before window is actually closed)
-    mainWindow.on('close', async () => {
-        console.log('Main window closing, initiating cleanup...');
-        await stopPythonServer();
     });
 
     if (isDev()) {
@@ -146,22 +143,16 @@ app.on('ready', async () => {
 })
 
 // Handle all windows closed
-app.on('window-all-closed', async () => {
-    console.log('All windows closed, stopping Python server...');
-    await stopPythonServer();
+app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
     }
 });
 
-// Handle app before quit
+// Single cleanup hook — stopPythonServer() is itself idempotent, but there
+// is no reason to invoke it from every lifecycle event.  `before-quit` fires
+// before the window closes and before `will-quit`, so one handler is enough.
 app.on('before-quit', async () => {
     console.log('App is quitting, cleaning up processes...');
-    await stopPythonServer();
-});
-
-// Handle app will quit
-app.on('will-quit', async () => {
-    console.log('App will quit, final cleanup...');
     await stopPythonServer();
 });

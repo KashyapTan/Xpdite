@@ -46,8 +46,17 @@
  * ```
  */
 
-const WS_BASE_URL = 'ws://localhost:8000';
-const HTTP_BASE_URL = 'http://localhost:8000';
+import { discoverServerPort, getHttpBaseUrl, getWsBaseUrl } from './portDiscovery';
+
+/**
+ * Awaits port discovery (cached after first call) and returns the HTTP base URL.
+ * Every async `api.*` method calls this so even the earliest request waits
+ * for the server port to be resolved before firing.
+ */
+async function baseUrl(): Promise<string> {
+  await discoverServerPort();
+  return getHttpBaseUrl();
+}
 
 export interface ApiService {
   // WebSocket methods
@@ -185,8 +194,14 @@ export function createApiService(
 
 // Singleton for direct imports (when WebSocket context is not needed)
 export const api = {
-  HTTP_BASE_URL,
-  WS_BASE_URL,
+  /**
+   * Current HTTP base URL. **Synchronous** — returns `http://localhost:8000`
+   * until `discoverServerPort()` has resolved. Prefer `await baseUrl()`
+   * inside async methods to guarantee the correct port.
+   */
+  get HTTP_BASE_URL() { return getHttpBaseUrl(); },
+  /** @see HTTP_BASE_URL — same caveat about pre-discovery staleness. */
+  get WS_BASE_URL() { return getWsBaseUrl(); },
 
   /**
    * Fetch all Ollama models installed on the user's machine.
@@ -198,7 +213,8 @@ export const api = {
    */
   async getOllamaModels(): Promise<{ models: { name: string; size: number; parameter_size: string; quantization: string }[]; error?: string }> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/models/ollama`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/models/ollama`);
       if (!response.ok) throw new Error('Failed to fetch Ollama models');
       const data = await response.json();
       // Backend may return { models: [...], error: "..." } or just an array
@@ -217,7 +233,8 @@ export const api = {
    */
   async getEnabledModels(): Promise<string[]> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/models/enabled`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/models/enabled`);
       if (!response.ok) throw new Error('Failed to fetch enabled models');
       return response.json();
     } catch {
@@ -231,7 +248,8 @@ export const api = {
    */
   async setEnabledModels(models: string[]): Promise<void> {
     try {
-      await fetch(`${HTTP_BASE_URL}/api/models/enabled`, {
+      const base = await baseUrl();
+      await fetch(`${base}/api/models/enabled`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ models }),
@@ -246,7 +264,8 @@ export const api = {
    */
   async healthCheck(): Promise<boolean> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/health`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/health`);
       return response.ok;
     } catch {
       return false;
@@ -263,7 +282,8 @@ export const api = {
    */
   async getApiKeyStatus(): Promise<Record<string, { has_key: boolean; masked: string | null }>> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/keys`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/keys`);
       if (!response.ok) throw new Error('Failed to fetch API key status');
       return response.json();
     } catch {
@@ -277,7 +297,8 @@ export const api = {
    * Throws an error with the validation message on failure.
    */
   async saveApiKey(provider: string, key: string): Promise<{ status: string; provider: string; masked: string }> {
-    const response = await fetch(`${HTTP_BASE_URL}/api/keys/${provider}`, {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/keys/${provider}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ key }),
@@ -294,7 +315,8 @@ export const api = {
    */
   async deleteApiKey(provider: string): Promise<void> {
     try {
-      await fetch(`${HTTP_BASE_URL}/api/keys/${provider}`, {
+      const base = await baseUrl();
+      await fetch(`${base}/api/keys/${provider}`, {
         method: 'DELETE',
       });
     } catch {
@@ -312,7 +334,8 @@ export const api = {
    */
   async getProviderModels(provider: string): Promise<{ name: string; provider: string; description: string }[]> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/models/${provider}`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/models/${provider}`);
       if (!response.ok) throw new Error(`Failed to fetch ${provider} models`);
       return response.json();
     } catch {
@@ -334,7 +357,8 @@ export const api = {
     auth_in_progress: boolean;
   }> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/google/status`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/google/status`);
       if (!response.ok) throw new Error('Failed to get Google status');
       return response.json();
     } catch {
@@ -347,7 +371,8 @@ export const api = {
    * This is a blocking call that waits for the OAuth callback.
    */
   async connectGoogle(): Promise<{ success: boolean; email?: string; error?: string }> {
-    const response = await fetch(`${HTTP_BASE_URL}/api/google/connect`, {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/google/connect`, {
       method: 'POST',
     });
     if (!response.ok) {
@@ -363,7 +388,8 @@ export const api = {
    * and stops Gmail/Calendar MCP servers.
    */
   async disconnectGoogle(): Promise<{ success: boolean; error?: string }> {
-    const response = await fetch(`${HTTP_BASE_URL}/api/google/disconnect`, {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/google/disconnect`, {
       method: 'POST',
     });
     return response.json();
@@ -378,7 +404,8 @@ export const api = {
    */
   async getMcpServers(): Promise<{ server: string; tools: string[] }[]> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/mcp/servers`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/mcp/servers`);
       if (!response.ok) throw new Error('Failed to fetch MCP servers');
       return response.json();
     } catch {
@@ -391,7 +418,8 @@ export const api = {
    */
   async getToolsSettings(): Promise<{ always_on: string[]; top_k: number }> {
     try {
-      const response = await fetch(`${HTTP_BASE_URL}/api/settings/tools`);
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/settings/tools`);
       if (!response.ok) throw new Error('Failed to fetch tool settings');
       return response.json();
     } catch {
@@ -404,7 +432,8 @@ export const api = {
    */
   async setToolsSettings(alwaysOn: string[], topK: number): Promise<void> {
     try {
-      await fetch(`${HTTP_BASE_URL}/api/settings/tools`, {
+      const base = await baseUrl();
+      await fetch(`${base}/api/settings/tools`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ always_on: alwaysOn, top_k: topK }),
@@ -422,7 +451,8 @@ export const api = {
    * Get the custom system prompt template.
    */
   async getSystemPrompt(): Promise<{ template: string; is_custom: boolean }> {
-    const res = await fetch(`${HTTP_BASE_URL}/api/settings/system-prompt`);
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/settings/system-prompt`);
     if (!res.ok) throw new Error('Failed to fetch system prompt');
     return res.json();
   },
@@ -431,7 +461,8 @@ export const api = {
    * Save a custom system prompt template.
    */
   async setSystemPrompt(template: string): Promise<void> {
-    const res = await fetch(`${HTTP_BASE_URL}/api/settings/system-prompt`, {
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/settings/system-prompt`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ template }),
@@ -445,13 +476,15 @@ export const api = {
 
   skillsApi: {
     async getAll(): Promise<any[]> {
-      const res = await fetch(`${HTTP_BASE_URL}/api/skills`);
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills`);
       if (!res.ok) throw new Error('Failed to fetch skills');
       return res.json();
     },
 
     async create(skill: { skill_name: string; display_name: string; slash_command: string; content: string; enabled: boolean }): Promise<void> {
-      const res = await fetch(`${HTTP_BASE_URL}/api/skills`, {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(skill),
@@ -463,7 +496,8 @@ export const api = {
     },
 
     async update(skillName: string, update: { display_name: string; slash_command: string; content: string; enabled: boolean }): Promise<void> {
-      const res = await fetch(`${HTTP_BASE_URL}/api/skills/${skillName}`, {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills/${skillName}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(update),
@@ -475,14 +509,16 @@ export const api = {
     },
 
     async delete(skillName: string): Promise<void> {
-      const res = await fetch(`${HTTP_BASE_URL}/api/skills/${skillName}`, {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills/${skillName}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete skill');
     },
 
     async reset(skillName: string): Promise<void> {
-      const res = await fetch(`${HTTP_BASE_URL}/api/skills/${skillName}/reset`, {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills/${skillName}/reset`, {
         method: 'POST',
       });
       if (!res.ok) throw new Error('Failed to reset skill');

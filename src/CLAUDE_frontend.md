@@ -38,7 +38,8 @@ src/
     │   ├── useAudioCapture.ts # System audio capture for meeting recording
     │   └── useTokenUsage.ts  # Token count display (+ getSnapshot/restoreSnapshot)
     ├── services/
-    │   └── api.ts        # createApiService (WS helpers) + singleton `api` (HTTP helpers)
+    │   ├── api.ts            # createApiService (WS helpers) + singleton `api` (HTTP helpers)
+    │   └── portDiscovery.ts  # Dynamic server port discovery (IPC-first, then probe 8000–8009)
     ├── types/            # Shared TypeScript interfaces (ChatMessage, ToolCall, ContentBlock, TabSnapshot…)
     ├── CSS/
     │   └── TabBar.css    # Dark theme tab bar styles (28px height)
@@ -96,16 +97,22 @@ The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ typ
 - `minimizable: false`, `maximizable: false`, `skipTaskbar: true` — intentional for overlay UX.
 
 ### IPC surface (preload.ts)
-Only two methods are exposed via `contextBridge`:
+Three methods are exposed via `contextBridge`:
 - `window.electronAPI.setMiniMode(mini: boolean)`
 - `window.electronAPI.focusWindow()`
+- `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
 
 Do not add IPC channels without updating both `preload.ts` (expose) and `main.ts` (handle).
 
 ### Python server lifecycle
 - **Dev:** Electron does *not* start Python. `dev:pyserver` runs it independently. `isDev()` guards this.
 - **Prod:** Electron spawns `resources/python-server/xpdite-server.exe` (PyInstaller bundle) from `pythonApi.ts → startPythonServer()`. The exe path differs between packaged and unpackaged builds — `pythonApi.ts` resolves `process.resourcesPath` at runtime.
-- **Port detection:** Both sides scan 8000-8009. The Python side picks first available; the frontend hardcodes `:8000`. If you move off 8000, you need to pass the chosen port from Python → Electron → renderer (currently not done — port 8000 is assumed free).
+- **Port discovery:** The Python backend binds to the first available port in 8000–8009. The renderer discovers the port automatically via `portDiscovery.ts`:
+  1. **IPC path (production):** `window.electronAPI.getServerPort()` returns the port detected by Electron's stdout parsing. The IPC-provided port is validated with a `/api/health` check before trusting it (guards against stale default when the Python server binds to a different port).
+  2. **Probe fallback (dev / no IPC):** Concurrent `GET /api/health` requests to ports 8000–8009; first 200 wins.
+  3. `WebSocketContext` calls `discoverServerPort()` before each connection (and `resetDiscovery()` on disconnect so a server restart on a new port is handled).
+  4. Every `api.*` HTTP method internally calls `await baseUrl()`, which awaits `discoverServerPort()` (cached after first resolution). This eliminates race conditions — no separate sync step is needed.
+- **Never hardcode `localhost:8000`** in frontend code — always use `getWsBaseUrl()` / `getHttpBaseUrl()` from `portDiscovery.ts`, or the `api` singleton which calls them internally.
 
 ---
 

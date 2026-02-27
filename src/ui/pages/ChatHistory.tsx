@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import TitleBar from '../components/TitleBar';
+import { useWebSocket } from '../contexts/WebSocketContext';
 import '../CSS/ChatHistory.css';
 
 interface Conversation {
@@ -12,69 +13,47 @@ interface Conversation {
 const ChatHistory: React.FC = () => {
   const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
   const navigate = useNavigate();
+  const { send, subscribe, isConnected } = useWebSocket();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
-  const wsRef = useRef<WebSocket | null>(null);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Connect to WebSocket and fetch conversations
+  // Subscribe to WebSocket messages and fetch conversations on connect
   useEffect(() => {
-    let ws: WebSocket | null = null;
-
-    const connect = () => {
-      ws = new WebSocket('ws://localhost:8000/ws');
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        console.log('ChatHistory WS connected');
-        // Request conversations list on connect
-        ws?.send(JSON.stringify({ type: 'get_conversations', limit: 50, offset: 0 }));
-      };
-
-      ws.onmessage = (event) => {
-        console.log('ChatHistory received message:', event.data);
-        try {
-          const data = JSON.parse(event.data);
-          switch (data.type) {
-            case 'conversations_list': {
-              const convos = data.content as Conversation[];
-              console.log('Parsed conversations:', convos);
-              setConversations(convos);
-              setLoading(false);
-              break;
-            }
-            case 'conversation_deleted': {
-              const deleteData = data.content;
-              setConversations(prev => prev.filter(c => c.id !== deleteData.conversation_id));
-              break;
-            }
-            case 'error': {
-              console.error('ChatHistory received error from backend:', data.content);
-              setLoading(false);
-              break;
-            }
-          }
-        } catch (e) {
-          console.error('ChatHistory WS parsing error:', e);
+    const unsubscribe = subscribe((data) => {
+      switch (data.type) {
+        case '__ws_connected': {
+          // Request conversations list on connect
+          send({ type: 'get_conversations', limit: 50, offset: 0 });
+          break;
         }
-      };
-
-      ws.onclose = () => {
-        // Reconnect after a brief delay
-        setTimeout(connect, 2000);
-      };
-    };
-
-    connect();
-
-    return () => {
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
+        case 'conversations_list': {
+          const convos = data.content as Conversation[];
+          setConversations(convos);
+          setLoading(false);
+          break;
+        }
+        case 'conversation_deleted': {
+          const deleteData = data.content;
+          setConversations(prev => prev.filter(c => c.id !== deleteData.conversation_id));
+          break;
+        }
+        case 'error': {
+          console.error('ChatHistory received error from backend:', data.content);
+          setLoading(false);
+          break;
+        }
       }
-    };
-  }, []);
+    });
+
+    // If already connected when this component mounts, fetch immediately
+    if (isConnected) {
+      send({ type: 'get_conversations', limit: 50, offset: 0 });
+    }
+
+    return unsubscribe;
+  }, [send, subscribe, isConnected]);
 
   // Debounced search
   const handleSearchChange = useCallback((value: string) => {
@@ -85,15 +64,13 @@ const ChatHistory: React.FC = () => {
     }
 
     searchTimeoutRef.current = setTimeout(() => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        if (value.trim()) {
-          wsRef.current.send(JSON.stringify({ type: 'search_conversations', query: value.trim() }));
-        } else {
-          wsRef.current.send(JSON.stringify({ type: 'get_conversations', limit: 50, offset: 0 }));
-        }
+      if (value.trim()) {
+        send({ type: 'search_conversations', query: value.trim() });
+      } else {
+        send({ type: 'get_conversations', limit: 50, offset: 0 });
       }
     }, 300);
-  }, []);
+  }, [send]);
 
   const handleConversationClick = (conversationId: string) => {
     // Navigate to the main chat page with the conversation ID in state
@@ -102,9 +79,7 @@ const ChatHistory: React.FC = () => {
 
   const handleDeleteConversation = (e: React.MouseEvent, conversationId: string) => {
     e.stopPropagation(); // Prevent triggering the click on the list item
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: 'delete_conversation', conversation_id: conversationId }));
-    }
+    send({ type: 'delete_conversation', conversation_id: conversationId });
   };
 
   const getRelativeDateGroup = (timestamp: number): string => {

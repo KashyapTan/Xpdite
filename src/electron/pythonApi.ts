@@ -1,32 +1,13 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process';
 import path from 'path';
-import { app } from 'electron';
 import { isDev } from './utils.js';
 import fs from 'fs';
-import net from 'net';
 
 let pythonProcess: ChildProcess | null = null;
 let detectedPort: number = 8000;
 
-async function findAvailablePort(startPort: number = 8000): Promise<number> {
-    for (let port = startPort; port < startPort + 10; port++) {
-        const server = net.createServer();
-        try {
-            await new Promise<void>((resolve, reject) => {
-                server.once('error', reject);
-                server.once('listening', () => {
-                    server.close();
-                    resolve();
-                });
-                server.listen(port);
-            });
-            return port;
-        } catch {
-            continue;
-        }
-    }
-    throw new Error(`No available ports found in range ${startPort}-${startPort + 9}`);
-}
+/** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
+const SERVER_PORT_RANGE = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
 
 function findPythonExecutable(): string {
     if (isDev()) {
@@ -160,7 +141,7 @@ async function killProcessesOnPorts(ports: number[]): Promise<void> {
 export async function startPythonServer(): Promise<void> {
     // Clean up any existing processes on startup (both dev and production)
     console.log('Cleaning up any existing processes before starting...');
-    await killProcessesOnPorts([8000, 8001, 8002, 8003, 8004]);
+    await killProcessesOnPorts(SERVER_PORT_RANGE);
     
     // Wait a moment for cleanup to complete
     await new Promise(resolve => setTimeout(resolve, 1000));
@@ -243,31 +224,35 @@ export async function startPythonServer(): Promise<void> {
             });
         }
 
-        // Give the server time to start up and check if it's actually running
-        setTimeout(() => {
+        // Poll for server readiness: retry every 1s for up to 20s.
+        // PyInstaller unpacking can be slow on cold start.
+        const POLL_INTERVAL_MS = 1000;
+        const MAX_POLL_ATTEMPTS = 20;
+        let pollAttempt = 0;
+
+        const pollForServer = () => {
+            pollAttempt++;
             const checkServerPorts = async () => {
                 try {
                     // Try to find the server on the detected port or fallback ports
-                    const portsToTry = [detectedPort, 8000, 8001, 8002, 8003, 8004];
+                    // Build a de-duplicated list: detected first, then remaining range ports
+                    const portsToTry = [detectedPort, ...SERVER_PORT_RANGE.filter(p => p !== detectedPort)];
                     let serverFound = false;
                     
                 for (const port of portsToTry) {
                     try {
-                        // Test if the server is responding on this port
-                        // Try a simple GET request to the root endpoint instead of WebSocket
+                        // Test if the server is responding with the health endpoint
                         const controller = new AbortController();
                         const timeoutId = setTimeout(() => controller.abort(), 1000);
                         
-                        const response = await fetch(`http://localhost:${port}/`, {
+                        const response = await fetch(`http://localhost:${port}/api/health`, {
                             method: 'GET',
                             signal: controller.signal
                         }).catch(() => null);
                         
                         clearTimeout(timeoutId);
                         
-                        if (response && (response.status === 404 || response.status === 200)) {
-                            // 404 is expected for FastAPI root if no route is defined
-                            // 200 means there's a route defined
+                        if (response && response.ok) {
                             detectedPort = port;
                             console.log(`Python server found on port ${port}`);
                             serverFound = true;
@@ -280,22 +265,37 @@ export async function startPythonServer(): Promise<void> {
                 }                    if (serverFound || serverStarted) {
                         console.log('Python server started successfully');
                         resolve();
+                    } else if (pollAttempt < MAX_POLL_ATTEMPTS) {
+                        console.log(`Server not ready yet (attempt ${pollAttempt}/${MAX_POLL_ATTEMPTS}), retrying...`);
+                        setTimeout(pollForServer, POLL_INTERVAL_MS);
                     } else {
-                        console.error('Python server failed to start - no response on any port');
+                        console.error('Python server failed to start - no response on any port after retries');
                         reject(new Error('Python server failed to start'));
                     }
                 } catch (error) {
                     console.error('Error checking Python server status:', error);
-                    reject(error);
+                    if (pollAttempt < MAX_POLL_ATTEMPTS) {
+                        setTimeout(pollForServer, POLL_INTERVAL_MS);
+                    } else {
+                        reject(error);
+                    }
                 }
             };
             
             checkServerPorts();
-        }, 5000);
+        };
+
+        // Start first poll after 1s to give the process time to begin
+        setTimeout(pollForServer, POLL_INTERVAL_MS);
     });
 }
 
+let cleaningUp = false;
+
 export async function stopPythonServer(): Promise<void> {
+    // Idempotent guard — avoid running concurrent / repeated cleanup.
+    if (cleaningUp) return;
+    cleaningUp = true;
     console.log('Stopping Python server...');
     
     // First try to gracefully stop the process
@@ -318,7 +318,7 @@ export async function stopPythonServer(): Promise<void> {
     
     // Also kill any remaining Python processes on the known ports
     try {
-        await killProcessesOnPorts([8000, 8001, 8002, 8003, 8004]);
+        await killProcessesOnPorts(SERVER_PORT_RANGE);
     } catch (error) {
         console.error('Error killing processes on ports:', error);
     }
@@ -330,11 +330,6 @@ export function getServerPort(): number {
     return detectedPort;
 }
 
-// Cleanup on app quit
-app.on('before-quit', async () => {
-    await stopPythonServer();
-});
-
-app.on('window-all-closed', async () => {
-    await stopPythonServer();
-});
+// NOTE: Cleanup is handled by main.ts app-level event handlers.
+// Do NOT register additional before-quit / window-all-closed handlers
+// here — they would cause duplicate stopPythonServer() calls.

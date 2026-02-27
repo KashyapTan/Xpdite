@@ -14,6 +14,7 @@
  * message content — it's a pure pub/sub transport.
  */
 import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from 'react';
+import { discoverServerPort, getWsBaseUrl, resetDiscovery } from '../services/portDiscovery';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type MessageHandler = (data: Record<string, any>) => void;
@@ -53,12 +54,21 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
 
     useEffect(() => {
         let ws: WebSocket | null = null;
+        let cancelled = false;
+        /** Reconnect delay with exponential back-off (2 s → 4 s → 8 s … capped at 30 s). */
+        let reconnectDelay = 2000;
+        const MAX_RECONNECT_DELAY = 30_000;
 
-        const connect = () => {
-            ws = new WebSocket('ws://localhost:8000/ws');
+        const connect = async () => {
+            // Discover which port the Python server is actually on.
+            await discoverServerPort();
+            if (cancelled) return;
+            ws = new WebSocket(`${getWsBaseUrl()}/ws`);
             wsRef.current = ws;
 
             ws.onopen = () => {
+                // Reset back-off on successful connection.
+                reconnectDelay = 2000;
                 setIsConnected(true);
                 // Notify subscribers so they can run connect-time logic
                 // (e.g. App.tsx sends set_capture_mode).
@@ -85,7 +95,13 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
                 for (const handler of [...subscribersRef.current]) {
                     handler({ type: '__ws_disconnected' });
                 }
-                setTimeout(connect, 2000);
+                // Re-discover port on reconnect in case the server restarted
+                // on a different port.
+                resetDiscovery();
+                if (!cancelled) {
+                    setTimeout(connect, reconnectDelay);
+                    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+                }
             };
 
             // onerror is always followed by onclose, which handles state reset.
@@ -97,6 +113,7 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
         connect();
 
         return () => {
+            cancelled = true;
             if (ws) {
                 ws.onclose = null;
                 ws.close();
