@@ -49,19 +49,19 @@ app.on('ready', async () => {
     console.log('__dirname:', __dirname);
 
     mainWindow = new BrowserWindow({
-        width: 850,
-        height: 850,
+        width: 550,
+        height: 550,
         minWidth: 30,
         minHeight: 20,
         title: 'Xpdite',
-        // frame: false,
+        frame: false,
         transparent: true,
         resizable: true,
         alwaysOnTop: true,
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
-        // skipTaskbar: true,
+        skipTaskbar: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
