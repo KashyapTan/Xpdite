@@ -167,12 +167,6 @@ const MeetingAlbum: React.FC = () => {
 
         <div className="chat-history-list-title">
           <span>Recordings</span>
-          <span
-            style={{ cursor: 'pointer', fontSize: '0.8em', opacity: 0.6 }}
-            onClick={() => navigate('/recorder')}
-          >
-            + New Recording
-          </span>
         </div>
 
         <div className="chat-history-list-container">

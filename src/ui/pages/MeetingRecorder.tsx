@@ -1,11 +1,16 @@
 import React, { useRef, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useOutletContext, useNavigate } from 'react-router-dom';
 import TitleBar from '../components/TitleBar';
+import { ModeSelector } from '../components/input/ModeSelector';
 import { useMeetingRecorder } from '../contexts/MeetingRecorderContext';
+import regionSSIcon from '../assets/region-screen-shot-icon.svg';
+import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
+import meetingRecordingIcon from '../assets/meeting-record-icon.svg';
 import '../CSS/MeetingRecorder.css';
 
 const MeetingRecorder: React.FC = () => {
     const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
+    const navigate = useNavigate();
     const {
         isRecording,
         liveTranscript,
@@ -90,6 +95,17 @@ const MeetingRecorder: React.FC = () => {
                     <div ref={transcriptEndRef} />
                 </div>
             </div>
+
+            <ModeSelector
+                captureMode="none"
+                meetingRecordingMode={true}
+                onFullscreenMode={() => navigate('/')}
+                onPrecisionMode={() => navigate('/')}
+                onMeetingMode={() => { /* already on recorder */ }}
+                regionSSIcon={regionSSIcon}
+                fullscreenSSIcon={fullscreenSSIcon}
+                meetingRecordingIcon={meetingRecordingIcon}
+            />
         </div>
     );
 };

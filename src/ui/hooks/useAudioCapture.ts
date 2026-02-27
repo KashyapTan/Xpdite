@@ -4,6 +4,11 @@
  * Captures system audio (via electron-audio-loopback) and microphone,
  * mixes them into a single mono 16kHz 16-bit PCM stream, and sends
  * chunks to the Python backend as base64-encoded JSON messages over WebSocket.
+ *
+ * WGC is disabled at the Electron level (see main.ts) to avoid continuous
+ * "ProcessFrame failed" errors on Windows. Chromium falls back to DXGI
+ * Output Duplication, which is more reliable. Video tracks are stripped
+ * per the electron-audio-loopback README.
  */
 import { useRef, useCallback } from 'react';
 
@@ -22,17 +27,53 @@ export function useAudioCapture(
     const chunkerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pcmBufferRef = useRef<Float32Array[]>([]);
 
+    // Shared cleanup logic — used by both stopCapture and startCapture's
+    // error/double-start paths. Operates only on refs so it's safe to call
+    // from any callback regardless of hook ordering.
+    const cleanupRefs = useCallback(() => {
+        if (chunkerIntervalRef.current) {
+            clearInterval(chunkerIntervalRef.current);
+            chunkerIntervalRef.current = null;
+        }
+        if (processorRef.current) {
+            processorRef.current.disconnect();
+            processorRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+        if (loopbackStreamRef.current) {
+            loopbackStreamRef.current.getTracks().forEach((t) => t.stop());
+            loopbackStreamRef.current = null;
+        }
+        if (micStreamRef.current) {
+            micStreamRef.current.getTracks().forEach((t) => t.stop());
+            micStreamRef.current = null;
+        }
+        pcmBufferRef.current = [];
+    }, []);
+
     const startCapture = useCallback(async () => {
+        // Guard against double-start: clean up any existing capture first
+        if (loopbackStreamRef.current || audioContextRef.current) {
+            cleanupRefs();
+        }
+
         try {
             // 1. Enable loopback audio via electron-audio-loopback
             await window.electronAPI?.enableLoopbackAudio();
 
-            // 2. Get system audio stream via getDisplayMedia
+            // 2. Get system audio stream via getDisplayMedia.
+            //    video: true is required by Chromium — it fails without it.
             const loopbackStream = await navigator.mediaDevices.getDisplayMedia({
                 video: true,
                 audio: true,
             });
-            // Remove video tracks (we only need audio)
+
+            // Per electron-audio-loopback README: remove video tracks we don't
+            // need. With WGC disabled (main.ts), the DXGI capture session tears
+            // down cleanly when video tracks are stopped.
             loopbackStream.getVideoTracks().forEach((track) => {
                 track.stop();
                 loopbackStream.removeTrack(track);
@@ -82,7 +123,12 @@ export function useAudioCapture(
 
             const mixedSource = ctx.createMediaStreamSource(destination.stream);
             mixedSource.connect(processor);
-            processor.connect(ctx.destination); // Required for processing to work
+            // Connect through a zero-gain node so ScriptProcessorNode stays
+            // active without echoing captured audio through the speakers.
+            const silencer = ctx.createGain();
+            silencer.gain.value = 0;
+            processor.connect(silencer);
+            silencer.connect(ctx.destination);
 
             processor.onaudioprocess = (e) => {
                 const inputData = e.inputBuffer.getChannelData(0);
@@ -128,42 +174,15 @@ export function useAudioCapture(
 
         } catch (err) {
             console.error('Failed to start audio capture:', err);
+            // Clean up any partially-initialized resources
+            cleanupRefs();
             throw err;
         }
-    }, [sendMessage]);
+    }, [sendMessage, cleanupRefs]);
 
     const stopCapture = useCallback(() => {
-        // Stop chunk sender
-        if (chunkerIntervalRef.current) {
-            clearInterval(chunkerIntervalRef.current);
-            chunkerIntervalRef.current = null;
-        }
-
-        // Disconnect processor
-        if (processorRef.current) {
-            processorRef.current.disconnect();
-            processorRef.current = null;
-        }
-
-        // Close audio context
-        if (audioContextRef.current) {
-            audioContextRef.current.close();
-            audioContextRef.current = null;
-        }
-
-        // Stop media streams
-        if (loopbackStreamRef.current) {
-            loopbackStreamRef.current.getTracks().forEach((t) => t.stop());
-            loopbackStreamRef.current = null;
-        }
-        if (micStreamRef.current) {
-            micStreamRef.current.getTracks().forEach((t) => t.stop());
-            micStreamRef.current = null;
-        }
-
-        // Clear buffer
-        pcmBufferRef.current = [];
-    }, []);
+        cleanupRefs();
+    }, [cleanupRefs]);
 
     return { startCapture, stopCapture };
 }

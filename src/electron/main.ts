@@ -13,6 +13,18 @@ let normalBounds = { width: 450, height: 450, x: 100, y: 100 };
 
 // Initialize electron-audio-loopback BEFORE app is ready.
 // This registers IPC handlers: 'enable-loopback-audio' / 'disable-loopback-audio'.
+//
+// Disable WGC (Windows Graphics Capture) for screen capture. On some Windows
+// GPU/driver combos, WGC's ProcessFrame fails continuously with E_FAIL
+// (-2147467259) when getDisplayMedia creates a video+audio session — even
+// though we only need audio. Forcing DXGI Output Duplication fallback avoids
+// this. Audio loopback is unaffected (uses WASAPI, not WGC).
+const existingDisabled = app.commandLine.getSwitchValue('disable-features');
+const wgcFlags = 'WebRtcAllowWgcScreenCapturer,WebRtcAllowWgcWindowCapturer';
+app.commandLine.appendSwitch(
+    'disable-features',
+    existingDisabled ? `${existingDisabled},${wgcFlags}` : wgcFlags,
+);
 initMain();
 
 app.on('ready', async () => {

@@ -5,6 +5,13 @@
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: center;
+}
+
+.meeting-recorder-container > .mode-selection-section {
+  height: 30px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .meeting-recorder-content {
@@ -14,6 +21,7 @@
   flex-direction: column;
   gap: 16px;
   overflow: hidden;
+  width: 100%;
 }
 
 /* ── Controls ─────────────────────────── */

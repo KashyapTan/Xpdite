@@ -13,7 +13,7 @@
  */
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { FormEvent } from 'react';
-import { useOutletContext, useLocation } from 'react-router-dom';
+import { useOutletContext, useLocation, useNavigate } from 'react-router-dom';
 
 // Hooks
 import { useChatState } from '../hooks/useChatState';
@@ -115,6 +115,7 @@ function App() {
   }>();
 
   const location = useLocation();
+  const navigate = useNavigate();
 
   // ============================================
   // Tab-scoped WS send helper
@@ -998,6 +999,7 @@ function App() {
     screenshotState.setCaptureMode('none');
     screenshotState.setMeetingRecordingMode(true);
     sendCaptureMode('none');
+    navigate('/recorder');
   };
 
   const getPlaceholder = () => {
