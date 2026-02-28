@@ -324,14 +324,19 @@ class TestCheckApproval:
         ts._ask_level = "on-miss"
         with (
             patch("source.services.terminal.is_command_approved", return_value=False),
-            patch("source.services.terminal.manager") as mock_manager,
+            patch("source.services.terminal.broadcast_message", new_callable=AsyncMock) as mock_bcast,
             patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
         ):
-            mock_manager.broadcast = AsyncMock()
             approved, request_id = await ts.check_approval("dangerous cmd", "/tmp")
 
         assert approved is False
-        mock_manager.broadcast.assert_called_once()
+        mock_bcast.assert_called_once()
+        # Verify the correct message type and payload were broadcast
+        assert mock_bcast.call_args[0][0] == "terminal_approval_request"
+        payload = mock_bcast.call_args[0][1]
+        assert payload["command"] == "dangerous cmd"
+        assert payload["cwd"] == "/tmp"
+        assert isinstance(payload["request_id"], str)
 
     @pytest.mark.asyncio
     async def test_always_prompts_user(self):
@@ -340,11 +345,15 @@ class TestCheckApproval:
         ts = self._make_service()
         ts._ask_level = "always"
         with (
-            patch("source.services.terminal.manager") as mock_manager,
+            patch("source.services.terminal.broadcast_message", new_callable=AsyncMock) as mock_bcast,
             patch("asyncio.wait_for", side_effect=asyncio.TimeoutError),
         ):
-            mock_manager.broadcast = AsyncMock()
             approved, _ = await ts.check_approval("echo hi", "/")
 
         assert approved is False
-        mock_manager.broadcast.assert_called_once()
+        mock_bcast.assert_called_once()
+        assert mock_bcast.call_args[0][0] == "terminal_approval_request"
+        payload = mock_bcast.call_args[0][1]
+        assert payload["command"] == "echo hi"
+        assert payload["cwd"] == "/"
+        assert isinstance(payload["request_id"], str)

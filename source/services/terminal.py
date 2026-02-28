@@ -34,7 +34,7 @@ import time
 import json
 from typing import Optional
 
-from ..core.connection import manager
+from ..core.connection import broadcast_message
 from .approval_history import is_command_approved, remember_approval
 
 # Import security checks from MCP terminal blocklist
@@ -216,19 +216,13 @@ class TerminalService:
         self._approval_remember[request_id] = False
 
         # Broadcast approval request to frontend
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "type": "terminal_approval_request",
-                    "content": json.dumps(
-                        {
-                            "command": command,
-                            "cwd": cwd,
-                            "request_id": request_id,
-                        }
-                    ),
-                }
-            )
+        await broadcast_message(
+            "terminal_approval_request",
+            {
+                "command": command,
+                "cwd": cwd,
+                "request_id": request_id,
+            },
         )
 
         # Block until user responds (timeout = 120s)
@@ -269,18 +263,12 @@ class TerminalService:
         self._session_event = asyncio.Event()
         self._session_result = None
 
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "type": "terminal_session_request",
-                    "content": json.dumps(
-                        {
-                            "reason": reason,
-                            "request_id": request_id,
-                        }
-                    ),
-                }
-            )
+        await broadcast_message(
+            "terminal_session_request",
+            {
+                "reason": reason,
+                "request_id": request_id,
+            },
         )
 
         try:
@@ -294,9 +282,7 @@ class TerminalService:
 
         if approved:
             self._session_mode = True
-            await manager.broadcast(
-                json.dumps({"type": "terminal_session_started", "content": ""})
-            )
+            await broadcast_message("terminal_session_started", "")
 
         return approved
 
@@ -309,9 +295,7 @@ class TerminalService:
     async def end_session(self):
         """End session mode."""
         self._session_mode = False
-        await manager.broadcast(
-            json.dumps({"type": "terminal_session_ended", "content": ""})
-        )
+        await broadcast_message("terminal_session_ended", "")
 
     def track_running_command(self, request_id: str, command: str):
         """Start tracking a running command for the 10s notice."""
@@ -331,19 +315,13 @@ class TerminalService:
             elapsed_ms = int((now - info["start_time"]) * 1000)
             if elapsed_ms >= 10000 and not info["notified"]:
                 info["notified"] = True
-                await manager.broadcast(
-                    json.dumps(
-                        {
-                            "type": "terminal_running_notice",
-                            "content": json.dumps(
-                                {
-                                    "request_id": request_id,
-                                    "command": info["command"],
-                                    "elapsed_ms": elapsed_ms,
-                                }
-                            ),
-                        }
-                    )
+                await broadcast_message(
+                    "terminal_running_notice",
+                    {
+                        "request_id": request_id,
+                        "command": info["command"],
+                        "elapsed_ms": elapsed_ms,
+                    },
                 )
 
     def stop_tracking_command(self, request_id: str):
@@ -362,39 +340,27 @@ class TerminalService:
             raw: If True, frontend uses term.write() (raw ANSI for PTY/TUI).
                  If False, frontend uses term.writeln() (line-by-line).
         """
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "type": "terminal_output",
-                    "content": json.dumps(
-                        {
-                            "text": text,
-                            "request_id": request_id,
-                            "stream": stream,
-                            "raw": raw,
-                        }
-                    ),
-                }
-            )
+        await broadcast_message(
+            "terminal_output",
+            {
+                "text": text,
+                "request_id": request_id,
+                "stream": stream,
+                "raw": raw,
+            },
         )
 
     async def broadcast_complete(
         self, request_id: str, exit_code: int, duration_ms: int
     ):
         """Broadcast command completion to frontend."""
-        await manager.broadcast(
-            json.dumps(
-                {
-                    "type": "terminal_command_complete",
-                    "content": json.dumps(
-                        {
-                            "request_id": request_id,
-                            "exit_code": exit_code,
-                            "duration_ms": duration_ms,
-                        }
-                    ),
-                }
-            )
+        await broadcast_message(
+            "terminal_command_complete",
+            {
+                "request_id": request_id,
+                "exit_code": exit_code,
+                "duration_ms": duration_ms,
+            },
         )
 
     # ── Direct Command Execution ────────────────────────────────────────

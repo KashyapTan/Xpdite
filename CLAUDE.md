@@ -73,6 +73,7 @@ uv run <file_name>                            # run python files for testing
 - Don't add a new WS message type on the Python side without updating the client → server or server → client reference in `source/api/websocket.py`'s docstring
 - Don't hardcode ports — use `find_available_port()` on the Python side
 - Don't skip `RequestContext.cancelled` checks inside long-running loops (streaming, tool loops)
+- Don't call `manager.broadcast()` directly in service code — always use `broadcast_message()` from `core.connection`. `manager.broadcast()` sends raw JSON with no `tab_id`, so the frontend routes the message to the `'default'` tab regardless of which tab is active. `broadcast_message()` reads `_current_tab_id` from the ContextVar and stamps it automatically.
 
 ---
 
