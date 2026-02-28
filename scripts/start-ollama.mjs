@@ -33,9 +33,10 @@ if (gpu === 'nvidia') {
 } else if (gpu === 'amd') {
   env = {
     ...base,
-    // Force Vulkan — works on Windows where ROCm HIP can conflict with GPU detection
+    // Force Vulkan — works on Windows where ROCm HIP can conflict with GPU detection.
+    // Do NOT restrict GGML_VK_VISIBLE_DEVICES so ollama enumerates all Vulkan devices
+    // and picks the best one (avoids accidentally pinning to iGPU at index 0).
     OLLAMA_GPU_DRIVER: 'vulkan',
-    GGML_VK_VISIBLE_DEVICES: '0',
   };
 } else {
   // CPU-only — no GPU vars needed
@@ -56,4 +57,13 @@ proc.on('error', (err) => {
 proc.on('exit', (code) => {
   process.exit(code ?? 0);
 });
+
+// Kill ollama when this script exits (Ctrl+C, bun dev shutdown, etc.)
+function cleanup() {
+  try { proc.kill(); } catch {}
+  process.exit(0);
+}
+process.on('exit', () => { try { proc.kill(); } catch {} });
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
 
