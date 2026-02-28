@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
 import logging
-import ollama
+from ollama import AsyncClient as OllamaAsyncClient
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +57,9 @@ async def get_ollama_models() -> List[dict]:
     and returns every model that has been pulled.
     """
     try:
-        # Run synchronous ollama.list() in a thread to avoid blocking
-        response = await _run_in_thread(ollama.list)
+        # Use async client — no thread needed
+        async_client = OllamaAsyncClient()
+        response = await async_client.list()
         models = []
         # The Ollama SDK returns objects with attributes, not dicts.
         # e.g. Model(model='gemma3:12b', size=..., details=ModelDetails(...))
