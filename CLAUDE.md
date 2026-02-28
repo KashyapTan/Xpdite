@@ -32,7 +32,7 @@ Enter plan mode for non trivial tasks. Its important to get the correct info and
 ## Dev Commands
 
 ```bash
-bun run dev              # start everything: React (Vite), Electron, Python server, Ollama watcher
+bun run dev              # start everything: React (Vite), Electron, Python server, Ollama (GPU via scripts/start-ollama.mjs)
 bun run dev:react        # Vite only (port 5123)
 bun run dev:pyserver     # Python FastAPI server only
 bun run build            # full production build (PyInstaller → tsc → Vite)
@@ -48,6 +48,8 @@ uv run <file_name>                            # run python files for testing
 ```
 
 **Ports:** Python server starts on 8000 (scans up to 8009 if busy). React dev server is on port 5123. WebSocket and HTTP share python's port.
+
+**Ollama GPU (AMD/Vulkan):** `dev:ollama` runs via `scripts/start-ollama.mjs` which auto-detects the GPU: NVIDIA (via `nvidia-smi`) → AMD (via `HIP_PATH` env var) → CPU fallback. For AMD it explicitly sets `OLLAMA_GPU_DRIVER=vulkan` and clears conflicting HIP/ROCm device vars (`HIP_VISIBLE_DEVICES`, `HSA_OVERRIDE_GFX_VERSION`) before spawning `ollama serve` with `stdio: 'ignore'` (no log flooding). This is needed because VS Code inherits the environment at launch time and the HIP vars conflict with Vulkan GPU detection.
 
 ---
 
