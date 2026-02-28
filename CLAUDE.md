@@ -1,6 +1,6 @@
 # Xpdite — CLAUDE.md
 
-Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a Python FastAPI backend to deliver an AI chat assistant with screenshot OCR, MCP tool calling, and multi-provider LLM support (Ollama, Anthropic, OpenAI, Gemini). Python dependencies are managed with **UV**; frontend with npm.
+Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a Python FastAPI backend to deliver an AI chat assistant with screenshot OCR, MCP tool calling, and multi-provider LLM support (Ollama, Anthropic, OpenAI, Gemini). Python dependencies are managed with **UV**; frontend with **Bun**.
 
 ---
 
@@ -32,13 +32,13 @@ Enter plan mode for non trivial tasks. Its important to get the correct info and
 ## Dev Commands
 
 ```bash
-npm run dev              # start everything: React (Vite), Electron, Python server, Ollama watcher
-npm run dev:react        # Vite only (port 5123)
-npm run dev:pyserver     # Python FastAPI server only
-npm run build            # full production build (PyInstaller → tsc → Vite)
-npm run lint             # ESLint
-npm run install:python   # uv sync --group dev (always run after pulling)
-npm run transpile:electron  # tsc for Electron main process only
+bun run dev              # start everything: React (Vite), Electron, Python server, Ollama watcher
+bun run dev:react        # Vite only (port 5123)
+bun run dev:pyserver     # Python FastAPI server only
+bun run build            # full production build (PyInstaller → tsc → Vite)
+bun run lint             # ESLint
+bun run install:python   # uv sync --group dev (always run after pulling)
+bun run transpile:electron  # tsc for Electron main process only
 
 # Python (run from project root with .venv active)
 .venv\Scripts\python.exe -m source.main      # start Python server directly
