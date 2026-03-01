@@ -78,8 +78,8 @@ app.on('ready', async () => {
 
     // IPC: Toggle mini mode - resize the actual electron window
     ipcMain.handle('set-mini-mode', (_event, mini: boolean) => {
-        console.log('IPC set-mini-mode called with:', mini);
-        console.log('Current Bounds before action:', mainWindow?.getBounds());
+        // console.log('IPC set-mini-mode called with:', mini);
+        // console.log('Current Bounds before action:', mainWindow?.getBounds());
 
         if (!mainWindow) {
             console.log('mainWindow is null');
@@ -91,7 +91,7 @@ app.on('ready', async () => {
             // Only update normalBounds if we are currently "large"
             if (currentBounds.width > 100 || currentBounds.height > 100) {
                 normalBounds = currentBounds;
-                console.log('Saved normalBounds:', normalBounds);
+                // console.log('Saved normalBounds:', normalBounds);
             }
 
             // Calculate position: top-right of the current window
@@ -102,16 +102,16 @@ app.on('ready', async () => {
             mainWindow.setMinimumSize(52, 52);
             mainWindow.setSize(52, 52, false); // false to disable animation which can sometimes bug out size setting
             mainWindow.setPosition(newX, newY, false);
-            console.log('Window resized to mini mode. New Bounds:', mainWindow.getBounds());
+            // console.log('Window resized to mini mode. New Bounds:', mainWindow.getBounds());
         } else {
-            console.log('Restoring to normalBounds:', normalBounds);
+            // console.log('Restoring to normalBounds:', normalBounds);
             mainWindow.setMinimumSize(30, 20);
 
             // Explicitly set size and position separately if setBounds fails
             mainWindow.setSize(normalBounds.width, normalBounds.height, false);
             mainWindow.setPosition(normalBounds.x, normalBounds.y, false);
 
-            console.log('Window restored. New Bounds:', mainWindow.getBounds());
+            // console.log('Window restored. New Bounds:', mainWindow.getBounds());
         }
     });
 
