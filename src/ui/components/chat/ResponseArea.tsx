@@ -83,9 +83,7 @@ export function ResponseArea({
         )}
 
         {/* Loading animation while waiting for first content */}
-        {!error && !canSubmit && !thinking && !hasContentBlocks && (
-          <LoadingDots />
-        )}
+        <LoadingDots isVisible={!error && !canSubmit && !thinking && !hasContentBlocks} />
 
         {/* Current thinking process */}
         {!error && thinking && (

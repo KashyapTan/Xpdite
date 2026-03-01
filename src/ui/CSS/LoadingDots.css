@@ -7,6 +7,40 @@
     margin: 10px 0;
     width: 100%;
     height: 30px;
+    opacity: 0;
+    animation: fade-in-scale 1.2s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@keyframes fade-in-scale {
+    0% {
+        opacity: 0;
+        transform: scale(0.8);
+        filter: blur(4px);
+    }
+
+    100% {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0px);
+    }
+}
+
+.thinking-animation-container.fade-out {
+    animation: fade-out-scale 0.5s ease-in forwards;
+}
+
+@keyframes fade-out-scale {
+    0% {
+        opacity: 1;
+        transform: scale(1);
+        filter: blur(0px);
+    }
+
+    100% {
+        opacity: 0;
+        transform: scale(0.8);
+        filter: blur(4px);
+    }
 }
 
 .black-hole-wrapper {
@@ -17,6 +51,7 @@
     align-items: center;
     justify-content: center;
     perspective: 800px;
+    transform-style: preserve-3d;
 }
 
 /* The actual dark void */
@@ -30,8 +65,7 @@
         inset 0 0 5px rgba(0, 0, 0, 1),
         0 0 8px rgba(0, 0, 0, 0.8),
         0 0 15px rgba(10, 5, 20, 0.9);
-    z-index: 5;
-    animation: hole-pulse 4s ease-in-out infinite alternate;
+    z-index: 3;
 }
 
 /* The glowing accretion disk */
@@ -40,12 +74,13 @@
     width: 50px;
     height: 50px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(0, 0, 0, 0) 25%, rgba(200, 200, 200, 0.4) 40%, rgba(100, 100, 100, 0.8) 55%, rgba(0, 0, 0, 0) 70%);
+    /* Distinct Mid-Grey */
+    background: radial-gradient(circle, rgba(0, 0, 0, 0) 25%, rgba(160, 160, 160, 0.4) 40%, rgba(120, 120, 120, 0.8) 55%, rgba(0, 0, 0, 0) 70%);
     transform: rotateX(65deg) rotateZ(0deg);
     animation: disk-spin 3s linear infinite;
     box-shadow:
-        0 0 20px rgba(255, 255, 255, 0.3),
-        inset 0 0 15px rgba(150, 150, 150, 0.4);
+        0 0 25px rgba(140, 140, 140, 0.5),
+        inset 0 0 15px rgba(100, 100, 100, 0.6);
     filter: blur(1px);
     z-index: 4;
 }
@@ -56,10 +91,11 @@
     width: 23px;
     height: 23px;
     border-radius: 50%;
-    border: 1px solid rgba(200, 200, 200, 0.8);
+    /* Bright white border for contrast */
+    border: 1px solid rgba(255, 255, 255, 0.9);
     box-shadow:
-        0 0 8px rgba(255, 255, 255, 0.5),
-        inset 0 0 5px rgba(255, 255, 255, 0.6);
+        0 0 10px rgba(255, 255, 255, 0.7),
+        inset 0 0 6px rgba(220, 220, 220, 0.8);
     animation: horizon-flicker 2s ease-in-out infinite alternate;
     z-index: 4;
     filter: blur(0.5px);
@@ -71,25 +107,15 @@
     width: 55px;
     height: 55px;
     border-radius: 50%;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    background: radial-gradient(circle, rgba(0, 0, 0, 0) 40%, rgba(200, 200, 255, 0.05) 50%, rgba(0, 0, 0, 0) 60%);
+    /* Distinct Dark Grey/Charcoal */
+    border: 1px solid rgba(70, 70, 70, 0.4);
+    background: radial-gradient(circle, rgba(0, 0, 0, 0) 40%, rgba(80, 80, 80, 0.2) 50%, rgba(0, 0, 0, 0) 60%);
     animation: lens-warp 8s linear infinite;
     z-index: 3;
     pointer-events: none;
 }
 
-/* Animations */
-@keyframes hole-pulse {
-    0% {
-        transform: scale(1);
-        box-shadow: inset 0 0 5px #000, 0 0 8px rgba(0, 0, 0, 0.8), 0 0 15px rgba(30, 30, 30, 0.9);
-    }
 
-    100% {
-        transform: scale(1.05);
-        box-shadow: inset 0 0 6px #000, 0 0 10px rgba(0, 0, 0, 0.9), 0 0 20px rgba(50, 50, 50, 1);
-    }
-}
 
 @keyframes disk-spin {
     0% {
@@ -107,19 +133,19 @@
     100% {
         opacity: 0.8;
         transform: scale(1) rotate(0deg);
-        border-color: rgba(200, 200, 200, 0.8);
+        border-color: rgba(255, 255, 255, 0.9);
     }
 
     33% {
-        opacity: 0.6;
+        opacity: 0.5;
         transform: scale(1.02) rotate(120deg);
-        border-color: rgba(150, 150, 150, 0.6);
+        border-color: rgba(180, 180, 180, 0.6);
     }
 
     66% {
-        opacity: 0.9;
+        opacity: 1;
         transform: scale(0.98) rotate(240deg);
-        border-color: rgba(220, 220, 220, 0.9);
+        border-color: rgba(230, 230, 230, 1);
     }
 }
 
