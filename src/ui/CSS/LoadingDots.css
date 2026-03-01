@@ -1,0 +1,141 @@
+.thinking-animation-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    margin: 10px 0;
+    width: 100%;
+    height: 30px;
+}
+
+.black-hole-wrapper {
+    position: relative;
+    width: 60px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    perspective: 800px;
+}
+
+/* The actual dark void */
+.black-hole-core {
+    position: absolute;
+    width: 20px;
+    height: 20px;
+    background-color: #000;
+    border-radius: 50%;
+    box-shadow:
+        inset 0 0 5px rgba(0, 0, 0, 1),
+        0 0 8px rgba(0, 0, 0, 0.8),
+        0 0 15px rgba(10, 5, 20, 0.9);
+    z-index: 5;
+    animation: hole-pulse 4s ease-in-out infinite alternate;
+}
+
+/* The glowing accretion disk */
+.accretion-disk {
+    position: absolute;
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(0, 0, 0, 0) 25%, rgba(200, 200, 200, 0.4) 40%, rgba(100, 100, 100, 0.8) 55%, rgba(0, 0, 0, 0) 70%);
+    transform: rotateX(65deg) rotateZ(0deg);
+    animation: disk-spin 3s linear infinite;
+    box-shadow:
+        0 0 20px rgba(255, 255, 255, 0.3),
+        inset 0 0 15px rgba(150, 150, 150, 0.4);
+    filter: blur(1px);
+    z-index: 4;
+}
+
+/* Event horizon glowing ring */
+.event-horizon {
+    position: absolute;
+    width: 23px;
+    height: 23px;
+    border-radius: 50%;
+    border: 1px solid rgba(200, 200, 200, 0.8);
+    box-shadow:
+        0 0 8px rgba(255, 255, 255, 0.5),
+        inset 0 0 5px rgba(255, 255, 255, 0.6);
+    animation: horizon-flicker 2s ease-in-out infinite alternate;
+    z-index: 4;
+    filter: blur(0.5px);
+}
+
+/* Gravitational lensing distortion effect */
+.gravitational-lens {
+    position: absolute;
+    width: 55px;
+    height: 55px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    background: radial-gradient(circle, rgba(0, 0, 0, 0) 40%, rgba(200, 200, 255, 0.05) 50%, rgba(0, 0, 0, 0) 60%);
+    animation: lens-warp 8s linear infinite;
+    z-index: 3;
+    pointer-events: none;
+}
+
+/* Animations */
+@keyframes hole-pulse {
+    0% {
+        transform: scale(1);
+        box-shadow: inset 0 0 5px #000, 0 0 8px rgba(0, 0, 0, 0.8), 0 0 15px rgba(30, 30, 30, 0.9);
+    }
+
+    100% {
+        transform: scale(1.05);
+        box-shadow: inset 0 0 6px #000, 0 0 10px rgba(0, 0, 0, 0.9), 0 0 20px rgba(50, 50, 50, 1);
+    }
+}
+
+@keyframes disk-spin {
+    0% {
+        transform: rotateX(65deg) rotateZ(0deg);
+    }
+
+    100% {
+        transform: rotateX(65deg) rotateZ(360deg);
+    }
+}
+
+@keyframes horizon-flicker {
+
+    0%,
+    100% {
+        opacity: 0.8;
+        transform: scale(1) rotate(0deg);
+        border-color: rgba(200, 200, 200, 0.8);
+    }
+
+    33% {
+        opacity: 0.6;
+        transform: scale(1.02) rotate(120deg);
+        border-color: rgba(150, 150, 150, 0.6);
+    }
+
+    66% {
+        opacity: 0.9;
+        transform: scale(0.98) rotate(240deg);
+        border-color: rgba(220, 220, 220, 0.9);
+    }
+}
+
+@keyframes lens-warp {
+    0% {
+        transform: rotate(0deg) scale(1);
+        opacity: 0.3;
+    }
+
+    50% {
+        transform: rotate(180deg) scale(1.1);
+        opacity: 0.6;
+    }
+
+    100% {
+        transform: rotate(360deg) scale(1);
+        opacity: 0.3;
+    }
+}

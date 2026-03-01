@@ -134,7 +134,7 @@ textarea,
 /* When the tab bar is visible (>1 tab), shrink the response area
    by the tab bar's 28px height and drop the extra top margin
    (the tab bar already provides the 30px offset from the title bar). */
-.tab-bar + .response-area {
+.tab-bar+.response-area {
   margin-top: 0;
   height: calc(100% - 188px);
 }
@@ -1408,49 +1408,5 @@ textarea,
 
   to {
     transform: rotate(360deg);
-  }
-}
-
-/* Loading Dots Animation */
-.loading-dots {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  height: 24px;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  background-color: rgba(255, 255, 255, 0.6);
-  border-radius: 50%;
-  animation: pulse 1.4s infinite ease-in-out both;
-}
-
-.dot:nth-child(1) {
-  animation-delay: -0.32s;
-}
-
-.dot:nth-child(2) {
-  animation-delay: -0.16s;
-}
-
-.dot:nth-child(3) {
-  animation-delay: 0s;
-}
-
-@keyframes pulse {
-
-  0%,
-  80%,
-  100% {
-    transform: scale(0);
-    opacity: 0.5;
-  }
-
-  40% {
-    transform: scale(1);
-    opacity: 1;
   }
 }

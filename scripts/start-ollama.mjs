@@ -58,12 +58,12 @@ proc.on('exit', (code) => {
   process.exit(code ?? 0);
 });
 
-// Kill ollama when this script exits (Ctrl+C, bun dev shutdown, etc.)
-function cleanup() {
-  try { proc.kill(); } catch {}
-  process.exit(0);
-}
-process.on('exit', () => { try { proc.kill(); } catch {} });
-process.on('SIGINT', cleanup);
-process.on('SIGTERM', cleanup);
+// // Kill ollama when this script exits (Ctrl+C, bun dev shutdown, etc.)
+// function cleanup() {
+//   try { proc.kill(); } catch {}
+//   process.exit(0);
+// }
+// process.on('exit', () => { try { proc.kill(); } catch {} });
+// process.on('SIGINT', cleanup);
+// process.on('SIGTERM', cleanup);
 

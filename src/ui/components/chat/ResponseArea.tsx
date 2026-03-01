@@ -84,10 +84,7 @@ export function ResponseArea({
 
         {/* Loading animation while waiting for first content */}
         {!error && !canSubmit && !thinking && !hasContentBlocks && (
-          <div className="response">
-            <div className="assistant-header">Xpdite • {generatingModel}</div>
-            <LoadingDots />
-          </div>
+          <LoadingDots />
         )}
 
         {/* Current thinking process */}
