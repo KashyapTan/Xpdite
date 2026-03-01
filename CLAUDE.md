@@ -49,7 +49,7 @@ uv run <file_name>                            # run python files for testing
 
 **Ports:** Python server starts on 8000 (scans up to 8009 if busy). React dev server is on port 5123. WebSocket and HTTP share python's port.
 
-**Ollama GPU (AMD/Vulkan):** `dev:ollama` runs via `scripts/start-ollama.mjs` which auto-detects the GPU: NVIDIA (via `nvidia-smi`) → AMD (via `HIP_PATH` env var) → CPU fallback. For AMD it explicitly sets `OLLAMA_GPU_DRIVER=vulkan` and clears conflicting HIP/ROCm device vars (`HIP_VISIBLE_DEVICES`, `HSA_OVERRIDE_GFX_VERSION`) before spawning `ollama serve` with `stdio: 'ignore'` (no log flooding). This is needed because VS Code inherits the environment at launch time and the HIP vars conflict with Vulkan GPU detection.
+**Ollama GPU (AMD/Vulkan):** `dev:ollama` runs via `scripts/start-ollama.mjs` which first checks if ollama is already running (HTTP probe to `127.0.0.1:11434`) and skips launch if so. Otherwise it auto-detects the GPU: NVIDIA (via `nvidia-smi`) → AMD (via `HIP_PATH` env var) → CPU fallback. For AMD it explicitly sets `OLLAMA_GPU_DRIVER=vulkan` and clears conflicting HIP/ROCm device vars (`HIP_VISIBLE_DEVICES`, `HSA_OVERRIDE_GFX_VERSION`). The process runs with `stdio: 'inherit'` so ollama is visible in the terminal and system tray. Performance env vars are set automatically: `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_KV_CACHE_TYPE=q8_0`, `OLLAMA_KEEP_ALIVE=30m`, `OLLAMA_NUM_PARALLEL=4`, `OLLAMA_MAX_LOADED_MODELS=1`.
 
 ---
 
