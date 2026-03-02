@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
     """
     app = FastAPI(
         title="Xpdite API",
-        description="AI Chat Assistant with Screenshot Capabilities",
+        description="Agentic Personal Assistant that can do anything you can",
         version="0.1.0"
     )
     
