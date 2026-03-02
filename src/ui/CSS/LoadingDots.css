@@ -59,7 +59,7 @@
     position: absolute;
     width: 20px;
     height: 20px;
-    background-color: #000;
+    background-color: black;
     border-radius: 50%;
     box-shadow:
         inset 0 0 5px rgba(0, 0, 0, 1),
@@ -92,7 +92,7 @@
     height: 23px;
     border-radius: 50%;
     /* Bright white border for contrast */
-    border: 1px solid rgba(255, 255, 255, 0.9);
+    border: 0.5px solid rgba(255, 255, 255, 0.9);
     box-shadow:
         0 0 10px rgba(255, 255, 255, 0.7),
         inset 0 0 6px rgba(220, 220, 220, 0.8);
@@ -108,7 +108,7 @@
     height: 55px;
     border-radius: 50%;
     /* Distinct Dark Grey/Charcoal */
-    border: 1px solid rgba(70, 70, 70, 0.4);
+    /* border: 1px solid rgba(70, 70, 70, 0.4); */
     background: radial-gradient(circle, rgba(0, 0, 0, 0) 40%, rgba(80, 80, 80, 0.2) 50%, rgba(0, 0, 0, 0) 60%);
     animation: lens-warp 8s linear infinite;
     z-index: 3;

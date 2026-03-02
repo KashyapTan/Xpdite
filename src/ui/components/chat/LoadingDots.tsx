@@ -1,26 +1,29 @@
 import { useState, useEffect } from 'react';
 import '../../CSS/LoadingDots.css';
 
+// DEV: set to true to always show the animation for styling
+const DEV_PREVIEW = true;
+
 interface LoadingDotsProps {
   isVisible?: boolean;
 }
 
 export function LoadingDots({ isVisible = true }: LoadingDotsProps) {
-  const [render, setRender] = useState(isVisible);
+  const [render, setRender] = useState(DEV_PREVIEW || isVisible);
 
   useEffect(() => {
-    if (isVisible) setRender(true);
+    if (DEV_PREVIEW || isVisible) setRender(true);
   }, [isVisible]);
 
   const onAnimationEnd = () => {
-    if (!isVisible) setRender(false);
+    if (!DEV_PREVIEW && !isVisible) setRender(false);
   };
 
   if (!render) return null;
 
   return (
     <div
-      className={`thinking-animation-container ${!isVisible ? 'fade-out' : ''}`}
+      className={`thinking-animation-container ${!DEV_PREVIEW && !isVisible ? 'fade-out' : ''}`}
       onAnimationEnd={onAnimationEnd}
     >
       <div className="black-hole-wrapper">
