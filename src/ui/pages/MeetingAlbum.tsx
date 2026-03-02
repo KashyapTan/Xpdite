@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
-import '../CSS/ChatHistory.css'; // Reuse chat history styles
+import '../CSS/MeetingAlbum.css';
 
 interface MeetingRecordingSummary {
   id: string;
@@ -135,14 +135,13 @@ const MeetingAlbum: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: '2rem', width: '100%', height: '100%', position: 'relative' }}>
+    <>
       <TitleBar onClearContext={() => { }} setMini={setMini} />
-
-      <div className="chat-history-container">
-        <div className="chat-history-search-box-container">
-          <form className="chat-history-search-box-form" onSubmit={handleSearch}>
+      <div className="meeting-album-container">
+        <div className="meeting-album-search-box-container">
+          <form className="meeting-album-search-box-form" onSubmit={handleSearch}>
             <input
-              className="chat-history-search-box-input"
+              className="meeting-album-search-box-input"
               type="text"
               placeholder="Search recordings..."
               value={searchQuery}
@@ -151,31 +150,31 @@ const MeetingAlbum: React.FC = () => {
           </form>
         </div>
 
-        <div className="chat-history-list-title">
+        {/* <div className="meeting-album-list-title">
           <span>Recordings</span>
-        </div>
+        </div> */}
 
-        <div className="chat-history-list-container">
+        <div className="meeting-album-list-container">
           {recordings.length === 0 ? (
-            <div className="chat-history-empty-state">
+            <div className="meeting-album-empty-state">
               No meetings recorded yet
             </div>
           ) : (
             groupedRecordings.map((group) => (
               <React.Fragment key={group.date}>
-                <div className="chat-history-date-separator">
+                <div className="meeting-album-date-separator">
                   <span>{group.date}</span>
                 </div>
                 {group.items.map((rec) => (
                   <div
                     key={rec.id}
-                    className="chat-history-list-item"
+                    className="meeting-album-list-item"
                     onClick={() => navigate(`/recording/${rec.id}`)}
                   >
-                    <div className="chat-history-list-item-description">
+                    <div className="meeting-album-list-item-description">
                       {rec.title || 'Untitled Recording'}
                     </div>
-                    <div className="chat-history-list-item-date-section">
+                    <div className="meeting-album-list-item-date-section">
                       {statusBadge(rec.status)}
                       {rec.status === 'processing' && processingProgress[rec.id] && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
@@ -194,11 +193,11 @@ const MeetingAlbum: React.FC = () => {
                           </span>
                         </div>
                       )}
-                      <span className="chat-history-list-item-time">
+                      <span className="meeting-album-list-item-time">
                         {formatDuration(rec.duration_seconds)} · {formatTime(rec.started_at)}
                       </span>
                       <button
-                        className="chat-history-delete-btn"
+                        className="meeting-album-delete-btn"
                         onClick={(e) => handleDelete(rec.id, e)}
                         title="Delete recording"
                       >
@@ -212,7 +211,7 @@ const MeetingAlbum: React.FC = () => {
           )}
         </div>
       </div>
-    </div>
+    </>
   );
 };
 

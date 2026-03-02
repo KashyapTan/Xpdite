@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import '../../CSS/LoadingDots.css';
 
 // DEV: set to true to always show the animation for styling
-const DEV_PREVIEW = true;
+const DEV_PREVIEW = false;
 
 interface LoadingDotsProps {
   isVisible?: boolean;
