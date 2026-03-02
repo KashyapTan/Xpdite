@@ -194,6 +194,7 @@ function App() {
     registerAfterSwitch((newTabId: string) => {
       activeTabIdRef.current = newTabId;
       restoreTabState(newTabId);
+      setShowScrollBottom(false);
       // Notify the backend so hotkey-captured screenshots route to the correct tab
       wsSend({ type: 'tab_activated', tab_id: newTabId });
     });
@@ -820,6 +821,7 @@ function App() {
     const state = location.state as { conversationId?: string; newChat?: boolean } | null;
 
     if (state?.conversationId) {
+      setShowScrollBottom(false);
       if (isConnected) {
         wsSend({
           type: 'resume_conversation',
@@ -830,6 +832,7 @@ function App() {
         pendingConversationRef.current = state.conversationId;
       }
     } else if (state?.newChat) {
+      setShowScrollBottom(false);
       if (isConnected) {
         wsSend({ type: 'clear_context' });
         window.history.replaceState({}, '');
