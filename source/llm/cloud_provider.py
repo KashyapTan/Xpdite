@@ -577,20 +577,24 @@ def _build_gemini_contents(
     user_query: str,
     image_paths: List[str],
 ) -> list:
-    """Convert chat history to Gemini content format."""
+    """Convert chat history to Gemini content format.
+
+    Maps the generic chat_history into Gemini's Content objects, including
+    FunctionCall / FunctionResponse parts so the model retains full memory
+    of past tool interactions.
+    """
     from google.genai import types
 
     contents = []
 
     for msg in chat_history:
         role = msg["role"]
-        content = msg["content"]
+        content = msg.get("content", "")
 
+        # Tool messages don't exist in persisted chat_history (they're
+        # transient), but guard against them just in case.
         if role == "tool":
             continue
-
-        # Gemini uses "user" and "model" roles
-        gemini_role = "model" if role == "assistant" else "user"
 
         if role == "user" and msg.get("images"):
             parts = []
@@ -606,12 +610,49 @@ def _build_gemini_contents(
                             )
                         )
             parts.append(types.Part.from_text(text=content))
-            contents.append(types.Content(role=gemini_role, parts=parts))
+            contents.append(types.Content(role="user", parts=parts))
+
+        elif role == "assistant" and msg.get("tool_calls"):
+            # Reconstruct the model turn with FunctionCall parts so Gemini
+            # remembers what it invoked.
+            model_parts: list = []
+            if content:
+                model_parts.append(types.Part.from_text(text=content))
+            for tc in msg["tool_calls"]:
+                model_parts.append(
+                    types.Part.from_function_call(
+                        name=tc["name"],
+                        args=tc.get("args", {}),
+                    )
+                )
+            contents.append(types.Content(role="model", parts=model_parts))
+
+            # Immediately follow with FunctionResponse parts ("user" role)
+            # so the model sees the results of its calls.
+            response_parts = []
+            for tc in msg["tool_calls"]:
+                response_parts.append(
+                    types.Part.from_function_response(
+                        name=tc["name"],
+                        response={"result": tc.get("result", "")},
+                    )
+                )
+            contents.append(types.Content(role="user", parts=response_parts))
+
+        elif role == "user":
+            contents.append(
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=content)],
+                )
+            )
         else:
+            # Plain assistant text (no tool calls)
+            gemini_role = "model" if role == "assistant" else "user"
             contents.append(
                 types.Content(
                     role=gemini_role,
-                    parts=[types.Part.from_text(text=content)],
+                    parts=[types.Part.from_text(text=content or "")],
                 )
             )
 
@@ -693,12 +734,22 @@ async def _stream_gemini(
         if system_prompt:
             config_kwargs["system_instruction"] = system_prompt
 
-        # Enable thinking for capable models
+        # Enable thinking for capable models.
+        # Gemini 3 uses thinking_level; Gemini 2.5 uses thinking_budget.
+        # include_thoughts=True is required for thought summaries to stream.
         is_thinking_model = any(kw in model for kw in GEMINI_THINKING_KEYWORDS)
         if is_thinking_model:
-            config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=10000,
-            )
+            is_gemini3 = "gemini-3" in model
+            if is_gemini3:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_level="high",
+                    include_thoughts=True,
+                )
+            else:
+                config_kwargs["thinking_config"] = types.ThinkingConfig(
+                    thinking_budget=10000,
+                    include_thoughts=True,
+                )
 
         if gemini_tools:
             config_kwargs["tools"] = gemini_tools
@@ -716,9 +767,12 @@ async def _stream_gemini(
 
             rounds += 1
 
-            # Collect function calls and parts from this round
+            # Collect function calls from this round.
+            # We keep the original Part objects for function_call parts
+            # because thinking models attach a `thought_signature` that
+            # the API requires on subsequent turns.
             round_fn_calls: List[Dict[str, Any]] = []
-            round_parts: list = []
+            round_fc_parts: list = []  # original Part objects with thought_signature intact
             round_has_thinking = False
             round_has_text = False
 
@@ -734,10 +788,10 @@ async def _stream_gemini(
                     # Check for usage metadata
                     if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                         um = chunk.usage_metadata
-                        total_token_stats["prompt_eval_count"] = (
+                        total_token_stats["prompt_eval_count"] += (
                             getattr(um, "prompt_token_count", 0) or 0
                         )
-                        total_token_stats["eval_count"] = (
+                        total_token_stats["eval_count"] += (
                             getattr(um, "candidates_token_count", 0) or 0
                         )
                     continue
@@ -753,15 +807,14 @@ async def _stream_gemini(
                         thinking_tokens.append(text_val)
                         round_has_thinking = True
                         await broadcast_message("thinking_chunk", text_val)
-                        round_parts.append(part)
                     elif hasattr(part, "function_call") and part.function_call:
-                        # Collect function calls for execution after stream
+                        # Keep the original Part (preserves thought_signature)
                         fc = part.function_call
                         round_fn_calls.append({
                             "name": fc.name,
                             "args": dict(fc.args) if fc.args else {},
                         })
-                        round_parts.append(part)
+                        round_fc_parts.append(part)
                     elif hasattr(part, "text") and part.text:
                         if thinking_tokens and not all_accumulated:
                             await broadcast_message("thinking_complete", "")
@@ -769,15 +822,14 @@ async def _stream_gemini(
                         current_round_text.append(part.text)
                         round_has_text = True
                         await broadcast_message("response_chunk", part.text)
-                        round_parts.append(part)
 
                 # Check usage metadata on each chunk
                 if hasattr(chunk, "usage_metadata") and chunk.usage_metadata:
                     um = chunk.usage_metadata
-                    total_token_stats["prompt_eval_count"] = (
+                    total_token_stats["prompt_eval_count"] += (
                         getattr(um, "prompt_token_count", 0) or 0
                     )
-                    total_token_stats["eval_count"] = (
+                    total_token_stats["eval_count"] += (
                         getattr(um, "candidates_token_count", 0) or 0
                     )
 
@@ -787,9 +839,18 @@ async def _stream_gemini(
                 if round_has_thinking and not round_has_text:
                     await broadcast_message("thinking_complete", "")
 
-                # Add model's response (text + function calls) to contents
-                if round_parts:
-                    contents.append(types.Content(role="model", parts=round_parts))
+                # Reconstruct clean model Content: consolidated text +
+                # original function_call Parts (which carry thought_signature).
+                # Thought-only parts are excluded — Gemini rejects them in
+                # input context with HTTP 400.
+                clean_parts: list = []
+                if current_round_text:
+                    clean_parts.append(
+                        types.Part.from_text(text="".join(current_round_text))
+                    )
+                clean_parts.extend(round_fc_parts)
+                if clean_parts:
+                    contents.append(types.Content(role="model", parts=clean_parts))
 
                 if current_round_text:
                     interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})

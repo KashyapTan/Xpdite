@@ -3,8 +3,10 @@
  * 
  * Renders a single chat message (user or assistant).
  */
+import { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from './CodeBlock';
+import { ThinkingSection } from './ThinkingSection';
 import { ToolCallsDisplay, InlineContentBlocks } from './ToolCallsDisplay';
 import type { ChatMessage as ChatMessageType } from '../../types';
 
@@ -14,8 +16,19 @@ interface ChatMessageProps {
 }
 
 export function ChatMessage({ message, selectedModel }: ChatMessageProps) {
+  const [thinkingCollapsed, setThinkingCollapsed] = useState(true);
+
   return (
     <div className={message.role === 'user' ? 'chat-user' : 'chat-assistant'}>
+      {/* Historical thinking section rendered ABOVE the response bubble */}
+      {message.role === 'assistant' && message.thinking && (
+        <ThinkingSection
+          thinking={message.thinking}
+          isThinking={false}
+          collapsed={thinkingCollapsed}
+          onToggle={() => setThinkingCollapsed(prev => !prev)}
+        />
+      )}
       <div className={message.role === 'user' ? 'query' : 'response'}>
         {message.role === 'assistant' && (
           <div className="assistant-header">Xpdite • {message.model || selectedModel}</div>

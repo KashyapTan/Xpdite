@@ -67,8 +67,8 @@ TERMINAL_MAX_OUTPUT_SIZE = 50 * 1024
 
 # Thinking-capable model keywords/identifiers — used to decide whether to
 # enable extended-thinking / budget_tokens parameters in cloud requests.
-ANTHROPIC_THINKING_KEYWORDS = ("opus", "sonnet")
-GEMINI_THINKING_KEYWORDS = ("thinking", "2.5")
+ANTHROPIC_THINKING_KEYWORDS = ("opus", "sonnet", "haiku")
+GEMINI_THINKING_KEYWORDS = ("thinking", "2.5", "gemini-3")
 
 
 # Capture modes
