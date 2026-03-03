@@ -1,6 +1,7 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process';
 import path from 'path';
 import { isDev } from './utils.js';
+import { app } from 'electron';
 import fs from 'fs';
 
 let pythonProcess: ChildProcess | null = null;
@@ -155,7 +156,15 @@ export async function startPythonServer(): Promise<void> {
         console.log(`Args: ${args.join(' ')}`);
 
         const options: SpawnOptions = {
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: {
+                ...process.env,
+                // Tell the Python backend where to store user data.
+                // In production this resolves to Electron's userData path
+                // (e.g. %APPDATA%/Xpdite on Windows). In dev the Python
+                // config.py falls back to <PROJECT_ROOT>/user_data.
+                ...(!isDev() ? { XPDITE_USER_DATA_DIR: app.getPath('userData') } : {}),
+            },
         };
 
         // Set working directory appropriately

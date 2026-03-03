@@ -1,0 +1,7 @@
+{
+  "name": "websearch",
+  "description": "Guidance for web searching, page fetching, and source evaluation.",
+  "slash_command": "websearch",
+  "trigger_servers": ["websearch"],
+  "version": "1.0.0"
+}

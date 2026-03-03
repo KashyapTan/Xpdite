@@ -103,16 +103,15 @@ export interface WebSocketMessage {
 // ==========================================
 
 export interface Skill {
-  id: number;
-  skill_name: string;
-  display_name: string;
-  slash_command: string;
-  content: string;
-  is_default: boolean;
-  is_modified: boolean;
+  name: string;
+  description: string;
+  slash_command: string | null;
+  trigger_servers: string[];
+  version: string;
+  source: 'builtin' | 'user';
   enabled: boolean;
-  created_at: number;
-  updated_at: number;
+  overridden_by_user: boolean;
+  folder_path: string;
 }
 
 // ============================================

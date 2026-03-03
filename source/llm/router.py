@@ -34,7 +34,7 @@ async def route_chat(
     user_query: str,
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
-    forced_skills: List[Dict[str, Any]] | None = None,
+    forced_skills: list | None = None,  # List[Skill] at runtime
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Route a chat request to the correct LLM provider.
@@ -50,7 +50,11 @@ async def route_chat(
 
     from ..database import db
     from .prompt import build_system_prompt
-    from ..mcp_integration.skill_injector import get_skills_to_inject, build_skills_prompt_block
+    from ..mcp_integration.skill_injector import (
+        get_skills_to_inject,
+        build_skill_manifest,
+        build_skills_prompt_block,
+    )
     from ..mcp_integration.manager import mcp_manager
     from ..core.request_context import is_current_request_cancelled
 
@@ -62,17 +66,19 @@ async def route_chat(
 
         retrieved_tools = retrieve_relevant_tools(user_query)
 
-    # Build skills block for system prompt
+    # Phase 1: compact manifest (always present)
+    manifest = build_skill_manifest()
+
+    # Phase 2: full skill injection (slash commands + auto-detect)
     skills_to_inject = get_skills_to_inject(
         retrieved_tools=retrieved_tools,
         forced_skills=forced_skills or [],
-        db=db,
         mcp_manager=mcp_manager,
     )
-    skills_block = build_skills_prompt_block(skills_to_inject)
+    skills_block = build_skills_prompt_block(skills_to_inject, manifest=manifest)
 
     if skills_to_inject:
-        logger.debug("Injecting %d skill(s): %s", len(skills_to_inject), [s['skill_name'] for s in skills_to_inject])
+        logger.debug("Injecting %d skill(s): %s", len(skills_to_inject), [s.name for s in skills_to_inject])
 
     custom_template = db.get_setting("system_prompt_template")
     system_prompt = build_system_prompt(skills_block=skills_block, template=custom_template)

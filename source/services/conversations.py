@@ -28,23 +28,27 @@ if TYPE_CHECKING:
 # Conversations service logic
 
 
-def _extract_skill_slash_commands_sync(message: str) -> tuple[list[dict], str]:
+def _extract_skill_slash_commands_sync(message: str) -> tuple[list, str]:
     """Extract slash commands from a user message and match to skills.
 
-    Returns (matched_skills, cleaned_message).
+    Returns (matched_skills, cleaned_message) where matched_skills is a
+    list of ``Skill`` objects from the SkillManager.
     Removes matched slash commands from the message text.
     If a slash command is recognized but the skill is disabled, strip it
     from the message silently and skip injection.
 
     This is the synchronous implementation; callers should use
     ``ConversationService.extract_skill_slash_commands`` which wraps it
-    in ``run_in_thread`` to avoid blocking the event loop on DB I/O.
+    in ``run_in_thread``.
     """
-    all_skills = db.get_all_skills()
-    slash_map = {s["slash_command"]: s for s in all_skills}
+    from .skills import get_skill_manager
+
+    manager = get_skill_manager()
+    all_skills = manager.get_all_skills()
+    slash_map = {s.slash_command: s for s in all_skills if s.slash_command}
 
     tokens = message.split()
-    matched_skills: list[dict] = []
+    matched_skills: list = []
     remaining_tokens: list[str] = []
 
     for token in tokens:
@@ -52,7 +56,7 @@ def _extract_skill_slash_commands_sync(message: str) -> tuple[list[dict], str]:
             cmd = token[1:].lower()
             if cmd in slash_map:
                 skill = slash_map[cmd]
-                if skill["enabled"]:
+                if skill.enabled:
                     matched_skills.append(skill)
                 # disabled skill: strip from message, skip injection silently
             else:
@@ -68,12 +72,12 @@ class ConversationService:
     """Manages conversation lifecycle and query processing."""
 
     @staticmethod
-    async def extract_skill_slash_commands(message: str) -> tuple[list[dict], str]:
+    async def extract_skill_slash_commands(message: str) -> tuple[list, str]:
         """Extract slash commands from a user message (async wrapper).
 
         Delegates to ``_extract_skill_slash_commands_sync`` via
-        ``run_in_thread`` so the synchronous DB call does not block the
-        event loop.
+        ``run_in_thread`` so the synchronous filesystem reads do not block
+        the event loop.
         """
         return await run_in_thread(_extract_skill_slash_commands_sync, message)
 
@@ -173,7 +177,7 @@ class ConversationService:
     async def submit_query(
         user_query: str,
         capture_mode: str = "none",
-        forced_skills: list[dict] | None = None,
+        forced_skills: list | None = None,
         llm_query: str | None = None,
         tab_state: Optional["TabState"] = None,
         queue: Optional["ConversationQueue"] = None,

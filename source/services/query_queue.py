@@ -37,7 +37,7 @@ class QueuedQuery:
     capture_mode: str = "none"
     images: List[str] = field(default_factory=list)
     conversation_id: Optional[str] = None
-    forced_skills: List[Dict[str, Any]] = field(default_factory=list)
+    forced_skills: list = field(default_factory=list)  # List[Skill] at runtime
     llm_query: Optional[str] = None
 
 

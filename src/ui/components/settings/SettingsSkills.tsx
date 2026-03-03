@@ -9,12 +9,12 @@ const SettingsSkills: React.FC = () => {
     const [editingSkill, setEditingSkill] = useState<Skill | null>(null);
     const [isCreating, setIsCreating] = useState(false);
 
-
     // Editor state
     const [editName, setEditName] = useState('');
-    const [editDisplayName, setEditDisplayName] = useState('');
+    const [editDescription, setEditDescription] = useState('');
     const [editCommand, setEditCommand] = useState('');
     const [editContent, setEditContent] = useState('');
+    const [editTriggerServers, setEditTriggerServers] = useState('');
     const [editError, setEditError] = useState('');
 
     const loadSkills = async () => {
@@ -35,97 +35,90 @@ const SettingsSkills: React.FC = () => {
 
     const handleToggle = async (skill: Skill) => {
         try {
-            await api.skillsApi.update(skill.skill_name, {
-                display_name: skill.display_name,
-                slash_command: skill.slash_command,
-                content: skill.content,
-                enabled: !skill.enabled
-            });
-            setSkills(skills.map(s => s.id === skill.id ? { ...s, enabled: !s.enabled } : s));
+            const newEnabled = !skill.enabled;
+            await api.skillsApi.toggle(skill.name, newEnabled);
+            setSkills(prev => prev.map(s => s.name === skill.name ? { ...s, enabled: newEnabled } : s));
         } catch (e: any) {
             console.error("Failed to toggle skill", e);
-            alert(e.message || "Failed to update skill");
+            alert(e.message || "Failed to toggle skill");
         }
     };
 
-    const startEdit = (skill: Skill | null) => {
+    const startEdit = async (skill: Skill | null) => {
         if (skill) {
             setEditingSkill(skill);
             setIsCreating(false);
-            setEditName(skill.skill_name);
-            setEditDisplayName(skill.display_name);
-            setEditCommand(skill.slash_command);
-            setEditContent(skill.content);
+            setEditName(skill.name);
+            setEditDescription(skill.description);
+            setEditCommand(skill.slash_command || '');
+            setEditTriggerServers(skill.trigger_servers.join(', '));
+            // Fetch full content
+            try {
+                const content = await api.skillsApi.getContent(skill.name);
+                setEditContent(content);
+            } catch {
+                setEditContent('');
+            }
         } else {
             setEditingSkill(null);
             setIsCreating(true);
             setEditName('');
-            setEditDisplayName('');
+            setEditDescription('');
             setEditCommand('');
             setEditContent('');
+            setEditTriggerServers('');
         }
         setEditError('');
     };
 
     const handleSave = async () => {
         setEditError('');
-        if (!editDisplayName.trim() || !editCommand.trim() || !editContent.trim()) {
-            setEditError("All fields are required.");
+        if (!editDescription.trim() || !editContent.trim()) {
+            setEditError("Description and content are required.");
             return;
         }
 
+        const triggerServers = editTriggerServers
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
+
         try {
             if (editingSkill) {
-                // Update
-                await api.skillsApi.update(editingSkill.skill_name, {
-                    display_name: editDisplayName,
-                    slash_command: editCommand.replace(/^\//, ''), // strip leading slash if user added it
+                await api.skillsApi.update(editingSkill.name, {
+                    description: editDescription,
+                    slash_command: editCommand.replace(/^\//, '') || undefined,
                     content: editContent,
-                    enabled: editingSkill.enabled
+                    trigger_servers: triggerServers,
                 });
             } else {
-                // Create
                 if (!editName.trim()) {
-                    setEditError("Internal Name is required for new skills.");
+                    setEditError("Name is required for new skills.");
                     return;
                 }
                 await api.skillsApi.create({
-                    skill_name: editName.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase(),
-                    display_name: editDisplayName,
-                    slash_command: editCommand.replace(/^\//, ''),
+                    name: editName.replace(/[^a-zA-Z0-9_-]/g, '').toLowerCase(),
+                    description: editDescription,
+                    slash_command: editCommand.replace(/^\//, '') || undefined,
                     content: editContent,
-                    enabled: true
+                    trigger_servers: triggerServers,
                 });
             }
             await loadSkills();
             setEditingSkill(null);
             setIsCreating(false);
-            setEditName('');
-            setEditDisplayName('');
-            setEditCommand('');
-            setEditContent('');
         } catch (e: any) {
             setEditError(e.message || "Failed to save skill");
         }
     };
 
-    const handleDelete = async (skillName: string) => {
-        if (!confirm(`Are you sure you want to delete the ${skillName} skill?`)) return;
+    const handleDelete = async (name: string) => {
+        if (!confirm(`Are you sure you want to delete the "${name}" skill?`)) return;
         try {
-            await api.skillsApi.delete(skillName);
+            await api.skillsApi.delete(name);
             await loadSkills();
         } catch (e: any) {
             alert(e.message || "Failed to delete skill");
-        }
-    };
-
-    const handleReset = async (skillName: string) => {
-        if (!confirm(`Are you sure you want to reset the ${skillName} skill to defaults? Your changes will be lost.`)) return;
-        try {
-            await api.skillsApi.reset(skillName);
-            await loadSkills();
-        } catch (e: any) {
-            alert(e.message || "Failed to reset skill");
         }
     };
 
@@ -148,9 +141,9 @@ const SettingsSkills: React.FC = () => {
             </div>
 
             {(isCreating || editingSkill) ? (
-                <div className="skill-editor">
+                <div className="skill-editor" key="editor">
                     <div className="editor-header">
-                        <h3>{editingSkill ? `Edit ${editingSkill.display_name}` : 'Create New Skill'}</h3>
+                        <h3>{editingSkill ? `Edit ${editingSkill.description}` : 'Create New Skill'}</h3>
                         <button className="editor-close-btn" onClick={() => { setEditingSkill(null); setIsCreating(false); }}>Cancel</button>
                     </div>
 
@@ -158,12 +151,12 @@ const SettingsSkills: React.FC = () => {
 
                     <div className="editor-row">
                         <div className="editor-group">
-                            <label>Display Name</label>
+                            <label>Description</label>
                             <input
                                 type="text"
-                                value={editDisplayName}
-                                onChange={e => setEditDisplayName(e.target.value)}
-                                placeholder="e.g. File System"
+                                value={editDescription}
+                                onChange={e => setEditDescription(e.target.value)}
+                                placeholder="e.g. Guidance for terminal command execution"
                             />
                         </div>
                         <div className="editor-group">
@@ -174,7 +167,7 @@ const SettingsSkills: React.FC = () => {
                                     type="text"
                                     value={editCommand}
                                     onChange={e => setEditCommand(e.target.value.replace(/[^a-zA-Z0-9_-]/g, ''))}
-                                    placeholder="e.g. filesystem"
+                                    placeholder="e.g. terminal"
                                 />
                             </div>
                         </div>
@@ -182,15 +175,25 @@ const SettingsSkills: React.FC = () => {
 
                     {!editingSkill && (
                         <div className="editor-group">
-                            <label>Internal Name (Appears in logs, must be unique, maps to MCP server name for auto-detect)</label>
+                            <label>Skill Name (unique identifier, must match folder name)</label>
                             <input
                                 type="text"
                                 value={editName}
                                 onChange={e => setEditName(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''))}
-                                placeholder="e.g. filesystem"
+                                placeholder="e.g. my-custom-skill"
                             />
                         </div>
                     )}
+
+                    <div className="editor-group">
+                        <label>Trigger Servers (comma-separated MCP server names for auto-detection)</label>
+                        <input
+                            type="text"
+                            value={editTriggerServers}
+                            onChange={e => setEditTriggerServers(e.target.value)}
+                            placeholder="e.g. terminal, filesystem"
+                        />
+                    </div>
 
                     <div className="editor-group">
                         <label>Prompt Content (Markdown supported)</label>
@@ -209,41 +212,45 @@ const SettingsSkills: React.FC = () => {
             ) : (
                 <div className="skills-list">
                     {skills.map(skill => (
-                        <div key={skill.id} className={`skill-card ${!skill.enabled ? 'disabled' : ''}`}>
+                        <div key={`${skill.name}-${skill.source}`} className={`skill-card ${!skill.enabled ? 'disabled' : ''}`}>
                             <div className="skill-card-header">
-                                <div className="skill-title-group">
-                                    <h3>{skill.display_name}</h3>
-                                    <span className="skill-command">/{skill.slash_command}</span>
-                                    {skill.is_default && <span className="skill-badge default">Default</span>}
-                                    {!skill.is_default && <span className="skill-badge custom">Custom</span>}
-                                    {skill.is_modified && <span className="skill-badge modified">Modified</span>}
+                                <div className="skill-header-left">
+                                    <h3 className="skill-name">{skill.name}</h3>
+                                    {skill.trigger_servers.length > 0 && (
+                                        <span className="skill-triggers">
+                                            Triggers: {skill.trigger_servers.join(', ')}
+                                        </span>
+                                    )}
+                                    <p className="skill-description">{skill.description}</p>
                                 </div>
 
-                                <label className="settings-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={skill.enabled}
-                                        onChange={() => handleToggle(skill)}
-                                    />
-                                    <span className="settings-toggle-slider"></span>
-                                </label>
-                            </div>
-
-                            <div className="skill-card-body">
-                                <pre>{skill.content.slice(0, 150)}{skill.content.length > 150 ? '...' : ''}</pre>
+                                <div className="skill-header-right">
+                                    <div className="skill-tags">
+                                        {skill.slash_command && <span className="skill-command">/{skill.slash_command}</span>}
+                                        {skill.source === 'builtin' && <span className="skill-badge default">BUILTIN</span>}
+                                        {skill.source === 'user' && <span className="skill-badge custom">CUSTOM</span>}
+                                        {skill.overridden_by_user && <span className="skill-badge modified">OVERRIDDEN</span>}
+                                    </div>
+                                    <label className="settings-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={skill.enabled}
+                                            onChange={() => handleToggle(skill)}
+                                            aria-label={`Toggle ${skill.name}`}
+                                        />
+                                        <span className="settings-toggle-slider"></span>
+                                    </label>
+                                </div>
                             </div>
 
                             <div className="skill-card-footer">
-                                <div className="skill-footer-left">
-                                    <span className="internal-name">Internal: {skill.skill_name}</span>
-                                </div>
+                                <span className="skill-version">v{skill.version}</span>
                                 <div className="skill-actions">
-                                    <button onClick={() => startEdit(skill)} className="action-btn edit-btn">Edit</button>
-                                    {skill.is_default && skill.is_modified && (
-                                        <button onClick={() => handleReset(skill.skill_name)} className="action-btn reset-btn">Reset</button>
-                                    )}
-                                    {!skill.is_default && (
-                                        <button onClick={() => handleDelete(skill.skill_name)} className="action-btn delete-btn">Delete</button>
+                                    {skill.source === 'user' && (
+                                        <>
+                                            <button onClick={() => startEdit(skill)} className="action-btn edit-btn">Edit</button>
+                                            <button onClick={() => handleDelete(skill.name)} className="action-btn delete-btn">Delete</button>
+                                        </>
                                     )}
                                 </div>
                             </div>

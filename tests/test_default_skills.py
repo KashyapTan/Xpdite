@@ -1,36 +1,75 @@
-"""Tests for source/mcp_integration/default_skills.py — skill data integrity."""
+"""Tests for skill seed files — data integrity of the shipped builtin skills."""
 
-from source.mcp_integration.default_skills import DEFAULT_SKILLS
+import json
+import os
+
+import pytest
+
+from source.config import SKILLS_SEED_DIR
 
 
-class TestDefaultSkills:
+def _load_seed_skills():
+    """Walk SKILLS_SEED_DIR and return a list of (name, skill_json_dict) tuples."""
+    skills = []
+    if not os.path.isdir(SKILLS_SEED_DIR):
+        return skills
+    for name in os.listdir(SKILLS_SEED_DIR):
+        folder = os.path.join(SKILLS_SEED_DIR, name)
+        if not os.path.isdir(folder):
+            continue
+        json_path = os.path.join(folder, "skill.json")
+        if os.path.isfile(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                skills.append((name, json.load(f)))
+    return skills
+
+
+SEED_SKILLS = _load_seed_skills()
+
+
+class TestSkillSeeds:
+    def test_seed_dir_exists(self):
+        assert os.path.isdir(SKILLS_SEED_DIR), f"Missing seed directory: {SKILLS_SEED_DIR}"
+
     def test_not_empty(self):
-        assert len(DEFAULT_SKILLS) > 0
+        assert len(SEED_SKILLS) > 0, "No skill seeds found"
 
-    def test_required_keys_present(self):
-        required = {"skill_name", "display_name", "slash_command", "content"}
-        for skill in DEFAULT_SKILLS:
-            missing = required - set(skill.keys())
-            assert not missing, f"Skill {skill.get('skill_name', '?')} missing keys: {missing}"
+    @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
+    def test_required_keys_present(self, name, data):
+        required = {"name", "description", "slash_command", "trigger_servers", "version"}
+        missing = required - set(data.keys())
+        assert not missing, f"Skill '{name}' missing keys: {missing}"
+
+    @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
+    def test_skill_md_exists(self, name, data):
+        md_path = os.path.join(SKILLS_SEED_DIR, name, "SKILL.md")
+        assert os.path.isfile(md_path), f"Missing SKILL.md for '{name}'"
+
+    @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
+    def test_skill_md_not_empty(self, name, data):
+        md_path = os.path.join(SKILLS_SEED_DIR, name, "SKILL.md")
+        with open(md_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert content.strip(), f"SKILL.md for '{name}' is empty"
+
+    @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
+    def test_folder_matches_name(self, name, data):
+        assert data["name"] == name, f"Folder '{name}' has mismatched name '{data['name']}'"
 
     def test_skill_names_unique(self):
-        names = [s["skill_name"] for s in DEFAULT_SKILLS]
-        assert len(names) == len(set(names)), "Duplicate skill_name found"
+        names = [data["name"] for _, data in SEED_SKILLS]
+        assert len(names) == len(set(names)), "Duplicate skill name found"
 
     def test_slash_commands_unique(self):
-        commands = [s["slash_command"] for s in DEFAULT_SKILLS]
+        commands = [data["slash_command"] for _, data in SEED_SKILLS]
         assert len(commands) == len(set(commands)), "Duplicate slash_command found"
 
-    def test_content_not_empty(self):
-        for skill in DEFAULT_SKILLS:
-            assert skill["content"].strip(), f"Skill {skill['skill_name']} has empty content"
-
     def test_known_skills_present(self):
-        names = {s["skill_name"] for s in DEFAULT_SKILLS}
+        names = {data["name"] for _, data in SEED_SKILLS}
         assert "terminal" in names
         assert "filesystem" in names
         assert "websearch" in names
 
-    def test_display_names_not_empty(self):
-        for skill in DEFAULT_SKILLS:
-            assert skill["display_name"].strip(), f"Skill {skill['skill_name']} has empty display_name"
+    @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
+    def test_trigger_servers_is_list(self, name, data):
+        assert isinstance(data["trigger_servers"], list), f"trigger_servers must be list for '{name}'"

@@ -1,9 +1,9 @@
 import os
+from pathlib import Path
 
-# --- Configuration (Hardcoded for now, will be fetched from DB later) ---
-USERNAME = 'Kashyap Tanuku'
-# We use os.path.abspath to normalize slashes (C:/ vs C:\) and resolve ..
-BASE_PATH = os.path.abspath(f"C:/Users/{USERNAME}")
+# --- Configuration (dynamic — works on any machine / OS) ---
+USERNAME = os.getenv("USERNAME") or os.getenv("USER") or Path.home().name
+BASE_PATH = os.path.abspath(str(Path.home()))
 
 
 LIST_DIRECTORY_DESCRIPTION = f"""

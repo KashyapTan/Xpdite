@@ -39,7 +39,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
         const loadSkills = async () => {
             try {
                 const all = await api.skillsApi.getAll();
-                const enabled = all.filter(s => s.enabled);
+                const enabled = all.filter(s => s.enabled && s.slash_command);
                 setSkills(enabled);
             } catch (e) {
                 console.error("Failed to load skills for slash menu", e);
@@ -52,8 +52,8 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
         if (!isTriggered) return;
 
         const filtered = skills.filter(s =>
-            s.slash_command.toLowerCase().includes(searchTerm) ||
-            s.display_name.toLowerCase().includes(searchTerm)
+            (s.slash_command ?? '').toLowerCase().includes(searchTerm) ||
+            s.name.toLowerCase().includes(searchTerm)
         );
         setFilteredSkills(filtered);
         setSelectedIndex(0);
@@ -120,7 +120,7 @@ const SlashCommandMenu: React.FC<SlashCommandMenuProps> = ({
                         onMouseEnter={() => setSelectedIndex(i)}
                     >
                         <div className="slash-menu-command">/{skill.slash_command}</div>
-                        <div className="slash-menu-name">{skill.display_name}</div>
+                        <div className="slash-menu-name">{skill.name}</div>
                     </div>
                 ))}
             </div>

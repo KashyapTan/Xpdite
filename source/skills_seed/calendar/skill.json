@@ -1,0 +1,7 @@
+{
+  "name": "calendar",
+  "description": "Guidance for Google Calendar: checking availability, creating events, and managing schedules.",
+  "slash_command": "calendar",
+  "trigger_servers": ["calendar"],
+  "version": "1.0.0"
+}

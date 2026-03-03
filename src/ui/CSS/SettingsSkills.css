@@ -1,41 +1,49 @@
+/* ── Container & Header ──────────────────────── */
+
 .settings-skills-container {
-    padding: 20px;
+    padding: 16px 20px;
     color: #eee;
     height: 100%;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     box-sizing: border-box;
+    overflow: hidden;
 }
 
 .settings-skills-header {
     display: flex;
+    flex-direction: column;
     justify-content: space-between;
     align-items: flex-start;
-    margin-bottom: 15px;
-    flex-direction: column;
-    gap: 30px;
+    margin-bottom: 12px;
+    flex-shrink: 0;
+    gap: 10px;
 }
 
 .settings-skills-header h2 {
-    margin: 0 0 10px 0;
-    font-size: 1.5rem;
+    margin: 0 0 4px 0;
+    font-size: 1.3rem;
 }
 
 .settings-skills-header p {
     margin: 0;
-    color: rgba(255, 255, 255, 0.6);
-    font-size: 0.9rem;
-    max-width: 600px;
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.8rem;
+    max-width: 500px;
 }
 
 .create-skill-btn {
     background-color: #3b82f6;
     color: white;
     border: none;
-    padding: 8px 16px;
+    padding: 6px 14px;
     border-radius: 6px;
     cursor: pointer;
     transition: background-color 0.2s;
-    font-family: montserrat, 'sans-serif';
+    font-family: 'Montserrat', sans-serif;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    flex-shrink: 0;
 }
 
 .create-skill-btn:hover {
@@ -48,61 +56,114 @@
     color: rgba(255, 255, 255, 0.5);
 }
 
-/* Skills List */
+/* ── Skills List ─────────────────────────────── */
+
 .skills-list {
     display: flex;
     flex-direction: column;
-    gap: 15px;
-    padding-bottom: 40px;
+    gap: 10px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 16px;
+    padding-right: 4px;
+    margin-bottom: 15px;
 }
+
+.skills-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.skills-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+}
+
+/* ── Skill Card ──────────────────────────────── */
 
 .skill-card {
     background-color: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
-    padding: 16px;
+    padding: 12px 14px;
     transition: all 0.2s ease;
+    flex-shrink: 0;
 }
 
 .skill-card.disabled {
-    opacity: 0.6;
+    opacity: 0.5;
     filter: grayscale(1);
 }
 
+/* Header: left info + right tags/toggle */
 .skill-card-header {
     display: flex;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 12px;
-}
-
-.skill-title-group {
-    display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
 }
 
-.skill-title-group h3 {
+.skill-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.skill-name {
     margin: 0;
-    font-size: 1.1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    text-transform: capitalize;
+    color: #fff;
+}
+
+.skill-triggers {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.4);
+    font-family: 'Fira Code', monospace;
+}
+
+.skill-description {
+    margin: 4px 0 0 0;
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.55);
+    line-height: 1.35;
+}
+
+/* Right side: tags row + toggle */
+.skill-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.skill-tags {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .skill-command {
     font-family: 'Fira Code', monospace;
-    font-size: 0.85rem;
+    font-size: 0.75rem;
     padding: 2px 6px;
     background-color: rgba(59, 130, 246, 0.15);
     color: #93c5fd;
     border-radius: 4px;
+    white-space: nowrap;
 }
 
 .skill-badge {
-    font-size: 0.7rem;
+    font-size: 0.65rem;
     padding: 2px 6px;
     border-radius: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .skill-badge.default {
@@ -120,49 +181,35 @@
     color: #fbbf24;
 }
 
-.skill-card-body {
-    margin-bottom: 16px;
-}
-
-.skill-card-body pre {
-    margin: 0;
-    white-space: pre-wrap;
-    font-family: inherit;
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.7);
-    background-color: rgba(0, 0, 0, 0.2);
-    padding: 12px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.05);
-    line-height: 1.4;
-}
+/* ── Card Footer ─────────────────────────────── */
 
 .skill-card-footer {
     display: flex;
     justify-content: space-between;
     align-items: center;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
-    padding-top: 12px;
+    padding-top: 8px;
+    margin-top: 8px;
 }
 
-.internal-name {
+.skill-version {
     font-family: 'Fira Code', monospace;
-    font-size: 0.75rem;
-    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.7rem;
+    color: rgba(255, 255, 255, 0.35);
 }
 
 .skill-actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
 }
 
 .action-btn {
     background: none;
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: rgba(255, 255, 255, 0.8);
-    padding: 4px 12px;
+    padding: 3px 10px;
     border-radius: 4px;
-    font-size: 0.8rem;
+    font-size: 0.75rem;
     cursor: pointer;
     transition: all 0.2s;
     font-family: 'Montserrat', sans-serif;
@@ -183,31 +230,28 @@
     border-color: #ef4444;
 }
 
-.reset-btn {
-    border-color: rgba(245, 158, 11, 0.5);
-    color: #fbbf24;
-    font-family: 'Montserrat', sans-serif;
-}
+/* ── Editor ──────────────────────────────────── */
 
-/* Editor */
 .skill-editor {
     background-color: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(59, 130, 246, 0.3);
     border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 40px;
+    padding: 16px;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
 }
 
 .editor-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
 }
 
 .editor-header h3 {
     margin: 0;
-    font-size: 1.2rem;
+    font-size: 1.1rem;
 }
 
 .editor-close-btn {
@@ -233,28 +277,28 @@
     color: #f87171;
     padding: 10px;
     border-radius: 4px;
-    margin-bottom: 16px;
-    font-size: 0.9rem;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
     border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 .editor-row {
     display: flex;
-    gap: 16px;
-    margin-bottom: 16px;
+    gap: 12px;
+    margin-bottom: 12px;
 }
 
 .editor-group {
     flex: 1;
     display: flex;
     flex-direction: column;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 .editor-group label {
-    font-size: 0.85rem;
+    font-size: 0.8rem;
     color: rgba(255, 255, 255, 0.7);
-    margin-bottom: 6px;
+    margin-bottom: 4px;
 }
 
 .editor-group input,
@@ -262,10 +306,10 @@
     background-color: rgba(0, 0, 0, 0.2);
     border: 1px solid rgba(255, 255, 255, 0.1);
     color: white;
-    padding: 10px;
+    padding: 8px;
     border-radius: 6px;
     font-family: inherit;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
 }
 
 .editor-group input:focus,
@@ -307,19 +351,19 @@
 .editor-actions {
     display: flex;
     justify-content: flex-end;
-    margin-top: 20px;
+    margin-top: 16px;
     border-top: 1px solid rgba(255, 255, 255, 0.05);
-    padding-top: 20px;
+    padding-top: 16px;
 }
 
 .save-btn {
     background-color: #3b82f6;
     color: white;
     border: none;
-    padding: 10px 24px;
+    padding: 8px 20px;
     border-radius: 6px;
     font-weight: 500;
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     cursor: pointer;
     transition: background-color 0.2s;
     font-family: 'Montserrat', sans-serif;
@@ -327,4 +371,49 @@
 
 .save-btn:hover {
     background-color: #2563eb;
+}
+
+/* ── Toggle Switch ───────────────────────────── */
+
+.settings-toggle {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.settings-toggle input[type='checkbox'] {
+    display: none;
+}
+
+.settings-toggle-slider {
+    width: 36px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.25s;
+    flex-shrink: 0;
+}
+
+.settings-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 50%;
+    transition: transform 0.25s, background 0.25s;
+}
+
+.settings-toggle input:checked + .settings-toggle-slider {
+    background: rgba(79, 140, 255, 0.5);
+}
+
+.settings-toggle input:checked + .settings-toggle-slider::after {
+    transform: translateX(16px);
+    background: #4f8cff;
 }

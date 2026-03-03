@@ -1,7 +1,6 @@
 """Tests for meeting recording database operations."""
 
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -10,10 +9,9 @@ import pytest
 def db_manager(tmp_path):
     """Create a fresh DatabaseManager backed by a temp SQLite file."""
     db_path = str(tmp_path / "test.db")
-    with patch("source.database.DatabaseManager._seed_default_skills"):
-        from source.database import DatabaseManager
+    from source.database import DatabaseManager
 
-        mgr = DatabaseManager(database_path=db_path)
+    mgr = DatabaseManager(database_path=db_path)
     return mgr
 
 

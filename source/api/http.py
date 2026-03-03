@@ -11,7 +11,7 @@ Use for:
 from fastapi import APIRouter, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Any, List, Optional
 import logging
 from ollama import AsyncClient as OllamaAsyncClient
 
@@ -618,111 +618,148 @@ async def update_system_prompt(body: SystemPromptUpdate):
 
 
 # ============================================
-# Skills API
+# Skills API (filesystem-backed)
 # ============================================
 
 
 class SkillCreate(BaseModel):
-    skill_name: str
-    display_name: str
-    slash_command: str
+    name: str
+    description: str
+    slash_command: Optional[str] = None
     content: str
-    enabled: bool = True
+    trigger_servers: List[str] = []
+
+
+# Sentinel so we can distinguish "field not sent" from "explicitly set to null".
+_UNSET: Any = object()
 
 
 class SkillUpdate(BaseModel):
-    display_name: str
-    slash_command: str
-    content: str
+    description: Optional[str] = None
+    slash_command: Optional[str] = _UNSET
+    content: Optional[str] = None
+    trigger_servers: Optional[List[str]] = None
+
+
+class SkillToggle(BaseModel):
     enabled: bool
+
+
+class ReferenceFileCreate(BaseModel):
+    filename: str
+    content: str
 
 
 @router.get("/skills")
 async def get_skills():
-    """Get all skills from the database."""
-    from ..database import db
-    return db.get_all_skills()
+    """Get all skills (builtin + user), with override info for the UI."""
+    from ..services.skills import get_skill_manager
+
+    manager = get_skill_manager()
+    return await _run_in_thread(manager.get_all_skills_with_overrides)
+
+
+@router.get("/skills/{name}/content")
+async def get_skill_content(name: str):
+    """Return the full SKILL.md text for a skill."""
+    from ..services.skills import get_skill_manager
+
+    manager = get_skill_manager()
+    content = await _run_in_thread(manager.get_skill_content, name)
+    if content is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return {"name": name, "content": content}
 
 
 @router.post("/skills")
 async def create_skill(body: SkillCreate):
-    """Create a new user-defined skill."""
-    from ..database import db
-    
-    # Validation
-    if not body.skill_name or not body.slash_command:
-        raise HTTPException(status_code=400, detail="Name and slash command are required")
-        
-    if db.get_skill_by_name(body.skill_name):
-        raise HTTPException(status_code=400, detail=f"Skill name '{body.skill_name}' already exists")
-        
-    if db.get_skill_by_slash_command(body.slash_command):
-        raise HTTPException(status_code=400, detail=f"Slash command '{body.slash_command}' already exists")
+    """Create a new user skill."""
+    from ..services.skills import get_skill_manager
 
-    db.upsert_skill(
-        skill_name=body.skill_name,
-        display_name=body.display_name,
-        slash_command=body.slash_command,
-        content=body.content,
-        is_default=False,
-        enabled=body.enabled,
-    )
-    return {"status": "created", "skill_name": body.skill_name}
+    if not body.name or not body.name.strip():
+        raise HTTPException(status_code=400, detail="Skill name is required")
+    if not body.content or not body.content.strip():
+        raise HTTPException(status_code=400, detail="Skill content is required")
+
+    manager = get_skill_manager()
+    try:
+        skill = await _run_in_thread(
+            manager.create_user_skill,
+            name=body.name,
+            description=body.description,
+            slash_command=body.slash_command or None,
+            content=body.content,
+            trigger_servers=body.trigger_servers,
+        )
+        return {"status": "created", "skill": skill.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.put("/skills/{skill_name}")
-async def update_skill(skill_name: str, body: SkillUpdate):
-    """Update an existing skill."""
-    from ..database import db
-    
-    skill = db.get_skill_by_name(skill_name)
-    if not skill:
+@router.put("/skills/{name}")
+async def update_skill(name: str, body: SkillUpdate):
+    """Update an existing user skill. Rejects edits to builtin skills."""
+    from ..services.skills import get_skill_manager
+
+    manager = get_skill_manager()
+    try:
+        kwargs = {}
+        if body.description is not None:
+            kwargs["description"] = body.description
+        if body.slash_command is not _UNSET:
+            # Explicitly sent (could be null to clear, or a new value).
+            kwargs["slash_command"] = body.slash_command or None
+        if body.content is not None:
+            kwargs["content"] = body.content
+        if body.trigger_servers is not None:
+            kwargs["trigger_servers"] = body.trigger_servers
+
+        skill = await _run_in_thread(manager.update_user_skill, name, **kwargs)
+        return {"status": "updated", "skill": skill.to_dict()}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/skills/{name}/toggle")
+async def toggle_skill(name: str, body: SkillToggle):
+    """Enable or disable a skill (works for both builtin and user)."""
+    from ..services.skills import get_skill_manager
+
+    manager = get_skill_manager()
+    result = await _run_in_thread(manager.toggle_skill, name, body.enabled)
+    if not result:
         raise HTTPException(status_code=404, detail="Skill not found")
-
-    # Check command uniqueness if changed
-    if body.slash_command != skill["slash_command"]:
-        existing = db.get_skill_by_slash_command(body.slash_command)
-        if existing and existing["skill_name"] != skill_name:
-             raise HTTPException(status_code=400, detail=f"Slash command '{body.slash_command}' already in use")
-
-    db.upsert_skill(
-        skill_name=skill_name,
-        display_name=body.display_name,
-        slash_command=body.slash_command,
-        content=body.content,
-        is_default=skill["is_default"],
-        enabled=body.enabled,
-        # Mark as modified when a default skill's content is changed
-        is_modified=skill["is_default"] and body.content != skill["content"],
-    )
-
-    return {"status": "updated"}
+    return {"status": "toggled", "name": name, "enabled": body.enabled}
 
 
-@router.delete("/skills/{skill_name}")
-async def delete_skill(skill_name: str):
-    """Delete a user-created skill."""
-    from ..database import db
-    
-    success = db.delete_skill(skill_name)
-    if not success:
-        raise HTTPException(status_code=400, detail="Cannot delete default skill or skill not found")
-        
+@router.delete("/skills/{name}")
+async def delete_skill(name: str):
+    """Delete a user skill folder. Rejects deletion of builtin skills."""
+    from ..services.skills import get_skill_manager
+
+    manager = get_skill_manager()
+    result = await _run_in_thread(manager.delete_user_skill, name)
+    if not result:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete builtin skill or skill not found",
+        )
     return {"status": "deleted"}
 
 
-@router.post("/skills/{skill_name}/reset")
-async def reset_skill(skill_name: str):
-    """Reset a default skill to its original content."""
-    from ..database import db
-    
-    skill = db.get_skill_by_name(skill_name)
-    if not skill:
-        raise HTTPException(status_code=404, detail="Skill not found")
-        
-    if not skill["is_default"]:
-         raise HTTPException(status_code=400, detail="Only default skills can be reset")
-         
-    db.reset_skill_to_default(skill_name)
-    return {"status": "reset"}
+@router.post("/skills/{name}/references")
+async def add_reference_file(name: str, body: ReferenceFileCreate):
+    """Add a reference .md file to a user skill."""
+    from ..services.skills import get_skill_manager
+
+    if not body.filename.endswith(".md"):
+        raise HTTPException(status_code=400, detail="Reference files must be .md")
+
+    manager = get_skill_manager()
+    try:
+        await _run_in_thread(manager.add_reference_file, name, body.filename, body.content)
+        return {"status": "created", "filename": body.filename}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 

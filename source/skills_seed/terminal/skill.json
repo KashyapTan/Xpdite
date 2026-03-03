@@ -1,0 +1,7 @@
+{
+  "name": "terminal",
+  "description": "Guidance for terminal command execution, PTY sessions, and environment detection.",
+  "slash_command": "terminal",
+  "trigger_servers": ["terminal"],
+  "version": "1.0.0"
+}

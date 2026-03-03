@@ -2,7 +2,6 @@
 
 import os
 import tempfile
-from unittest.mock import patch
 
 import pytest
 
@@ -11,12 +10,9 @@ import pytest
 def db_manager(tmp_path):
     """Create a fresh DatabaseManager backed by a temp SQLite file."""
     db_path = str(tmp_path / "test.db")
-    # Prevent _seed_default_skills from importing MCP modules that may not
-    # be available in the test environment.
-    with patch("source.database.DatabaseManager._seed_default_skills"):
-        from source.database import DatabaseManager
+    from source.database import DatabaseManager
 
-        mgr = DatabaseManager(database_path=db_path)
+    mgr = DatabaseManager(database_path=db_path)
 
     # On a fresh DB the ALTER TABLE migration for content_blocks runs before
     # the CREATE TABLE, so the column is never added.  Add it manually.
@@ -433,91 +429,6 @@ class TestTerminalEvents:
         cid = db_manager.start_new_conversation("No events")
         events = db_manager.get_terminal_events(cid)
         assert events == []
-
-
-# ------------------------------------------------------------------
-# Skills
-# ------------------------------------------------------------------
-
-
-class TestSkills:
-    def test_upsert_and_get_by_name(self, db_manager):
-        db_manager.upsert_skill(
-            skill_name="test_skill",
-            display_name="Test Skill",
-            slash_command="test",
-            content="Do testing things.",
-        )
-        skill = db_manager.get_skill_by_name("test_skill")
-        assert skill is not None
-        assert skill["skill_name"] == "test_skill"
-        assert skill["display_name"] == "Test Skill"
-        assert skill["slash_command"] == "test"
-        assert skill["content"] == "Do testing things."
-        assert skill["enabled"] is True
-
-    def test_get_skill_by_slash_command(self, db_manager):
-        db_manager.upsert_skill(
-            skill_name="web",
-            display_name="Web",
-            slash_command="websearch",
-            content="Search the web.",
-        )
-        skill = db_manager.get_skill_by_slash_command("websearch")
-        assert skill is not None
-        assert skill["skill_name"] == "web"
-
-    def test_get_nonexistent_skill(self, db_manager):
-        assert db_manager.get_skill_by_name("nope") is None
-        assert db_manager.get_skill_by_slash_command("nope") is None
-
-    def test_get_all_skills(self, db_manager):
-        db_manager.upsert_skill("s1", "S1", "cmd1", "content1")
-        db_manager.upsert_skill("s2", "S2", "cmd2", "content2")
-        skills = db_manager.get_all_skills()
-        names = {s["skill_name"] for s in skills}
-        assert "s1" in names
-        assert "s2" in names
-
-    def test_upsert_updates_existing(self, db_manager):
-        db_manager.upsert_skill("sk", "SK", "sk_cmd", "v1")
-        db_manager.upsert_skill("sk", "SK Updated", "sk_cmd", "v2")
-        skill = db_manager.get_skill_by_name("sk")
-        assert skill["display_name"] == "SK Updated"
-        assert skill["content"] == "v2"
-
-    def test_update_skill_content(self, db_manager):
-        db_manager.upsert_skill("sk", "SK", "sk_cmd", "original")
-        db_manager.update_skill_content("sk", "modified")
-        skill = db_manager.get_skill_by_name("sk")
-        assert skill["content"] == "modified"
-        assert skill["is_modified"] is True
-
-    def test_toggle_skill(self, db_manager):
-        db_manager.upsert_skill("sk", "SK", "sk_cmd", "content", enabled=True)
-        db_manager.toggle_skill("sk", False)
-        skill = db_manager.get_skill_by_name("sk")
-        assert skill["enabled"] is False
-
-        db_manager.toggle_skill("sk", True)
-        skill = db_manager.get_skill_by_name("sk")
-        assert skill["enabled"] is True
-
-    def test_delete_custom_skill(self, db_manager):
-        db_manager.upsert_skill("custom", "Custom", "custom_cmd", "stuff", is_default=False)
-        result = db_manager.delete_skill("custom")
-        assert result is True
-        assert db_manager.get_skill_by_name("custom") is None
-
-    def test_delete_default_skill_fails(self, db_manager):
-        db_manager.upsert_skill("default_sk", "Default", "def_cmd", "stuff", is_default=True)
-        result = db_manager.delete_skill("default_sk")
-        assert result is False
-        assert db_manager.get_skill_by_name("default_sk") is not None
-
-    def test_delete_nonexistent_skill(self, db_manager):
-        result = db_manager.delete_skill("nonexistent")
-        assert result is False
 
 
 # ------------------------------------------------------------------

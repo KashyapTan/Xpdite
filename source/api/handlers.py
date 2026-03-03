@@ -111,7 +111,7 @@ class MessageHandler:
         forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(query_text)
 
         if forced_skills:
-            logger.debug("Slash commands matched: %s", [s['skill_name'] for s in forced_skills])
+            logger.debug("Slash commands matched: %s", [s.name for s in forced_skills])
 
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
 

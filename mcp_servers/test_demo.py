@@ -3,7 +3,7 @@ Test script for the MCP ↔ Ollama bridge.
 =========================================
 Run this from the project root:
 
-    cd c:\\Users\\Kashyap Tanuku\\Desktop\\Github\\xpdite
+    cd <project_root>
     python -m mcp_servers.test_demo
 
 This will:

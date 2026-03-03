@@ -87,7 +87,7 @@ class RequestContext:
         # asyncio.Event() requires a running event loop on Python < 3.10.
         # RequestContext is always created inside async handlers, so this is safe.
         self._done_event = asyncio.Event()
-        self.forced_skills: List[Dict[str, Any]] = []  # Skills from slash commands
+        self.forced_skills: list = []  # List[Skill] at runtime
 
     # ── Read-only state ────────────────────────────────────────────
 

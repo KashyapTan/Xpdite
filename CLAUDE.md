@@ -7,7 +7,7 @@ Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a 
 ## Workflow
 
 ### Sub-agents for Information Gathering
-Spawn as many sub-agent as you need for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
+Spawn as many sub-agents as you need for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
 
 ### Sub-agents for Self-Review
 After finishing any coding task, spawn a fresh sub-agent(s) to review the work before considering it done. The reviewer should:
@@ -91,6 +91,8 @@ uv run <file_name>                            # run python files for testing
 
 **New MCP tool server** → see `source/CLAUDE.md` → "Adding a new MCP server".
 
+**New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
+
 ---
 
 ## Testing
@@ -123,15 +125,13 @@ uv run python -m pytest tests/test_foo.py  # run a single file
 
 ### DB tests — fixture pattern
 ```python
-from unittest.mock import patch
 import pytest
 
 @pytest.fixture()
 def db_manager(tmp_path):
     db_path = str(tmp_path / "test.db")
-    with patch("source.database.DatabaseManager._seed_default_skills"):
-        from source.database import DatabaseManager
-        mgr = DatabaseManager(database_path=db_path)
+    from source.database import DatabaseManager
+    mgr = DatabaseManager(database_path=db_path)
     return mgr
 ```
 The fixture is already defined in `conftest.py` — just accept `db_manager` as a parameter.

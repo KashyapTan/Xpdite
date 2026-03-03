@@ -47,6 +47,7 @@
  */
 
 import { discoverServerPort, getHttpBaseUrl, getWsBaseUrl } from './portDiscovery';
+import type { Skill } from '../types';
 
 /**
  * Awaits port discovery (cached after first call) and returns the HTTP base URL.
@@ -475,14 +476,22 @@ export const api = {
   // ============================================
 
   skillsApi: {
-    async getAll(): Promise<any[]> {
+    async getAll(): Promise<Skill[]> {
       const base = await baseUrl();
       const res = await fetch(`${base}/api/skills`);
       if (!res.ok) throw new Error('Failed to fetch skills');
       return res.json();
     },
 
-    async create(skill: { skill_name: string; display_name: string; slash_command: string; content: string; enabled: boolean }): Promise<void> {
+    async getContent(name: string): Promise<string> {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills/${name}/content`);
+      if (!res.ok) throw new Error('Failed to fetch skill content');
+      const data = await res.json();
+      return data.content;
+    },
+
+    async create(skill: { name: string; description: string; slash_command?: string; content: string; trigger_servers?: string[] }): Promise<void> {
       const base = await baseUrl();
       const res = await fetch(`${base}/api/skills`, {
         method: 'POST',
@@ -495,9 +504,9 @@ export const api = {
       }
     },
 
-    async update(skillName: string, update: { display_name: string; slash_command: string; content: string; enabled: boolean }): Promise<void> {
+    async update(name: string, update: { description?: string; slash_command?: string; content?: string; trigger_servers?: string[] }): Promise<void> {
       const base = await baseUrl();
-      const res = await fetch(`${base}/api/skills/${skillName}`, {
+      const res = await fetch(`${base}/api/skills/${name}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(update),
@@ -508,20 +517,22 @@ export const api = {
       }
     },
 
-    async delete(skillName: string): Promise<void> {
+    async toggle(name: string, enabled: boolean): Promise<void> {
       const base = await baseUrl();
-      const res = await fetch(`${base}/api/skills/${skillName}`, {
+      const res = await fetch(`${base}/api/skills/${name}/toggle`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      });
+      if (!res.ok) throw new Error('Failed to toggle skill');
+    },
+
+    async delete(name: string): Promise<void> {
+      const base = await baseUrl();
+      const res = await fetch(`${base}/api/skills/${name}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Failed to delete skill');
-    },
-
-    async reset(skillName: string): Promise<void> {
-      const base = await baseUrl();
-      const res = await fetch(`${base}/api/skills/${skillName}/reset`, {
-        method: 'POST',
-      });
-      if (!res.ok) throw new Error('Failed to reset skill');
     },
   }
 };

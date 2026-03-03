@@ -5,6 +5,7 @@ Centralizes all configuration values and constants.
 """
 
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -15,9 +16,32 @@ SOURCE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
 # Load environment variables from .env file
 load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
 
+
+def _resolve_user_data_dir() -> Path:
+    """Resolve the user data directory for both dev and production.
+
+    Resolution order:
+    1. ``XPDITE_USER_DATA_DIR`` env-var (set by Electron in production)
+    2. ``<PROJECT_ROOT>/user_data`` (development fallback)
+    """
+    env_dir = os.environ.get("XPDITE_USER_DATA_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return PROJECT_ROOT / "user_data"
+
+
+USER_DATA_DIR = _resolve_user_data_dir()
+
 # Screenshot storage
-SCREENSHOT_FOLDER = os.path.join("user_data", "screenshots")
+SCREENSHOT_FOLDER = str(USER_DATA_DIR / "screenshots")
 os.makedirs(SCREENSHOT_FOLDER, exist_ok=True)
+
+# Skills directories
+SKILLS_DIR = USER_DATA_DIR / "skills"
+BUILTIN_SKILLS_DIR = SKILLS_DIR / "builtin"
+USER_SKILLS_DIR = SKILLS_DIR / "user"
+SKILLS_SEED_DIR = SOURCE_DIR / "skills_seed"
+SKILLS_PREFERENCES_FILE = SKILLS_DIR / "preferences.json"
 
 # Server configuration
 DEFAULT_PORT = 8000
@@ -55,7 +79,7 @@ class CaptureMode:
 
 
 # Google OAuth configuration
-GOOGLE_USER_DATA = os.path.join("user_data", "google")
+GOOGLE_USER_DATA = str(USER_DATA_DIR / "google")
 os.makedirs(GOOGLE_USER_DATA, exist_ok=True)
 GOOGLE_TOKEN_FILE = os.path.join(GOOGLE_USER_DATA, "token.json")
 GOOGLE_SCOPES = [

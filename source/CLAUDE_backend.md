@@ -35,12 +35,19 @@ source/
 │   ├── handlers.py      # handle_mcp_tool_calls (Ollama path) + retrieve_relevant_tools
 │   ├── cloud_tool_handlers.py  # Cloud path: parallel execute + result injection
 │   ├── retriever.py     # ToolRetriever: semantic search over tool descriptions
-│   ├── skill_injector.py   # Inject skills into system prompt based on active tools
-│   ├── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
-│   └── default_skills.py   # Seed data for the skills table
+│   ├── skill_injector.py   # Two-phase skill injection (manifest + contextual)
+│   └── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
+│
+├── skills_seed/             # Builtin skill folders shipped with the app
+│   ├── terminal/            # Each folder: skill.json + SKILL.md
+│   ├── filesystem/
+│   ├── websearch/
+│   ├── gmail/
+│   └── calendar/
 │
 └── services/
     ├── conversations.py # ConversationService.submit_query — orchestrates the full turn
+    ├── skills.py        # SkillManager — filesystem-backed skill loading, caching, CRUD
     ├── screenshots.py   # ScreenshotHandler — manage screenshot lifecycle + state
     ├── terminal.py      # TerminalService — PTY sessions, approval queue, history
     ├── query_queue.py   # Per-tab async message queue (QueuedQuery, ConversationQueue)
@@ -80,7 +87,8 @@ source/
 | `messages` | `num_messages` (autoincrement PK), `conversation_id`, `role`, `content`, `images` (JSON), `model`, `content_blocks` (JSON) | `images` is a JSON-serialized list of file paths |
 | `settings` | `key`, `value` | Key-value store for all user preferences |
 | `terminal_events` | `id`, `conversation_id`, `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands |
-| `skills` | `skill_name` (UNIQUE), `slash_command` (UNIQUE), `content`, `is_default`, `enabled` | Seeded from `default_skills.py` via `INSERT OR IGNORE` |
+
+Skills are **no longer in the database** — they are filesystem-backed folders under `user_data/skills/` managed by `SkillManager` in `source/services/skills.py`. Preferences (enabled/disabled) are stored in `user_data/skills/preferences.json`.
 
 **Migration rule:** New columns use `ALTER TABLE … ADD COLUMN` inside `try/except OperationalError` in `_init_db()`. Never alter the original `CREATE TABLE` statement — it would break existing databases.
 
@@ -156,7 +164,11 @@ Tools are handled inside a single streaming session. When a tool_use block is de
 `ToolRetriever` embeds tool descriptions and user query using Ollama (`nomic-embed-text`) or `sentence-transformers`. Top-K most similar tools are passed to the LLM, reducing context noise. "Always on" tools bypass the filter (configured in Settings → Tools).
 
 ### Skill Injection
-`skill_injector.py` appends behavioral guidance to the system prompt. Forced skills come from `/slash` commands; auto-detected skills come from the dominant tool server in the retriever output. Skills are stored in the `skills` DB table and editable from Settings.
+`skill_injector.py` uses a two-phase injection strategy:
+1. **Compact manifest** — a one-liner-per-skill list always present in the system prompt so the agent knows what capabilities exist.
+2. **Full injection** — the complete `SKILL.md` content, injected only when triggered by a `/slash` command or auto-detected dominant MCP server.
+
+Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin skills live in `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). User skills live in `user_data/skills/user/`. A `preferences.json` file stores enabled/disabled state so builtin overwrites never reset user toggles.
 
 ### Adding a New MCP Server (end-to-end)
 
@@ -170,7 +182,7 @@ Tools are handled inside a single streaming session. When a tool_use block is de
    )
    ```
 3. **Optionally update** `mcp_servers/config/servers.json` with metadata (used by the Settings UI; not read by the backend).
-4. **Optionally add a skill** in `source/mcp_integration/default_skills.py` so the model gets context-specific guidance when your tools are active.
+4. **Optionally add a skill** by creating a folder under `source/skills_seed/<your_name>/` with a `skill.json` and `SKILL.md` file. The skill will be auto-seeded to `user_data/skills/builtin/` on startup.
 5. Tools are auto-discovered, indexed by the retriever, and available immediately.
 
 ---

@@ -1,0 +1,7 @@
+{
+  "name": "gmail",
+  "description": "Guidance for Gmail operations: searching, reading, composing, and labeling emails.",
+  "slash_command": "gmail",
+  "trigger_servers": ["gmail"],
+  "version": "1.0.0"
+}

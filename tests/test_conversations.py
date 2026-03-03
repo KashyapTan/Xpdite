@@ -1,30 +1,30 @@
 """Tests for source/services/conversations.py — slash command extraction."""
 
+from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from source.services.conversations import _extract_skill_slash_commands_sync
+from source.services.skills import Skill
 
 
 def _make_skill(name, slash_command, enabled=True):
-    return {
-        "id": 1,
-        "skill_name": name,
-        "display_name": name.title(),
-        "slash_command": slash_command,
-        "content": f"Skill {name} content",
-        "is_default": True,
-        "is_modified": False,
-        "enabled": enabled,
-        "created_at": 0.0,
-        "updated_at": 0.0,
-    }
+    return Skill(
+        name=name,
+        description=f"{name.title()} skill",
+        slash_command=slash_command,
+        trigger_servers=[name],
+        version="1.0.0",
+        source="builtin",
+        folder_path=Path(f"fake/{name}"),
+        enabled=enabled,
+    )
 
 
 class TestExtractSkillSlashCommands:
     def _call(self, message, skills):
-        mock_db = MagicMock()
-        mock_db.get_all_skills.return_value = skills
-        with patch("source.services.conversations.db", mock_db):
+        mock_manager = MagicMock()
+        mock_manager.get_all_skills.return_value = skills
+        with patch("source.services.skills.get_skill_manager", return_value=mock_manager):
             return _extract_skill_slash_commands_sync(message)
 
     def test_no_slash_commands(self):
@@ -36,7 +36,7 @@ class TestExtractSkillSlashCommands:
         skills = [_make_skill("terminal", "terminal")]
         matched, cleaned = self._call("/terminal run this", skills)
         assert len(matched) == 1
-        assert matched[0]["skill_name"] == "terminal"
+        assert matched[0].name == "terminal"
         assert cleaned == "run this"
 
     def test_multiple_slash_commands(self):
@@ -46,7 +46,7 @@ class TestExtractSkillSlashCommands:
         ]
         matched, cleaned = self._call("/terminal /websearch do stuff", skills)
         assert len(matched) == 2
-        names = {s["skill_name"] for s in matched}
+        names = {s.name for s in matched}
         assert names == {"terminal", "websearch"}
         assert cleaned == "do stuff"
 
