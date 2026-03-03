@@ -66,6 +66,15 @@ async def route_chat(
 
         retrieved_tools = retrieve_relevant_tools(user_query)
 
+    if retrieved_tools:
+        tool_names = [t["function"]["name"] for t in retrieved_tools]
+        logger.info(
+            "Retrieved %d tool(s) for query '%s...': %s",
+            len(tool_names), user_query[:40], tool_names,
+        )
+    else:
+        logger.info("No tools retrieved for query '%s...'", user_query[:40])
+
     # Phase 1: compact manifest (always present)
     manifest = build_skill_manifest()
 
@@ -117,6 +126,12 @@ async def route_chat(
     allowed_tool_names: set[str] = {
         t["function"]["name"] for t in retrieved_tools
     } if retrieved_tools else set()
+
+    if allowed_tool_names:
+        logger.info(
+            "Submitting %d tool(s) to %s/%s: %s",
+            len(allowed_tool_names), provider, model, sorted(allowed_tool_names),
+        )
 
     # Stream with inline tool calling — text and tool results are
     # interleaved and broadcast to the user in real-time

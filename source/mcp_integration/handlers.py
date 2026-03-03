@@ -120,7 +120,14 @@ async def handle_mcp_tool_calls(
 
     filtered_tools = retrieve_relevant_tools(user_query)
     if not filtered_tools:
+        logger.info("No tools retrieved for Ollama query '%s...'", user_query[:40])
         return messages, tool_calls_made, None
+
+    tool_names = [t["function"]["name"] for t in filtered_tools]
+    logger.info(
+        "Submitting %d tool(s) to Ollama: %s",
+        len(tool_names), tool_names,
+    )
 
     # Use provided client or create a new async one
     async_client = client or OllamaAsyncClient()

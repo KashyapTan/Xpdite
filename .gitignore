@@ -34,3 +34,7 @@ user_data/
 archive/
 implementation_plans/
 code_review/
+
+# Playwright CLI
+.playwright-cli/
+.playwright/
