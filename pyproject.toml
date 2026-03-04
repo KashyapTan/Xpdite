@@ -33,6 +33,7 @@ dependencies = [
     "whisperx>=3.8.1",
     "speechbrain>=1.0.3",
     "torchaudio>=2.8.0",
+    "litellm>=1.81.12",
 ]
 
 [dependency-groups]

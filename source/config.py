@@ -51,9 +51,9 @@ MAX_PORT_ATTEMPTS = 10
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"
 MAX_MCP_TOOL_ROUNDS = 30
 
-# LLM token limits
-CLOUD_MAX_TOKENS = 16384
-CLOUD_TOOL_MAX_TOKENS = 4096
+# Reasoning effort for thinking models ("low", "medium", "high")
+# LiteLLM translates to native format per provider.
+REASONING_EFFORT = "medium"
 OLLAMA_CTX_SIZE = 32768
 
 # Tool result truncation
@@ -64,11 +64,6 @@ THREAD_POOL_SIZE = int(os.environ.get("XPDITE_THREAD_POOL_SIZE", "4"))
 
 # Terminal output
 TERMINAL_MAX_OUTPUT_SIZE = 50 * 1024
-
-# Thinking-capable model keywords/identifiers — used to decide whether to
-# enable extended-thinking / budget_tokens parameters in cloud requests.
-ANTHROPIC_THINKING_KEYWORDS = ("opus", "sonnet", "haiku")
-GEMINI_THINKING_KEYWORDS = ("thinking", "2.5", "gemini-3")
 
 
 # Capture modes

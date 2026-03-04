@@ -26,14 +26,13 @@ source/
 ├── llm/
 │   ├── router.py        # parse_provider() + route_chat() — Ollama vs cloud dispatch
 │   ├── ollama_provider.py  # stream_ollama_chat: async 2-phase tool detect + streaming via AsyncClient
-│   ├── cloud_provider.py   # stream_cloud_chat: Anthropic / OpenAI / Gemini inline streaming
+│   ├── cloud_provider.py   # stream_cloud_chat: unified Anthropic / OpenAI / Gemini streaming via LiteLLM
 │   ├── key_manager.py   # Encrypted API key storage/retrieval
 │   └── prompt.py        # build_system_prompt, accepts skills_block + optional template
 │
 ├── mcp_integration/
 │   ├── manager.py       # McpToolManager: spawn servers, discover tools, route calls
 │   ├── handlers.py      # handle_mcp_tool_calls (Ollama path) + retrieve_relevant_tools
-│   ├── cloud_tool_handlers.py  # Cloud path: parallel execute + result injection
 │   ├── retriever.py     # ToolRetriever: semantic search over tool descriptions
 │   ├── skill_injector.py   # Two-phase skill injection (manifest + contextual)
 │   └── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
@@ -157,8 +156,8 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 2. **Streaming loop** — if tools were requested, enters a `MAX_MCP_TOOL_ROUNDS` loop: execute tools → append results → streaming call for next response. Each intermediate text chunk is broadcast live so the user sees the model's reasoning between tool calls.
 3. If no tools were detected in phase 1, the caller falls through to normal streaming (with thinking enabled).
 
-### Cloud path (inline)
-Tools are handled inside a single streaming session. When a tool_use block is detected mid-stream, execution is paused, the tool runs, and the result is injected before streaming resumes. No separate detection phase.
+### Cloud path (inline via LiteLLM)
+All cloud providers (Anthropic, OpenAI, Gemini) use a single unified implementation via `litellm.acompletion()`. The API key is passed directly as a kwarg (not via `os.environ`) for thread safety. Tool definitions use OpenAI format for all providers — LiteLLM translates to native formats. When accumulated tool call deltas are detected after a streaming round ends, tools are executed and results fed back in a multi-round loop (up to `MAX_MCP_TOOL_ROUNDS`). The presence of `pending_tool_calls` is the trigger — not `finish_reason` — because providers like Gemini may use a non-standard finish reason (e.g. `"stop"` instead of `"tool_calls"`). After the tool budget is exhausted, one final summarisation round runs without tools so the model can synthesise its answer. Thinking/reasoning tokens are broadcast via `thinking_chunk`; thinking state (`thinking_tokens`, `thinking_complete_sent`) is **reset per round** so multi-round tool loops get fresh thinking broadcasts. Reasoning/thinking capability and `max_output_tokens` are both derived from a single `litellm.get_model_info()` call cached once per request — no redundant queries and no hardcoded token limits. If the model is not in litellm's registry, `max_tokens` is omitted (except for Anthropic, which requires it — a 16384 fallback is used). If supported, `reasoning_effort` (configurable via `REASONING_EFFORT` in `config.py`) is passed and LiteLLM translates it to each provider's native format (Anthropic → `thinking`, Gemini → `thinkingConfig`/`thinking_level`, OpenAI → native `reasoning_effort`). Malformed tool call JSON is reported back to the model as a tool-result error so it can self-correct. Cancellation during tool execution properly exits both the inner tool loop and the outer streaming loop. On exceptions, partial accumulated text and tool calls are preserved (not discarded). Providers that omit `tool_call_id` (e.g. Gemini) receive synthetic fallback IDs.
 
 ### Tool Retrieval
 `ToolRetriever` embeds tool descriptions and user query using Ollama (`nomic-embed-text`) or `sentence-transformers`. Top-K most similar tools are passed to the LLM, reducing context noise. "Always on" tools bypass the filter (configured in Settings → Tools).

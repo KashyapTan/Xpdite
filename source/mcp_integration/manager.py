@@ -287,21 +287,13 @@ class McpToolManager:
             servers[server_name].append(tool_name)
         return servers
 
-    def get_anthropic_tools(self) -> List[Dict] | None:
-        """Return tool definitions in Anthropic format, or None if no tools."""
-        if not self._raw_tools:
-            return None
-        return [
-            {
-                "name": t["name"],
-                "description": t["description"],
-                "input_schema": t["input_schema"],
-            }
-            for t in self._raw_tools
-        ]
+    def get_tools(self) -> List[Dict] | None:
+        """Return tool definitions in OpenAI format, or None if no tools.
 
-    def get_openai_tools(self) -> List[Dict] | None:
-        """Return tool definitions in OpenAI format, or None if no tools."""
+        This is the canonical format used by both cloud providers (via
+        LiteLLM, which translates to each provider's native format) and
+        the tool retriever.  Ollama uses ``get_ollama_tools()`` instead.
+        """
         if not self._raw_tools:
             return None
         tools = []
@@ -322,32 +314,9 @@ class McpToolManager:
             )
         return tools
 
-    def get_gemini_tools(self) -> List[Any] | None:
-        """Return tool definitions in Gemini format, or None if no tools."""
-        if not self._raw_tools:
-            return None
-        try:
-            from google.genai import types
-
-            declarations = []
-            for t in self._raw_tools:
-                # Clean up the schema for Gemini
-                params = dict(t["input_schema"])
-                params.pop("additionalProperties", None)
-
-                declarations.append(
-                    types.FunctionDeclaration(
-                        name=t["name"],
-                        description=t["description"],
-                        parameters=params,
-                    )
-                )
-            return [types.Tool(function_declarations=declarations)]
-        except ImportError:
-            logger.warning(
-                "google-genai not installed, cannot convert tools to Gemini format"
-            )
-            return None
+    # Backward-compat aliases — code that used the old provider-specific
+    # methods will keep working until fully migrated.
+    get_openai_tools = get_tools
 
     async def disconnect_server(self, server_name: str):
         """Disconnect a single MCP server by name."""

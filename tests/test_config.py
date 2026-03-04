@@ -5,14 +5,10 @@ from source.config import (
     MAX_PORT_ATTEMPTS,
     DEFAULT_MODEL,
     MAX_MCP_TOOL_ROUNDS,
-    CLOUD_MAX_TOKENS,
-    CLOUD_TOOL_MAX_TOKENS,
     OLLAMA_CTX_SIZE,
     MAX_TOOL_RESULT_LENGTH,
     THREAD_POOL_SIZE,
     TERMINAL_MAX_OUTPUT_SIZE,
-    ANTHROPIC_THINKING_KEYWORDS,
-    GEMINI_THINKING_KEYWORDS,
     CaptureMode,
     SCREENSHOT_FOLDER,
     PROJECT_ROOT,
@@ -34,12 +30,6 @@ class TestConstants:
     def test_max_mcp_tool_rounds(self):
         assert MAX_MCP_TOOL_ROUNDS == 30
 
-    def test_cloud_max_tokens(self):
-        assert CLOUD_MAX_TOKENS == 16384
-
-    def test_cloud_tool_max_tokens(self):
-        assert CLOUD_TOOL_MAX_TOKENS == 4096
-
     def test_ollama_ctx_size(self):
         assert OLLAMA_CTX_SIZE == 32768
 
@@ -51,12 +41,6 @@ class TestConstants:
 
     def test_terminal_max_output_size(self):
         assert TERMINAL_MAX_OUTPUT_SIZE == 50 * 1024
-
-    def test_thinking_keywords_are_tuples(self):
-        assert isinstance(ANTHROPIC_THINKING_KEYWORDS, tuple)
-        assert isinstance(GEMINI_THINKING_KEYWORDS, tuple)
-        assert "sonnet" in ANTHROPIC_THINKING_KEYWORDS
-        assert "opus" in ANTHROPIC_THINKING_KEYWORDS
 
     def test_screenshot_folder_defined(self):
         assert isinstance(SCREENSHOT_FOLDER, str)
