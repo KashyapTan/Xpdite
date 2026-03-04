@@ -51,6 +51,14 @@ def _usage_chunk(prompt_tokens: int, completion_tokens: int):
     return SimpleNamespace(choices=[], usage=usage)
 
 
+def _text_chunk_with_usage(content, finish_reason, prompt_tokens, completion_tokens):
+    """A final chunk carrying both choices and usage (Anthropic/Gemini pattern)."""
+    delta = SimpleNamespace(content=content, tool_calls=None)
+    choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+    usage = SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+    return SimpleNamespace(choices=[choice], usage=usage)
+
+
 def _empty_chunk():
     """A chunk with no choices and no usage (e.g. keep-alive)."""
     return SimpleNamespace(choices=[], usage=None)
@@ -826,6 +834,62 @@ class TestStreamLitellm:
         assert len(thinking_completes) == 2
 
     @pytest.mark.asyncio
+    async def test_token_usage_on_content_chunk(self, _mock_broadcast, _mock_cancelled):
+        """Token usage attached to a content chunk (Anthropic/Gemini) is captured."""
+        chunks = [
+            _text_chunk("Hello "),
+            _text_chunk("world!"),
+            _text_chunk_with_usage(None, "stop", 15, 8),
+        ]
+        with _patch_acompletion(chunks):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, blocks = await stream_cloud_chat(
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="hi",
+                image_paths=[], chat_history=[],
+            )
+
+        assert text == "Hello world!"
+        assert stats["prompt_eval_count"] == 15
+        assert stats["eval_count"] == 8
+
+    @pytest.mark.asyncio
+    async def test_token_usage_summed_across_tool_rounds(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
+    ):
+        """Token usage from multiple acompletion rounds is summed correctly."""
+        # Round 1: tool call with usage on final chunk
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_1", name="read_file"),
+            _tool_call_chunk(0, arguments='{"path": "a.py"}'),
+            _text_chunk_with_usage(None, "stop", 20, 10),
+        ]
+        # Round 2: text response with usage on final chunk
+        text_stream = [
+            _text_chunk("Done"),
+            _text_chunk_with_usage(None, "stop", 30, 15),
+        ]
+
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, blocks = await stream_cloud_chat(
+                provider="gemini", model="gemini-2.5-flash", api_key="key",
+                user_query="read file", image_paths=[], chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "Done"
+        assert stats["prompt_eval_count"] == 50  # 20 + 30
+        assert stats["eval_count"] == 25  # 10 + 15
+
+    @pytest.mark.asyncio
     async def test_tool_calls_with_non_standard_finish_reason(
         self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
@@ -867,3 +931,26 @@ class TestStreamLitellm:
         block_types = [b["type"] for b in blocks]
         assert "tool_call" in block_types
         assert "text" in block_types
+
+    @pytest.mark.asyncio
+    async def test_token_usage_no_double_count(self, _mock_broadcast, _mock_cancelled):
+        """Usage on a content chunk AND a usage-only chunk should not double-count."""
+        chunks = [
+            _text_chunk("Hi"),
+            # Final content chunk carries usage (Anthropic style)
+            _text_chunk_with_usage(None, "stop", 15, 8),
+            # Separate usage-only chunk also carries usage (OpenAI style)
+            _usage_chunk(15, 8),
+        ]
+        with _patch_acompletion(chunks):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, blocks = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
+            )
+
+        assert text == "Hi"
+        # Should be 15/8, NOT 30/16
+        assert stats["prompt_eval_count"] == 15
+        assert stats["eval_count"] == 8

@@ -340,6 +340,8 @@ async def _stream_litellm(
             current_round_text: list[str] = []
             thinking_tokens: list[str] = []
             thinking_complete_sent = False
+            round_prompt_tokens = 0
+            round_completion_tokens = 0
 
             if is_current_request_cancelled():
                 break
@@ -397,11 +399,19 @@ async def _stream_litellm(
                 if is_current_request_cancelled():
                     break
 
-                # Usage-only final chunk (no choices)
-                if not chunk.choices and hasattr(chunk, "usage") and chunk.usage:
-                    total_token_stats["prompt_eval_count"] += getattr(chunk.usage, "prompt_tokens", 0) or 0
-                    total_token_stats["eval_count"] += getattr(chunk.usage, "completion_tokens", 0) or 0
-                    continue
+                # Capture usage from ANY chunk that carries it.
+                # LiteLLM normalises provider-native usage into the
+                # OpenAI `usage` shape, but the chunk it lands on varies:
+                #   OpenAI  → separate usage-only chunk (choices=[])
+                #   Anthropic/Gemini → may be on the final content chunk
+                # Using assignment (last value wins) avoids double-counting
+                # if both a content chunk and a usage-only chunk carry data.
+                if hasattr(chunk, "usage") and chunk.usage:
+                    prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
+                    completion = getattr(chunk.usage, "completion_tokens", 0) or 0
+                    if prompt or completion:
+                        round_prompt_tokens = prompt
+                        round_completion_tokens = completion
 
                 if not chunk.choices:
                     continue
@@ -439,6 +449,10 @@ async def _stream_litellm(
                                 pending_tool_calls[idx]["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
                                 pending_tool_calls[idx]["arguments"] += tc_delta.function.arguments
+
+            # Add this round's usage to running totals (summed across rounds)
+            total_token_stats["prompt_eval_count"] += round_prompt_tokens
+            total_token_stats["eval_count"] += round_completion_tokens
 
             # Finalize thinking section in UI for this round
             if thinking_tokens and not thinking_complete_sent:
