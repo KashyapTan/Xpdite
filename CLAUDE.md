@@ -66,6 +66,7 @@ uv run <file_name>                            # run python files for testing
 - All modules inside `source/` use **relative imports** (`from ..config import ...`) — never absolute `from source.xxx`
 - Every async handler runs in the uvicorn event loop; CPU-heavy or blocking-IO work goes through `run_in_thread` (see `source/core/thread_pool.py`)
 - Never call `sqlite3.connect()` outside `DatabaseManager._get_connection()` — and always pass `check_same_thread=False`
+- All DB methods use `with self._connect() as conn:` context manager — never open/close connections manually
 - New DB columns: ADD via `ALTER TABLE ... ADD COLUMN` inside a `try/except OperationalError` migration block in `_init_db()`, not by changing the CREATE TABLE statement
 - Never put business logic in `api/` layer — it belongs in `services/`
 - Tests are in the tests folder

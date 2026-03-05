@@ -82,12 +82,15 @@ source/
 
 | Table | Key Columns | Notes |
 |---|---|---|
-| `conversations` | `id` (UUID), `title`, `created_at`, `updated_at`, `total_input_tokens`, `total_output_tokens` | Sort sidebar by `updated_at` |
-| `messages` | `num_messages` (autoincrement PK), `conversation_id`, `role`, `content`, `images` (JSON), `model`, `content_blocks` (JSON) | `images` is a JSON-serialized list of file paths |
+| `conversations` | `id` (UUID), `title`, `created_at`, `updated_at`, `total_input_tokens`, `total_output_tokens` | Sort sidebar by `updated_at`; indexed on `updated_at DESC` |
+| `messages` | `num_messages` (autoincrement PK), `conversation_id` (NOT NULL), `role` (NOT NULL), `content`, `images` (JSON), `model`, `content_blocks` (JSON) | `images` is a JSON-serialized list of file paths; indexed on `(conversation_id, created_at)` |
 | `settings` | `key`, `value` | Key-value store for all user preferences |
-| `terminal_events` | `id`, `conversation_id`, `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands |
+| `terminal_events` | `id`, `conversation_id` (NOT NULL), `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands; indexed on `(conversation_id, created_at)` |
+| `meeting_recordings` | `id`, `title`, `started_at`, `ended_at`, `duration_seconds`, `status`, ... | Indexed on `started_at DESC` |
 
 Skills are **no longer in the database** — they are filesystem-backed folders under `user_data/skills/` managed by `SkillManager` in `source/services/skills.py`. Preferences (enabled/disabled) are stored in `user_data/skills/preferences.json`.
+
+**Connection pattern:** All methods use the `_connect()` context manager which ensures cleanup on exit and explicit rollback on error. `_get_connection()` sets PRAGMAs (WAL, foreign_keys, busy_timeout, cache_size, synchronous) on every connection.
 
 **Migration rule:** New columns use `ALTER TABLE … ADD COLUMN` inside `try/except OperationalError` in `_init_db()`. Never alter the original `CREATE TABLE` statement — it would break existing databases.
 
@@ -189,7 +192,7 @@ Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin ski
 ## Architecture Decisions
 
 **Why `check_same_thread=False` on every SQLite connection?**
-FastAPI runs handlers on different threads in its thread pool. A per-call `_get_connection()` pattern creates a new connection for every DB call, avoiding cross-thread reuse while staying compatible with asyncio.
+FastAPI runs handlers on different threads in its thread pool. A per-call `_get_connection()` pattern creates a new connection for every DB call, avoiding cross-thread reuse while staying compatible with asyncio. Each connection is wrapped in the `_connect()` context manager for exception-safe cleanup. WAL mode is enabled for concurrent reads during writes, and `busy_timeout=5000` prevents instant lock failures.
 
 **Why does the Ollama tool-detection call use `think=False`?**
 Ollama bug #10976: models with thinking enabled return empty `tool_calls` even when they intend to call tools. The detection phase disables thinking specifically to surface tool calls correctly; thinking is re-enabled in the streaming follow-up.

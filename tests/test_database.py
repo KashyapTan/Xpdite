@@ -4,6 +4,7 @@ import os
 import tempfile
 
 import pytest
+import sqlite3
 
 
 @pytest.fixture()
@@ -12,20 +13,7 @@ def db_manager(tmp_path):
     db_path = str(tmp_path / "test.db")
     from source.database import DatabaseManager
 
-    mgr = DatabaseManager(database_path=db_path)
-
-    # On a fresh DB the ALTER TABLE migration for content_blocks runs before
-    # the CREATE TABLE, so the column is never added.  Add it manually.
-    conn = mgr._get_connection()
-    try:
-        conn.execute("ALTER TABLE messages ADD COLUMN content_blocks TEXT")
-        conn.commit()
-    except Exception:
-        pass  # already exists
-    finally:
-        conn.close()
-
-    return mgr
+    return DatabaseManager(database_path=db_path)
 
 
 # ------------------------------------------------------------------
@@ -114,6 +102,20 @@ class TestTokenUsage:
         usage = db_manager.get_token_usage(cid)
         assert usage["input"] == 80
         assert usage["output"] == 120
+
+    def test_negative_tokens_clamped_to_zero(self, db_manager):
+        cid = db_manager.start_new_conversation("Negative")
+        db_manager.add_token_usage(cid, -50, -100)
+        usage = db_manager.get_token_usage(cid)
+        assert usage["input"] == 0
+        assert usage["output"] == 0
+
+    def test_none_tokens_treated_as_zero(self, db_manager):
+        cid = db_manager.start_new_conversation("NoneTokens")
+        db_manager.add_token_usage(cid, None, None)
+        usage = db_manager.get_token_usage(cid)
+        assert usage["input"] == 0
+        assert usage["output"] == 0
 
 
 # ------------------------------------------------------------------
@@ -507,4 +509,28 @@ class TestMessageContentBlocks:
         db_manager.add_message(cid, "assistant", "Reply", model="gpt-4o")
         msgs = db_manager.get_full_conversation(cid)
         assert msgs[0]["model"] == "gpt-4o"
+
+
+# ------------------------------------------------------------------
+# Schema constraints
+# ------------------------------------------------------------------
+
+
+class TestSchemaConstraints:
+    def test_message_null_role_rejected(self, db_manager):
+        cid = db_manager.start_new_conversation("Null role")
+        with pytest.raises(sqlite3.IntegrityError):
+            with db_manager._connect() as conn:
+                conn.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
+                    (cid, None, "text"),
+                )
+
+    def test_message_null_conversation_id_rejected(self, db_manager):
+        with pytest.raises(sqlite3.IntegrityError):
+            with db_manager._connect() as conn:
+                conn.execute(
+                    "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
+                    (None, "user", "text"),
+                )
 
