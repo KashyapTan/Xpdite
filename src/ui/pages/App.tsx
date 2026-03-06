@@ -42,6 +42,7 @@ import type {
   ScreenshotRemovedContent,
   ConversationSavedContent,
   ConversationResumedContent,
+  ConversationTurnPayload,
   ToolCallContent,
   TokenUsageContent,
   ChatMessage,
@@ -50,6 +51,11 @@ import type {
   TerminalOutput,
   TerminalCommandComplete,
 } from '../types';
+import {
+  applySavedTurnToHistory,
+  mapConversationMessagePayload,
+  type LocalTurnPatch,
+} from '../utils/chatMessages';
 
 // Assets
 import '../CSS/App.css';
@@ -62,6 +68,57 @@ import scrollDownIcon from '../assets/scroll-down-icon.svg';
 
 // API
 import { api } from '../services/api';
+
+type PendingTurnAction = {
+  type: 'retry' | 'edit';
+  messageId: string;
+  editedContent?: string;
+};
+
+function hasTurnInHistory(
+  history: ChatMessage[],
+  turn: ConversationTurnPayload,
+): boolean {
+  return history.some(
+    (message) =>
+      message.turnId === turn.turn_id ||
+      message.messageId === turn.user.message_id ||
+      (turn.assistant !== undefined && message.messageId === turn.assistant.message_id),
+  );
+}
+
+function buildPendingTurnLocalPatch(
+  history: ChatMessage[],
+  turn: ConversationTurnPayload,
+  pendingAction: PendingTurnAction | undefined,
+  assistantMessage?: ChatMessage,
+): LocalTurnPatch | undefined {
+  if (!pendingAction) {
+    return undefined;
+  }
+
+  const localUserMessage =
+    pendingAction.type === 'edit'
+      ? history.find(
+          (message) =>
+            message.messageId === pendingAction.messageId && message.role === 'user',
+        )
+      : history.find(
+          (message) => message.turnId === turn.turn_id && message.role === 'user',
+        );
+
+  return {
+    user:
+      pendingAction.type === 'edit'
+        ? {
+            ...(localUserMessage ?? { role: 'user' as const, content: turn.user.content }),
+            role: 'user',
+            content: pendingAction.editedContent ?? turn.user.content,
+          }
+        : localUserMessage,
+    assistant: assistantMessage,
+  };
+}
 
 
 function App() {
@@ -92,6 +149,7 @@ function App() {
   const pendingConversationRef = useRef<string | null>(null);
   const pendingNewChatRef = useRef<boolean>(false);
   const generatingModelRef = useRef<string>('');
+  const pendingTurnActionsRef = useRef<Map<string, PendingTurnAction>>(new Map());
   // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
   const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
 
@@ -99,7 +157,7 @@ function App() {
   // Tab Management
   // ============================================
   const {
-    activeTabId, createTab, switchTab, updateTabTitle,
+    activeTabId, createTab, updateTabTitle,
     queueMap, setQueueItems, registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
   } = useTabs();
   const activeTabIdRef = useRef(activeTabId);
@@ -200,8 +258,9 @@ function App() {
     });
     registerOnTabClosed((closedTabId: string) => {
       tabRegistryRef.current.delete(closedTabId);
+      pendingTurnActionsRef.current.delete(closedTabId);
     });
-  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState]);
+  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState, wsSend]);
 
   // Keep activeTabIdRef in sync when activeTabId changes (e.g. from external triggers)
   useEffect(() => {
@@ -219,6 +278,7 @@ function App() {
   const applyToBackgroundTab = useCallback((tabId: string, data: WebSocketMessage) => {
     const snap = tabRegistryRef.current.get(tabId) ?? freshSnapshot();
     const chat = { ...snap.chat };
+    const pendingTurnAction = pendingTurnActionsRef.current.get(tabId);
 
     switch (data.type) {
       case 'query':
@@ -257,10 +317,17 @@ function App() {
       }
 
       case 'response_complete': {
+        if (pendingTurnAction) {
+          chat.isThinking = false;
+          chat.status = 'Saving updated turn...';
+          break;
+        }
+
         if (chat.response || chat.thinking || chat.toolCalls.length > 0) {
+          const timestamp = Date.now();
           chat.chatHistory = [
             ...chat.chatHistory,
-            { role: 'user', content: chat.currentQuery },
+            { role: 'user', content: chat.currentQuery, timestamp },
             {
               role: 'assistant',
               content: chat.response,
@@ -268,6 +335,15 @@ function App() {
               toolCalls: chat.toolCalls.length > 0 ? [...chat.toolCalls] : undefined,
               contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
               model: snap.generatingModel || undefined,
+              timestamp,
+              activeResponseIndex: 0,
+              responseVersions: [{
+                responseIndex: 0,
+                content: chat.response,
+                model: snap.generatingModel || undefined,
+                timestamp,
+                contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
+              }],
             },
           ];
         }
@@ -300,6 +376,70 @@ function App() {
       case 'conversation_saved': {
         const sd = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as ConversationSavedContent;
         chat.conversationId = sd.conversation_id;
+        if (pendingTurnAction && !sd.turn) {
+          chat.response = '';
+          chat.thinking = '';
+          chat.currentQuery = '';
+          chat.isThinking = false;
+          chat.toolCalls = [];
+          chat.contentBlocks = [];
+          chat.canSubmit = true;
+          chat.status = 'Ready for follow-up question.';
+          pendingTurnActionsRef.current.delete(tabId);
+          break;
+        }
+        if (sd.turn) {
+          chat.chatHistory = applySavedTurnToHistory(
+            chat.chatHistory,
+            sd.turn,
+            sd.operation ?? pendingTurnAction?.type ?? 'submit',
+            buildPendingTurnLocalPatch(
+              chat.chatHistory,
+              sd.turn,
+              pendingTurnAction,
+              pendingTurnAction
+                ? {
+                    role: 'assistant',
+                    content: chat.response,
+                    thinking: chat.thinking || undefined,
+                    toolCalls: chat.toolCalls.length > 0 ? [...chat.toolCalls] : undefined,
+                    contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
+                    model: snap.generatingModel || undefined,
+                    timestamp: Date.now(),
+                  }
+                : undefined,
+            ),
+          );
+        }
+        if (pendingTurnAction) {
+          chat.response = '';
+          chat.thinking = '';
+          chat.currentQuery = '';
+          chat.isThinking = false;
+          chat.toolCalls = [];
+          chat.contentBlocks = [];
+          chat.canSubmit = true;
+          chat.status = 'Ready for follow-up question.';
+          pendingTurnActionsRef.current.delete(tabId);
+        }
+        break;
+      }
+
+      case 'conversation_resumed': {
+        const resumeData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as ConversationResumedContent;
+        chat.chatHistory = resumeData.messages.map(mapConversationMessagePayload);
+        chat.conversationId = resumeData.conversation_id;
+        chat.response = '';
+        chat.thinking = '';
+        chat.currentQuery = '';
+        chat.isThinking = false;
+        chat.toolCalls = [];
+        chat.contentBlocks = [];
+        chat.canSubmit = true;
+        chat.status = 'Conversation loaded. Ask a follow-up question.';
+        pendingTurnActionsRef.current.delete(tabId);
         break;
       }
 
@@ -307,6 +447,15 @@ function App() {
         chat.error = String(data.content);
         chat.status = 'An error occurred.';
         chat.canSubmit = true;
+        if (pendingTurnAction) {
+          chat.response = '';
+          chat.thinking = '';
+          chat.currentQuery = '';
+          chat.isThinking = false;
+          chat.toolCalls = [];
+          chat.contentBlocks = [];
+          pendingTurnActionsRef.current.delete(tabId);
+        }
         break;
 
       case 'tool_call': {
@@ -449,6 +598,27 @@ function App() {
   // WebSocket Message Handler (tab-aware)
   // ============================================
 
+  const conversationTitle = useCallback((messages: ChatMessage[]) => {
+    const firstUserMessage = messages.find((message) => message.role === 'user');
+    return firstUserMessage?.content.slice(0, 30) || 'Chat';
+  }, []);
+
+  const buildStreamingAssistantMessage = useCallback((): ChatMessage => ({
+    role: 'assistant',
+    content: chatState.responseRef.current,
+    thinking: chatState.thinkingRef.current || undefined,
+    toolCalls:
+      chatState.toolCallsRef.current.length > 0
+        ? [...chatState.toolCallsRef.current]
+        : undefined,
+    contentBlocks:
+      chatState.contentBlocksRef.current.length > 0
+        ? [...chatState.contentBlocksRef.current]
+        : undefined,
+    model: generatingModelRef.current || selectedModel,
+    timestamp: Date.now(),
+  }), [chatState, selectedModel]);
+
   /** Handle messages that apply globally (not tab-scoped). */
   const handleGlobalMessage = useCallback((data: WebSocketMessage): boolean => {
     switch (data.type) {
@@ -528,6 +698,8 @@ function App() {
 
   /** Handle tab-scoped messages for the active tab. */
   const handleActiveTabMessage = useCallback((data: WebSocketMessage) => {
+    const activePendingTurnAction = pendingTurnActionsRef.current.get(activeTabIdRef.current);
+
     switch (data.type) {
       case 'context_cleared':
         chatState.resetForNewChat();
@@ -631,7 +803,12 @@ function App() {
         break;
 
       case 'response_complete':
-        chatState.completeResponse(screenshotState.getImageData(), generatingModelRef.current);
+        if (activePendingTurnAction) {
+          chatState.setIsThinking(false);
+          chatState.setStatus('Saving updated turn...');
+        } else {
+          chatState.completeResponse(screenshotState.getImageData(), generatingModelRef.current);
+        }
         break;
 
       case 'token_usage': {
@@ -649,10 +826,54 @@ function App() {
           ? JSON.parse(data.content)
           : data.content) as unknown as ConversationSavedContent;
         chatState.setConversationId(saveData.conversation_id);
-        // Use first user message as tab title
-        if (chatState.chatHistory.length === 0 && chatState.currentQueryRef.current) {
-          const title = chatState.currentQueryRef.current.slice(0, 30) || 'Chat';
-          updateTabTitle(activeTabIdRef.current, title);
+
+        if (activePendingTurnAction && !saveData.turn) {
+          chatState.clearStreamingState('Updated turn saved. Reloading conversation...');
+          pendingTurnActionsRef.current.delete(activeTabIdRef.current);
+          wsSend({
+            type: 'resume_conversation',
+            conversation_id: saveData.conversation_id,
+          });
+          break;
+        }
+
+        let nextHistory: ChatMessage[] | null = null;
+        if (saveData.turn) {
+          if (
+            activePendingTurnAction &&
+            !hasTurnInHistory(chatState.chatHistory, saveData.turn)
+          ) {
+            chatState.clearStreamingState('Updated turn saved. Reloading conversation...');
+            pendingTurnActionsRef.current.delete(activeTabIdRef.current);
+            wsSend({
+              type: 'resume_conversation',
+              conversation_id: saveData.conversation_id,
+            });
+            break;
+          }
+
+          nextHistory = applySavedTurnToHistory(
+            chatState.chatHistory,
+            saveData.turn,
+            saveData.operation ?? activePendingTurnAction?.type ?? 'submit',
+            buildPendingTurnLocalPatch(
+              chatState.chatHistory,
+              saveData.turn,
+              activePendingTurnAction,
+              activePendingTurnAction ? buildStreamingAssistantMessage() : undefined,
+            ),
+          );
+          chatState.setChatHistory(nextHistory);
+        }
+
+        if (activePendingTurnAction) {
+          chatState.clearStreamingState();
+          pendingTurnActionsRef.current.delete(activeTabIdRef.current);
+        }
+
+        const titleHistory = nextHistory ?? chatState.chatHistory;
+        if (titleHistory.length > 0) {
+          updateTabTitle(activeTabIdRef.current, conversationTitle(titleHistory));
         }
         break;
       }
@@ -662,22 +883,14 @@ function App() {
           ? JSON.parse(data.content)
           : data.content) as unknown as ConversationResumedContent;
 
-        const msgs: ChatMessage[] = resumeData.messages.map((m) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          images: m.images && m.images.length > 0 ? m.images : undefined,
-          model: m.model,
-          contentBlocks: m.content_blocks
-            ? m.content_blocks.map((b) =>
-              b.type === 'tool_call'
-                ? { type: 'tool_call' as const, toolCall: { name: b.name!, args: b.args ?? {}, server: b.server ?? '', status: 'complete' as const } }
-                : { type: 'text' as const, content: b.content ?? '' }
-            )
-            : undefined,
-        }));
+        const msgs: ChatMessage[] = resumeData.messages.map(mapConversationMessagePayload);
 
         chatState.loadConversation(resumeData.conversation_id, msgs);
         screenshotState.clearScreenshots();
+        pendingTurnActionsRef.current.delete(activeTabIdRef.current);
+        if (msgs.length > 0) {
+          updateTabTitle(activeTabIdRef.current, conversationTitle(msgs));
+        }
 
         if (resumeData.token_usage) {
           tokenState.setTokenUsage({
@@ -690,6 +903,10 @@ function App() {
       }
 
       case 'error':
+        if (activePendingTurnAction) {
+          pendingTurnActionsRef.current.delete(activeTabIdRef.current);
+          chatState.clearStreamingState('An error occurred.');
+        }
         chatState.setError(String(data.content));
         chatState.setStatus('An error occurred.');
         chatState.setCanSubmit(true);
@@ -770,7 +987,7 @@ function App() {
       case 'terminal_running_notice':
         break;
     }
-  }, [chatState, screenshotState, tokenState, setIsHidden, updateTabTitle]);
+  }, [buildStreamingAssistantMessage, chatState, conversationTitle, screenshotState, tokenState, setIsHidden, updateTabTitle, wsSend]);
 
   /** Top-level WS message router: global → active tab → background tab. */
   const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
@@ -840,7 +1057,7 @@ function App() {
         pendingNewChatRef.current = true;
       }
     }
-  }, [location.state]);
+  }, [isConnected, location.state, wsSend]);
 
   // ============================================
   // Focus Handler
@@ -867,12 +1084,12 @@ function App() {
   // ============================================
   // Event Handlers
   // ============================================
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     responseAreaRef.current?.scrollTo({
       top: responseAreaRef.current.scrollHeight,
       behavior: 'smooth',
     });
-  };
+  }, []);
 
   const handleScroll = () => {
     if (responseAreaRef.current) {
@@ -910,12 +1127,78 @@ function App() {
     });
   };
 
+  const handleRetryMessage = useCallback((message: ChatMessage) => {
+    if (!isConnected || !message.messageId || !chatState.canSubmit) {
+      return;
+    }
+
+    pendingTurnActionsRef.current.set(activeTabIdRef.current, {
+      type: 'retry',
+      messageId: message.messageId,
+    });
+    generatingModelRef.current = selectedModel;
+    setTimeout(scrollToBottom, 50);
+    wsSend({
+      type: 'retry_message',
+      message_id: message.messageId,
+      model: selectedModel,
+    });
+  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
+
+  const handleEditMessage = useCallback((message: ChatMessage, content: string) => {
+    if (!isConnected || !message.messageId || !chatState.canSubmit) {
+      return;
+    }
+
+    pendingTurnActionsRef.current.set(activeTabIdRef.current, {
+      type: 'edit',
+      messageId: message.messageId,
+      editedContent: content,
+    });
+    generatingModelRef.current = selectedModel;
+    setTimeout(scrollToBottom, 50);
+    wsSend({
+      type: 'edit_message',
+      message_id: message.messageId,
+      content,
+      model: selectedModel,
+    });
+  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
+
+  const handleSetActiveResponse = useCallback((message: ChatMessage, responseIndex: number) => {
+    if (!message.messageId || !message.responseVersions) {
+      return;
+    }
+
+    const nextVariant = message.responseVersions[responseIndex];
+    if (!nextVariant) {
+      return;
+    }
+
+    chatState.setChatHistory((prev) =>
+      prev.map((entry) =>
+        entry.messageId === message.messageId
+          ? {
+            ...entry,
+            content: nextVariant.content,
+            model: nextVariant.model ?? entry.model,
+            timestamp: nextVariant.timestamp ?? entry.timestamp,
+            contentBlocks: nextVariant.contentBlocks ?? entry.contentBlocks,
+            activeResponseIndex: responseIndex,
+          }
+          : entry,
+      ),
+    );
+
+    wsSend({
+      type: 'set_active_response',
+      message_id: message.messageId,
+      response_index: responseIndex,
+    });
+  }, [chatState, wsSend]);
+
   const handleStopStreaming = () => {
     wsSend({ type: 'stop_streaming' });
-  };
-
-  const handleClearContext = () => {
-    wsSend({ type: 'clear_context' });
   };
 
   /** Create a new tab and notify the backend. */
@@ -999,7 +1282,7 @@ function App() {
       // Transition inline block to denied state
       chatState.updateTerminalBlock(requestId, { status: 'denied' });
     }
-  }, [chatState]);
+  }, [chatState, wsSend]);
 
   const handleTerminalApprove = useCallback((requestId: string) => {
     handleTerminalApprovalResponse(requestId, true, false);
@@ -1028,11 +1311,12 @@ function App() {
     setTerminalSessionActive(false);
   };
 
-  const handleKillCommand = useCallback((_requestId: string) => {
+  const handleKillCommand = useCallback((requestId: string) => {
+    void requestId;
     wsSend({
       type: 'terminal_kill_command',
     });
-  }, []);
+  }, [wsSend]);
 
   const handleTerminalResize = useCallback((cols: number, rows: number) => {
     wsSend({
@@ -1053,7 +1337,6 @@ function App() {
       <ResponseArea
         chatHistory={chatState.chatHistory}
         currentQuery={chatState.currentQuery}
-        response={chatState.response}
         thinking={chatState.thinking}
         isThinking={chatState.isThinking}
         thinkingCollapsed={chatState.thinkingCollapsed}
@@ -1062,6 +1345,9 @@ function App() {
         canSubmit={chatState.canSubmit}
         error={chatState.error}
         showScrollBottom={showScrollBottom}
+        onRetryMessage={handleRetryMessage}
+        onEditMessage={handleEditMessage}
+        onSetActiveResponse={handleSetActiveResponse}
         onToggleThinking={() => chatState.setThinkingCollapsed(!chatState.thinkingCollapsed)}
         onScroll={handleScroll}
         onScrollToBottom={scrollToBottom}

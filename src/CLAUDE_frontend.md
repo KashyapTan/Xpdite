@@ -75,6 +75,8 @@ Never call `ws.send()` directly in a component — go through `useWebSocket().se
 
 Similarly, `handleSubmit` displays the user query optimistically via `chatState.startQuery(queryText)` when `canSubmit` is true (non-queued). A guard in `handleActiveTabMessage`'s `query` case prevents the WS echo from calling `startQuery` again (which would reset in-flight tool calls / content blocks).
 
+Retry/edit flows are different from brand-new submits: `response_complete` still ends the stream, but `conversation_saved` is the source of truth for patching the existing turn in `chatHistory`. Keep turn-aware reconciliation logic in `src/ui/utils/chatMessages.ts` instead of duplicating it inside components.
+
 ### Streaming state — state + refs dual pattern
 `useChatState` holds every field in both `useState` (drives re-renders) **and** `useRef` (for mutation inside async callbacks mid-stream). The refs are the source of truth during a stream; state is synced from them. On response complete, refs are read to commit to `chatHistory`, then both are reset.
 
@@ -82,6 +84,9 @@ This is intentional: mutating React state inside a streaming callback causes sta
 
 ### Content blocks — interleaved rendering
 The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, and `{ type: 'terminal_command' }` entries to render tool calls inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
+
+### Chat message metadata and footer actions
+`ChatMessage` now carries stable `messageId`, `turnId`, `timestamp`, `activeResponseIndex`, and `responseVersions`. `components/chat/ChatMessage.tsx` owns footer UI (copy, retry, timestamp, and user-only edit); `ResponseArea.tsx` just wires callbacks from `App.tsx`.
 
 ### `createApiService` vs `api` singleton
 - `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.

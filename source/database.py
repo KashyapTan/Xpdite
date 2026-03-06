@@ -4,7 +4,7 @@ import uuid
 import time
 import os
 from contextlib import contextmanager
-from typing import List, Dict
+from typing import List, Dict, Any, Optional
 
 
 class DatabaseManager:
@@ -200,7 +200,180 @@ class DatabaseManager:
                 END
             """)
 
+            # --- MESSAGE METADATA MIGRATIONS ---
+            for statement in (
+                "ALTER TABLE messages ADD COLUMN message_id TEXT",
+                "ALTER TABLE messages ADD COLUMN turn_id TEXT",
+                "ALTER TABLE messages ADD COLUMN active_response_index INTEGER DEFAULT 0",
+            ):
+                try:
+                    cursor.execute(statement)
+                except sqlite3.OperationalError:
+                    pass
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS message_response_versions (
+                    id TEXT PRIMARY KEY,
+                    assistant_message_id TEXT NOT NULL,
+                    response_index INTEGER NOT NULL,
+                    content TEXT,
+                    model TEXT,
+                    content_blocks TEXT,
+                    created_at REAL,
+                    UNIQUE(assistant_message_id, response_index)
+                )
+            """)
+
+            cursor.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_message_id
+                ON messages(message_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_messages_turn
+                ON messages(conversation_id, turn_id, created_at)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_message_response_versions_assistant
+                ON message_response_versions(assistant_message_id, response_index)
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS messages_fts_au
+                AFTER UPDATE OF content ON messages BEGIN
+                    DELETE FROM messages_fts WHERE rowid = old.rowid;
+                    INSERT INTO messages_fts(rowid, conversation_id, content)
+                    VALUES (new.rowid, new.conversation_id, new.content);
+                END
+            """)
+
+            self._backfill_message_metadata(cursor)
+
             conn.commit()
+
+    @staticmethod
+    def _decode_images(images_json: Optional[str]) -> List[str]:
+        return json.loads(images_json) if images_json else []
+
+    @staticmethod
+    def _decode_content_blocks(content_blocks_json: Optional[str]) -> List[Dict] | None:
+        return json.loads(content_blocks_json) if content_blocks_json else None
+
+    def _build_response_variants(
+        self, assistant_message_id: str, conn: sqlite3.Connection
+    ) -> List[Dict[str, Any]]:
+        rows = conn.execute(
+            """SELECT response_index, content, model, content_blocks, created_at
+               FROM message_response_versions
+               WHERE assistant_message_id = ?
+               ORDER BY response_index ASC""",
+            (assistant_message_id,),
+        ).fetchall()
+        return [
+            {
+                "response_index": row[0],
+                "content": row[1],
+                "model": row[2],
+                "content_blocks": self._decode_content_blocks(row[3]),
+                "timestamp": row[4],
+            }
+            for row in rows
+        ]
+
+    def _build_message_record(
+        self, row: tuple, conn: sqlite3.Connection
+    ) -> Dict[str, Any]:
+        message = {
+            "num_messages": row[0],
+            "message_id": row[1],
+            "turn_id": row[2],
+            "role": row[3],
+            "content": row[4],
+            "images": self._decode_images(row[5]),
+            "timestamp": row[6],
+            "model": row[7],
+            "content_blocks": self._decode_content_blocks(row[8]),
+            "active_response_index": row[9] or 0,
+        }
+        if message["role"] == "assistant" and message["message_id"]:
+            message["response_variants"] = self._build_response_variants(
+                message["message_id"], conn
+            )
+        return message
+
+    def _backfill_message_metadata(self, cursor: sqlite3.Cursor) -> None:
+        rows = cursor.execute(
+            """SELECT num_messages, conversation_id, role, content, model, content_blocks,
+                      created_at, message_id, turn_id, active_response_index
+               FROM messages
+               ORDER BY conversation_id ASC, created_at ASC, num_messages ASC"""
+        ).fetchall()
+
+        pending_turns: Dict[str, str] = {}
+
+        for row in rows:
+            (
+                num_messages,
+                conversation_id,
+                role,
+                content,
+                model,
+                content_blocks_json,
+                created_at,
+                message_id,
+                turn_id,
+                active_response_index,
+            ) = row
+
+            resolved_message_id = message_id or str(uuid.uuid4())
+            resolved_turn_id = turn_id
+
+            if not resolved_turn_id:
+                if role == "user":
+                    resolved_turn_id = str(uuid.uuid4())
+                    pending_turns[conversation_id] = resolved_turn_id
+                elif pending_turns.get(conversation_id):
+                    resolved_turn_id = pending_turns.pop(conversation_id)
+                else:
+                    resolved_turn_id = str(uuid.uuid4())
+            else:
+                if role == "user":
+                    pending_turns[conversation_id] = resolved_turn_id
+                elif pending_turns.get(conversation_id) == resolved_turn_id:
+                    pending_turns.pop(conversation_id, None)
+
+            cursor.execute(
+                """UPDATE messages
+                   SET message_id = ?,
+                       turn_id = ?,
+                       active_response_index = COALESCE(active_response_index, 0)
+                   WHERE num_messages = ?""",
+                (resolved_message_id, resolved_turn_id, num_messages),
+            )
+
+            if role != "assistant":
+                continue
+
+            existing = cursor.execute(
+                """SELECT 1 FROM message_response_versions
+                   WHERE assistant_message_id = ?
+                   LIMIT 1""",
+                (resolved_message_id,),
+            ).fetchone()
+            if existing:
+                continue
+
+            cursor.execute(
+                """INSERT INTO message_response_versions
+                   (id, assistant_message_id, response_index, content, model, content_blocks, created_at)
+                   VALUES (?, ?, 0, ?, ?, ?, ?)""",
+                (
+                    str(uuid.uuid4()),
+                    resolved_message_id,
+                    content,
+                    model,
+                    content_blocks_json,
+                    created_at,
+                ),
+            )
 
     # ---------------------------------------------------------
     # WRITE OPERATIONS
@@ -226,23 +399,349 @@ class DatabaseManager:
         images: List[str] | None = None,
         model: str | None = None,
         content_blocks: List[Dict] | None = None,
-    ) -> None:
-        """Save a message and bump the parent conversation's updated_at timestamp."""
-        now = time.time()
+        *,
+        turn_id: str | None = None,
+        message_id: str | None = None,
+        created_at: float | None = None,
+        active_response_index: int = 0,
+    ) -> Dict[str, Any]:
+        """Save a message and return its persisted metadata."""
+        now = created_at if created_at is not None else time.time()
         images_json = json.dumps(images) if images else None
         content_blocks_json = json.dumps(content_blocks) if content_blocks else None
+        resolved_turn_id = turn_id or str(uuid.uuid4())
+        resolved_message_id = message_id or str(uuid.uuid4())
 
         with self._connect() as conn:
-            conn.execute(
-                "INSERT INTO messages (conversation_id, role, content, images, model, content_blocks, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (conversation_id, role, content, images_json, model, content_blocks_json, now),
+            cursor = conn.execute(
+                """INSERT INTO messages
+                   (conversation_id, role, content, images, model, content_blocks, created_at,
+                    message_id, turn_id, active_response_index)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    conversation_id,
+                    role,
+                    content,
+                    images_json,
+                    model,
+                    content_blocks_json,
+                    now,
+                    resolved_message_id,
+                    resolved_turn_id,
+                    active_response_index,
+                ),
             )
             conn.execute(
                 "UPDATE conversations SET updated_at = ? WHERE id = ?",
                 (now, conversation_id),
             )
             conn.commit()
+        return {
+            "num_messages": cursor.lastrowid,
+            "message_id": resolved_message_id,
+            "turn_id": resolved_turn_id,
+            "timestamp": now,
+        }
+
+    def get_message_by_id(self, message_id: str) -> Dict[str, Any] | None:
+        """Return a single message by its stable message_id."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
+                          model, content_blocks, active_response_index, conversation_id
+                   FROM messages
+                   WHERE message_id = ?""",
+                (message_id,),
+            ).fetchone()
+            if row is None:
+                return None
+
+            message = self._build_message_record(
+                (
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    row[4],
+                    row[5],
+                    row[6],
+                    row[7],
+                    row[8],
+                    row[9],
+                ),
+                conn,
+            )
+            message["conversation_id"] = row[10]
+            return message
+
+    def get_turn_messages(self, conversation_id: str, turn_id: str) -> List[Dict[str, Any]]:
+        """Return all persisted messages for a single turn."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
+                          model, content_blocks, active_response_index
+                   FROM messages
+                   WHERE conversation_id = ? AND turn_id = ?
+                   ORDER BY created_at ASC, num_messages ASC""",
+                (conversation_id, turn_id),
+            ).fetchall()
+
+            return [self._build_message_record(row, conn) for row in rows]
+
+    def get_turn_payload(self, conversation_id: str, turn_id: str) -> Dict[str, Any] | None:
+        """Return the canonical user/assistant payload for a turn."""
+        messages = self.get_turn_messages(conversation_id, turn_id)
+        if not messages:
+            return None
+
+        user_message = next((msg for msg in messages if msg["role"] == "user"), None)
+        assistant_message = next(
+            (msg for msg in messages if msg["role"] == "assistant"), None
+        )
+        if user_message is None:
+            return None
+
+        return {
+            "turn_id": turn_id,
+            "user": user_message,
+            "assistant": assistant_message,
+        }
+
+    def get_active_chat_history(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """Return active conversation messages in LLM-friendly history format."""
+        history: List[Dict[str, Any]] = []
+        for message in self.get_full_conversation(conversation_id):
+            entry: Dict[str, Any] = {
+                "role": message["role"],
+                "content": message["content"],
+            }
+            if message.get("images"):
+                entry["images"] = message["images"]
+            if message.get("model"):
+                entry["model"] = message["model"]
+            history.append(entry)
+        return history
+
+    def save_response_version(
+        self,
+        conversation_id: str,
+        assistant_message_id: str,
+        content: str,
+        *,
+        model: str | None = None,
+        content_blocks: List[Dict] | None = None,
+        created_at: float | None = None,
+        replace_history: bool = False,
+    ) -> Dict[str, Any]:
+        """Persist an assistant response variant and mark it active."""
+        now = created_at if created_at is not None else time.time()
+        content_blocks_json = json.dumps(content_blocks) if content_blocks else None
+
+        with self._connect() as conn:
+            message_row = conn.execute(
+                """SELECT 1
+                   FROM messages
+                   WHERE conversation_id = ? AND message_id = ? AND role = 'assistant'""",
+                (conversation_id, assistant_message_id),
+            ).fetchone()
+            if message_row is None:
+                raise ValueError("Assistant message not found for conversation.")
+
+            if replace_history:
+                conn.execute(
+                    "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
+                    (assistant_message_id,),
+                )
+                next_index = 0
+            else:
+                row = conn.execute(
+                    """SELECT COALESCE(MAX(response_index), -1) + 1
+                       FROM message_response_versions
+                       WHERE assistant_message_id = ?""",
+                    (assistant_message_id,),
+                ).fetchone()
+                next_index = int(row[0]) if row and row[0] is not None else 0
+
+            version_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO message_response_versions
+                   (id, assistant_message_id, response_index, content, model, content_blocks, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    version_id,
+                    assistant_message_id,
+                    next_index,
+                    content,
+                    model,
+                    content_blocks_json,
+                    now,
+                ),
+            )
+            conn.execute(
+                """UPDATE messages
+                   SET content = ?,
+                       model = ?,
+                       content_blocks = ?,
+                       created_at = ?,
+                       active_response_index = ?
+                   WHERE message_id = ? AND conversation_id = ?""",
+                (
+                    content,
+                    model,
+                    content_blocks_json,
+                    now,
+                    next_index,
+                    assistant_message_id,
+                    conversation_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (now, conversation_id),
+            )
+            conn.commit()
+
+        return {
+            "assistant_message_id": assistant_message_id,
+            "response_index": next_index,
+            "timestamp": now,
+            "id": version_id,
+        }
+
+    def set_active_response_version(
+        self, conversation_id: str, assistant_message_id: str, response_index: int
+    ) -> Dict[str, Any] | None:
+        """Switch the active assistant response variant for a turn."""
+        if response_index < 0:
+            raise ValueError("response_index must be non-negative")
+
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT rv.content, rv.model, rv.content_blocks, rv.created_at
+                   FROM message_response_versions rv
+                   JOIN messages m ON m.message_id = rv.assistant_message_id
+                   WHERE rv.assistant_message_id = ?
+                     AND rv.response_index = ?
+                     AND m.conversation_id = ?""",
+                (assistant_message_id, response_index, conversation_id),
+            ).fetchone()
+            if row is None:
+                return None
+
+            conn.execute(
+                """UPDATE messages
+                   SET content = ?,
+                       model = ?,
+                       content_blocks = ?,
+                       created_at = ?,
+                       active_response_index = ?
+                    WHERE message_id = ? AND conversation_id = ?""",
+                (
+                    row[0],
+                    row[1],
+                    row[2],
+                    row[3],
+                    response_index,
+                    assistant_message_id,
+                    conversation_id,
+                ),
+            )
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (time.time(), conversation_id),
+            )
+            conn.commit()
+
+        return self.get_message_by_id(assistant_message_id)
+
+    def truncate_conversation_after_turn(self, conversation_id: str, turn_id: str) -> None:
+        """Delete all later turns after the specified turn."""
+        with self._connect() as conn:
+            cutoff = conn.execute(
+                """SELECT MAX(num_messages)
+                   FROM messages
+                   WHERE conversation_id = ? AND turn_id = ?""",
+                (conversation_id, turn_id),
+            ).fetchone()
+            if cutoff is None or cutoff[0] is None:
+                return
+
+            later_assistant_ids = [
+                row[0]
+                for row in conn.execute(
+                    """SELECT message_id
+                       FROM messages
+                       WHERE conversation_id = ? AND num_messages > ? AND role = 'assistant'""",
+                    (conversation_id, cutoff[0]),
+                ).fetchall()
+            ]
+            for assistant_id in later_assistant_ids:
+                conn.execute(
+                    "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
+                    (assistant_id,),
+                )
+
+            conn.execute(
+                "DELETE FROM terminal_events WHERE conversation_id = ? AND message_index > ?",
+                (conversation_id, cutoff[0]),
+            )
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ? AND num_messages > ?",
+                (conversation_id, cutoff[0]),
+            )
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (time.time(), conversation_id),
+            )
+            conn.commit()
+
+    def update_user_message(
+        self,
+        conversation_id: str,
+        message_id: str,
+        content: str,
+        *,
+        created_at: float | None = None,
+        conversation_title: str | None = None,
+    ) -> Dict[str, Any] | None:
+        """Update the persisted content for a user message."""
+        now = created_at if created_at is not None else time.time()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """UPDATE messages
+                   SET content = ?, created_at = ?
+                   WHERE conversation_id = ? AND message_id = ? AND role = 'user'""",
+                (content, now, conversation_id, message_id),
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return None
+
+            if conversation_title is None:
+                conn.execute(
+                    "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                    (now, conversation_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+                    (conversation_title, now, conversation_id),
+                )
+            conn.commit()
+        return self.get_message_by_id(message_id)
+
+    def is_first_user_message(self, conversation_id: str, message_id: str) -> bool:
+        """Return True when message_id is the first user turn in the conversation."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT message_id
+                   FROM messages
+                   WHERE conversation_id = ? AND role = 'user'
+                   ORDER BY created_at ASC, num_messages ASC
+                   LIMIT 1""",
+                (conversation_id,),
+            ).fetchone()
+        return bool(row and row[0] == message_id)
 
     # ---------------------------------------------------------
     # READ OPERATIONS
@@ -261,28 +760,31 @@ class DatabaseManager:
         """Load all messages for a conversation in stable insertion order."""
         with self._connect() as conn:
             rows = conn.execute(
-                """SELECT role, content, images, created_at, model, content_blocks
+                """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
+                          model, content_blocks, active_response_index
                    FROM messages
                    WHERE conversation_id = ?
                    ORDER BY created_at ASC, num_messages ASC""",
                 (conversation_id,),
             ).fetchall()
 
-        return [
-            {
-                "role": row[0],
-                "content": row[1],
-                "images": json.loads(row[2]) if row[2] else [],
-                "timestamp": row[3],
-                "model": row[4],
-                "content_blocks": json.loads(row[5]) if row[5] else None,
-            }
-            for row in rows
-        ]
+            return [self._build_message_record(row, conn) for row in rows]
 
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation and all associated data (messages, terminal events)."""
         with self._connect() as conn:
+            assistant_ids = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT message_id FROM messages WHERE conversation_id = ? AND role = 'assistant'",
+                    (conversation_id,),
+                ).fetchall()
+            ]
+            for assistant_id in assistant_ids:
+                conn.execute(
+                    "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
+                    (assistant_id,),
+                )
             conn.execute("DELETE FROM terminal_events WHERE conversation_id = ?", (conversation_id,))
             conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
             conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))

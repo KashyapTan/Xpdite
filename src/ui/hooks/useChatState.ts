@@ -31,6 +31,7 @@ interface UseChatStateReturn {
   
   // Actions
   setQuery: React.Dispatch<React.SetStateAction<string>>;
+  setChatHistory: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   setCanSubmit: (canSubmit: boolean) => void;
   setStatus: (status: string) => void;
   setError: (error: string) => void;
@@ -45,6 +46,7 @@ interface UseChatStateReturn {
   appendTerminalOutput: (requestId: string, text: string, raw?: boolean) => void;
   startQuery: (query: string) => void;
   completeResponse: (attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => void;
+  clearStreamingState: (status?: string) => void;
   resetForNewChat: () => void;
   loadConversation: (id: string, messages: ChatMessage[]) => void;
   setConversationId: (id: string | null) => void;
@@ -53,8 +55,6 @@ interface UseChatStateReturn {
   getSnapshot: () => ChatStateSnapshot;
   restoreSnapshot: (snapshot: ChatStateSnapshot) => void;
 }
-
-const DEFAULT_TOKEN_LIMIT = 128000;
 
 export function useChatState(): UseChatStateReturn {
   // UI State
@@ -206,29 +206,45 @@ export function useChatState(): UseChatStateReturn {
     contentBlocksRef.current = [];
   }, []);
 
+  const clearStreamingState = useCallback((nextStatus: string = 'Ready for follow-up question.') => {
+    setResponse('');
+    setThinking('');
+    setCurrentQuery('');
+    setIsThinking(false);
+    setToolCalls([]);
+    setContentBlocks([]);
+
+    currentQueryRef.current = '';
+    responseRef.current = '';
+    thinkingRef.current = '';
+    toolCallsRef.current = [];
+    contentBlocksRef.current = [];
+
+    setStatus(nextStatus);
+    setCanSubmit(true);
+  }, []);
+
   const completeResponse = useCallback((attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => {
     const completedQuery = currentQueryRef.current;
     const completedResponse = responseRef.current;
     const completedThinking = thinkingRef.current;
     const completedToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
     const completedContentBlocks = contentBlocksRef.current.length > 0 ? [...contentBlocksRef.current] : undefined;
+    const timestamp = Date.now();
+    const responseVersions = completedResponse || completedToolCalls
+      ? [{
+        responseIndex: 0,
+        content: completedResponse,
+        model,
+        timestamp,
+        contentBlocks: completedContentBlocks,
+      }]
+      : undefined;
 
     // Guard: if nothing was generated (cancelled before any output, or duplicate
     // response_complete), just reset state without adding empty messages.
     if (!completedResponse && !completedThinking && !completedToolCalls) {
-      setResponse('');
-      setThinking('');
-      setCurrentQuery('');
-      setIsThinking(false);
-      setToolCalls([]);
-      setContentBlocks([]);
-      currentQueryRef.current = '';
-      responseRef.current = '';
-      thinkingRef.current = '';
-      toolCallsRef.current = [];
-      contentBlocksRef.current = [];
-      setStatus('Ready');
-      setCanSubmit(true);
+      clearStreamingState('Ready');
       return;
     }
 
@@ -238,7 +254,8 @@ export function useChatState(): UseChatStateReturn {
       { 
         role: 'user', 
         content: completedQuery, 
-        images: attachedImages && attachedImages.length > 0 ? attachedImages : undefined 
+        images: attachedImages && attachedImages.length > 0 ? attachedImages : undefined,
+        timestamp,
       },
       { 
         role: 'assistant', 
@@ -246,27 +263,15 @@ export function useChatState(): UseChatStateReturn {
         thinking: completedThinking || undefined, 
         toolCalls: completedToolCalls,
         contentBlocks: completedContentBlocks,
-        model: model
+        model,
+        timestamp,
+        activeResponseIndex: 0,
+        responseVersions,
       }
     ]);
 
-    // Reset current state
-    setResponse('');
-    setThinking('');
-    setCurrentQuery('');
-    setToolCalls([]);
-    setContentBlocks([]);
-    
-    // Reset refs
-    currentQueryRef.current = '';
-    responseRef.current = '';
-    thinkingRef.current = '';
-    toolCallsRef.current = [];
-    contentBlocksRef.current = [];
-    
-    setStatus('Ready for follow-up question.');
-    setCanSubmit(true);
-  }, []);
+    clearStreamingState();
+  }, [clearStreamingState]);
 
   const resetForNewChat = useCallback(() => {
     setStatus('Context cleared. Ready for new conversation.');
@@ -373,6 +378,7 @@ export function useChatState(): UseChatStateReturn {
     
     // Actions
     setQuery,
+    setChatHistory,
     setCanSubmit,
     setStatus,
     setError,
@@ -387,6 +393,7 @@ export function useChatState(): UseChatStateReturn {
     appendTerminalOutput,
     startQuery,
     completeResponse,
+    clearStreamingState,
     resetForNewChat,
     loadConversation,
     setConversationId,

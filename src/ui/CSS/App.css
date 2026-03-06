@@ -13,8 +13,8 @@ body {
   overflow: hidden;
   background-color: transparent;
   scroll-behavior: smooth;
-  -webkit-user-select: none;
-  user-select: none;
+  /* -webkit-user-select: none; */
+  /* user-select: none; */
 }
 
 /* Global scrollbar styling for internal overflowing elements (like code blocks) */
@@ -34,9 +34,6 @@ html::-webkit-scrollbar {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-user-drag: none;
 }
 
 /* Allow text selection in inputs and textareas */
@@ -200,7 +197,8 @@ textarea,
   /* Allow text selection in the response area */
   user-select: text;
   -webkit-user-select: text;
-  padding: 0.5rem 1.5rem;
+  margin-left: 10px;
+  margin-right: 10px;
   width: 100%;
 }
 
@@ -209,13 +207,14 @@ textarea,
 }
 
 .response pre {
-  padding: 0.5em;
+  margin-right: 20px;
   border-radius: 5px;
   overflow-x: auto;
+  
 }
 
 .response code {
-  font-family: 'Courier New', Courier, monospace;
+  font-family: 'fira code', 'courier new', monospace;
   background-color: rgba(255, 255, 255, 0.2);
   padding: 1px 1px;
   border-radius: 3px;
@@ -241,6 +240,8 @@ textarea,
   border: none;
   padding: 1rem 1.5rem;
   width: 100%;
+  margin-left: 10px;
+  margin-right: 10px;
 }
 
 .status {
@@ -772,6 +773,151 @@ textarea,
 .query p {
   margin-top: 0.25rem;
   margin-bottom: 0;
+}
+
+.message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.message-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+}
+
+.message-footer {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.48);
+  background: transparent;
+}
+
+.message-footer-user {
+  justify-content: flex-end;
+  margin-right: 5px;
+}
+
+.message-footer-assistant {
+  justify-content: flex-start;
+  margin-left: 20px;
+}
+
+.message-footer-button {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+}
+
+.message-footer-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.28);
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.message-footer-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
+.message-footer-button svg {
+  width: 13px;
+  height: 13px;
+}
+
+.message-timestamp {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.42);
+  min-width: max-content;
+}
+
+.message-response-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: 0.15rem;
+}
+
+.message-response-index {
+  min-width: max-content;
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.message-edit-container {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.message-edit-input {
+  width: 100%;
+  min-height: 86px;
+  resize: vertical;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(255, 255, 255, 0.94);
+  padding: 0.75rem 0.9rem;
+  font: inherit;
+  line-height: 1.5;
+}
+
+.message-edit-input:focus {
+  outline: none;
+  border-color: rgba(100, 140, 255, 0.55);
+  box-shadow: 0 0 0 2px rgba(100, 140, 255, 0.16);
+}
+
+.message-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.message-edit-button {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.86);
+  padding: 0.38rem 0.8rem;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font: inherit;
+  font-size: 0.8rem;
+}
+
+.message-edit-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.message-edit-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.message-edit-save {
+  background: rgba(100, 140, 255, 0.16);
+  border-color: rgba(100, 140, 255, 0.32);
+}
+
+.message-edit-save:hover:not(:disabled) {
+  background: rgba(100, 140, 255, 0.24);
+  border-color: rgba(100, 140, 255, 0.45);
 }
 
 /* Image chips on user messages in chat history */

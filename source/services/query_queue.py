@@ -39,6 +39,8 @@ class QueuedQuery:
     conversation_id: Optional[str] = None
     forced_skills: list = field(default_factory=list)  # List[Skill] at runtime
     llm_query: Optional[str] = None
+    action: str = "submit"
+    target_message_id: Optional[str] = None
 
 
 class ConversationQueue:

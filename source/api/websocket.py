@@ -25,6 +25,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
     Client -> Server messages (JSON):
       - submit_query: Submit a query with optional capture mode
+      - retry_message: Retry a saved user/assistant turn by message_id
+      - edit_message: Edit a saved user message and resubmit that turn
+      - set_active_response: Switch the active assistant response variant
       - clear_context: Clear screenshots and chat history
       - remove_screenshot: Remove specific screenshot from context
       - set_capture_mode: Set capture mode (fullscreen/precision/none)
@@ -76,7 +79,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - tool_calls_summary: Summary of all tool calls
       - token_usage: Token usage statistics
       - context_cleared: Context was cleared
-      - conversation_saved: Conversation was saved
+      - conversation_saved: Conversation was saved (includes turn metadata for patching)
       - conversations_list: List of conversations
       - conversation_loaded: Conversation content loaded
       - conversation_deleted: Conversation was deleted

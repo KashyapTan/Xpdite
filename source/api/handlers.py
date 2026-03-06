@@ -145,6 +145,162 @@ class MessageHandler:
         except QueueFullError:
             await broadcast_to_tab(tab_id, "queue_full", {"tab_id": tab_id})
 
+    async def _enqueue_turn_action(self, data: Dict[str, Any], action: str) -> None:
+        from ..services.query_queue import QueuedQuery, QueueFullError
+
+        tab_id = self._get_tab_id(data)
+        message_id = str(data.get("message_id", "")).strip()
+        model = str(data.get("model", "")).strip()
+
+        if model:
+            app_state.selected_model = model
+
+        if not message_id:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "Missing message_id for retry/edit action.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        target_message = db.get_message_by_id(message_id)
+        if target_message is None:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "The selected message could not be found.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        turn_messages = db.get_turn_messages(
+            target_message["conversation_id"], target_message["turn_id"]
+        )
+        user_message = next((msg for msg in turn_messages if msg["role"] == "user"), None)
+        assistant_message = next(
+            (msg for msg in turn_messages if msg["role"] == "assistant"), None
+        )
+        if user_message is None or assistant_message is None:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "The selected turn is incomplete and cannot be regenerated.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        if action == "edit":
+            if target_message["role"] != "user":
+                await self.websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "content": "Only user messages can be edited.",
+                            "tab_id": tab_id,
+                        }
+                    )
+                )
+                return
+            query_text = str(data.get("content", "")).strip()
+        else:
+            query_text = str(user_message["content"]).strip()
+
+        if not query_text:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "Empty query",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(
+            query_text
+        )
+        llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
+
+        session = self._get_tab_manager().get_or_create(tab_id)
+        session.queue.resolved_conversation_id = target_message["conversation_id"]
+        queued = QueuedQuery(
+            tab_id=tab_id,
+            content=query_text,
+            model=model or assistant_message.get("model") or app_state.selected_model,
+            capture_mode="none",
+            forced_skills=forced_skills,
+            llm_query=llm_query,
+            action=action,
+            target_message_id=message_id,
+        )
+
+        try:
+            await session.queue.enqueue(queued)
+        except QueueFullError:
+            await broadcast_to_tab(tab_id, "queue_full", {"tab_id": tab_id})
+
+    async def _handle_retry_message(self, data: Dict[str, Any]):
+        """Handle retrying an existing turn."""
+        await self._enqueue_turn_action(data, "retry")
+
+    async def _handle_edit_message(self, data: Dict[str, Any]):
+        """Handle editing and resubmitting an existing user turn."""
+        await self._enqueue_turn_action(data, "edit")
+
+    async def _handle_set_active_response(self, data: Dict[str, Any]):
+        """Handle switching between stored assistant response variants."""
+        tab_id = self._get_tab_id(data)
+        message_id = str(data.get("message_id", "")).strip()
+        raw_index = data.get("response_index", 0)
+
+        try:
+            response_index = int(raw_index)
+        except (TypeError, ValueError):
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "Invalid response_index value.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        if response_index < 0 or not message_id:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "Missing or invalid active response selection.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
+        session = self._get_tab_manager().get_or_create(tab_id)
+        token = set_current_tab_id(tab_id)
+        try:
+            ConversationService.set_active_response_variant(
+                message_id, response_index, tab_state=session.state
+            )
+        except ValueError as exc:
+            await broadcast_to_tab(tab_id, "error", str(exc))
+        finally:
+            set_current_tab_id(None)
+
     # ── Stop / cancel ─────────────────────────────────────────────
 
     async def _handle_stop_streaming(self, data: Dict[str, Any]):

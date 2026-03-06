@@ -51,6 +51,14 @@ export interface MessageImage {
   thumbnail: string;
 }
 
+export interface ResponseVariant {
+  responseIndex: number;
+  content: string;
+  model?: string;
+  timestamp: number;
+  contentBlocks?: ContentBlock[];
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -60,6 +68,11 @@ export interface ChatMessage {
   /** Interleaved text + tool_call blocks (preferred over toolCalls for rendering) */
   contentBlocks?: ContentBlock[];
   model?: string;
+  messageId?: string;
+  turnId?: string;
+  timestamp?: number;
+  activeResponseIndex?: number;
+  responseVersions?: ResponseVariant[];
 }
 
 // ============================================
@@ -175,23 +188,68 @@ export interface ScreenshotRemovedContent {
 
 export interface ConversationSavedContent {
   conversation_id: string;
+  operation?: 'submit' | 'retry' | 'edit';
+  truncate_after_turn?: boolean;
+  turn?: ConversationTurnPayload;
+}
+
+export interface ConversationContentBlockPayload {
+  type: string;
+  content?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+  server?: string;
+  result?: string;
+  request_id?: string;
+  requestId?: string;
+  command?: string;
+  cwd?: string;
+  status?: string;
+  output?: string;
+  output_chunks?: Array<{ text: string; raw: boolean }>;
+  outputChunks?: Array<{ text: string; raw: boolean }>;
+  is_pty?: boolean;
+  isPty?: boolean;
+  exit_code?: number;
+  exitCode?: number;
+  duration_ms?: number;
+  durationMs?: number;
+  timed_out?: boolean;
+  timedOut?: boolean;
+}
+
+export type ConversationImagePayload = { name: string; thumbnail: string | null } | string;
+
+export interface ConversationResponseVariantPayload {
+  response_index: number;
+  content: string;
+  model?: string;
+  timestamp: number;
+  content_blocks?: ConversationContentBlockPayload[];
+}
+
+export interface ConversationMessagePayload {
+  message_id: string;
+  turn_id: string;
+  role: string;
+  content: string;
+  timestamp: number;
+  images?: ConversationImagePayload[];
+  model?: string;
+  content_blocks?: ConversationContentBlockPayload[];
+  active_response_index?: number;
+  response_variants?: ConversationResponseVariantPayload[];
+}
+
+export interface ConversationTurnPayload {
+  turn_id: string;
+  user: ConversationMessagePayload;
+  assistant?: ConversationMessagePayload;
 }
 
 export interface ConversationResumedContent {
   conversation_id: string;
-  messages: Array<{
-    role: string;
-    content: string;
-    images?: Array<{ name: string; thumbnail: string }>;
-    model?: string;
-    content_blocks?: Array<{
-      type: string;
-      content?: string;
-      name?: string;
-      args?: Record<string, unknown>;
-      server?: string;
-    }>;
-  }>;
+  messages: ConversationMessagePayload[];
   token_usage?: {
     total: number;
     input: number;

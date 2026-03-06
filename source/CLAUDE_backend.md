@@ -83,7 +83,8 @@ source/
 | Table | Key Columns | Notes |
 |---|---|---|
 | `conversations` | `id` (UUID), `title`, `created_at`, `updated_at`, `total_input_tokens`, `total_output_tokens` | Sort sidebar by `updated_at`; indexed on `updated_at DESC` |
-| `messages` | `num_messages` (autoincrement PK), `conversation_id` (NOT NULL), `role` (NOT NULL), `content`, `images` (JSON), `model`, `content_blocks` (JSON) | `images` is a JSON-serialized list of file paths; indexed on `(conversation_id, created_at)` |
+| `messages` | `num_messages` (autoincrement PK), `conversation_id` (NOT NULL), `role` (NOT NULL), `content`, `images` (JSON), `model`, `content_blocks` (JSON), `message_id`, `turn_id`, `active_response_index` | `message_id` is the stable per-message identifier used by retry/edit flows; `turn_id` groups a user + assistant pair; indexed on `(conversation_id, created_at)` |
+| `message_response_versions` | `message_id`, `version_index`, `content`, `content_blocks`, `model` | Stores alternate assistant responses for the same turn; `messages.active_response_index` points at the visible variant |
 | `settings` | `key`, `value` | Key-value store for all user preferences |
 | `terminal_events` | `id`, `conversation_id` (NOT NULL), `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands; indexed on `(conversation_id, created_at)` |
 | `meeting_recordings` | `id`, `title`, `started_at`, `ended_at`, `duration_seconds`, `status`, ... | Indexed on `started_at DESC` |
@@ -103,6 +104,9 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `type` | Key fields | Handler |
 |---|---|---|
 | `submit_query` | `content`, `capture_mode`, `model`, `tab_id` | `_handle_submit_query` |
+| `retry_message` | `message_id`, `tab_id` | `_handle_retry_message` |
+| `edit_message` | `message_id`, `content`, `tab_id` | `_handle_edit_message` |
+| `set_active_response` | `message_id`, `response_index`, `tab_id` | `_handle_set_active_response` |
 | `clear_context` | `tab_id` | `_handle_clear_context` |
 | `remove_screenshot` | `id` | `_handle_remove_screenshot` |
 | `set_capture_mode` | `mode` (`fullscreen`/`precision`/`none`) | `_handle_set_capture_mode` |
@@ -135,7 +139,7 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `query` | Echo of submitted query |
 | `token_usage` | After response completes |
 | `context_cleared` | After `clear_context` completes |
-| `conversation_saved` / `conversations_list` / `conversation_loaded` / `conversation_deleted` / `conversation_resumed` | Conversation management |
+| `conversation_saved` / `conversations_list` / `conversation_loaded` / `conversation_deleted` / `conversation_resumed` | Conversation management (`conversation_saved` now includes the persisted turn payload used to reconcile retry/edit results on the frontend) |
 | `screenshot_ready` | Legacy — kept for backwards compatibility |
 | `transcription_result` | After `stop_recording` completes |
 | `terminal_approval_request` | Command needs user approval (includes `request_id`, `command`, `cwd`) |

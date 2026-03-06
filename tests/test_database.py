@@ -81,6 +81,130 @@ class TestMessages:
         assert msgs == []
 
 
+class TestTurnVersioning:
+    def _seed_turn(self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"):
+        user_message = db_manager.add_message(conversation_id, "user", user_content)
+        assistant_message = db_manager.add_message(
+            conversation_id,
+            "assistant",
+            assistant_content,
+            model="model-a",
+            content_blocks=[{"type": "text", "content": assistant_content}],
+            turn_id=user_message["turn_id"],
+        )
+        db_manager.save_response_version(
+            conversation_id,
+            assistant_message["message_id"],
+            assistant_content,
+            model="model-a",
+            content_blocks=[{"type": "text", "content": assistant_content}],
+            created_at=assistant_message["timestamp"],
+            replace_history=True,
+        )
+        return user_message, assistant_message
+
+    def test_add_message_assigns_stable_ids_and_turns(self, db_manager):
+        cid = db_manager.start_new_conversation("Turn IDs")
+        user_message, assistant_message = self._seed_turn(db_manager, cid)
+
+        messages = db_manager.get_full_conversation(cid)
+        assert messages[0]["message_id"] == user_message["message_id"]
+        assert messages[1]["message_id"] == assistant_message["message_id"]
+        assert messages[0]["turn_id"] == messages[1]["turn_id"]
+        assert messages[1]["active_response_index"] == 0
+        assert len(messages[1]["response_variants"]) == 1
+
+    def test_save_response_version_tracks_multiple_variants(self, db_manager):
+        cid = db_manager.start_new_conversation("Variants")
+        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="First answer")
+
+        saved = db_manager.save_response_version(
+            cid,
+            assistant_message["message_id"],
+            "Second answer",
+            model="model-b",
+            content_blocks=[{"type": "text", "content": "Second answer"}],
+        )
+
+        messages = db_manager.get_full_conversation(cid)
+        assistant = messages[1]
+        assert saved["response_index"] == 1
+        assert assistant["content"] == "Second answer"
+        assert assistant["active_response_index"] == 1
+        assert [variant["content"] for variant in assistant["response_variants"]] == [
+            "First answer",
+            "Second answer",
+        ]
+
+    def test_set_active_response_version_switches_visible_response(self, db_manager):
+        cid = db_manager.start_new_conversation("Switch variant")
+        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="Original")
+        db_manager.save_response_version(
+            cid,
+            assistant_message["message_id"],
+            "Alternate",
+            model="model-b",
+            content_blocks=[{"type": "text", "content": "Alternate"}],
+        )
+
+        updated = db_manager.set_active_response_version(
+            cid, assistant_message["message_id"], 0
+        )
+
+        assert updated is not None
+        assert updated["content"] == "Original"
+        assert updated["active_response_index"] == 0
+
+    def test_set_active_response_version_rejects_negative_index(self, db_manager):
+        cid = db_manager.start_new_conversation("Invalid variant")
+        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="Original")
+
+        with pytest.raises(ValueError, match="non-negative"):
+            db_manager.set_active_response_version(
+                cid, assistant_message["message_id"], -1
+            )
+
+    def test_truncate_conversation_after_turn_removes_later_turns(self, db_manager):
+        cid = db_manager.start_new_conversation("Truncate")
+        first_user, first_assistant = self._seed_turn(
+            db_manager, cid, user_content="First", assistant_content="First reply"
+        )
+        self._seed_turn(
+            db_manager, cid, user_content="Second", assistant_content="Second reply"
+        )
+        db_manager.save_response_version(
+            cid,
+            first_assistant["message_id"],
+            "First alternate",
+            model="model-c",
+            content_blocks=[{"type": "text", "content": "First alternate"}],
+        )
+
+        db_manager.truncate_conversation_after_turn(cid, first_user["turn_id"])
+
+        messages = db_manager.get_full_conversation(cid)
+        assert len(messages) == 2
+        assert [message["content"] for message in messages] == ["First", "First alternate"]
+        assert len(messages[1]["response_variants"]) == 2
+
+    def test_update_user_message_scopes_to_conversation(self, db_manager):
+        first_conversation = db_manager.start_new_conversation("First chat")
+        second_conversation = db_manager.start_new_conversation("Second chat")
+        user_message = db_manager.add_message(first_conversation, "user", "Original")
+
+        updated = db_manager.update_user_message(
+            second_conversation,
+            user_message["message_id"],
+            "Edited elsewhere",
+        )
+
+        assert updated is None
+        assert (
+            db_manager.get_message_by_id(user_message["message_id"])["content"]
+            == "Original"
+        )
+
+
 # ------------------------------------------------------------------
 # Token usage
 # ------------------------------------------------------------------

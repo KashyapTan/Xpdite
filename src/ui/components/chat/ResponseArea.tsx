@@ -13,7 +13,6 @@ import type { ChatMessage as ChatMessageType, ContentBlock } from '../../types';
 interface ResponseAreaProps {
   chatHistory: ChatMessageType[];
   currentQuery: string;
-  response: string;
   thinking: string;
   isThinking: boolean;
   thinkingCollapsed: boolean;
@@ -22,6 +21,9 @@ interface ResponseAreaProps {
   canSubmit: boolean;
   error: string;
   showScrollBottom: boolean;
+  onRetryMessage: (message: ChatMessageType) => void;
+  onEditMessage: (message: ChatMessageType, content: string) => void;
+  onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
   onToggleThinking: () => void;
   onScroll: () => void;
   onScrollToBottom: () => void;
@@ -38,7 +40,6 @@ interface ResponseAreaProps {
 export function ResponseArea({
   chatHistory,
   currentQuery,
-  response: _response,
   thinking,
   isThinking,
   thinkingCollapsed,
@@ -47,6 +48,9 @@ export function ResponseArea({
   canSubmit,
   error,
   showScrollBottom,
+  onRetryMessage,
+  onEditMessage,
+  onSetActiveResponse,
   onToggleThinking,
   onScroll,
   onScrollToBottom,
@@ -72,7 +76,15 @@ export function ResponseArea({
         {/* Chat history */}
         {!error &&
           chatHistory.map((msg, idx) => (
-            <ChatMessage key={idx} message={msg} selectedModel={generatingModel} />
+            <ChatMessage
+              key={msg.messageId ?? `${msg.role}-${idx}`}
+              message={msg}
+              selectedModel={generatingModel}
+              actionsDisabled={!canSubmit}
+              onRetryMessage={onRetryMessage}
+              onEditMessage={onEditMessage}
+              onSetActiveResponse={onSetActiveResponse}
+            />
           ))}
 
         {/* Current query being processed */}

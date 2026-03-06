@@ -8,6 +8,7 @@ import os
 import copy
 import json
 import logging
+import uuid
 from typing import Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,145 @@ class ConversationService:
         return await run_in_thread(_extract_skill_slash_commands_sync, message)
 
     @staticmethod
+    def _conversation_title(text: str) -> str:
+        return text[:50] + ("..." if len(text) > 50 else "")
+
+    @staticmethod
+    async def _hydrate_message_images(message: Dict[str, Any]) -> Dict[str, Any]:
+        hydrated_message = copy.deepcopy(message)
+        images = hydrated_message.get("images")
+        if not images or not all(isinstance(image, str) for image in images):
+            return hydrated_message
+
+        from ..ss import create_thumbnail
+
+        thumbnails = []
+        for image_path in images:
+            thumbnail = None
+            if os.path.exists(image_path):
+                thumbnail = await run_in_thread(create_thumbnail, image_path)
+
+            thumbnails.append(
+                {
+                    "name": os.path.basename(image_path),
+                    "thumbnail": thumbnail,
+                }
+            )
+
+        hydrated_message["images"] = thumbnails
+        return hydrated_message
+
+    @staticmethod
+    async def _hydrate_messages_for_frontend(
+        messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        return [
+            await ConversationService._hydrate_message_images(message)
+            for message in messages
+        ]
+
+    @staticmethod
+    async def _hydrate_turn_payload(
+        turn: Dict[str, Any] | None,
+    ) -> Dict[str, Any] | None:
+        if turn is None:
+            return None
+
+        hydrated_turn = {
+            "turn_id": turn["turn_id"],
+            "user": await ConversationService._hydrate_message_images(turn["user"]),
+        }
+        if turn.get("assistant") is not None:
+            hydrated_turn["assistant"] = await ConversationService._hydrate_message_images(
+                turn["assistant"]
+            )
+        return hydrated_turn
+
+    @staticmethod
+    def _set_chat_history(
+        conversation_id: str, tab_state: Optional["TabState"] = None
+    ) -> None:
+        history = db.get_active_chat_history(conversation_id)
+        if tab_state is not None:
+            tab_state.chat_history = history
+        else:
+            app_state.chat_history = history
+
+    @staticmethod
+    def _build_content_blocks_data(
+        response_text: str,
+        tool_calls: List[Dict[str, Any]],
+        interleaved_blocks_from_llm: Optional[List[Dict[str, Any]]],
+        *,
+        interrupted: bool = False,
+    ) -> List[Dict[str, Any]] | None:
+        if interleaved_blocks_from_llm:
+            blocks = [
+                {k: v for k, v in block.items() if k != "result"}
+                for block in interleaved_blocks_from_llm
+            ]
+            if interrupted:
+                blocks.append({"type": "text", "content": "\n\n[Response interrupted]"})
+            return blocks
+
+        if not tool_calls:
+            return None
+
+        blocks = [
+            {
+                "type": "tool_call",
+                "name": tc["name"],
+                "args": tc.get("args", {}),
+                "server": tc.get("server", ""),
+            }
+            for tc in tool_calls
+        ]
+        if response_text.strip():
+            blocks.append({"type": "text", "content": response_text})
+        return blocks
+
+    @staticmethod
+    def _resolve_turn_context(target_message_id: str) -> Dict[str, Any]:
+        target_message = db.get_message_by_id(target_message_id)
+        if target_message is None:
+            raise ValueError("Selected message could not be found.")
+
+        conversation_id = target_message["conversation_id"]
+        turn_id = target_message["turn_id"]
+        turn_messages = db.get_turn_messages(conversation_id, turn_id)
+        user_message = next((msg for msg in turn_messages if msg["role"] == "user"), None)
+        assistant_message = next(
+            (msg for msg in turn_messages if msg["role"] == "assistant"), None
+        )
+        if user_message is None:
+            raise ValueError("Selected turn does not have a user message.")
+        if assistant_message is None:
+            raise ValueError("Selected turn does not have an assistant response yet.")
+
+        history_before_turn: List[Dict[str, Any]] = []
+        for message in db.get_full_conversation(conversation_id):
+            if message.get("turn_id") == turn_id:
+                break
+            entry: Dict[str, Any] = {
+                "role": message["role"],
+                "content": message["content"],
+            }
+            if message.get("images"):
+                entry["images"] = message["images"]
+            if message.get("model"):
+                entry["model"] = message["model"]
+            history_before_turn.append(entry)
+
+        return {
+            "conversation_id": conversation_id,
+            "turn_id": turn_id,
+            "user_message": user_message,
+            "assistant_message": assistant_message,
+            "history_before_turn": history_before_turn,
+            "image_paths": user_message.get("images", []),
+        }
+
+    @staticmethod
     async def clear_context(tab_state: Optional["TabState"] = None):
         """Clear screenshots and chat history for a fresh start.
 
@@ -98,7 +238,6 @@ class ConversationService:
             app_state.chat_history = []
             app_state.conversation_id = None
 
-        # Reset terminal service state (ends session mode, clears tracking)
         terminal_service.reset()
 
         logger.info("Context cleared: screenshots and chat history reset")
@@ -113,7 +252,6 @@ class ConversationService:
         If *tab_state* is provided, loads into per-tab state.
         """
         from .terminal import terminal_service
-        from ..ss import create_thumbnail
 
         # Resolve state target
         chat_history_target = tab_state.chat_history if tab_state else app_state.chat_history
@@ -126,32 +264,22 @@ class ConversationService:
             await ScreenshotHandler.clear_screenshots()
 
         # Load conversation from database
-        messages = db.get_full_conversation(conversation_id)
+        raw_messages = db.get_full_conversation(conversation_id)
+        messages = await ConversationService._hydrate_messages_for_frontend(
+            copy.deepcopy(raw_messages)
+        )
         if tab_state is not None:
             tab_state.conversation_id = conversation_id
         else:
             app_state.conversation_id = conversation_id
 
         # Rebuild in-memory chat history
-        for msg in messages:
+        for msg in raw_messages:
             entry = {"role": msg["role"], "content": msg["content"]}
             if msg.get("model"):
                 entry["model"] = msg["model"]
             if msg.get("images"):
                 entry["images"] = msg["images"]
-                # Generate thumbnails for frontend (blocking I/O via run_in_thread)
-                thumbnails = []
-                for img_path in msg["images"]:
-                    if os.path.exists(img_path):
-                        thumb = await run_in_thread(create_thumbnail, img_path)
-                        thumbnails.append(
-                            {"name": os.path.basename(img_path), "thumbnail": thumb}
-                        )
-                    else:
-                        thumbnails.append(
-                            {"name": os.path.basename(img_path), "thumbnail": None}
-                        )
-                msg["images"] = thumbnails
             chat_history_target.append(entry)
 
         chat_history_len = len(tab_state.chat_history) if tab_state else len(app_state.chat_history)
@@ -182,6 +310,8 @@ class ConversationService:
         tab_state: Optional["TabState"] = None,
         queue: Optional["ConversationQueue"] = None,
         model: Optional[str] = None,
+        action: str = "submit",
+        target_message_id: Optional[str] = None,
     ) -> Optional[str]:
         """
         Handle query submission from a client.
@@ -194,15 +324,25 @@ class ConversationService:
             tab_state: Per-tab state container. Falls back to app_state if None.
             queue: The ConversationQueue managing this request (for registering ctx).
             model: Explicit model override (e.g. from queued query).
+            action: 'submit' for new turns, 'retry' to regenerate, 'edit' to edit an earlier turn.
+            target_message_id: Stable message identifier for retry/edit actions.
 
         Returns:
             The conversation_id (str) or None on failure.
         """
 
-        # ── Resolve state targets ─────────────────────────────────────
-        _chat_history = tab_state.chat_history if tab_state else app_state.chat_history
-        _get_conv_id: Callable[[], Optional[str]] = lambda: tab_state.conversation_id if tab_state else app_state.conversation_id
-        _set_conv_id = lambda v: (setattr(tab_state, "conversation_id", v) if tab_state else setattr(app_state, "conversation_id", v))
+        if action not in {"submit", "retry", "edit"}:
+            await broadcast_message("error", f"Unsupported conversation action: {action}")
+            return None
+
+        _get_conv_id: Callable[[], Optional[str]] = lambda: (
+            tab_state.conversation_id if tab_state else app_state.conversation_id
+        )
+        _set_conv_id = lambda v: (
+            setattr(tab_state, "conversation_id", v)
+            if tab_state
+            else setattr(app_state, "conversation_id", v)
+        )
 
         def _require_conv_id() -> str:
             """Return conversation_id or raise — used after we know it's been set."""
@@ -216,8 +356,8 @@ class ConversationService:
         current_model = model or app_state.selected_model
 
         logger.debug(
-            "submit_query: model=%s, capture_mode=%s, screenshots=%d",
-            current_model, capture_mode, len(_screenshot_list)
+            "submit_query: action=%s, model=%s, capture_mode=%s, screenshots=%d",
+            action, current_model, capture_mode, len(_screenshot_list)
         )
 
         # ── Request lifecycle: create context ─────────────────────────
@@ -246,220 +386,182 @@ class ConversationService:
         if queue is not None:
             queue.set_active_ctx(ctx)
 
+        turn_context: Dict[str, Any] | None = None
+        should_clear_screenshots = action == "submit"
+
         try:
             # NOTE: Fullscreen auto-capture is now done in the handler
             # (_handle_submit_query) BEFORE enqueuing, so screenshots are
             # taken immediately without being blocked by the Ollama queue.
-
-            # Get image paths
-            if tab_state:
-                image_paths = tab_state.get_image_paths()
+            if action == "submit":
+                if tab_state:
+                    image_paths = tab_state.get_image_paths()
+                    history_for_llm = copy.deepcopy(tab_state.chat_history)
+                else:
+                    image_paths = app_state.get_image_paths()
+                    history_for_llm = copy.deepcopy(app_state.chat_history)
+                display_query = user_query
             else:
-                image_paths = app_state.get_image_paths()
+                if not target_message_id:
+                    await broadcast_message(
+                        "error", "Retry/edit actions require a target message."
+                    )
+                    return None
+                try:
+                    turn_context = ConversationService._resolve_turn_context(
+                        target_message_id
+                    )
+                except ValueError as exc:
+                    await broadcast_message("error", str(exc))
+                    return None
 
-            # Echo query to clients
-            await broadcast_message("query", user_query)
+                _set_conv_id(turn_context["conversation_id"])
+                history_for_llm = copy.deepcopy(turn_context["history_before_turn"])
+                image_paths = turn_context["image_paths"]
+                display_query = (
+                    turn_context["user_message"]["content"]
+                    if action == "retry"
+                    else user_query
+                )
 
-            # Stream the response — use cleaned query (without slash commands) for the LLM
-            query_for_llm = llm_query if llm_query else user_query
+            query_for_llm = llm_query if llm_query else display_query
+
+            await broadcast_message("query", display_query)
+
             response_text, token_stats, tool_calls, interleaved_blocks_from_llm = await route_chat(
                 current_model,
                 query_for_llm,
                 image_paths,
-                copy.deepcopy(_chat_history),
+                history_for_llm,
                 forced_skills=ctx.forced_skills,
             )
 
-            # Check if request was cancelled during route_chat
-            if ctx.cancelled:
-                # ── Save interrupted conversation ────────────────────
-                if _get_conv_id() is None:
-                    title = user_query[:50] + ("..." if len(user_query) > 50 else "")
-                    _set_conv_id(db.start_new_conversation(title))
-                    logger.info("Created conversation (interrupted): %s", _require_conv_id())
-
-                    from .terminal import terminal_service
-                    terminal_service.flush_pending_events(_require_conv_id())
-
-                # Persist any token usage that was collected
-                input_tokens = token_stats.get("prompt_eval_count", 0)
-                output_tokens = token_stats.get("eval_count", 0)
-                if input_tokens or output_tokens:
-                    try:
-                        db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)
-                    except Exception as e:
-                        logger.error("Error saving token usage (interrupted): %s", e)
-
-                # Broadcast tool calls summary if any ran before interruption
-                if tool_calls:
-                    await broadcast_message("tool_calls_summary", json.dumps(tool_calls))
-
-                # Build interrupted assistant text
+            interrupted = ctx.cancelled
+            if interrupted:
                 if response_text.strip():
-                    interrupted_text = response_text + "\n\n[Response interrupted]"
+                    response_text = response_text + "\n\n[Response interrupted]"
                 else:
-                    interrupted_text = "[Response interrupted]"
+                    response_text = "[Response interrupted]"
 
-                # Build content_blocks (mirrors the normal path)
-                content_blocks_data: List[Dict] | None = None
-                if interleaved_blocks_from_llm:
-                    content_blocks_data = [
-                        {k: v for k, v in block.items() if k != "result"}
-                        for block in interleaved_blocks_from_llm
-                    ]
-                elif tool_calls:
-                    content_blocks_data = [
-                        {
-                            "type": "tool_call",
-                            "name": tc["name"],
-                            "args": tc.get("args", {}),
-                            "server": tc.get("server", ""),
-                        }
-                        for tc in tool_calls
-                    ]
-                    if response_text.strip():
-                        content_blocks_data.append(
-                            {"type": "text", "content": response_text}
-                        )
-
-                # Add to in-memory chat history
-                user_msg: Dict[str, Any] = {"role": "user", "content": user_query}
-                if image_paths:
-                    user_msg["images"] = image_paths
-                _chat_history.append(user_msg)
-
-                assistant_msg: Dict[str, Any] = {
-                    "role": "assistant",
-                    "content": interrupted_text,
-                    "model": current_model,
-                }
-                if tool_calls:
-                    assistant_msg["tool_calls"] = tool_calls
-                _chat_history.append(assistant_msg)
-
-                # Persist to database
-                db.add_message(
-                    _require_conv_id(),
-                    "user",
-                    user_query,
-                    image_paths if image_paths else None,
-                )
-                db.add_message(
-                    _require_conv_id(),
-                    "assistant",
-                    interrupted_text,
-                    model=current_model,
-                    content_blocks=content_blocks_data,
-                )
-
-                await broadcast_message(
-                    "conversation_saved",
-                    json.dumps({"conversation_id": _require_conv_id()}),
-                )
-
-                logger.info("Saved interrupted conversation: %s", _require_conv_id())
-
-                return _require_conv_id()
-
-            # 1. Create conversation entry if it doesn't exist
             if _get_conv_id() is None:
-                title = user_query[:50] + ("..." if len(user_query) > 50 else "")
-                _set_conv_id(db.start_new_conversation(title))
+                _set_conv_id(db.start_new_conversation(ConversationService._conversation_title(display_query)))
                 logger.info("Created conversation: %s", _require_conv_id())
 
-                # Flush any terminal events that were queued before conversation existed
                 from .terminal import terminal_service
+
                 terminal_service.flush_pending_events(_require_conv_id())
 
-            # Persist token usage
             input_tokens = token_stats.get("prompt_eval_count", 0)
             output_tokens = token_stats.get("eval_count", 0)
             if input_tokens or output_tokens:
                 try:
                     db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)
-                except Exception as e:
-                    logger.error("Error saving token usage: %s", e)
+                except Exception as exc:
+                    logger.error("Error saving token usage: %s", exc)
 
-            # Broadcast tool calls summary
             if tool_calls:
                 await broadcast_message("tool_calls_summary", json.dumps(tool_calls))
 
-            # Add to chat history
-            user_msg: Dict[str, Any] = {"role": "user", "content": user_query}
-            if image_paths:
-                user_msg["images"] = image_paths
-            _chat_history.append(user_msg)
-
-            if response_text.strip():
-                assistant_msg: Dict[str, Any] = {
-                    "role": "assistant",
-                    "content": response_text,
-                    "model": current_model,
-                }
-                if tool_calls:
-                    assistant_msg["tool_calls"] = tool_calls
-                _chat_history.append(assistant_msg)
-            elif tool_calls:
-                fallback_text = (
-                    "[Tool calls completed but model returned empty response]"
-                )
-                assistant_msg = {
-                    "role": "assistant",
-                    "content": fallback_text,
-                    "model": current_model,
-                    "tool_calls": tool_calls,
-                }
-                _chat_history.append(assistant_msg)
-                response_text = fallback_text
+            if not response_text.strip() and tool_calls:
+                response_text = "[Tool calls completed but model returned empty response]"
                 logger.warning(
                     "Empty response after tool calls — saved fallback message"
                 )
 
-            # Persist to database
-            db.add_message(
-                _require_conv_id(),
-                "user",
-                user_query,
-                image_paths if image_paths else None,
+            content_blocks_data = ConversationService._build_content_blocks_data(
+                response_text,
+                tool_calls,
+                interleaved_blocks_from_llm,
+                interrupted=interrupted,
             )
-            if response_text.strip() or tool_calls:
-                content_blocks_data: List[Dict] | None = None
-                if interleaved_blocks_from_llm:
-                    content_blocks_data = [
-                        {k: v for k, v in block.items() if k != "result"}
-                        for block in interleaved_blocks_from_llm
-                    ]
-                elif tool_calls:
-                    content_blocks_data = [
-                        {
-                            "type": "tool_call",
-                            "name": tc["name"],
-                            "args": tc.get("args", {}),
-                            "server": tc.get("server", ""),
-                        }
-                        for tc in tool_calls
-                    ]
-                    if response_text.strip():
-                        content_blocks_data.append(
-                            {"type": "text", "content": response_text}
-                        )
 
-                save_text = response_text if response_text.strip() else "[Tool calls completed]"
+            saved_turn: Dict[str, Any] | None = None
+
+            if action == "submit":
+                turn_id = str(uuid.uuid4())
                 db.add_message(
                     _require_conv_id(),
-                    "assistant",
+                    "user",
+                    display_query,
+                    image_paths if image_paths else None,
+                    turn_id=turn_id,
+                )
+
+                if response_text.strip() or tool_calls:
+                    save_text = response_text if response_text.strip() else "[Tool calls completed]"
+                    assistant_message = db.add_message(
+                        _require_conv_id(),
+                        "assistant",
+                        save_text,
+                        model=current_model,
+                        content_blocks=content_blocks_data,
+                        turn_id=turn_id,
+                    )
+                    db.save_response_version(
+                        _require_conv_id(),
+                        assistant_message["message_id"],
+                        save_text,
+                        model=current_model,
+                        content_blocks=content_blocks_data,
+                        created_at=assistant_message["timestamp"],
+                        replace_history=True,
+                    )
+
+                saved_turn = db.get_turn_payload(_require_conv_id(), turn_id)
+            else:
+                assert turn_context is not None
+
+                db.truncate_conversation_after_turn(
+                    turn_context["conversation_id"], turn_context["turn_id"]
+                )
+
+                if action == "edit":
+                    conversation_title = None
+                    if db.is_first_user_message(
+                        turn_context["conversation_id"],
+                        turn_context["user_message"]["message_id"],
+                    ):
+                        conversation_title = ConversationService._conversation_title(
+                            display_query
+                        )
+
+                    updated_user_message = db.update_user_message(
+                        turn_context["conversation_id"],
+                        turn_context["user_message"]["message_id"],
+                        display_query,
+                        conversation_title=conversation_title,
+                    )
+                    if updated_user_message is None:
+                        raise ValueError("Selected turn could not be updated.")
+
+                save_text = response_text if response_text.strip() else "[Model returned empty response]"
+                db.save_response_version(
+                    turn_context["conversation_id"],
+                    turn_context["assistant_message"]["message_id"],
                     save_text,
                     model=current_model,
                     content_blocks=content_blocks_data,
+                    replace_history=action == "edit",
                 )
 
-            # Notify frontend
+                saved_turn = db.get_turn_payload(
+                    turn_context["conversation_id"], turn_context["turn_id"]
+                )
+
+            ConversationService._set_chat_history(_require_conv_id(), tab_state=tab_state)
+            saved_turn = await ConversationService._hydrate_turn_payload(saved_turn)
+
             await broadcast_message(
                 "conversation_saved",
-                json.dumps({"conversation_id": _require_conv_id()}),
+                {
+                    "conversation_id": _require_conv_id(),
+                    "operation": action,
+                    "truncate_after_turn": action in {"retry", "edit"},
+                    "turn": saved_turn,
+                },
             )
 
-            logger.debug("Chat history: %d messages", len(_chat_history))
+            logger.debug("Chat history: %d messages", len(tab_state.chat_history if tab_state else app_state.chat_history))
 
             return _require_conv_id()
 
@@ -470,7 +572,7 @@ class ConversationService:
             # ── Always clear screenshots that were consumed ───────────
             # Covers normal, cancelled, AND exception paths so the
             # frontend chip container is never left stale.
-            if _screenshot_list:
+            if should_clear_screenshots and _screenshot_list:
                 _screenshot_list.clear()
                 await broadcast_message("screenshots_cleared", "")
 
@@ -497,6 +599,30 @@ class ConversationService:
             if terminal_service.session_mode:
                 await terminal_service.end_session()
                 logger.info("Session mode auto-expired after turn")
+
+    @staticmethod
+    def set_active_response_variant(
+        message_id: str,
+        response_index: int,
+        tab_state: Optional["TabState"] = None,
+    ) -> Dict[str, Any]:
+        """Persist and apply the currently selected assistant response variant."""
+        message = db.get_message_by_id(message_id)
+        if message is None:
+            raise ValueError("Assistant message not found.")
+        if message["role"] != "assistant":
+            raise ValueError("Only assistant responses can switch variants.")
+
+        updated = db.set_active_response_version(
+            message["conversation_id"], message_id, response_index
+        )
+        if updated is None:
+            raise ValueError("Requested response variant does not exist.")
+
+        ConversationService._set_chat_history(
+            message["conversation_id"], tab_state=tab_state
+        )
+        return updated
 
     @staticmethod
     def get_conversations(limit: int = 50, offset: int = 0) -> List[Dict]:

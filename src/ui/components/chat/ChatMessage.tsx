@@ -1,63 +1,309 @@
 /**
  * Chat message component.
- * 
+ *
  * Renders a single chat message (user or assistant).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ComponentPropsWithRef, ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from './CodeBlock';
 import { ThinkingSection } from './ThinkingSection';
 import { ToolCallsDisplay, InlineContentBlocks } from './ToolCallsDisplay';
+import { copyToClipboard } from '../../utils/clipboard';
+import {
+  formatMessageTimestamp,
+  serializeMessageForCopy,
+} from '../../utils/chatMessages';
 import type { ChatMessage as ChatMessageType } from '../../types';
 
 interface ChatMessageProps {
   message: ChatMessageType;
   selectedModel: string;
+  actionsDisabled: boolean;
+  onRetryMessage: (message: ChatMessageType) => void;
+  onEditMessage: (message: ChatMessageType, content: string) => void;
+  onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
 }
 
-export function ChatMessage({ message, selectedModel }: ChatMessageProps) {
+interface ActionButtonProps {
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  children: React.ReactNode;
+}
+
+function ActionButton({ title, onClick, disabled = false, children }: ActionButtonProps) {
+  return (
+    <button
+      type="button"
+      className="message-footer-button"
+      onClick={onClick}
+      title={title}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+
+function EditIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  );
+}
+
+function RetryIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+      <path d="M3 3v5h5" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m15 18-6-6 6-6" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="m9 18 6-6-6-6" />
+    </svg>
+  );
+}
+
+export function ChatMessage({
+  message,
+  selectedModel,
+  actionsDisabled,
+  onRetryMessage,
+  onEditMessage,
+  onSetActiveResponse,
+}: ChatMessageProps) {
   const [thinkingCollapsed, setThinkingCollapsed] = useState(true);
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftContent, setDraftContent] = useState(message.content);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftContent(message.content);
+    }
+  }, [isEditing, message.content]);
+
+  const activeResponseIndex = Math.min(
+    message.activeResponseIndex ?? 0,
+    Math.max((message.responseVersions?.length ?? 1) - 1, 0),
+  );
+  const formattedTimestamp = formatMessageTimestamp(message.timestamp);
+  const canPersistActions = !!message.messageId;
+  const canSaveEdit = draftContent.trim().length > 0 && draftContent.trim() !== message.content.trim();
+  const footerClassName =
+    message.role === 'user'
+      ? 'message-footer message-footer-user'
+      : 'message-footer message-footer-assistant';
+
+  const handleSaveEdit = () => {
+    const nextContent = draftContent.trim();
+    if (!canSaveEdit) {
+      return;
+    }
+    onEditMessage(message, nextContent);
+    setIsEditing(false);
+  };
+
+  const handleEditKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setDraftContent(message.content);
+      setIsEditing(false);
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      handleSaveEdit();
+    }
+  };
+
+  const renderUserContent = () => {
+    if (isEditing) {
+      return (
+        <div className="message-edit-container">
+          <textarea
+            className="message-edit-input"
+            value={draftContent}
+            onChange={(event) => setDraftContent(event.target.value)}
+            onKeyDown={handleEditKeyDown}
+            autoFocus
+          />
+          <div className="message-edit-actions">
+            <button
+              type="button"
+              className="message-edit-button message-edit-cancel"
+              onClick={() => {
+                setDraftContent(message.content);
+                setIsEditing(false);
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="message-edit-button message-edit-save"
+              onClick={handleSaveEdit}
+              disabled={!canSaveEdit}
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="user-text">
+        {message.content.split(/(\/\w+)/g).map((part, index) => {
+          if (part.startsWith('/') && part.match(/^\/\w+$/)) {
+            return <code key={index} className="slash-command-history">{part}</code>;
+          }
+          return part;
+        })}
+      </div>
+    );
+  };
+
+  const renderAssistantContent = () => {
+    if (message.contentBlocks && message.contentBlocks.length > 0) {
+      return <InlineContentBlocks blocks={message.contentBlocks} />;
+    }
+
+    return (
+      <>
+        {message.toolCalls && <ToolCallsDisplay toolCalls={message.toolCalls} />}
+        <ReactMarkdown
+          components={{
+            code: CodeBlock as ComponentType<ComponentPropsWithRef<'code'>>,
+          }}
+        >
+          {message.content}
+        </ReactMarkdown>
+      </>
+    );
+  };
 
   return (
     <div className={message.role === 'user' ? 'chat-user' : 'chat-assistant'}>
-      {/* Historical thinking section rendered ABOVE the response bubble */}
       {message.role === 'assistant' && message.thinking && (
         <ThinkingSection
           thinking={message.thinking}
           isThinking={false}
           collapsed={thinkingCollapsed}
-          onToggle={() => setThinkingCollapsed(prev => !prev)}
+          onToggle={() => setThinkingCollapsed((prev) => !prev)}
         />
       )}
-      <div className={message.role === 'user' ? 'query' : 'response'}>
-        {message.role === 'assistant' && (
-          <div className="assistant-header">Xpdite • {message.model || selectedModel}</div>
-        )}
-        <div className="message-content">
-          {message.role === 'user' ? (
-            <div className="user-text">
-              {message.content.split(/(\/\w+)/g).map((part, i) => {
-                if (part.startsWith('/') && part.match(/^\/\w+$/)) {
-                  return <code key={i} className="slash-command-history">{part}</code>;
-                }
-                return part;
-              })}
-            </div>
-          ) : message.contentBlocks && message.contentBlocks.length > 0 ? (
-            /* ── Inline interleaved rendering (preferred) ── */
-            <InlineContentBlocks blocks={message.contentBlocks} />
-          ) : (
-            /* ── Legacy fallback: tool calls at top, then text ── */
-            <>
-              {message.toolCalls && <ToolCallsDisplay toolCalls={message.toolCalls} />}
-              <ReactMarkdown components={{ code: CodeBlock as any }}>
-                {message.content}
-              </ReactMarkdown>
-            </>
+      <div className="message-stack">
+        <div className={message.role === 'user' ? 'query' : 'response'}>
+          {message.role === 'assistant' && (
+            <div className="assistant-header">Xpdite • {message.model || selectedModel}</div>
+          )}
+          <div className="message-content">
+            {message.role === 'user' ? renderUserContent() : renderAssistantContent()}
+          </div>
+          {message.images && message.images.length > 0 && (
+            <MessageImages images={message.images} />
           )}
         </div>
-        {message.images && message.images.length > 0 && (
-          <MessageImages images={message.images as any} />
+
+        {!isEditing && (
+          <div className={footerClassName}>
+            {message.role === 'assistant' ? (
+              <>
+                <ActionButton
+                  title="Copy message"
+                  onClick={() => {
+                    void copyToClipboard(serializeMessageForCopy(message));
+                  }}
+                >
+                  <CopyIcon />
+                </ActionButton>
+                <ActionButton
+                  title="Retry message"
+                  onClick={() => onRetryMessage(message)}
+                  disabled={actionsDisabled || !canPersistActions}
+                >
+                  <RetryIcon />
+                </ActionButton>
+                <span className="message-timestamp">{formattedTimestamp}</span>
+                {!!message.responseVersions && message.responseVersions.length > 1 && (
+                  <div className="message-response-nav">
+                    <ActionButton
+                      title="Previous response"
+                      onClick={() => onSetActiveResponse(message, activeResponseIndex - 1)}
+                      disabled={actionsDisabled || activeResponseIndex <= 0 || !canPersistActions}
+                    >
+                      <ArrowLeftIcon />
+                    </ActionButton>
+                    <span className="message-response-index">
+                      {activeResponseIndex + 1} / {message.responseVersions.length}
+                    </span>
+                    <ActionButton
+                      title="Next response"
+                      onClick={() => onSetActiveResponse(message, activeResponseIndex + 1)}
+                      disabled={
+                        actionsDisabled ||
+                        activeResponseIndex >= message.responseVersions.length - 1 ||
+                        !canPersistActions
+                      }
+                    >
+                      <ArrowRightIcon />
+                    </ActionButton>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <span className="message-timestamp">{formattedTimestamp}</span>
+                <ActionButton
+                  title="Retry message"
+                  onClick={() => onRetryMessage(message)}
+                  disabled={actionsDisabled || !canPersistActions}
+                >
+                  <RetryIcon />
+                </ActionButton>
+                <ActionButton
+                  title="Edit message"
+                  onClick={() => setIsEditing(true)}
+                  disabled={actionsDisabled || !canPersistActions}
+                >
+                  <EditIcon />
+                </ActionButton>
+                <ActionButton
+                  title="Copy message"
+                  onClick={() => {
+                    void copyToClipboard(message.content);
+                  }}
+                >
+                  <CopyIcon />
+                </ActionButton>
+              </>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -80,7 +326,7 @@ function MessageImages({ images }: MessageImagesProps) {
               className="message-chip-thumb"
             />
           ) : (
-            <span className="message-chip-icon">📷</span>
+            <span className="message-chip-icon">[IMG]</span>
           )}
           <span className="message-chip-name">{img.name || `Image ${idx + 1}`}</span>
           {img.thumbnail && (

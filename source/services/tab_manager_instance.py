@@ -62,6 +62,8 @@ def init_tab_manager() -> TabManager:
                     tab_state=session.state,
                     queue=session.queue,
                     model=query.model,
+                    action=query.action,
+                    target_message_id=query.target_message_id,
                 )
             finally:
                 set_current_tab_id(None)
