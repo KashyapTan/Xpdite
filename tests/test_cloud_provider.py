@@ -205,6 +205,21 @@ class TestHelpers:
         assert result["type"] == "image_url"
         assert result["image_url"]["url"] == "data:image/png;base64,abc123"
 
+    def test_sanitize_tool_args_redacts_sensitive_keys(self):
+        from source.llm.cloud_provider import _sanitize_tool_args
+
+        result = _sanitize_tool_args({
+            "path": "notes.txt",
+            "api_key": "secret-value",
+            "nested": {"token": "abc123", "safe": "ok"},
+        })
+
+        assert result == {
+            "path": "notes.txt",
+            "api_key": "[REDACTED]",
+            "nested": {"token": "[REDACTED]", "safe": "ok"},
+        }
+
     def test_get_reasoning_params_supported(self):
         """Models that support reasoning should get reasoning_effort."""
         from source.llm.cloud_provider import _get_reasoning_params
@@ -549,7 +564,7 @@ class TestStreamLitellm:
             if c.args[0] == "error"
         ]
         assert len(error_calls) == 1
-        assert "LLM API error" in error_calls[0].args[1]
+        assert error_calls[0].args[1] == "LLM service temporarily unavailable. See server logs for details."
 
     @pytest.mark.asyncio
     async def test_multiple_tool_calls_in_single_round(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
@@ -676,6 +691,125 @@ class TestStreamLitellm:
         assert "max_tokens" not in call_kwargs
 
     @pytest.mark.asyncio
+    async def test_max_tokens_zero_not_forwarded(self, _mock_broadcast, _mock_cancelled):
+        """A zero max_output_tokens value should not be forwarded to LiteLLM."""
+        chunks = [_text_chunk("ok", finish_reason="stop")]
+        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp), \
+             patch("source.llm.cloud_provider.litellm.get_model_info",
+                   return_value={"supports_reasoning": False, "max_output_tokens": 0}):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
+            )
+
+        call_kwargs = mock_acomp.call_args.kwargs
+        assert "max_tokens" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_tool_resolution_failure_falls_back_to_no_tools(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
+    ):
+        """Tool schema lookup failures should not crash the request."""
+        chunks = [_text_chunk("No tools needed", finish_reason="stop")]
+        _mock_mcp.get_tools.side_effect = RuntimeError("registry unavailable")
+
+        with _patch_acompletion(chunks):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, blocks = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hello", image_paths=[], chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "No tools needed"
+        assert stats["prompt_eval_count"] == 0
+        assert stats["eval_count"] == 0
+        assert tool_calls == []
+        assert blocks is None or all(block["type"] != "tool_call" for block in blocks)
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_tool_call_rejected(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
+        """A tool outside the allowed set should be rejected and not executed."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_forbidden", name="run_cmd"),
+            _tool_call_chunk(0, arguments='{"cmd": "whoami"}'),
+            _tool_call_chunk(0, finish_reason="tool_calls"),
+        ]
+        text_stream = [
+            _text_chunk("I cannot call that tool."),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="run something", image_paths=[], chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "I cannot call that tool."
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "run_cmd"
+        assert "not available for this request" in tool_calls[0]["result"]
+        _mock_mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tool_execution_errors_are_sanitized(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
+        """Tool execution failures should not leak raw exception details."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_1", name="read_file"),
+            _tool_call_chunk(0, arguments='{"path": "secret.txt", "api_key": "secret-token-value"}'),
+            _tool_call_chunk(0, finish_reason="tool_calls"),
+        ]
+        text_stream = [
+            _text_chunk("Handled"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        _mock_mcp.call_tool.side_effect = RuntimeError("secret-token-value")
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="read it", image_paths=[], chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "Handled"
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["args"] == {"path": "secret.txt", "api_key": "[REDACTED]"}
+        assert tool_calls[0]["result"] == "System error: tool execution failed. See server logs for details."
+        assert "secret-token-value" not in tool_calls[0]["result"]
+        _mock_mcp.call_tool.assert_awaited_once_with(
+            "read_file",
+            {"path": "secret.txt", "api_key": "secret-token-value"},
+        )
+
+        tool_call_payloads = [
+            json.loads(call.args[1])
+            for call in _mock_broadcast.call_args_list
+            if call.args[0] == "tool_call"
+        ]
+        assert any(payload["args"].get("api_key") == "[REDACTED]" for payload in tool_call_payloads)
+
+    @pytest.mark.asyncio
     async def test_cancellation_during_tool_execution_stops_loop(
         self, _mock_broadcast, _mock_mcp,
     ):
@@ -711,6 +845,44 @@ class TestStreamLitellm:
         assert mock_acomp.call_count == 1
         # Tool should not have been executed
         _mock_mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_mid_tool_batch_keeps_message_history_consistent(
+        self, _mock_broadcast, _mock_mcp,
+    ):
+        """Cancellation mid-batch should not append orphaned assistant tool_calls."""
+        cancel_calls = 0
+
+        def cancel_after_first_tool():
+            nonlocal cancel_calls
+            cancel_calls += 1
+            return cancel_calls > 6
+
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_a", name="read_file"),
+            _tool_call_chunk(0, arguments='{"path": "a.py"}'),
+            _tool_call_chunk(1, tc_id="call_b", name="run_cmd"),
+            _tool_call_chunk(1, arguments='{"cmd": "dir"}'),
+            _tool_call_chunk(0, finish_reason="tool_calls"),
+        ]
+
+        with patch("source.llm.cloud_provider.is_current_request_cancelled",
+                    side_effect=cancel_after_first_tool):
+            mock_acomp = AsyncMock(return_value=_make_async_iter(tool_stream))
+            with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
+                from source.llm.cloud_provider import stream_cloud_chat
+
+                await stream_cloud_chat(
+                    provider="openai", model="gpt-4o", api_key="sk-test",
+                    user_query="do both", image_paths=[], chat_history=[],
+                    allowed_tool_names={"read_file", "run_cmd"},
+                )
+
+        first_round_messages = mock_acomp.call_args.kwargs["messages"]
+        assistant_messages = [m for m in first_round_messages if m.get("role") == "assistant"]
+        tool_messages = [m for m in first_round_messages if m.get("role") == "tool"]
+        assert assistant_messages == []
+        assert tool_messages == []
 
     @pytest.mark.asyncio
     async def test_api_error_preserves_partial_data(

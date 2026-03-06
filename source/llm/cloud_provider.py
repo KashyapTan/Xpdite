@@ -15,7 +15,7 @@ import base64
 import json
 import logging
 import os
-from typing import List, Dict, Any, Optional, Set
+from typing import AsyncIterator, List, Dict, Any, Optional, Set, cast
 
 import litellm
 
@@ -33,19 +33,42 @@ litellm.modify_params = True
 # Suppress litellm's internal info-level HTTP logs (very noisy).
 litellm.suppress_debug_info = True
 
+_MAX_INLINE_IMAGE_BYTES = 50 * 1024 * 1024
+_REDACTED_VALUE = "[REDACTED]"
+_SENSITIVE_TOOL_ARG_KEYS = (
+    "api_key",
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+    "session",
+    "key",
+)
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+
 
 
 def _load_image_as_base64(path: str) -> Optional[str]:
     """Load an image file and return its base64-encoded content."""
     try:
+        file_size = os.path.getsize(path)
+        if file_size > _MAX_INLINE_IMAGE_BYTES:
+            logger.warning(
+                "Skipping oversized image %s (%d bytes)",
+                os.path.basename(path),
+                file_size,
+            )
+            return None
+
         with open(path, "rb") as f:
             return base64.standard_b64encode(f.read()).decode("utf-8")
     except Exception as e:
-        logger.error("Failed to load image %s: %s", path, e)
+        logger.error(
+            "Failed to load image %s (%s)",
+            os.path.basename(path),
+            type(e).__name__,
+        )
         return None
 
 
@@ -78,6 +101,67 @@ def _format_image(b64: str, media_type: str) -> dict:
         "type": "image_url",
         "image_url": {"url": f"data:{media_type};base64,{b64}"},
     }
+
+
+def _sanitize_tool_args(value: Any) -> Any:
+    """Redact sensitive tool arguments before exposing them outside execution."""
+    if isinstance(value, dict):
+        redacted: Dict[str, Any] = {}
+        for key, item in value.items():
+            key_lower = key.lower()
+            if any(fragment in key_lower for fragment in _SENSITIVE_TOOL_ARG_KEYS):
+                redacted[key] = _REDACTED_VALUE
+            else:
+                redacted[key] = _sanitize_tool_args(item)
+        return redacted
+
+    if isinstance(value, list):
+        return [_sanitize_tool_args(item) for item in value]
+
+    return value
+
+
+def _build_user_content(text: str, image_paths: List[str]) -> Any:
+    """Return either plain text or multipart user content with images."""
+    parts: List[Dict[str, Any]] = []
+
+    for img_path in image_paths:
+        if not os.path.exists(img_path):
+            continue
+
+        b64 = _load_image_as_base64(img_path)
+        if b64:
+            parts.append(_format_image(b64, _guess_media_type(img_path)))
+
+    if not parts:
+        return text
+
+    parts.append({"type": "text", "text": text})
+    return parts
+
+
+def _append_tool_result(
+    fn_name: str,
+    fn_args: Dict[str, Any],
+    result_str: str,
+    server_name: str,
+    tool_calls_list: List[Dict[str, Any]],
+    interleaved_blocks: List[Dict[str, Any]],
+) -> None:
+    """Record a tool result for persistence and UI reconstruction."""
+    safe_args = _sanitize_tool_args(fn_args)
+    tool_calls_list.append({
+        "name": fn_name,
+        "args": safe_args,
+        "result": result_str,
+        "server": server_name,
+    })
+    interleaved_blocks.append({
+        "type": "tool_call",
+        "name": fn_name,
+        "args": safe_args,
+        "server": server_name,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -114,29 +198,15 @@ def _build_messages(
             continue
 
         if role == "user" and msg.get("images"):
-            parts: list = []
-            for img_path in msg["images"]:
-                if os.path.exists(img_path):
-                    b64 = _load_image_as_base64(img_path)
-                    if b64:
-                        parts.append(_format_image(b64, _guess_media_type(img_path)))
-            parts.append({"type": "text", "text": content})
-            messages.append({"role": "user", "content": parts})
+            messages.append({
+                "role": "user",
+                "content": _build_user_content(content, msg["images"]),
+            })
         else:
             messages.append({"role": role, "content": content})
 
     # Current user message
-    existing_images = [p for p in image_paths if os.path.exists(p)]
-    if existing_images:
-        parts = []
-        for img_path in existing_images:
-            b64 = _load_image_as_base64(img_path)
-            if b64:
-                parts.append(_format_image(b64, _guess_media_type(img_path)))
-        parts.append({"type": "text", "text": user_query})
-        messages.append({"role": "user", "content": parts})
-    else:
-        messages.append({"role": "user", "content": user_query})
+    messages.append({"role": "user", "content": _build_user_content(user_query, image_paths)})
 
     return messages
 
@@ -163,42 +233,67 @@ async def _execute_and_broadcast_tool(
     from ..mcp_integration.manager import mcp_manager
     from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
 
-    server_name = mcp_manager.get_tool_server_name(fn_name)
-    logger.info("%s tool call: %s(%s) from '%s'", provider_label, fn_name, fn_args, server_name)
+    try:
+        server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
+    except Exception as e:
+        logger.warning(
+            "%s tool server lookup failed for %s (%s)",
+            provider_label,
+            fn_name,
+            type(e).__name__,
+        )
+        server_name = "unknown"
+
+    logger.info(
+        "%s tool call: %s(%s) from '%s'",
+        provider_label,
+        fn_name,
+        _sanitize_tool_args(fn_args),
+        server_name,
+    )
+
+    safe_args = _sanitize_tool_args(fn_args)
 
     await broadcast_message(
         "tool_call",
         json.dumps({
-            "name": fn_name, "args": fn_args,
+            "name": fn_name, "args": safe_args,
             "server": server_name, "status": "calling",
         }),
     )
 
-    if is_terminal_tool(fn_name, server_name):
-        result = await execute_terminal_tool(fn_name, fn_args, server_name)
-    else:
-        try:
+    try:
+        if is_terminal_tool(fn_name, server_name):
+            result = await execute_terminal_tool(fn_name, fn_args, server_name)
+        else:
             result = await mcp_manager.call_tool(fn_name, dict(fn_args))
-        except Exception as e:
-            result = f"Error executing tool: {e}"
+    except Exception as e:
+        logger.warning(
+            "%s tool execution failed for %s on '%s' (%s)",
+            provider_label,
+            fn_name,
+            server_name,
+            type(e).__name__,
+        )
+        result = "System error: tool execution failed. See server logs for details."
 
     result_str = _truncate_tool_result(str(result))
     await broadcast_message(
         "tool_call",
         json.dumps({
-            "name": fn_name, "args": fn_args, "result": result_str,
+            "name": fn_name, "args": safe_args, "result": result_str,
             "server": server_name, "status": "complete",
         }),
     )
 
-    tool_calls_list.append({
-        "name": fn_name, "args": fn_args,
-        "result": result_str, "server": server_name,
-    })
-    interleaved_blocks.append({
-        "type": "tool_call", "name": fn_name,
-        "args": fn_args, "server": server_name,
-    })
+    _append_tool_result(
+        fn_name,
+        fn_args,
+        result_str,
+        server_name,
+        tool_calls_list,
+        interleaved_blocks,
+    )
 
     return result_str
 
@@ -208,7 +303,10 @@ async def _execute_and_broadcast_tool(
 # ---------------------------------------------------------------------------
 
 
-def _get_reasoning_params(litellm_model: str) -> Dict[str, Any]:
+def _get_reasoning_params(
+    litellm_model: str,
+    model_info: Optional[Any] = None,
+) -> Dict[str, Any]:
     """Build reasoning/thinking parameters if the model supports it.
 
     Uses ``litellm.get_model_info()`` for capability detection — no hardcoded
@@ -221,8 +319,8 @@ def _get_reasoning_params(litellm_model: str) -> Dict[str, Any]:
     - OpenAI → native ``reasoning_effort``
     """
     try:
-        model_info = litellm.get_model_info(litellm_model)
-        if not model_info.get("supports_reasoning", False):
+        resolved_model_info = model_info or litellm.get_model_info(litellm_model)
+        if not resolved_model_info.get("supports_reasoning", False):
             return {}
     except Exception:
         logger.debug(
@@ -234,7 +332,10 @@ def _get_reasoning_params(litellm_model: str) -> Dict[str, Any]:
     return {"reasoning_effort": REASONING_EFFORT}
 
 
-def _get_max_tokens(litellm_model: str) -> Optional[int]:
+def _get_max_tokens(
+    litellm_model: str,
+    model_info: Optional[Any] = None,
+) -> Optional[int]:
     """Look up the model's maximum output tokens via litellm.
 
     Returns the model's native ``max_output_tokens`` if known, ``None``
@@ -243,8 +344,8 @@ def _get_max_tokens(litellm_model: str) -> Optional[int]:
     automatically.
     """
     try:
-        model_info = litellm.get_model_info(litellm_model)
-        return model_info.get("max_output_tokens")
+        resolved_model_info = model_info or litellm.get_model_info(litellm_model)
+        return resolved_model_info.get("max_output_tokens")
     except Exception:
         logger.debug(
             "Model %s not in litellm registry, skipping max_tokens",
@@ -293,15 +394,6 @@ async def _stream_litellm(
     total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
     interleaved_blocks: List[Dict[str, Any]] = []
 
-    # Resolve tools in OpenAI format (LiteLLM translates to native)
-    tools: Optional[List[Dict]] = None
-    if allowed_tool_names:
-        all_tools = mcp_manager.get_tools()
-        if all_tools:
-            tools = [t for t in all_tools if t["function"]["name"] in allowed_tool_names]
-            if not tools:
-                tools = None
-
     # LiteLLM model string: "provider/model-name"
     litellm_model = f"{provider}/{model}"
 
@@ -318,26 +410,42 @@ async def _stream_litellm(
     # satisfied automatically; others simply get their full limit.
     # For unknown Anthropic models not in the registry, use a safe fallback
     # since Anthropic's API mandates the max_tokens parameter.
-    max_tokens = model_info.get("max_output_tokens")
+    max_tokens = _get_max_tokens(litellm_model, model_info)
     if max_tokens is None and provider == "anthropic":
         max_tokens = 16384
         logger.debug("Anthropic model not in registry; using fallback max_tokens=%d", max_tokens)
 
     # Reasoning params (hoisted outside the loop — model doesn't change)
-    reasoning_params: Dict[str, Any] = {}
-    if model_info.get("supports_reasoning", False):
-        reasoning_params = {"reasoning_effort": REASONING_EFFORT}
+    reasoning_params = _get_reasoning_params(litellm_model, model_info)
 
+    current_round_text: list[str] = []
     try:
         if is_current_request_cancelled():
             return "", total_token_stats, tool_calls_list, None
 
+        tools: Optional[List[Dict]] = None
+        if allowed_tool_names:
+            try:
+                all_tools = mcp_manager.get_tools()
+            except Exception as e:
+                logger.warning(
+                    "Failed to resolve tool definitions for %s/%s (%s); continuing without tools",
+                    provider,
+                    model,
+                    type(e).__name__,
+                )
+                all_tools = []
+
+            if all_tools:
+                tools = [t for t in all_tools if t["function"]["name"] in allowed_tool_names]
+                if not tools:
+                    tools = None
+
         rounds = 0
         has_more = True
-
         while has_more:
             # Per-round state resets
-            current_round_text: list[str] = []
+            current_round_text = []
             thinking_tokens: list[str] = []
             thinking_complete_sent = False
             round_prompt_tokens = 0
@@ -369,7 +477,7 @@ async def _stream_litellm(
                 "timeout": 300.0,
             }
 
-            if max_tokens is not None:
+            if max_tokens is not None and max_tokens > 0:
                 create_kwargs["max_tokens"] = max_tokens
 
             if reasoning_params:
@@ -389,7 +497,7 @@ async def _stream_litellm(
             )
 
             # Stream the response
-            response = await litellm.acompletion(**create_kwargs)
+            response = cast(AsyncIterator[Any], await litellm.acompletion(**create_kwargs))
 
             # Accumulate tool call deltas during streaming
             pending_tool_calls: Dict[int, Dict[str, str]] = {}
@@ -493,13 +601,13 @@ async def _stream_litellm(
                 # Include text content if the model produced any before tool calls
                 assistant_msg["content"] = "".join(current_round_text) if current_round_text else None
 
-                messages.append(assistant_msg)
-
                 if current_round_text:
                     interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
                     current_round_text.clear()
 
                 # Execute each tool and append results
+                tool_result_messages: List[Dict[str, str]] = []
+                cancelled_during_tool_loop = False
                 for tc_info in assistant_tool_calls:
                     fn_name = tc_info["function"]["name"]
                     raw_args = tc_info["function"]["arguments"]
@@ -514,25 +622,53 @@ async def _stream_litellm(
                             f"for tool '{fn_name}': {raw_args}"
                         )
                         logger.warning(
-                            "Malformed tool call JSON for %s: %s", fn_name, raw_args,
+                            "Malformed tool call JSON for %s (%d chars)",
+                            fn_name,
+                            len(raw_args or ""),
                         )
-                        messages.append({
+                        tool_result_messages.append({
                             "role": "tool",
                             "tool_call_id": tc_info["id"],
                             "content": error_result,
                         })
-                        tool_calls_list.append({
-                            "name": fn_name, "args": {},
-                            "result": error_result, "server": "unknown",
+                        _append_tool_result(
+                            fn_name,
+                            {},
+                            error_result,
+                            "unknown",
+                            tool_calls_list,
+                            interleaved_blocks,
+                        )
+                        continue
+
+                    if allowed_tool_names is not None and fn_name not in allowed_tool_names:
+                        error_result = (
+                            f"System error: tool '{fn_name}' is not available for this request."
+                        )
+                        logger.warning(
+                            "Rejected unauthorized tool call from %s/%s: %s",
+                            provider,
+                            model,
+                            fn_name,
+                        )
+                        tool_result_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_info["id"],
+                            "content": error_result,
                         })
-                        interleaved_blocks.append({
-                            "type": "tool_call", "name": fn_name,
-                            "args": {}, "server": "unknown",
-                        })
+                        _append_tool_result(
+                            fn_name,
+                            fn_args,
+                            error_result,
+                            "unknown",
+                            tool_calls_list,
+                            interleaved_blocks,
+                        )
                         continue
 
                     if is_current_request_cancelled():
                         has_more = False
+                        cancelled_during_tool_loop = True
                         break
 
                     result_str = await _execute_and_broadcast_tool(
@@ -541,11 +677,15 @@ async def _stream_litellm(
                     )
 
                     # Append tool result in OpenAI format (LiteLLM translates)
-                    messages.append({
+                    tool_result_messages.append({
                         "role": "tool",
                         "tool_call_id": tc_info["id"],
                         "content": result_str,
                     })
+
+                if not cancelled_during_tool_loop:
+                    messages.append(assistant_msg)
+                    messages.extend(tool_result_messages)
 
                 # Propagate cancellation to outer loop
                 if is_current_request_cancelled():
@@ -568,8 +708,12 @@ async def _stream_litellm(
     except Exception as e:
         # Keep detailed error in server logs only — exception messages
         # from LiteLLM / provider SDKs may contain API keys.
-        error_msg = f"LLM API error ({type(e).__name__}): {type(e).__doc__ or 'see server logs'}"
-        logger.error("%s streaming error: %s", provider.capitalize(), e, exc_info=True)
+        error_msg = "LLM service temporarily unavailable. See server logs for details."
+        logger.error(
+            "%s streaming error (%s)",
+            provider.capitalize(),
+            type(e).__name__,
+        )
         await broadcast_message("error", error_msg)
         # Return accumulated data so partial responses are preserved
         return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
