@@ -198,7 +198,7 @@ textarea,
   user-select: text;
   -webkit-user-select: text;
   margin-left: 10px;
-  margin-right: 10px;
+  padding-right: 10px;
   width: 100%;
   /* background-color: red; */
 }
@@ -462,6 +462,7 @@ textarea,
   height: 80%;
   color: white;
   border-radius: 8px;
+  stroke: currentColor;
 }
 
 .mic-icon:hover,
@@ -800,34 +801,35 @@ textarea,
 }
 
 .message-footer-button {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.05);
-  /* border: 1px solid rgba(255, 255, 255, 0.14); */
-  /* border-radius: 6px; */
-  color: rgba(255, 255, 255, 0.78);
+  background: transparent;
+  border: 1px solid transparent;
+  border: 0;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.9);
   cursor: pointer;
   transition: all 0.15s ease;
   padding: 0;
 }
 
 .message-footer-button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.28);
-  color: rgba(255, 255, 255, 0.96);
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 1);
 }
 
 .message-footer-button:disabled {
   cursor: not-allowed;
-  opacity: 0.35;
+  opacity: 0.25;
 }
 
 .message-footer-button svg {
-  width: 13px;
-  height: 13px;
+  width: 17px;
+  height: 17px;
 }
 
 .message-timestamp {
@@ -1346,7 +1348,7 @@ textarea,
   display: flex;
   flex-direction: column;
   margin: 10px 0 15px 0;
-  width: calc(100% - 20px);
+  width: calc(100% - 10px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   background-color: rgba(255, 255, 255, 0.02);
@@ -1359,7 +1361,7 @@ textarea,
   border-radius: 6px;
   background-color: rgba(255, 255, 255, 0.02);
   overflow: hidden;
-  margin: 4px 20px 6px 0;
+  margin: 4px 10px 6px 0;
 }
 
 /* Main Container Header */

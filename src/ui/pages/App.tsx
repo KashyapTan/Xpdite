@@ -62,7 +62,6 @@ import '../CSS/App.css';
 import micSignSvg from '../assets/mic-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
-import meetingRecordingIcon from '../assets/meeting-record-icon.svg';
 import contextWindowInsightsIcon from '../assets/context-window-icon.svg';
 import scrollDownIcon from '../assets/scroll-down-icon.svg';
 
@@ -1453,7 +1452,6 @@ function App() {
           onMeetingMode={meetingRecordingModeEnabled}
           regionSSIcon={regionSSIcon}
           fullscreenSSIcon={fullscreenSSIcon}
-          meetingRecordingIcon={meetingRecordingIcon}
         />
       </div>
     </div>

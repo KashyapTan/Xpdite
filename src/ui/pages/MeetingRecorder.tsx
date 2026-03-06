@@ -5,7 +5,6 @@ import { ModeSelector } from '../components/input/ModeSelector';
 import { useMeetingRecorder } from '../contexts/MeetingRecorderContext';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
-import meetingRecordingIcon from '../assets/meeting-record-icon.svg';
 import '../CSS/MeetingRecorder.css';
 
 const MeetingRecorder: React.FC = () => {
@@ -112,7 +111,6 @@ const MeetingRecorder: React.FC = () => {
                 onMeetingMode={() => { /* already on recorder */ }}
                 regionSSIcon={regionSSIcon}
                 fullscreenSSIcon={fullscreenSSIcon}
-                meetingRecordingIcon={meetingRecordingIcon}
             />
         </div>
     );
