@@ -276,10 +276,10 @@ textarea,
   width: 100%;
   min-height: 32px;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   margin-bottom: 5px;
   /* background-color: greenyellow; */
-  flex: 1 1 auto;
+  flex: 0 0 auto;
 }
 
 .input-options-section {
@@ -466,9 +466,8 @@ textarea,
 
 .query-input-form {
   width: 100%;
-  height: 100%;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
 }
 
 .query-input {
@@ -479,7 +478,8 @@ textarea,
   margin: 0;
   border: none;
   width: 100%;
-  height: 100%;
+  min-height: 32px;
+  max-height: 200px;
   background: transparent;
   box-sizing: border-box;
   letter-spacing: normal;
@@ -490,15 +490,27 @@ textarea,
   color: white;
   caret-color: white;
   outline: none;
-  overflow-x: auto;
-  overflow-y: hidden;
-  white-space: pre;
+  overflow-x: hidden;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
   cursor: text;
-  scrollbar-width: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
 }
 
 .query-input::-webkit-scrollbar {
-  display: none;
+  width: 4px;
+}
+
+.query-input::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.query-input::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
 }
 
 .query-input[data-placeholder]:empty::before {
@@ -508,7 +520,7 @@ textarea,
 }
 
 .query-input [data-editor-text='true'] {
-  white-space: pre;
+  white-space: pre-wrap;
 }
 
 .slash-command-history {
