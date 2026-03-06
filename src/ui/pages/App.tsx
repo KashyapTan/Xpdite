@@ -52,6 +52,7 @@ import type {
   TerminalCommandComplete,
 } from '../types';
 import {
+  applyResponseVariant,
   applySavedTurnToHistory,
   mapConversationMessagePayload,
   type LocalTurnPatch,
@@ -1169,22 +1170,15 @@ function App() {
       return;
     }
 
-    const nextVariant = message.responseVersions[responseIndex];
-    if (!nextVariant) {
+    const nextMessage = applyResponseVariant(message, responseIndex);
+    if (!nextMessage) {
       return;
     }
 
     chatState.setChatHistory((prev) =>
       prev.map((entry) =>
         entry.messageId === message.messageId
-          ? {
-            ...entry,
-            content: nextVariant.content,
-            model: nextVariant.model ?? entry.model,
-            timestamp: nextVariant.timestamp ?? entry.timestamp,
-            contentBlocks: nextVariant.contentBlocks ?? entry.contentBlocks,
-            activeResponseIndex: responseIndex,
-          }
+          ? nextMessage
           : entry,
       ),
     );

@@ -218,6 +218,29 @@ export function mergeMessageMetadata(
   };
 }
 
+export function applyResponseVariant(
+  message: ChatMessage,
+  responseIndex: number,
+): ChatMessage | undefined {
+  const nextVariant = message.responseVersions?.[responseIndex];
+  if (!nextVariant) {
+    return undefined;
+  }
+  const hasContentBlocks =
+    !!nextVariant.contentBlocks && nextVariant.contentBlocks.length > 0;
+
+  return {
+    ...message,
+    content: nextVariant.content,
+    model: nextVariant.model ?? message.model,
+    timestamp: nextVariant.timestamp ?? message.timestamp,
+    contentBlocks: hasContentBlocks ? nextVariant.contentBlocks : undefined,
+    toolCalls: hasContentBlocks ? undefined : message.toolCalls,
+    thinking: undefined,
+    activeResponseIndex: responseIndex,
+  };
+}
+
 export function applySavedTurnToHistory(
   history: ChatMessage[],
   turn: ConversationTurnPayload,
