@@ -97,8 +97,8 @@ export function ResponseArea({
         {/* Loading animation while waiting for first content */}
         <LoadingDots isVisible={!error && !canSubmit && !thinking && !hasContentBlocks} />
 
-        {/* Current thinking process */}
-        {!error && thinking && (
+        {/* Current thinking process — only shown when no tool calls are in flight */}
+        {!error && thinking && !contentBlocks?.some(b => b.type === 'tool_call') && (
           <ThinkingSection
             thinking={thinking}
             isThinking={isThinking}

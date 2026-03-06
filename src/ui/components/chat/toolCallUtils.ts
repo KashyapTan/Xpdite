@@ -2,7 +2,7 @@
  * Utility functions for tool call display logic.
  * Kept separate from component files for Fast Refresh compatibility.
  */
-import type { ToolCall, ContentBlock } from '../../types';
+import type { ToolCall } from '../../types';
 
 export function getHumanReadableDescription(tc: ToolCall): { badge: string; text: string } {
   const { server, name, args } = tc;
@@ -38,50 +38,4 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
   return { badge, text };
 }
 
-export type RenderGroup =
-  | { kind: 'text'; content: string }
-  | { kind: 'single_tool'; toolCall: ToolCall }
-  | { kind: 'tool_group'; toolCalls: ToolCall[] }
-  | { kind: 'terminal_command'; terminal: import('../../types').TerminalCommandBlock };
 
-export function groupBlocks(blocks: ContentBlock[]): RenderGroup[] {
-  const groups: RenderGroup[] = [];
-  let i = 0;
-
-  while (i < blocks.length) {
-    const block = blocks[i];
-
-    if (block.type === 'text') {
-      if (block.content) {
-        groups.push({ kind: 'text', content: block.content });
-      }
-      i++;
-    } else if (block.type === 'terminal_command') {
-      groups.push({ kind: 'terminal_command', terminal: block.terminal });
-      i++;
-    } else {
-      // Collect consecutive tool_call blocks (empty text blocks don't break the run)
-      const toolRun: ToolCall[] = [block.toolCall];
-      i++;
-      while (i < blocks.length) {
-        const next = blocks[i];
-        if (next.type === 'tool_call') {
-          toolRun.push(next.toolCall);
-          i++;
-        } else if (next.type === 'text' && !next.content.trim()) {
-          i++; // skip whitespace-only text between consecutive tools
-        } else {
-          break;
-        }
-      }
-
-      if (toolRun.length === 1) {
-        groups.push({ kind: 'single_tool', toolCall: toolRun[0] });
-      } else {
-        groups.push({ kind: 'tool_group', toolCalls: toolRun });
-      }
-    }
-  }
-
-  return groups;
-}

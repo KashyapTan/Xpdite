@@ -291,9 +291,22 @@ function App() {
         chat.contentBlocks = [];
         break;
 
-      case 'thinking_chunk':
-        chat.thinking += String(data.content);
+      case 'thinking_chunk': {
+        const tChunk = String(data.content);
+        chat.thinking += tChunk;
+        // Also interleave into contentBlocks so thinking appears positionally in the chain
+        const tBlocks = [...chat.contentBlocks];
+        if (tBlocks.length > 0 && tBlocks[tBlocks.length - 1].type === 'thinking') {
+          tBlocks[tBlocks.length - 1] = {
+            type: 'thinking',
+            content: (tBlocks[tBlocks.length - 1] as { type: 'thinking'; content: string }).content + tChunk,
+          };
+        } else {
+          tBlocks.push({ type: 'thinking', content: tChunk });
+        }
+        chat.contentBlocks = tBlocks;
         break;
+      }
 
       case 'thinking_complete':
         chat.isThinking = false;

@@ -84,6 +84,23 @@ export function useChatState(): UseChatStateReturn {
   const appendThinking = useCallback((chunk: string) => {
     setThinking(prev => prev + chunk);
     thinkingRef.current += chunk;
+
+    // Also track in contentBlocks so thinking appears at the correct position
+    // in the tool chain timeline (interleaved with tool calls)
+    const blocks = contentBlocksRef.current;
+    if (blocks.length > 0 && blocks[blocks.length - 1].type === 'thinking') {
+      const newBlocks = [...blocks];
+      newBlocks[newBlocks.length - 1] = {
+        type: 'thinking',
+        content: (newBlocks[newBlocks.length - 1] as { type: 'thinking'; content: string }).content + chunk,
+      };
+      contentBlocksRef.current = newBlocks;
+      setContentBlocks(newBlocks);
+    } else {
+      const newBlocks: ContentBlock[] = [...blocks, { type: 'thinking', content: chunk }];
+      contentBlocksRef.current = newBlocks;
+      setContentBlocks(newBlocks);
+    }
   }, []);
 
   const appendResponse = useCallback((chunk: string) => {

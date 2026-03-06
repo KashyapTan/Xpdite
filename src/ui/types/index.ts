@@ -16,6 +16,7 @@ export interface ToolCall {
 
 export type ContentBlock =
   | { type: 'text'; content: string }
+  | { type: 'thinking'; content: string }
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'terminal_command'; terminal: TerminalCommandBlock };
 

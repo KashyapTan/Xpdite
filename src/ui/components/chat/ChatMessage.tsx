@@ -189,7 +189,11 @@ export function ChatMessage({
 
   const renderAssistantContent = () => {
     if (message.contentBlocks && message.contentBlocks.length > 0) {
-      return <InlineContentBlocks blocks={message.contentBlocks} />;
+      return (
+        <InlineContentBlocks
+          blocks={message.contentBlocks}
+        />
+      );
     }
 
     return (
@@ -209,12 +213,20 @@ export function ChatMessage({
   return (
     <div className={message.role === 'user' ? 'chat-user' : 'chat-assistant'}>
       {message.role === 'assistant' && message.thinking && (
-        <ThinkingSection
-          thinking={message.thinking}
-          isThinking={false}
-          collapsed={thinkingCollapsed}
-          onToggle={() => setThinkingCollapsed((prev) => !prev)}
-        />
+        (() => {
+          const hasToolCalls =
+            message.contentBlocks?.some(b => b.type === 'tool_call') ||
+            (message.toolCalls && message.toolCalls.length > 0);
+          if (hasToolCalls) return null; // thinking is integrated into the chain
+          return (
+            <ThinkingSection
+              thinking={message.thinking}
+              isThinking={false}
+              collapsed={thinkingCollapsed}
+              onToggle={() => setThinkingCollapsed((prev) => !prev)}
+            />
+          );
+        })()
       )}
       <div className="message-stack">
         <div className={message.role === 'user' ? 'query' : 'response'}>

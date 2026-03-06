@@ -1343,202 +1343,221 @@ textarea,
   border-color: rgba(255, 255, 255, 0.3) transparent transparent transparent;
 }
 
-/* ── Simple Tool Calls Display ───────────────────────────────── */
-.tool-calls-container-simple {
-  display: flex;
-  flex-direction: column;
-  margin: 10px 0 15px 0;
-  width: calc(100% - 10px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  background-color: rgba(255, 255, 255, 0.02);
-  overflow: hidden;
+/* ── Tool Chain Timeline ──────────────────────────────────────── */
+
+.tool-chain {
+  margin: 6px 0 10px 0;
 }
 
-/* Standalone inline tool card (single tool, no outer container header) */
-.inline-tool-card-wrapper {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 6px;
-  background-color: rgba(255, 255, 255, 0.02);
-  overflow: hidden;
-  margin: 4px 10px 6px 0;
-}
-
-/* Main Container Header */
-.tool-main-header {
+.tool-chain-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+  gap: 8px;
+  padding: 4px 0;
   cursor: pointer;
-  background-color: transparent;
-  transition: background-color 0.2s ease;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.88rem;
+  font-family: 'Montserrat', sans-serif;
+  user-select: none;
+  transition: color 0.15s ease;
 }
 
-.tool-main-header:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+.tool-chain-header:hover {
+  color: rgba(255, 255, 255, 0.75);
 }
 
-.tool-main-header-left {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.9);
-  font-weight: 500;
-}
-
-.tool-icon-static {
-  width: 16px;
-  height: 16px;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.tool-chevron {
-  width: 16px;
-  height: 16px;
-  color: rgba(255, 255, 255, 0.5);
-  transition: transform 0.2s ease;
-}
-
-.tool-chevron.expanded {
-  transform: rotate(180deg);
-}
-
-/* Tool List Wrapper */
-.tool-list-wrapper {
-  display: flex;
-  flex-direction: column;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  background-color: rgba(0, 0, 0, 0.15);
-}
-
-/* Individual Tool Items */
-.tool-item-container {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.tool-item-container:last-child {
-  border-bottom: none;
-}
-
-.tool-timeline-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.85rem;
-  color: rgba(255, 255, 255, 0.9);
-  cursor: pointer;
-  transition: background-color 0.2s ease;
-}
-
-.tool-timeline-item.running {
-  cursor: default;
-}
-
-.tool-timeline-item:hover:not(.running) {
-  background-color: rgba(255, 255, 255, 0.04);
-}
-
-.tool-timeline-item.expanded {
-  background-color: rgba(255, 255, 255, 0.06);
-}
-
-.tool-status-icon-wrapper {
+.tool-chain-header-icon {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   flex-shrink: 0;
 }
 
-.tool-spinner {
-  width: 16px;
-  height: 16px;
-  color: white;
-  animation: spin 1.5s linear infinite;
-}
-
-.tool-spinner.small {
-  width: 14px;
-  height: 14px;
-}
-
-.tool-check {
-  width: 16px;
-  height: 16px;
-  color: #7ee787;
-  /* Github Green */
-}
-
-.tool-badge {
-  background-color: rgba(255, 255, 255, 0.05);
-  /* Blue tint */
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.5);
-  border-radius: 4px;
-  padding: 2px 6px;
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.tool-desc {
+.tool-chain-summary {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: rgba(255, 255, 255, 0.8);
-  font-family: 'Montserrat', sans-serif;
-  font-size: 0.9rem;
-  flex: 1;
-  /* Pushes chevron to right */
 }
 
-.tool-item-chevron {
+.chain-chevron {
   width: 14px;
   height: 14px;
   color: rgba(255, 255, 255, 0.3);
   transition: transform 0.2s ease;
+  flex-shrink: 0;
 }
 
-.tool-item-chevron.expanded {
+.chain-chevron.expanded {
   transform: rotate(180deg);
 }
 
-/* Detailed Results Panel */
-.tool-details-panel {
-  padding: 0 14px 14px 44px;
-  /* Indent to align with text */
-  background-color: rgba(0, 0, 0, 0.2);
+.chain-chevron.small {
+  width: 12px;
+  height: 12px;
 }
 
-.tool-details-label {
-  font-size: 0.7rem;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.4);
-  margin-bottom: 6px;
-  margin-top: 4px;
-  font-weight: 600;
-  letter-spacing: 0.5px;
+/* Timeline container */
+.tool-chain-timeline {
+  padding: 4px 0 2px 0;
 }
 
-.tool-details-content {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 0.75rem;
+/* Individual chain item — flexbox timeline row */
+.chain-item {
+  display: flex;
+  gap: 10px;
+}
+
+/* Marker column: icon dot + connecting line below */
+.chain-item-marker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 16px;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.chain-item-dot {
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* Vertical line segment connecting items */
+.chain-item-line {
+  flex: 1;
+  width: 1.5px;
+  min-height: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 3px 0;
+}
+
+/* Content column */
+.chain-item-body {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0 10px 0;
+}
+
+/* ── Icon styles ──────────────────────────────────────────────── */
+
+.chain-icon {
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.chain-icon-check {
   color: white;
+}
+
+.chain-icon-spinner {
+  color: rgba(255, 255, 255, 0.6);
+  animation: spin 1.5s linear infinite;
+}
+
+/* ── Thinking item ────────────────────────────────────────────── */
+
+.chain-thinking-text {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.82rem;
+  line-height: 1.5;
+  font-family: 'Montserrat', sans-serif;
+}
+
+/* Collapsible thinking-tokens item (model internal reasoning) */
+.chain-thought-label {
+  color: rgba(255, 255, 255, 0.45);
+  font-style: italic;
+  font-size: 0.82rem;
+}
+
+.chain-thought-content {
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  font-family: 'Montserrat', sans-serif;
   white-space: pre-wrap;
   word-wrap: break-word;
-  background-color: rgba(0, 0, 0, 0.3);
+  max-height: 260px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* ── Tool call item ───────────────────────────────────────────── */
+
+.chain-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.84rem;
+}
+
+.chain-tool-header.clickable {
+  cursor: pointer;
+}
+
+.chain-tool-header.clickable:hover {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.chain-tool-badge {
+  background-color: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.chain-tool-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.chain-tool-result {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.35);
+  background-color: rgba(0, 0, 0, 0.25);
   padding: 8px;
   border-radius: 4px;
   border: 1px solid rgba(255, 255, 255, 0.05);
-  max-height: 300px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 200px;
   overflow-y: auto;
+  margin-top: 6px;
+}
+
+/* ── Done marker ──────────────────────────────────────────────── */
+
+.chain-done-text {
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.82rem;
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 500;
+}
+
+/* ── Terminal inside chain ────────────────────────────────────── */
+
+.chain-item-terminal .chain-item-body {
+  padding-bottom: 6px;
 }
 
 @keyframes spin {
