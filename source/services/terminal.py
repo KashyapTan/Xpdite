@@ -632,13 +632,38 @@ class TerminalService:
 
             # Start the async reader loop
             async def _pty_reader():
-                """Read PTY output in a loop, broadcast raw ANSI to frontend."""
+                """Read PTY output in a loop, broadcast raw ANSI to frontend.
+
+                Also handles terminal capability queries from TUI apps: when a TUI
+                (e.g. opencode) starts, it sends \x1b[c (Primary Device Attributes)
+                to the host and waits for a response before drawing its UI. We detect
+                this in-stream and reply with a VT100 DA response so the TUI renders
+                immediately rather than waiting 3+ seconds to time out.
+                """
+                _da_responded = False  # Only respond once per session
+
                 while True:
                     try:
                         # PtyProcess.read() blocks — run in thread
                         data = await asyncio.to_thread(pty_proc.read, 4096)
+                        # pywinpty returns "" for its internal b'0011Ignore' sentinel
+                        # (not an actual EOF). Only EOFError signals process exit.
                         if not data:
-                            break
+                            # Yield to event loop to avoid busy-spin on empty reads
+                            await asyncio.sleep(0.005)
+                            continue
+
+                        # Detect and respond to Primary Device Attributes query (\x1b[c).
+                        # TUI apps send this once at startup to identify the terminal.
+                        # Responding with a standard VT100 DA response lets them render
+                        # immediately instead of waiting for their probe to time out.
+                        if not _da_responded and "\x1b[c" in data:
+                            _da_responded = True
+                            try:
+                                await asyncio.to_thread(pty_proc.write, "\x1b[?1;2c")
+                            except Exception:
+                                pass
+
                         session.output_buffer.append(data)
                         session.text_buffer.append(_strip_ansi(data))
                         await self.broadcast_output(
@@ -796,7 +821,7 @@ class TerminalService:
             # Decode only known-safe escape sequences (whitelist approach).
             # The raw_unicode_escape + unicode_escape codec allows arbitrary
             # control character injection, so we use explicit replacements.
-            decoded = _decode_safe_escapes(text)
+            decoded = self._decode_safe_escapes(text)
 
             # Auto-append Enter if requested and not already present
             if press_enter and not decoded.endswith(("\r", "\n")):

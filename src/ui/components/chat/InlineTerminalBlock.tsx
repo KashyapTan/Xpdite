@@ -73,8 +73,14 @@ export function InlineTerminalBlock({
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const writtenChunksRef = useRef<number>(0);
+  // Always-current ref so the RAF flush inside the init effect reads live chunks,
+  // not the stale closure value captured when the effect ran.
+  const outputChunksRef = useRef(terminal.outputChunks);
 
   const { requestId, command, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
+
+  // Keep the ref in sync on every render
+  outputChunksRef.current = outputChunks;
 
   // ── xterm.js lifecycle for PTY commands ──────────────────────────
 
@@ -116,16 +122,19 @@ export function InlineTerminalBlock({
         }
       } catch { /* ignore */ }
 
-      // Flush any chunks that arrived before xterm initialized
-      if (outputChunks && outputChunks.length > 0) {
-        for (const chunk of outputChunks) {
+      // Flush all chunks buffered before xterm was ready.
+      // Use outputChunksRef so we read the *live* array, not the stale
+      // closure value captured when this effect ran.
+      const chunks = outputChunksRef.current;
+      if (chunks && chunks.length > 0) {
+        for (const chunk of chunks) {
           if (chunk.raw) {
             term.write(chunk.text);
           } else {
             term.writeln(chunk.text);
           }
         }
-        writtenChunksRef.current = outputChunks.length;
+        writtenChunksRef.current = chunks.length;
         term.scrollToBottom();
       }
     });
@@ -154,7 +163,7 @@ export function InlineTerminalBlock({
     };
   }, [isPty, isExpanded]); // Re-init when expanded or isPty changes
 
-  // Write new chunks to xterm as they arrive
+  // Write new chunks to xterm as they arrive (only runs once xterm is ready)
   useEffect(() => {
     if (!isPty || !xtermRef.current || !outputChunks) return;
 
@@ -348,7 +357,7 @@ export function InlineTerminalBlock({
 
           {/* PTY output area (xterm.js) */}
           {isPty && (status === 'running' || status === 'completed') && (
-            <div className="terminal-inline-xterm-wrapper">
+            <div className={`terminal-inline-xterm-wrapper${status === 'completed' ? ' pty-completed' : ''}`}>
               <div ref={xtermContainerRef} className="terminal-inline-xterm" />
             </div>
           )}

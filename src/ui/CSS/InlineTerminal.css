@@ -263,10 +263,20 @@
 
 .terminal-inline-xterm-wrapper {
   background: #1a1a2e;
-  min-height: 80px;
-  max-height: 450px;
+  /* Explicit height required so FitAddon can compute terminal rows.
+     height: 100% on the child only works when the parent has a definite height.
+     Default to a fixed height while running so the TUI has space to render. */
+  height: 400px;
   overflow: hidden;
   position: relative;
+}
+
+/* Shrink PTY wrapper once the process completes — avoid a 400px empty box
+   for short-output commands or quickly-exiting processes. */
+.terminal-inline-xterm-wrapper.pty-completed {
+  height: auto;
+  min-height: 80px;
+  max-height: 450px;
 }
 
 .terminal-inline-xterm {

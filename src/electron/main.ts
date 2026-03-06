@@ -74,7 +74,7 @@ app.on('ready', async () => {
 
     // Strengthen always-on-top level (optional):
     mainWindow.setAlwaysOnTop(true, 'screen-saver'); // or 'floating'
-    // mainWindow.setContentProtection(true); // Prevent screen capture on some OSes
+    mainWindow.setContentProtection(true); // Prevent screen capture on some OSes
 
     // IPC: Toggle mini mode - resize the actual electron window
     ipcMain.handle('set-mini-mode', (_event, mini: boolean) => {
