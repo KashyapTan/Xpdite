@@ -7,25 +7,67 @@ Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a 
 ## Workflow
 
 ### Sub-agents for Information Gathering
-Spawn as many sub-agents as you need in parallel (to optimize time and context window) for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
+Spawn as many sub-agents as you need **in parallel** for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
 
-### Sub-agents for Self-Review
-After finishing any coding task, spawn a fresh sub-agent(s) to review the work before considering it done. The reviewer should:
-The reviewer sub-agent(s) should read and follow the CODE_REVIEW_GUIDE.md for its review.
-Incorporate the reviewer's findings before responding. The goal is production-ready output on the first pass.
+### Sub-agents for Self-Review — Best-of-N + Parallel + De-dup
 
-### Post review action
-Read the testing section and see if new tests are needed based on the changes made.
-Once you finish your entire task, make sure to update any relevalant claude and documentation files with the changes made. 
+After finishing any coding task, run a **three-stage review pipeline** before considering it done. This produces near-zero false-negatives and filters out noise. For non-trivial changes this is mandatory; for trivial one-liners (renaming a variable, fixing a typo) a single quick pass is fine.
 
-### Read more than less
-Its always better to read more than less. Make sure to read all relevant and connected files so you have a comprehensive understanding of how things work before writing new code.
+---
 
-### Freedom and direction
-You are extremly knowledgeable so dont be afraid to use that. If you have any concers, suggestions, or imporvements, dont be afraid to let me know. I am open to discussion and would prefer if we discussed things and clarified to get to the best possible end goal.
+#### Stage 1 — Parallel Focused Reviewers (run all three simultaneously)
+
+Spawn **three independent sub-agent reviewers in parallel**, each with a *single narrow focus*. Provide each agent the changed files + the `CODE_REVIEW_GUIDE.md`. Give each a different lens:
+
+| Agent | Focus | Checklist Phases |
+|---|---|---|
+| **Reviewer A — Correctness & Logic** | Logic bugs, edge cases, async errors, wrong return types, mutation bugs | Phase 1 (Correctness) |
+| **Reviewer B — Security & Resilience** | Injection, hardcoded secrets, missing auth, unhandled errors, resource leaks, timeouts | Phase 2 (Security) + Phase 3 (Error Handling) |
+| **Reviewer C — Performance & Quality** | N+1 queries, O(n²) loops, dead code, naming, complexity, missing tests | Phase 4 (Performance) + Phase 5–7 (Simplification, Style, Testability) |
+
+Each reviewer produces a raw findings list in the `CODE_REVIEW_GUIDE.md` report format. They work completely independently and must **not** see each other's output.
+
+---
+
+#### Stage 2 — Best-of-N Synthesis (optional but recommended for large diffs)
+
+For large or high-risk changes (new services, DB migrations, auth flows), spawn **two additional Reviewer A agents** (correctness is the highest-value check) and pick the best / most complete findings across all three correctness reports. This is "best of N" — independent runs of the same task surface different bugs.
+
+---
+
+#### Stage 3 — De-dup Judge Agent
+
+Spawn a **single judge sub-agent** that receives all raw reports from Stage 1 (and Stage 2 if run). The judge must:
+
+1. **Merge** all findings into a single ranked list (Critical → High → Medium → Low).
+2. **De-duplicate** — if multiple reviewers flag the same issue, keep one entry with a note that N reviewers flagged it (higher confidence).
+3. **Resolve contradictions** — if Reviewer A says something is fine and Reviewer B flags it, the judge investigates and decides.
+4. **Filter false positives** — mark any finding as a false positive if it flags intentional, correct behavior (e.g. flagging `check_same_thread=False` on SQLite as a bug when it's required by our DB pattern).
+5. **Produce the final `CODE_REVIEW_GUIDE.md` report** with a clear Production Readiness Verdict.
+
+---
+
+#### Stage 4 — Fix & Verify
+
+- Incorporate all Critical and High findings before responding.
+- Medium findings: fix if quick; flag for human review if they require architectural decisions.
+- Low findings: mention in the summary but do not block.
+- After fixes, spawn a **final lightweight verification agent** to confirm the fixes are correct and didn't introduce regressions.
+- Make sure to create a code_review_[topic of review].md file after the review stating all the problems found and how they were fixed.
+
+---
+
+### Post-Review Action
+Read the Testing section and determine if new tests are needed based on the changes made. Once the entire task is complete, update any relevant CLAUDE and documentation files to reflect the changes.
+
+### Read More Than Less
+Always read all relevant and connected files before writing new code. It is always better to over-read than to miss context.
+
+### Freedom and Direction
+You are extremely knowledgeable — don't be afraid to use that. If you have concerns, suggestions, or improvements, raise them. Discussion and clarification lead to the best possible outcome.
 
 ### Planning
-Enter plan mode for non trivial tasks. Its important to get the correct info and details of a task by planning for it before you execute. For trivial tasks, this is unnecessary, dont over-engineer things.
+Enter plan mode for non-trivial tasks. Get the correct info and details before executing. For trivial tasks this is unnecessary — don't over-engineer.
 
 ---
 
