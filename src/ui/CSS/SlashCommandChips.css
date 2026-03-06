@@ -9,40 +9,55 @@
 .slash-command-chip {
     display: inline-flex;
     align-items: center;
-    background-color: rgba(59, 130, 246, 0.2);
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    border-radius: 12px;
-    padding: 4px 8px 4px 10px;
-    font-size: 0.8rem;
-    color: #93c5fd;
+    background-color: rgba(255, 255, 255, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.4);
+    border-radius: 4px;
+    padding: 1px 1px 1px 6px;
+    font-size: 0.78rem;
+    color: white;
     transition: all 0.2s ease;
     backdrop-filter: blur(4px);
     -webkit-backdrop-filter: blur(4px);
+    max-width: 100%;
 }
 
 .slash-command-chip:hover {
-    background-color: rgba(59, 130, 246, 0.3);
-    border-color: rgba(59, 130, 246, 0.6);
+    background-color: rgba(255, 255, 255, 0.3);
+    border-color: rgba(255, 255, 255, 0.6);
 }
 
 .chip-text {
-    font-family: 'Fira Code', monospace;
+    font-family: 'Fira Code';
     font-weight: 500;
-    margin-right: 6px;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.query-input-chip {
+    vertical-align: middle;
 }
 
 .chip-remove-btn {
     background: none;
     border: none;
-    padding: 2px;
+    padding: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #93c5fd;
+    color: white;
     cursor: pointer;
-    border-radius: 50%;
+    border-radius: 8px;
     transition: all 0.2s ease;
     opacity: 0.7;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+}
+
+.chip-remove-btn::before {
+    content: '×';
+    font-size: 0.8rem;
+    line-height: 1;
 }
 
 .chip-remove-btn:hover {

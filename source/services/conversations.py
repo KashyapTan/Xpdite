@@ -8,10 +8,13 @@ import os
 import copy
 import json
 import logging
+import re
 import uuid
 from typing import Callable, List, Dict, Any, Optional, TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
+
+_SLASH_COMMAND_PATTERN = re.compile(r"(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)")
 
 from ..core.state import app_state
 from ..core.request_context import RequestContext
@@ -46,26 +49,32 @@ def _extract_skill_slash_commands_sync(message: str) -> tuple[list, str]:
 
     manager = get_skill_manager()
     all_skills = manager.get_all_skills()
-    slash_map = {s.slash_command: s for s in all_skills if s.slash_command}
+    slash_map = {
+        s.slash_command.lower(): s for s in all_skills if s.slash_command
+    }
 
-    tokens = message.split()
     matched_skills: list = []
-    remaining_tokens: list[str] = []
+    seen_commands: set[str] = set()
+    cleaned_parts: list[str] = []
+    last_index = 0
 
-    for token in tokens:
-        if token.startswith("/"):
-            cmd = token[1:].lower()
-            if cmd in slash_map:
-                skill = slash_map[cmd]
-                if skill.enabled:
-                    matched_skills.append(skill)
-                # disabled skill: strip from message, skip injection silently
-            else:
-                remaining_tokens.append(token)  # unknown slash command, leave it
-        else:
-            remaining_tokens.append(token)
+    for match in _SLASH_COMMAND_PATTERN.finditer(message):
+        cmd = match.group(1).lower()
+        skill = slash_map.get(cmd)
+        if skill is None:
+            continue
 
-    cleaned_message = " ".join(remaining_tokens)
+        start, end = match.span()
+        cleaned_parts.append(message[last_index:start])
+
+        if skill.enabled and cmd not in seen_commands:
+            matched_skills.append(skill)
+            seen_commands.add(cmd)
+
+        last_index = end
+
+    cleaned_parts.append(message[last_index:])
+    cleaned_message = " ".join("".join(cleaned_parts).split())
     return matched_skills, cleaned_message
 
 

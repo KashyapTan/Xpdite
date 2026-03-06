@@ -26,11 +26,10 @@ const SlashCommandChips: React.FC<SlashCommandChipsProps> = ({ query, onRemoveCo
                     <span className="chip-text">{cmd}</span>
                     <button
                         className="chip-remove-btn"
+                        aria-label={`Remove ${cmd}`}
                         onClick={() => onRemoveCommand(cmd)}
                         title={`Remove ${cmd}`}
-                    >
-                        ×
-                    </button>
+                    />
                 </div>
             ))}
         </div>

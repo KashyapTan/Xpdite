@@ -59,6 +59,16 @@
     border-radius: 6px;
     cursor: pointer;
     transition: all 0.1s ease;
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
+}
+
+.slash-menu-item:focus {
+    outline: none;
 }
 
 .slash-menu-item:hover,

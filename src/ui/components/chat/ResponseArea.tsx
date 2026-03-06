@@ -35,6 +35,10 @@ interface ResponseAreaProps {
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
   onTerminalResize?: (cols: number, rows: number) => void;
+  hasTabBar: boolean;
+  topInset: number;
+  bottomInset: number;
+  scrollButtonBottom: number;
 }
 
 export function ResponseArea({
@@ -61,12 +65,24 @@ export function ResponseArea({
   onTerminalApproveRemember,
   onTerminalKill,
   onTerminalResize,
+  hasTabBar,
+  topInset,
+  bottomInset,
+  scrollButtonBottom,
 }: ResponseAreaProps) {
   const hasContentBlocks = contentBlocks && contentBlocks.length > 0;
+  const responseAreaStyle = {
+    marginTop: hasTabBar ? 0 : `${topInset}px`,
+    marginBottom: `${bottomInset}px`,
+    height: `calc(100% - ${topInset + bottomInset}px)`,
+  };
+  const scrollButtonStyle = {
+    bottom: `${scrollButtonBottom}px`,
+  };
 
   return (
     <>
-      <div className="response-area" ref={responseAreaRef} onScroll={onScroll}>
+      <div className="response-area" ref={responseAreaRef} onScroll={onScroll} style={responseAreaStyle}>
         {error && (
           <div className="error">
             <strong>Error:</strong> {error}
@@ -128,6 +144,7 @@ export function ResponseArea({
           className="scroll-bottom-button"
           onClick={onScrollToBottom}
           title="Scroll to bottom"
+          style={scrollButtonStyle}
         >
           <img src={scrollDownIcon} alt="Scroll down" className="scroll-down-icon" />
         </button>

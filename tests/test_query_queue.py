@@ -61,6 +61,16 @@ class TestEnqueue:
         assert "queue_updated" in types
 
     @pytest.mark.asyncio
+    async def test_first_enqueued_item_is_hidden_from_queue_state(self, queue, broadcast_fn):
+        await queue.enqueue(_make_query())
+
+        queue_update_calls = [
+            call for call in broadcast_fn.call_args_list if call.args[1] == "queue_updated"
+        ]
+        assert len(queue_update_calls) == 1
+        assert queue_update_calls[0].args[2]["items"] == []
+
+    @pytest.mark.asyncio
     async def test_consumer_processes_item(self, queue, process_fn):
         await queue.enqueue(_make_query())
         # Give the consumer task time to run
@@ -93,6 +103,54 @@ class TestEnqueue:
         assert len(order) == 2
         assert order[0] == q1.item_id
         assert order[1] == q2.item_id
+
+    @pytest.mark.asyncio
+    async def test_queue_state_updates_when_next_item_becomes_active(self, broadcast_fn):
+        first_started = asyncio.Event()
+        second_started = asyncio.Event()
+        release_first = asyncio.Event()
+        release_second = asyncio.Event()
+
+        async def _track(item):
+            if item.content == "first":
+                first_started.set()
+                await release_first.wait()
+            else:
+                second_started.set()
+                await release_second.wait()
+            return "conv-123"
+
+        q = ConversationQueue(
+            "tab-seq",
+            process_fn=_track,
+            broadcast_fn=broadcast_fn,
+        )
+
+        try:
+            q1 = _make_query(content="first")
+            q2 = _make_query(content="second")
+
+            await q.enqueue(q1)
+            await first_started.wait()
+            await q.enqueue(q2)
+
+            queue_update_calls = [
+                call for call in broadcast_fn.call_args_list if call.args[1] == "queue_updated"
+            ]
+            assert queue_update_calls[-1].args[2]["items"][0]["item_id"] == q2.item_id
+
+            release_first.set()
+            await second_started.wait()
+
+            queue_update_calls = [
+                call for call in broadcast_fn.call_args_list if call.args[1] == "queue_updated"
+            ]
+            assert queue_update_calls[-1].args[2]["items"] == []
+
+            release_second.set()
+            await asyncio.sleep(0.02)
+        finally:
+            await q.drain()
 
     @pytest.mark.asyncio
     async def test_resolved_conversation_id_inherited(self, queue, process_fn):

@@ -136,6 +136,7 @@ function App() {
   const [enabledModels, setEnabledModels] = useState<string[]>([]);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [interactionSectionHeight, setInteractionSectionHeight] = useState(115);
 
   // Terminal state (minimal — most state is now in chatState.contentBlocks)
   const [terminalSessionActive, setTerminalSessionActive] = useState(false);
@@ -144,8 +145,9 @@ function App() {
   // ============================================
   // Refs
   // ============================================
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const inputRef = useRef<HTMLDivElement | null>(null);
   const responseAreaRef = useRef<HTMLDivElement | null>(null);
+  const mainInteractionRef = useRef<HTMLDivElement | null>(null);
   const pendingConversationRef = useRef<string | null>(null);
   const pendingNewChatRef = useRef<boolean>(false);
   const generatingModelRef = useRef<string>('');
@@ -157,7 +159,7 @@ function App() {
   // Tab Management
   // ============================================
   const {
-    activeTabId, createTab, updateTabTitle,
+    tabs, activeTabId, createTab, updateTabTitle,
     queueMap, setQueueItems, registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
   } = useTabs();
   const activeTabIdRef = useRef(activeTabId);
@@ -184,6 +186,51 @@ function App() {
   const wsSend = useCallback((msg: Record<string, unknown>) => {
     wsSendRaw({ tab_id: activeTabIdRef.current, ...msg });
   }, [wsSendRaw]);
+
+  useEffect(() => {
+    const node = mainInteractionRef.current;
+    if (!node) {
+      return undefined;
+    }
+
+    let frameId: number | null = null;
+
+    const updateHeight = () => {
+      if (!node.isConnected) {
+        return;
+      }
+      const nextHeight = Math.ceil(node.getBoundingClientRect().height);
+      setInteractionSectionHeight((previousHeight) => (
+        previousHeight === nextHeight ? previousHeight : nextHeight
+      ));
+    };
+
+    const scheduleHeightUpdate = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        updateHeight();
+      });
+    };
+
+    updateHeight();
+
+    if (typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+
+    const observer = new ResizeObserver(() => scheduleHeightUpdate());
+    observer.observe(node);
+
+    return () => {
+      observer.disconnect();
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, []);
   // Tab switch: snapshot / restore state registry
   // ============================================
 
@@ -1335,6 +1382,11 @@ function App() {
   // ============================================
   // Render
   // ============================================
+  const hasTabBar = tabs.length > 1;
+  const responseAreaTopInset = hasTabBar ? 58 : 30;
+  const responseAreaBottomInset = interactionSectionHeight + 15;
+  const scrollButtonBottom = interactionSectionHeight + 10;
+
   return (
     <div className="content-container" style={{ width: '100%', height: '100%', position: 'relative' }}>
       <TitleBar onClearContext={handleNewTab} setMini={setMini} />
@@ -1364,9 +1416,13 @@ function App() {
         onTerminalApproveRemember={handleTerminalApproveRemember}
         onTerminalKill={handleKillCommand}
         onTerminalResize={handleTerminalResize}
+        hasTabBar={hasTabBar}
+        topInset={responseAreaTopInset}
+        bottomInset={responseAreaBottomInset}
+        scrollButtonBottom={scrollButtonBottom}
       />
 
-      <div className="main-interaction-section">
+      <div className="main-interaction-section" ref={mainInteractionRef}>
         {/* Session mode indicators */}
         {terminalSessionRequest && (
           <div className="terminal-session-chip">

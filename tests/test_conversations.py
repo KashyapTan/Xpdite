@@ -63,6 +63,18 @@ class TestExtractSkillSlashCommands:
         assert names == {"terminal", "websearch"}
         assert cleaned == "do stuff"
 
+    def test_multiple_slash_commands_inline(self):
+        skills = [
+            _make_skill("terminal", "terminal"),
+            _make_skill("websearch", "websearch"),
+        ]
+        matched, cleaned = self._call(
+            "please /websearch then /terminal for docs",
+            skills,
+        )
+        assert [skill.name for skill in matched] == ["websearch", "terminal"]
+        assert cleaned == "please then for docs"
+
     def test_unknown_slash_command_preserved(self):
         skills = [_make_skill("terminal", "terminal")]
         matched, cleaned = self._call("/unknown hello", skills)
@@ -81,6 +93,13 @@ class TestExtractSkillSlashCommands:
         matched, cleaned = self._call("please /websearch for python docs", skills)
         assert len(matched) == 1
         assert cleaned == "please for python docs"
+
+    def test_duplicate_slash_commands_only_force_once(self):
+        skills = [_make_skill("terminal", "terminal")]
+        matched, cleaned = self._call("/terminal /terminal run this", skills)
+        assert len(matched) == 1
+        assert matched[0].name == "terminal"
+        assert cleaned == "run this"
 
     def test_empty_message(self):
         matched, cleaned = self._call("", [])

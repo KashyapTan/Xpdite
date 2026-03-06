@@ -11,8 +11,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Coroutine, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Coroutine, Deque, Dict, List, Optional
 
 if TYPE_CHECKING:
     from ..core.request_context import RequestContext
@@ -62,8 +63,10 @@ class ConversationQueue:
     ) -> None:
         self.tab_id = tab_id
         self._queue: asyncio.Queue[QueuedQuery] = asyncio.Queue(maxsize=MAX_QUEUE_SIZE)
+        self._queued_order: Deque[QueuedQuery] = deque()
         self._consumer_task: Optional[asyncio.Task[None]] = None
         self._active_ctx: Optional[RequestContext] = None
+        self._pending_active_item_id: Optional[str] = None
         self.resolved_conversation_id: Optional[str] = None
 
         # Injected dependencies
@@ -88,7 +91,12 @@ class ConversationQueue:
             query.conversation_id = self.resolved_conversation_id
 
         self._queue.put_nowait(query)
+        self._queued_order.append(query)
         position = self._queue.qsize()
+        consumer_running = self._consumer_task is not None and not self._consumer_task.done()
+
+        if position == 1 and not self.is_processing and not consumer_running:
+            self._pending_active_item_id = query.item_id
 
         # Notify frontend
         await self._broadcast_fn(
@@ -99,7 +107,7 @@ class ConversationQueue:
         await self._broadcast_queue_state()
 
         # Spawn consumer if not running
-        if self._consumer_task is None or self._consumer_task.done():
+        if not consumer_running:
             self._consumer_task = asyncio.create_task(
                 self._consumer(), name=f"queue-consumer-{self.tab_id}"
             )
@@ -123,11 +131,15 @@ class ConversationQueue:
                 break
             if item.item_id == item_id:
                 found = True
+                if item_id == self._pending_active_item_id:
+                    self._pending_active_item_id = None
             else:
                 temp.append(item)
 
         for item in temp:
             self._queue.put_nowait(item)
+
+        self._queued_order = deque(temp)
 
         if found:
             await self._broadcast_queue_state()
@@ -153,12 +165,15 @@ class ConversationQueue:
             self._active_ctx.cancel()
             self._active_ctx = None
 
+        self._pending_active_item_id = None
+
         # Clear remaining items
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+        self._queued_order.clear()
 
     async def stop_current(self) -> None:
         """Stop only the currently running request. Queue continues."""
@@ -176,7 +191,11 @@ class ConversationQueue:
     @property
     def queued_items(self) -> List[Dict[str, Any]]:
         """Snapshot of items waiting in the queue (not the active one)."""
-        items = list(self._queue._queue)  # type: ignore[attr-defined]
+        items = [
+            item
+            for item in self._queued_order
+            if item.item_id != self._pending_active_item_id
+        ]
         return [
             {
                 "item_id": item.item_id,
@@ -196,6 +215,20 @@ class ConversationQueue:
                     item = self._queue.get_nowait()
                 except asyncio.QueueEmpty:
                     break
+
+                if self._queued_order and self._queued_order[0].item_id == item.item_id:
+                    self._queued_order.popleft()
+                else:
+                    self._queued_order = deque(
+                        queued_item
+                        for queued_item in self._queued_order
+                        if queued_item.item_id != item.item_id
+                    )
+
+                if item.item_id == self._pending_active_item_id:
+                    self._pending_active_item_id = None
+
+                await self._broadcast_queue_state()
 
                 try:
                     await self._process_item(item)

@@ -13,37 +13,48 @@ interface QueueDropdownProps {
 }
 
 export function QueueDropdown({ items, onCancel }: QueueDropdownProps) {
-  const [expanded, setExpanded] = useState(true);
+  const [expanded, setExpanded] = useState(false);
 
   if (items.length === 0) return null;
+
+  const nextItem = items[0];
+  const queueLabel = items.length === 1 ? 'Queued next' : 'Queued follow-ups';
 
   return (
     <div className="queue-dropdown">
       <button
+        type="button"
         className="queue-dropdown-header"
         onClick={() => setExpanded(prev => !prev)}
         aria-expanded={expanded}
+        aria-label={expanded ? 'Collapse queued messages' : 'Expand queued messages'}
       >
-        <span className="queue-dropdown-badge">{items.length}</span>
-        <span className="queue-dropdown-label">
-          {items.length === 1 ? '1 queued message' : `${items.length} queued messages`}
-        </span>
-        <span className={`queue-dropdown-chevron ${expanded ? 'open' : ''}`}>›</span>
+        <div className="queue-dropdown-header-copy">
+          <span className="queue-dropdown-title">{queueLabel}</span>
+          <div className="queue-dropdown-summary">
+            <span className="queue-dropdown-order">{nextItem.position}</span>
+            <span className="queue-dropdown-preview" title={nextItem.preview}>{nextItem.preview}</span>
+          </div>
+        </div>
+        <span className={`queue-dropdown-chevron ${expanded ? 'open' : ''}`} aria-hidden="true">›</span>
       </button>
 
       {expanded && (
         <ul className="queue-dropdown-list">
           {items.map((item) => (
             <li key={item.item_id} className="queue-dropdown-item">
-              <span className="queue-dropdown-pos">#{item.position}</span>
-              <span className="queue-dropdown-preview">{item.preview}</span>
+              <div className="queue-dropdown-item-copy">
+                <span className="queue-dropdown-order">{item.position}</span>
+                <span className="queue-dropdown-item-preview" title={item.preview}>{item.preview}</span>
+              </div>
               <button
+                type="button"
                 className="queue-dropdown-cancel"
                 onClick={() => onCancel(item.item_id)}
                 title="Cancel this queued message"
                 aria-label="Cancel this queued message"
               >
-                ✕
+                <span aria-hidden="true">×</span>
               </button>
             </li>
           ))}
