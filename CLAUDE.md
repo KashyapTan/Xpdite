@@ -76,11 +76,21 @@ Enter plan mode for non-trivial tasks. Get the correct info and details before e
 ```bash
 bun run dev              # start everything: React (Vite), Electron, Python server, Ollama (GPU via scripts/start-ollama.mjs)
 bun run dev:react        # Vite only (port 5123)
+bun run dev:electron     # transpile Electron tsc + launch in dev mode
 bun run dev:pyserver     # Python FastAPI server only
+bun run test:ollama      # verify Ollama is running (curl probe to port 11434)
 bun run build            # full production build (PyInstaller → tsc → Vite)
+bun run build:react      # Vite build only
+bun run build:python     # Python build via scripts/build-python.mjs (without PyInstaller exe)
+bun run build:python-exe # PyInstaller via scripts/build-python-exe.py (used by prebuild hook)
+bun run preview          # preview the Vite production build locally
 bun run lint             # ESLint
 bun run install:python   # uv sync --group dev (always run after pulling)
+bun run install:uv       # install the UV tool itself (first-time setup)
 bun run transpile:electron  # tsc for Electron main process only
+bun run dist:win         # full production package for Windows (x64)
+bun run dist:mac         # full production package for macOS (arm64)
+bun run dist:linux       # full production package for Linux (x64)
 
 # Python (run from project root with .venv active)
 .venv\Scripts\python.exe -m source.main      # start Python server directly
@@ -88,6 +98,8 @@ uv sync --group dev                           # install / update Python deps
 uv add <pkg>                                  # add a new Python package
 uv run <file_name>                            # run python files for testing
 ```
+
+**Requires Python 3.13+** (`requires-python = ">=3.13"` in `pyproject.toml`).
 
 **Ports:** Python server starts on 8000 (scans up to 8009 if busy). React dev server is on port 5123. WebSocket and HTTP share python's port.
 
@@ -132,7 +144,7 @@ uv run <file_name>                            # run python files for testing
 
 **New DB column** → add an `ALTER TABLE … ADD COLUMN` migration block inside `_init_db()` in `source/database.py`. Never modify the original `CREATE TABLE` statement.
 
-**New MCP tool server** → see `source/CLAUDE.md` → "Adding a new MCP server".
+**New MCP tool server** → see `mcp_servers/CLAUDE_mcp.md` → "How to Add a New MCP Server".
 
 **New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
 
@@ -153,6 +165,8 @@ Skip tests for thin glue code (WS handlers that just call a service, REST endpoi
 uv run python -m pytest tests/ -v          # run all tests
 uv run python -m pytest tests/test_foo.py  # run a single file
 ```
+
+**`asyncio_mode = "auto"`** is set in `pyproject.toml` — all `async def test_*` functions are automatically treated as asyncio tests. No `@pytest.mark.asyncio` decorator is needed (though some legacy tests retain it; both styles work).
 
 ### Test file conventions
 - One file per source module: `source/services/terminal.py` → `tests/test_terminal.py`

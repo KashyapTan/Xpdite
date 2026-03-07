@@ -10,7 +10,7 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 |---|---|---|---|
 | `filesystem` | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file` | Sandboxed — paths are validated |
 | `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
-| `calendar` | ✅ Active | `get_events`, `search_events`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
+| `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
 | `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
 | `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Executed inline by `terminal_executor.py` with approval UI. |
 | `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
@@ -25,13 +25,19 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 ```
 mcp_servers/
 ├── config/
-│   └── servers.json         # Enable/disable servers; per-server env vars and credentials
+│   └── servers.json         # Enable/disable servers; per-server env vars and credentials (UI metadata only — backend does not read this)
 ├── servers/
-│   └── <name>/
-│       ├── server.py                  # Tool definitions via @mcp.tool()
-│       └── <name>_descriptions.py    # Long docstrings kept separate to keep server.py clean
+│   ├── calendar/            ✅ server.py + calander_descriptions.py
+│   ├── canvas/              📝 server.py placeholder (no tools yet) — needs CANVAS_URL + CANVAS_TOKEN
+│   ├── demo/                ✅ server.py (disabled by default)
+│   ├── discord/             📝 server.py placeholder (no tools yet) — needs DISCORD_BOT_TOKEN
+│   ├── filesystem/          ✅ server.py + filesystem_descriptions.py
+│   ├── gmail/               ✅ server.py + gmail_descriptions.py
+│   ├── terminal/            ✅ server.py + terminal_descriptions.py + blocklist.py (tools run inline, not as subprocess)
+│   ├── websearch/           ✅ server.py + websearch_descriptions.py
+│   └── github/, jira/, notion/, obsidian/, outlook/, slack/, teams/, whatsapp/, yahoo/   🗂️ Empty directories (no files)
 └── client/
-    └── ollama_bridge.py    # Standalone bridge for testing MCP servers outside the main app
+    └── ollama_bridge.py    # Standalone bridge for testing MCP servers outside the main app (not used in production)
 ```
 
 ---
@@ -69,7 +75,11 @@ await mcp_manager.connect_server(
 Add an entry for UI display in Settings. The backend does **not** read this file — it is metadata only.
 
 ### 4. (Optional) Add a skill
-Create an entry in `source/mcp_integration/default_skills.py` with `skill_name` matching the server name. The skill's `content` is injected into the system prompt whenever your tools are active, giving the model domain-specific guidance.
+Create a folder under `source/skills_seed/<your_name>/` with two files:
+- `skill.json` — `{ name, description, slash_command, trigger_servers, version }`
+- `SKILL.md` — the prompt content injected when the skill is active.
+
+The skill is auto-seeded to `user_data/skills/builtin/` on every app startup. `trigger_servers` should list your new server name so the skill auto-injects when relevant tools are retrieved. Skills are managed by `SkillManager` in `source/services/skills.py`.
 
 ### 5. That's it
 Tools are auto-discovered on startup, indexed by the semantic retriever, and routed automatically when the LLM calls them.

@@ -12,7 +12,7 @@ source/
 │
 ├── core/
 │   ├── state.py         # AppState singleton (screenshot list, model selection, chat history)
-│   ├── connection.py    # ConnectionManager + broadcast_message helper
+│   ├── connection.py    # ConnectionManager + broadcast_message + broadcast_to_tab helpers
 │   ├── request_context.py  # Per-request lifecycle and cancellation
 │   ├── thread_pool.py   # run_in_thread — offload blocking calls from event loop
 │   └── lifecycle.py     # Signal handlers, graceful shutdown
@@ -42,7 +42,8 @@ source/
 │   ├── filesystem/
 │   ├── websearch/
 │   ├── gmail/
-│   └── calendar/
+│   ├── calendar/
+│   └── browser/             # Browser automation via playwright-cli (trigger_servers: [])
 │
 └── services/
     ├── conversations.py # ConversationService.submit_query — orchestrates the full turn
@@ -54,7 +55,9 @@ source/
     ├── ollama_global_queue.py  # Global Ollama request serializer (GPU is single-tenant)
     ├── tab_manager_instance.py # Lazy singleton + _process_fn bridging queue → ConversationService
     ├── google_auth.py   # OAuth2 flow for Gmail/Calendar
-    └── transcription.py # Audio transcription (if enabled)
+    ├── transcription.py # Voice transcription (pyaudio + faster-whisper base.en, stop_recording trigger)
+    ├── meeting_recorder.py  # Meeting recording service: live Tier 1 + Tier 2 post-processing pipeline
+    └── gpu_detector.py  # GPU backend detection for Whisper (CUDA vs CPU, compute type)
 ```
 
 ---
@@ -62,19 +65,23 @@ source/
 ## Key File Responsibilities
 
 - **`state.py`** is a simple mutable singleton — it is *not* thread-safe for writes. All mutations happen inside the asyncio event loop from WS handler tasks, which is sufficient. `server_loop_holder["loop"]` stores the running asyncio event loop so that non-async threads (screenshot, lifecycle) can schedule coroutines via `asyncio.run_coroutine_threadsafe()`. Required because the Windows Proactor loop is not accessible from threads spawned outside uvicorn. Also tracks `active_tab_id` — updated by `MessageHandler.handle()` on every incoming WS message so that background-thread screenshot captures (precision-mode hotkey) route to the correct tab.
-- **`connection.py`** — `wrap_with_tab_ctx(tab_id, coro)` wraps a coroutine so that `_current_tab_id` is set for its duration. Used whenever scheduling a broadcast from a background thread (e.g., precision-mode screenshot capture) back to the event loop via `call_soon_threadsafe` or `run_coroutine_threadsafe`. Without this wrapper, new tasks lose the contextvar and broadcast messages arrive without `tab_id`, routing them to the wrong tab on the frontend. See the "Why `wrap_with_tab_ctx`" architecture decision below.
-- **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop. Provides `ContextVar`-based `set_current_request()` / `is_current_request_cancelled()` for per-task cancellation, and `set_current_model()` / `get_current_model()` so the LLM layer picks up the correct model per-request without reading the global `app_state.selected_model`.
-- **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully.
-- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs.
-- **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`.
-- **`tab_manager_instance.py`** — lazy singleton initialized in `app.py` startup. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing Ollama models through the global queue.
+- **`connection.py`** — `wrap_with_tab_ctx(tab_id, coro)` wraps a coroutine so that `_current_tab_id` is set for its duration. Used whenever scheduling a broadcast from a background thread (e.g., precision-mode screenshot capture) back to the event loop via `call_soon_threadsafe` or `run_coroutine_threadsafe`. Without this wrapper, new tasks lose the contextvar and broadcast messages arrive without `tab_id`, routing them to the wrong tab on the frontend. Also provides `broadcast_to_tab(tab_id, message_type, content)` — an explicit tab-scoped broadcast helper for scenarios where you want to target a specific tab directly rather than rely on the contextvar (e.g., Ollama queue status updates from the global queue). See the "Why `wrap_with_tab_ctx`" architecture decision below.
+- **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop. Provides `ContextVar`-based `set_current_request()` / `is_current_request_cancelled()` for per-task cancellation, and `set_current_model()` / `get_current_model()` so the LLM layer picks up the correct model per-request without reading the global `app_state.selected_model`. `RequestContext` also carries a `forced_skills: list` field (set from `QueuedQuery.forced_skills` by the slash command parser) and supports `on_cancel(callback)` to register cleanup callbacks that fire on cancellation; `mark_done()` clears them on normal completion.
+- **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully. On `QueueFullError`, the handler broadcasts `queue_full` (not `error`). Each enqueued item broadcasts `query_queued` to the frontend. `QueuedQuery` carries `item_id`, `forced_skills`, `llm_query`, `action` (`"submit"` / `"retry"` / `"edit"`), and `target_message_id` for retry/edit flows. `resolved_conversation_id` on the queue allows subsequent items to inherit the conversation started by the first.
+- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs. `lifecycle.py` calls `tab_manager.close_all()` during graceful shutdown.
+- **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`. Uses a `result_holder[0]` pattern via an inner `_wrapper` coroutine to propagate return values back to `run()` callers. `set_broadcast_fn(fn)` injects the broadcast function after startup to avoid circular imports.
+- **`tab_manager_instance.py`** — lazy singleton initialized in `app.py` startup. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing Ollama models through the global queue. `init_tab_manager()` also wires the Ollama queue's broadcast function and creates the default tab.
 - **`thread_pool.py → run_in_thread`** is mandatory for anything that calls a synchronous SDK (e.g., `google-auth`, `Pillow`, screenshots). Calling them directly will block uvicorn's single event loop. Note: Ollama now uses `AsyncClient` natively and no longer needs `run_in_thread`.
-- **`terminal_executor.py`** handles terminal tools *inline* — it never calls the MCP subprocess for terminal actions. The `terminal` MCP server's `server.py` exists only as a schema/description source.
-- **`ss.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups.
-- **`services/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text.
-- **`services/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket.
-- **`services/conversations.py`** — `submit_query` orchestrates the full turn. When the user cancels mid-generation (`ctx.cancelled`), the method still persists the user prompt and partial assistant response (with `[Response interrupted]` appended) to the DB, creates a conversation record if needed, and broadcasts `conversation_saved`. Tool calls and content blocks executed before cancellation are preserved in the saved message. Screenshots consumed during a turn are always cleared in the `finally` block (covers normal, cancelled, and exception paths).
-- **`services/terminal.py`** — terminal events that fire before the first assistant message (no `conversation_id` yet) are queued via `queue_terminal_event()` and flushed to the DB after the conversation record is created via `flush_pending_events(conversation_id)`. Without this, tool calls on message 1 would be orphaned.
+- **`terminal_executor.py`** handles terminal tools *inline* — it never calls the MCP subprocess for terminal actions. The `terminal` MCP server's `server.py` exists only as a schema/description source. Supported inline tools: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts optional `background=True` and `yield_ms` parameters. A per-command `_notice_checker` asyncio task fires a notice broadcast if the command runs longer than 10 seconds.
+- **`ss.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups. Also exposes `copy_image_to_clipboard(image, dpi_scale=None)` (copies PIL Image to Windows clipboard via `CF_DIB` with retry loop for busy clipboard) and `copy_file_to_clipboard(filepath)` (uses PowerShell `Set-Clipboard -Path`). `ScreenshotService` has a `start_callback` field for when capture starts (used for window hiding) and a 1.5s debounce via `_last_trigger_time`.
+- **`services/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text. Uses an in-memory `_approvals_cache` dict protected by `threading.Lock` to avoid repeated file reads.
+- **`services/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket. `_recording_error: str | None` attribute surfaces audio errors back to the caller.
+- **`services/conversations.py`** — `submit_query` orchestrates the full turn. Supports `action` parameter (`"submit"` / `"retry"` / `"edit"`) and `target_message_id` for retry/edit flows. When the user cancels mid-generation (`ctx.cancelled`), the method still persists the user prompt and partial assistant response (with `[Response interrupted]` appended) to the DB, creates a conversation record if needed, and broadcasts `conversation_saved`. Tool calls and content blocks executed before cancellation are preserved in the saved message. Screenshots consumed during a turn are always cleared in the `finally` block (covers normal, cancelled, and exception paths). Slash command extraction (`extract_skill_slash_commands`) uses a background thread to parse `/skill-name` tokens via regex `(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)` and returns `(forced_skills, llm_query_without_commands)`.
+- **`services/terminal.py`** — `TerminalSession` class tracks running processes with fields `session_id`, `request_id`, `command`, `process`, `output_buffer`, `text_buffer`, `reader_task`, `exit_code`. `wait_for_completion(timeout)` is async-safe. `get_recent_output(lines=50)` returns ANSI-stripped output via `_ANSI_RE`. `_kill_process_tree(pid)` uses `taskkill /F /T /PID` on Windows, process-group kill on Unix. `kill_running_command()` and `resize_all_pty(cols, rows)` are available (triggered by `terminal_kill_command` and `terminal_resize` WS messages). Terminal events that fire before the first assistant message (no `conversation_id` yet) are queued via `queue_terminal_event()` and flushed to the DB after the conversation record is created via `flush_pending_events(conversation_id)`.
+- **`services/meeting_recorder.py`** — `MeetingRecorderService` manages one active recording at a time. Audio arrives as base64 PCM chunks via WS, written to `user_data/meeting_audio/<recording_id>.wav` (16kHz, mono, 16-bit). Live Tier 1 transcription runs via `faster-whisper` in a background thread with 5-second chunks and 1-second overlap. Silence detection uses RMS < 50 threshold. `recover_interrupted_recordings()` is called at startup for crash recovery. `PostProcessingPipeline` runs a sequential worker thread with steps: `transcribing → aligning → diarizing → merging → generating_title → saving`, using `faster-whisper large-v3`, WhisperX for alignment, and SpeechBrain for diarization.
+- **`services/gpu_detector.py`** — `detect_compute_backend()` returns `'cuda'` or `'cpu'`. `get_compute_info()` returns `{backend, device_name, vram_gb, compute_type}` — `float16` if VRAM ≥ 4 GB, else `int8`. `get_estimated_processing_time(audio_duration_seconds)` returns `0.15×` for CUDA, `1.5×` for CPU. Results are cached in a module-level `_cached_backend` singleton.
+- **`services/google_auth.py`** — `GoogleAuthService` manages Google OAuth 2.0 lifecycle. `start_oauth_flow()` runs `InstalledAppFlow.run_local_server(port=0)`, saves `token.json` to `user_data/google/`. `disconnect()` attempts token revocation then deletes the file. `get_status()` returns `{connected, email, auth_in_progress}`. The OAuth client credentials are embedded in `config.py` — this is the Google-recommended pattern for native desktop apps (client_secret is not confidential for installed apps).
+- **`services/skills.py`** — `SkillManager` caches skill content lazily on `Skill` instances; `invalidate_content_cache()` clears it. `_validate_safe_name(value, label)` enforces `^[a-zA-Z0-9_-]+$` pattern to prevent path traversal. `add_reference_file(name, filename, content)` writes a `.md` file to `skill_folder/references/` (enforces `.md` extension). Skills with `references/` subdirectories have their reference files available to inject as additional context. `get_all_skills_with_overrides()` returns overridden builtins first (greyed out) followed by all active skills.
 
 ---
 
@@ -83,13 +90,19 @@ source/
 | Table | Key Columns | Notes |
 |---|---|---|
 | `conversations` | `id` (UUID), `title`, `created_at`, `updated_at`, `total_input_tokens`, `total_output_tokens` | Sort sidebar by `updated_at`; indexed on `updated_at DESC` |
-| `messages` | `num_messages` (autoincrement PK), `conversation_id` (NOT NULL), `role` (NOT NULL), `content`, `images` (JSON), `model`, `content_blocks` (JSON), `message_id`, `turn_id`, `active_response_index` | `message_id` is the stable per-message identifier used by retry/edit flows; `turn_id` groups a user + assistant pair; indexed on `(conversation_id, created_at)` |
-| `message_response_versions` | `message_id`, `version_index`, `content`, `content_blocks`, `model` | Stores alternate assistant responses for the same turn; `messages.active_response_index` points at the visible variant |
-| `settings` | `key`, `value` | Key-value store for all user preferences |
-| `terminal_events` | `id`, `conversation_id` (NOT NULL), `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands; indexed on `(conversation_id, created_at)` |
-| `meeting_recordings` | `id`, `title`, `started_at`, `ended_at`, `duration_seconds`, `status`, ... | Indexed on `started_at DESC` |
+| `messages` | `num_messages` (autoincrement PK), `conversation_id` (NOT NULL), `role` (NOT NULL), `content`, `images` (JSON), `model`, `content_blocks` (JSON), `message_id` (UUID, unique index), `turn_id` (UUID), `active_response_index` | `message_id` is the stable per-message identifier used by retry/edit flows; `turn_id` groups a user + assistant pair; indexed on `(conversation_id, created_at)` and `(conversation_id, turn_id, created_at)` |
+| `message_response_versions` | `id` (UUID PK), `assistant_message_id` (TEXT, FK→messages.message_id), `response_index` (INTEGER), `content`, `model`, `content_blocks` (JSON), `created_at` | Unique constraint on `(assistant_message_id, response_index)`; stores alternate assistant responses for the same turn; `messages.active_response_index` points at the visible variant |
+| `settings` | `key`, `value` | Key-value store for all user preferences including `enabled_models`, `system_prompt_template` |
+| `terminal_events` | `id`, `conversation_id` (NOT NULL), `message_index`, `command`, `exit_code`, `output_preview`, `full_output`, `cwd`, `duration_ms`, `timed_out`, `denied`, `pty`, `background` | Full audit trail of executed commands; `pty` and `background` are boolean flags |
+| `meeting_recordings` | `id` (UUID PK), `title`, `started_at` (REAL), `ended_at` (REAL), `duration_seconds` (REAL), `status` (TEXT: `recording`/`processing`/`completed`/`failed`), `audio_file_path`, `tier1_transcript` (TEXT), `tier2_transcript_json` (JSON), `ai_summary` (TEXT), `ai_actions_json` (JSON), `ai_title_generated` (INTEGER bool) | Indexed on `started_at DESC` |
+| `conversations_fts` | Virtual FTS5 table: `conversation_id`, `title` | `unicode61` tokenizer; kept in sync by `conversations_fts_ai` / `_au` / `_ad` triggers |
+| `messages_fts` | Virtual FTS5 table: `conversation_id`, `content` | `unicode61` tokenizer; kept in sync by `messages_fts_ai` / `_au` / `_ad` triggers; `messages_fts_au` trigger fires on `UPDATE OF content` |
 
 Skills are **no longer in the database** — they are filesystem-backed folders under `user_data/skills/` managed by `SkillManager` in `source/services/skills.py`. Preferences (enabled/disabled) are stored in `user_data/skills/preferences.json`.
+
+**FTS5 search:** `search_conversations(search_term)` uses `_fts5_phrase(term)` to wrap the query in FTS5 double-quote phrase syntax (internal `"` doubled). Falls back to `LIKE` search with `ESCAPE '\\'` if the FTS virtual tables are missing.
+
+**Migration pattern for new message columns:** `_backfill_message_metadata(cursor)` runs on every `_init_db()` call to assign `message_id`/`turn_id`/`active_response_index` to all existing messages and create their corresponding `message_response_versions` row. This is idempotent — rows that already have IDs are skipped.
 
 **Connection pattern:** All methods use the `_connect()` context manager which ensures cleanup on exit and explicit rollback on error. `_get_connection()` sets PRAGMAs (WAL, foreign_keys, busy_timeout, cache_size, synchronous) on every connection.
 
@@ -116,15 +129,30 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `delete_conversation` | `conversation_id` | `_handle_delete_conversation` |
 | `search_conversations` | `query` | `_handle_search_conversations` |
 | `resume_conversation` | `conversation_id`, `tab_id` | `_handle_resume_conversation` |
+| `start_recording` | — | `_handle_start_recording` |
 | `stop_recording` | — | `_handle_stop_recording` |
 | `terminal_approval_response` | `request_id`, `approved`, `remember` | `_handle_terminal_approval_response` |
 | `terminal_session_response` | `approved` | `_handle_terminal_session_response` |
 | `terminal_stop_session` | — | `_handle_terminal_stop_session` |
 | `terminal_set_ask_level` | `level` (`always`/`on-miss`/`off`) | `_handle_terminal_set_ask_level` |
+| `terminal_kill_command` | — | `_handle_terminal_kill_command` |
+| `terminal_resize` | `cols`, `rows` (validated: 0 < cols ≤ 500, 0 < rows ≤ 200) | `_handle_terminal_resize` |
 | `tab_created` | `tab_id` | `_handle_tab_created` |
 | `tab_closed` | `tab_id` | `_handle_tab_closed` |
 | `tab_activated` | `tab_id` | `_handle_tab_activated` |
 | `cancel_queued_item` | `tab_id`, `item_id` | `_handle_cancel_queued_item` |
+| `meeting_start_recording` | `title` | `_handle_meeting_start_recording` |
+| `meeting_stop_recording` | `recording_id` | `_handle_meeting_stop_recording` |
+| `meeting_cancel_recording` | `recording_id` | `_handle_meeting_cancel_recording` |
+| `meeting_get_recordings` | `limit`, `offset` | `_handle_meeting_get_recordings` |
+| `meeting_get_recording` | `recording_id` | `_handle_meeting_get_recording` |
+| `meeting_delete_recording` | `recording_id` | `_handle_meeting_delete_recording` |
+| `meeting_search_recordings` | `query` | `_handle_meeting_search_recordings` |
+| `meeting_analyze_recording` | `recording_id` | `_handle_meeting_analyze_recording` |
+| `meeting_regenerate_analysis` | `recording_id`, `instructions` | `_handle_meeting_regenerate_analysis` |
+| `meeting_get_analysis` | `recording_id` | `_handle_meeting_get_analysis` |
+| `meeting_audio_chunk` | `recording_id`, `data` (base64 PCM) | `_handle_meeting_audio_chunk` |
+| `meeting_execute_action` | `recording_id`, `action_type` (`create_event`/`create_draft`), `action_data` | `_handle_meeting_execute_action` |
 
 ### Server → Client
 
@@ -149,8 +177,24 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `terminal_command_complete` | Command finished (`exit_code`, `duration_ms`) |
 | `terminal_running_notice` | Broadcast 10s after command starts if still running |
 | `queue_updated` | Queue items changed for a tab (`tab_id`, `items`) |
+| `query_queued` | Broadcast when a query is successfully enqueued (`tab_id`, `item_id`, `position`) |
+| `queue_full` | Broadcast when `QueueFullError` is raised (queue already at max 5 items) |
 | `ollama_queue_status` | Ollama global queue position broadcast |
 | `error` | Any unhandled exception |
+| `meeting_recordings_list` | Response to `meeting_get_recordings` |
+| `meeting_recording_detail` | Response to `meeting_get_recording` or `meeting_stop_recording` completion |
+| `meeting_recording_started` | Recording successfully created and started |
+| `meeting_recording_stopped` | Recording stopped; includes `recording_id` and `duration_seconds` |
+| `meeting_recording_cancelled` | Recording cancelled before saving |
+| `meeting_recording_deleted` | Recording deleted |
+| `meeting_recordings_search` | FTS/LIKE search results |
+| `meeting_tier1_transcript_chunk` | Live transcript text during recording |
+| `meeting_processing_status` | Tier 2 pipeline step progress (`transcribing` → `aligning` → `diarizing` → `merging` → `generating_title` → `saving`) |
+| `meeting_processing_complete` | Tier 2 pipeline finished; includes final recording detail |
+| `meeting_processing_error` | Tier 2 pipeline failed |
+| `meeting_analysis_result` | AI summary + actions after `meeting_analyze_recording` |
+| `meeting_action_executed` | Calendar event or email draft created via `meeting_execute_action` |
+| `meeting_error` | Meeting-specific error (not generic `error`) |
 
 **Note:** All server→client messages include a `tab_id` field stamped automatically by `broadcast_message()` via the `_current_tab_id` contextvar.
 
@@ -164,17 +208,26 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 3. If no tools were detected in phase 1, the caller falls through to normal streaming (with thinking enabled).
 
 ### Cloud path (inline via LiteLLM)
-All cloud providers (Anthropic, OpenAI, Gemini) use a single unified implementation via `litellm.acompletion()`. The API key is passed directly as a kwarg (not via `os.environ`) for thread safety. Tool definitions use OpenAI format for all providers — LiteLLM translates to native formats. When accumulated tool call deltas are detected after a streaming round ends, tools are executed and results fed back in a multi-round loop (up to `MAX_MCP_TOOL_ROUNDS`). The presence of `pending_tool_calls` is the trigger — not `finish_reason` — because providers like Gemini may use a non-standard finish reason (e.g. `"stop"` instead of `"tool_calls"`). After the tool budget is exhausted, one final summarisation round runs without tools so the model can synthesise its answer. Thinking/reasoning tokens are broadcast via `thinking_chunk`; thinking state (`thinking_tokens`, `thinking_complete_sent`) is **reset per round** so multi-round tool loops get fresh thinking broadcasts. Reasoning/thinking capability and `max_output_tokens` are both derived from a single `litellm.get_model_info()` call cached once per request — no redundant queries and no hardcoded token limits. If the model is not in litellm's registry, `max_tokens` is omitted (except for Anthropic, which requires it — a 16384 fallback is used). If supported, `reasoning_effort` (configurable via `REASONING_EFFORT` in `config.py`) is passed and LiteLLM translates it to each provider's native format (Anthropic → `thinking`, Gemini → `thinkingConfig`/`thinking_level`, OpenAI → native `reasoning_effort`). Malformed tool call JSON is reported back to the model as a tool-result error so it can self-correct. Cancellation during tool execution properly exits both the inner tool loop and the outer streaming loop. On exceptions, partial accumulated text and tool calls are preserved (not discarded). Providers that omit `tool_call_id` (e.g. Gemini) receive synthetic fallback IDs.
+All cloud providers (Anthropic, OpenAI, Gemini) use a single unified implementation via `litellm.acompletion()`. `litellm.modify_params = True` is set globally — required for Anthropic thinking+tools to work correctly. The API key is passed directly as a kwarg (not via `os.environ`) for thread safety. Tool definitions use OpenAI format for all providers — LiteLLM translates to native formats. When accumulated tool call deltas are detected after a streaming round ends, tools are executed and results fed back in a multi-round loop (up to `MAX_MCP_TOOL_ROUNDS`). The presence of `pending_tool_calls` is the trigger — not `finish_reason` — because providers like Gemini may use a non-standard finish reason (e.g. `"stop"` instead of `"tool_calls"`). After the tool budget is exhausted, one final summarisation round runs without tools so the model can synthesise its answer. Thinking/reasoning tokens are broadcast via `thinking_chunk`; thinking state (`thinking_tokens`, `thinking_complete_sent`) is **reset per round** so multi-round tool loops get fresh thinking broadcasts. Reasoning/thinking capability and `max_output_tokens` are both derived from a single `litellm.get_model_info()` call cached once per request — no redundant queries and no hardcoded token limits. If the model is not in litellm's registry, `max_tokens` is omitted (except for Anthropic, which requires it — a 16384 fallback is used). If supported, `reasoning_effort` (configurable via `REASONING_EFFORT` in `config.py`) is passed and LiteLLM translates it to each provider's native format (Anthropic → `thinking`, Gemini → `thinkingConfig`/`thinking_level`, OpenAI → native `reasoning_effort`). Malformed tool call JSON is reported back to the model as a tool-result error so it can self-correct. Cancellation during tool execution properly exits both the inner tool loop and the outer streaming loop. On exceptions, partial accumulated text and tool calls are preserved (not discarded). Providers that omit `tool_call_id` (e.g. Gemini) receive synthetic fallback IDs. `_sanitize_tool_args(value)` scrubs sensitive keys (`api_key`, `token`, `secret`, `password`, `authorization`, `cookie`, `session`, `key`) from tool arguments before logging/broadcasting — replaces values with `"[REDACTED]"`.
 
 ### Tool Retrieval
-`ToolRetriever` embeds tool descriptions and user query using Ollama (`nomic-embed-text`) or `sentence-transformers`. Top-K most similar tools are passed to the LLM, reducing context noise. "Always on" tools bypass the filter (configured in Settings → Tools).
+`ToolRetriever` embeds tool descriptions and user query using Ollama (`nomic-embed-text`) or `sentence-transformers`. Top-K most similar tools are passed to the LLM, reducing context noise. Similarity is gated by `MIN_SIMILARITY_THRESHOLD = 0.3` — tools below this floor are excluded even if in the top-K. Embeddings are cached to `user_data/cache/tool_embeddings.npz` keyed by `sha256(model_name|description)` to avoid recomputing across restarts. "Always on" tools bypass the filter (configured in Settings → Tools). `retrieve_relevant_tools` is shared between the Ollama and cloud paths — both call it to build `allowed_tool_names`.
+
+### `McpToolManager` — Key Methods
+- `register_inline_tools(server_name, tools)` — registers tool schemas for inline (non-subprocess) tools like terminal tools. No subprocess is spawned.
+- `get_tools()` — returns OpenAI-format tool list, strips `additionalProperties`. `get_openai_tools` is a backward-compat alias.
+- `call_tool(...)` — has a 3-minute `asyncio.wait_for` timeout ceiling.
+- `connect_google_servers()` / `disconnect_google_servers()` — start/stop Gmail and Calendar MCP servers on demand.
 
 ### Skill Injection
 `skill_injector.py` uses a two-phase injection strategy:
-1. **Compact manifest** — a one-liner-per-skill list always present in the system prompt so the agent knows what capabilities exist.
+1. **Compact manifest** — a one-liner-per-skill list always present in the system prompt so the agent knows what capabilities exist. The manifest includes the skills directory path and each skill's folder path.
 2. **Full injection** — the complete `SKILL.md` content, injected only when triggered by a `/slash` command or auto-detected dominant MCP server.
 
-Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin skills live in `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). User skills live in `user_data/skills/user/`. A `preferences.json` file stores enabled/disabled state so builtin overwrites never reset user toggles.
+Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin skills live in `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). User skills live in `user_data/skills/user/`. A `preferences.json` file stores enabled/disabled state so builtin overwrites never reset user toggles. Skills can have a `references/` subdirectory with `.md` files for supplemental context.
+
+### Terminal Tools (Inline)
+Terminal tools are handled inline by `terminal_executor.py`, never via the MCP subprocess. Full set: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts `background=True` and `yield_ms` params.
 
 ### Adding a New MCP Server (end-to-end)
 
@@ -190,6 +243,72 @@ Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin ski
 3. **Optionally update** `mcp_servers/config/servers.json` with metadata (used by the Settings UI; not read by the backend).
 4. **Optionally add a skill** by creating a folder under `source/skills_seed/<your_name>/` with a `skill.json` and `SKILL.md` file. The skill will be auto-seeded to `user_data/skills/builtin/` on startup.
 5. Tools are auto-discovered, indexed by the retriever, and available immediately.
+
+---
+
+## REST API Reference
+
+All endpoints are in `source/api/http.py` unless noted.
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/models` | Ollama models list |
+| `GET` | `/api/cloud-models` | All enabled cloud models per provider |
+| `GET` | `/api/keys` | Provider API key status (present/absent) |
+| `POST` | `/api/keys/{provider}` | Save encrypted API key; triggers model list refresh |
+| `DELETE` | `/api/keys/{provider}` | Delete key; also removes that provider's models from `enabled_models` |
+| `GET` | `/api/models/enabled` | User's enabled model list |
+| `PUT` | `/api/models/enabled` | Save enabled model list |
+| `POST` | `/api/keys/{provider}/validate` | Validate API key with a test request. Anthropic tries `["claude-sonnet-4-20250514", "claude-3-haiku-20240307"]` with fallback |
+| `GET` | `/api/mcp/servers` | Sorted list of connected MCP servers + their tool names |
+| `GET` | `/api/skills` | All skills (with overrides) |
+| `POST` | `/api/skills` | Create a user skill |
+| `GET` | `/api/skills/{name}` | Get a single skill |
+| `PATCH` | `/api/skills/{name}` | Update skill fields (uses `_UNSET` sentinel for `slash_command` to distinguish "not sent" from null) |
+| `DELETE` | `/api/skills/{name}` | Delete a user skill |
+| `PUT` | `/api/skills/{name}/toggle` | Enable/disable a skill |
+| `GET` | `/api/skills/{name}/content` | Return full `SKILL.md` text |
+| `POST` | `/api/skills/{name}/references` | Add a `.md` reference file to a skill; enforces `.md` extension (`ReferenceFileCreate`: `filename`, `content`) |
+| `GET` | `/api/google/status` | Google OAuth connection status |
+| `POST` | `/api/google/connect` | Start OAuth flow (opens browser) |
+| `POST` | `/api/google/disconnect` | Revoke + delete token |
+| `GET` | `/api/settings/system-prompt` | Returns template text + `is_custom: bool` (returns `_BASE_TEMPLATE` if no custom set) |
+| `PUT` | `/api/settings/system-prompt` | Save custom template; send null/empty to reset to base |
+| `GET` | `/api/terminal/settings` | Terminal settings | `source/api/terminal.py` |
+| `PUT` | `/api/terminal/settings/ask-level` | Set approval level | `source/api/terminal.py` |
+| `DELETE` | `/api/terminal/approvals` | Clear remembered approvals | `source/api/terminal.py` |
+
+**Model filtering rules:**
+- **Gemini**: Skips models containing `"embedding"`, `"aqa"`, `"bison"`, `"gecko"`; strips `"models/"` prefix from names.
+- **OpenAI**: Includes models starting with `"gpt-"`, `"o1"`, `"o3"`, `"o4"`, `"chatgpt-"`, `"gpt-5"`; excludes names containing `"search"`.
+
+---
+
+## Skills Seed Directory
+
+| Skill | `slash_command` | `trigger_servers` | Notes |
+|---|---|---|---|
+| `terminal` | `terminal` | `["terminal"]` | PTY + approval flow |
+| `filesystem` | `filesystem` | `["filesystem"]` | Read/write files |
+| `websearch` | `websearch` | `["websearch"]` | Web search |
+| `gmail` | `gmail` | `["gmail"]` | Gmail MCP server |
+| `calendar` | `calendar` | `["calendar"]` | Google Calendar MCP server |
+| `browser` | `browser` | `[]` | Playwright-CLI automation; NOT server-backed. Uses `run_command` via terminal tools to interact with a playwright-cli daemon. `--headed` always. Has a `references/` subdirectory. Empty `trigger_servers` means never auto-injects — only activated by `/browser` slash command. |
+
+---
+
+## Config Constants
+
+Key constants from `config.py`:
+
+| Constant | Value | Notes |
+|---|---|---|
+| `DEFAULT_MODEL` | `"qwen3-vl:8b-instruct"` | Default Ollama model |
+| `OLLAMA_CTX_SIZE` | `32768` | Context window size passed as `num_ctx` |
+| `MAX_TOOL_RESULT_LENGTH` | `100_000` | Truncation limit for MCP tool result strings |
+| `TERMINAL_MAX_OUTPUT_SIZE` | `50 * 1024` (50 KB) | Max bytes stored in `terminal_events.full_output` |
+| `THREAD_POOL_SIZE` | env `XPDITE_THREAD_POOL_SIZE` or default | Override thread pool size |
+| `XPDITE_USER_DATA_DIR` env var | — | Electron sets this in production to point to the correct user data dir |
 
 ---
 

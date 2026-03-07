@@ -7,43 +7,77 @@ src/
 ├── electron/
 │   ├── main.ts          # Electron entry: window creation, IPC handlers, Python lifecycle
 │   ├── preload.ts       # contextBridge: exposes electronAPI to renderer (minimal surface)
-│   ├── pythonApi.ts     # Python server spawn/kill logic (dev vs prod differs significantly)
+│   ├── pythonApi.ts     # Python server spawn/kill logic + killProcessesOnPorts() pre-spawn cleanup
 │   ├── pcResources.ts   # Resource path resolution for packaged app
 │   └── utils.ts         # isDev() — checks NODE_ENV === 'development'
 │
 └── ui/
-    ├── main.tsx         # React entry, router, TabProvider wrap
+    ├── main.tsx         # React entry, createHashRouter (6 routes), TabProvider wrap
     ├── pages/
-    │   ├── App.tsx      # Main chat page (query input, response, tool calls, screenshots, tab routing)
-    │   ├── Settings.tsx # Settings page (models, API keys, MCP, skills, system prompt)
-    │   ├── ChatHistory.tsx  # Past conversations browser
-    │   ├── MeetingRecorder.tsx # Live meeting recording UI
-    │   ├── MeetingAlbum.tsx   # Past meeting recordings list
-    │   └── MeetingRecordingDetail.tsx # Individual recording detail + AI analysis
+    │   ├── App.tsx                  # Main chat page (query input, response, tool calls, screenshots, tab routing)
+    │   ├── App_old.tsx              # Archive — not imported anywhere; can be removed
+    │   ├── Settings.tsx             # Settings page (models, connections, API keys, MCP, skills, meeting, system-prompt)
+    │   ├── ChatHistory.tsx          # Past conversations browser with full-text search
+    │   ├── MeetingRecorder.tsx      # Live meeting recording UI
+    │   ├── MeetingAlbum.tsx         # Past meeting recordings list (grouped by date)
+    │   └── MeetingRecordingDetail.tsx  # Individual recording detail + AI analysis + action execution
     ├── components/
-    │   ├── Layout.tsx        # Shell with nav, WebSocketProvider + MeetingRecorderProvider wrap
-    │   ├── TitleBar.tsx      # Draggable custom title bar + mini-mode toggle
-    │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), create/close/switch
-    │   ├── chat/             # Message rendering (thinking blocks, tool calls, markdown)
-    │   ├── input/            # Query input bar, model selector, capture mode controls
-    │   ├── settings/         # Settings panel sub-components (per-tab components)
-    │   └── terminal/         # Terminal approval UI, PTY output renderer
+    │   ├── Layout.tsx        # Shell; manages mini/hidden state; passes {setMini,setIsHidden} via Outlet context
+    │   ├── TitleBar.tsx      # Custom title bar: new-chat button, nav icons, mini-mode toggle
+    │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), switch/close; new-tab button commented out
+    │   ├── chat/
+    │   │   ├── ChatMessage.tsx          # User + assistant message; inline edit, retry, response version nav
+    │   │   ├── CodeBlock.tsx            # Syntax-highlighted code block with copy button
+    │   │   ├── InlineTerminalBlock.tsx  # Inline terminal (xterm.js PTY or ansi-to-html); approval buttons
+    │   │   ├── LoadingDots.tsx          # Three-dot loading animation
+    │   │   ├── ResponseArea.tsx         # Scrollable message list; computes topInset/bottomInset offsets
+    │   │   ├── SlashCommandMenu.tsx     # Autocomplete skill menu (used by QueryInput)
+    │   │   ├── ThinkingSection.tsx      # Collapsible thinking/reasoning block
+    │   │   ├── ToolCallsDisplay.tsx     # ToolChainTimeline (primary) + legacy flat ToolCallsDisplay
+    │   │   ├── toolCallUtils.ts         # getHumanReadableDescription() for tool calls
+    │   │   └── index.ts
+    │   ├── input/
+    │   │   ├── ModeSelector.tsx         # Precision / fullscreen / meeting audio mode selector
+    │   │   ├── QueryInput.tsx           # Chip-aware contentEditable div with slash command autocomplete
+    │   │   ├── QueueDropdown.tsx        # Collapsed per-tab queue list above input
+    │   │   ├── ScreenshotChips.tsx      # Screenshot thumbnail chips
+    │   │   ├── SlashCommandChips.tsx    # ⚠️ LEGACY — superseded by QueryInput chip rendering; not imported
+    │   │   ├── TokenUsagePopup.tsx      # Token count popup with context-window progress bar
+    │   │   └── index.ts
+    │   ├── settings/
+    │   │   ├── MeetingRecorderSettings.tsx  # Whisper model, diarization, audio retention (WS-based)
+    │   │   ├── SettingsApiKey.tsx           # API key entry per provider
+    │   │   ├── SettingsConnections.tsx      # Google OAuth (Gmail + Calendar)
+    │   │   ├── SettingsModels.tsx           # Ollama + cloud model enable/disable toggles
+    │   │   ├── SettingsSkills.tsx           # Full CRUD for user skills and builtin overrides
+    │   │   ├── SettingsSystemPrompt.tsx     # Editable system prompt template
+    │   │   └── SettingsTools.tsx            # Always-on tools, topK slider, per-tool toggles
+    │   └── terminal/
+    │       ├── ApprovalCard.tsx         # Standalone approval prompt (legacy — now inside InlineTerminalBlock)
+    │       ├── SessionBanner.tsx        # Session mode active/request banner
+    │       ├── TerminalCard.tsx         # Past terminal event in chat history
+    │       └── TerminalPanel.tsx        # ⚠️ Fully implemented but NOT rendered in App.tsx; supplanted by InlineTerminalBlock
     ├── contexts/
-    │   ├── WebSocketContext.tsx  # Single WS connection provider (send, subscribe, isConnected)
+    │   ├── WebSocketContext.tsx      # Single WS connection provider (send, subscribe, isConnected)
     │   ├── MeetingRecorderContext.tsx # Recording state (persists across routes)
-    │   └── TabContext.tsx    # TabProvider: tab list, active tab, switch/close/create with callbacks
+    │   └── TabContext.tsx             # TabProvider: tab list, active tab, switch/close/create with callbacks
     ├── hooks/
-    │   ├── useChatState.ts   # All in-flight and history chat state (+ getSnapshot/restoreSnapshot)
-    │   ├── useScreenshots.ts # Screenshot list management (+ getSnapshot/restoreSnapshot)
-    │   ├── useAudioCapture.ts # System audio capture for meeting recording
-    │   └── useTokenUsage.ts  # Token count display (+ getSnapshot/restoreSnapshot)
+    │   ├── useChatState.ts    # All in-flight and history chat state + terminal block management
+    │   ├── useScreenshots.ts  # Screenshot list + meetingRecordingMode flag
+    │   ├── useAudioCapture.ts # System audio capture for meeting recording (WASAPI + mic mix)
+    │   ├── useTokenUsage.ts   # Token count display
+    │   └── index.ts
     ├── services/
-    │   ├── api.ts            # createApiService (WS helpers) + singleton `api` (HTTP helpers)
-    │   └── portDiscovery.ts  # Dynamic server port discovery (IPC-first, then probe 8000–8009)
-    ├── types/            # Shared TypeScript interfaces (ChatMessage, ToolCall, ContentBlock, TabSnapshot…)
-    ├── CSS/
-    │   └── TabBar.css    # Dark theme tab bar styles (28px height)
-    └── utils/            # Misc helpers
+    │   ├── api.ts             # createApiService (WS helpers) + singleton `api` (HTTP helpers, 18+ endpoints)
+    │   ├── portDiscovery.ts   # Dynamic server port discovery (IPC-first, then probe 8000–8009)
+    │   └── index.ts
+    ├── types/
+    │   └── index.ts           # ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant…
+    ├── CSS/                   # Per-component stylesheets
+    └── utils/
+        ├── chatMessages.ts    # Message mapping, merging, retry/edit reconciliation utilities
+        ├── clipboard.ts       # copyToClipboard helper
+        └── index.ts
 ```
 
 ---
@@ -88,26 +122,126 @@ The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ typ
 ### Chat message metadata and footer actions
 `ChatMessage` now carries stable `messageId`, `turnId`, `timestamp`, `activeResponseIndex`, and `responseVersions`. `components/chat/ChatMessage.tsx` owns footer UI (copy, retry, timestamp, and user-only edit); `ResponseArea.tsx` just wires callbacks from `App.tsx`.
 
+### Retry / Edit flow
+`App.tsx` tracks in-flight retry/edit operations via `pendingTurnActionsRef: Map<string, PendingTurnAction>` (keyed by `tabId`):
+```ts
+type PendingTurnAction = { type: 'retry' | 'edit'; messageId: string; editedContent?: string }
+```
+When the user clicks Retry or saves an edit:
+1. `handleRetryMessage` / `handleEditMessage` stores a `PendingTurnAction` and sends `retry_message` / `edit_message` to the server.
+2. After `conversation_saved` arrives (with `operation: 'retry' | 'edit'`), `App` automatically sends `resume_conversation` to reload the full updated history.
+3. `applySavedTurnToHistory(history, turn, operation, localPatch)` in `chatMessages.ts` performs the reconciliation — slices history at the affected turn and rebuilds it with server metadata.
+
+Retry/edit is disabled for messages that don't yet have a server-assigned `messageId` (`canPersistActions = !!message.messageId`).
+
+### Response versioning
+Each assistant `ChatMessage` carries `responseVersions: ResponseVariant[]` and `activeResponseIndex`. Users navigate versions with left/right arrow buttons in `ChatMessage.tsx`. `applyResponseVariant(message, index)` switches the visible content without re-fetching.
+
+```ts
+interface ResponseVariant {
+  content: string
+  model?: string
+  timestamp?: number
+  contentBlocks?: ContentBlock[]
+}
+```
+
+### `QueryInput` — chip-aware contentEditable
+`QueryInput` is **not a `<textarea>`**. It is a `contentEditable` div that renders slash command tokens as non-editable chip spans inline:
+- `normalizeQuerySegments(query, commandMap)` — parses text into `QuerySegment[]` (`text` or `chip`).
+- `buildChipNode(command, label)` — creates `<span data-slash-chip="true">` with an `×` remove button.
+- `getSlashTrigger(node)` — detects partial `/command` typed by the user and opens `SlashCommandMenu`.
+- `getSelectionOffset()` / `restoreSelectionOffset()` — custom cursor tracking that survives DOM mutations.
+- `COMMAND_TOKEN_PATTERN = /(?<!\S)\/([a-zA-Z0-9_-]+)(?=\s|$)/g`
+- On mount, fetches `api.skillsApi.getAll()` to build the command map.
+
+### `ToolChainTimeline` — primary tool display
+`ToolCallsDisplay.tsx` exports **`ToolChainTimeline`** (new) in addition to the legacy flat `ToolCallsDisplay`. `ToolChainTimeline` separates content blocks into:
+- `chainBlocks` — thinking tokens, tool calls, terminal commands (interleaved, collapsible).
+- `responseBlocks` — trailing text after all tools complete.
+
+Timeline item kinds: `thinking_tokens` (collapsible `ChainThinkingItem`), `thinking` (plain), `tool` (wrench+check), `terminal` (renders `InlineTerminalBlock`), `done` (final check marker). Auto-expands while any tool is running.
+
+### `InlineTerminalBlock` — embedded terminal in chat
+Filepath: `src/ui/components/chat/InlineTerminalBlock.tsx`
+
+Replaces `TerminalPanel` for in-flow terminal I/O. Two rendering paths:
+- **PTY mode** (`isPty=true`): xterm.js with `FitAddon`; `writtenChunksRef` prevents replay on re-render.
+- **Non-PTY mode**: `ansi-to-html` with VSCode Dark+ compatible ANSI color theme.
+
+Status: `pending_approval` (yellow + Allow/Deny/Allow&Remember buttons) → `running` (spinner) → `completed` (green/red) / `denied` (red). `ResizeObserver` keeps xterm fitted and calls `onTerminalResize(cols, rows)` to sync the PTY.
+
+### Settings tabs (full list)
+`Settings.tsx` renders the following tabs in order:
+`models → connections → tools → skills → meeting → system-prompt → ollama (placeholder) → anthropic → gemini → openai`
+
+- **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar. Shows email and service badges when connected.
+- **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
+- **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`.
+
 ### `createApiService` vs `api` singleton
 - `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.
-- `api` singleton in `api.ts` — plain `fetch` calls for one-shot HTTP operations (settings, model lists, API key management). Import `api` directly; don't create new instances.
+- `api` singleton in `api.ts` — plain `fetch` calls for one-shot HTTP operations. Import `api` directly; don't create new instances.
+
+**`api` HTTP methods** (partial list — see `api.ts` for full surface):
+```ts
+// Models
+api.getOllamaModels()            → GET /api/models/ollama
+api.getEnabledModels()           → GET /api/models/enabled
+api.setEnabledModels(models)     → PUT /api/models/enabled
+api.getProviderModels(provider)  → GET /api/models/{provider}   // CloudModel[]
+
+// API Keys
+api.getApiKeyStatus()            → GET /api/keys
+api.saveApiKey(provider, key)    → PUT /api/keys/{provider}
+api.deleteApiKey(provider)       → DELETE /api/keys/{provider}
+
+// Google OAuth
+api.getGoogleStatus()            → GET /api/google/status
+api.connectGoogle()              → POST /api/google/connect
+api.disconnectGoogle()           → POST /api/google/disconnect
+
+// MCP / Tools
+api.getMcpServers()              → GET /api/mcp/servers
+api.getToolsSettings()           → GET /api/settings/tools
+api.setToolsSettings(alwaysOn, topK) → PUT /api/settings/tools
+
+// System Prompt
+api.getSystemPrompt()            → GET /api/settings/system-prompt
+api.setSystemPrompt(template)    → PUT /api/settings/system-prompt
+
+// Skills (sub-object)
+api.skillsApi.getAll()           → GET /api/skills
+api.skillsApi.getContent(name)   → GET /api/skills/{name}/content
+api.skillsApi.create(skill)      → POST /api/skills
+api.skillsApi.update(name, u)    → PATCH /api/skills/{name}
+api.skillsApi.toggle(name, en)   → PUT /api/skills/{name}/toggle
+api.skillsApi.delete(name)       → DELETE /api/skills/{name}
+```
 
 ---
 
 ## Electron-Specific Notes
 
 ### Window
-- Frameless, transparent, 450×450, `alwaysOnTop: true` at `screen-saver` level.
-- **Mini mode** (52×52): saves `normalBounds` before shrinking; restores on exit. Triggered via `ipcMain.handle('set-mini-mode', …)`.
+- Frameless, transparent, **550×550**, `alwaysOnTop: true` at `screen-saver` level.
+- **Mini mode** (52×52): saves `normalBounds` before shrinking; `setResizable(true)` called before `setSize()` to allow shrinking below minimum; restores on exit. Triggered via `ipcMain.handle('set-mini-mode', …)`.
 - `minimizable: false`, `maximizable: false`, `skipTaskbar: true` — intentional for overlay UX.
+- `win.setContentProtection(true)` — prevents screen recording of the Xpdite window in production.
+- `setDisplayMediaRequestHandler` — auto-approves `getDisplayMedia` with `{ video: { source: tab-capture-stream } }` for WASAPI loopback audio capture; required by `useAudioCapture`.
 
 ### IPC surface (preload.ts)
 Three methods are exposed via `contextBridge`:
 - `window.electronAPI.setMiniMode(mini: boolean)`
-- `window.electronAPI.focusWindow()`
-- `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
+- `window.electronAPI.setHidden(hidden: boolean)` — hides window content during screenshot capture (opacity: 0)
+- `window.electronAPI.getPythonPort()` — returns the port the Python backend is listening on (production only)
 
 Do not add IPC channels without updating both `preload.ts` (expose) and `main.ts` (handle).
+
+### `pythonApi.ts` extras
+- **`killProcessesOnPorts()`** — runs before every Python spawn; scans ports 8000–8009 via `netstat -ano | findstr`, cross-references PID names against `['python.exe', 'xpdite-server.exe', 'uvicorn', 'fastapi']`, then `taskkill /F /PID`. Prevents stale-port errors on restart.
+- **`XPDITE_USER_DATA_DIR`** — in production, `app.getPath('userData')` is injected as an env var so Python resolves user data paths platform-independently.
+- **Startup detection:** waits for either `"Starting FastAPI WebSocket server"` OR `"Application startup complete"` in stdout.
 
 ### Python server lifecycle
 - **Dev:** Electron does *not* start Python. `dev:pyserver` runs it independently. `isDev()` guards this.
@@ -136,3 +270,27 @@ Handle the new `type` string inside a `subscribe()` callback in the relevant con
 
 ### New HTTP endpoint call
 Add a method to the `api` singleton at the bottom of `src/ui/services/api.ts`. Use the existing `fetch` + error handling pattern already there.
+
+---
+
+## Key `chatMessages.ts` Utilities
+
+These are the primary reconciliation utilities used by `App.tsx` to keep local state consistent with server-persisted data:
+
+| Function | Purpose |
+|---|---|
+| `mapConversationMessagePayload(msg)` | Maps server conversation message payload → `ChatMessage`; handles camelCase + snake_case |
+| `mapConversationContentBlock(block)` | Maps persisted DB block payload to frontend `ContentBlock` union type |
+| `mergeMessageMetadata(local, persisted)` | Merges in-flight local state with server data; local wins for content, persisted wins for IDs |
+| `applyResponseVariant(message, index)` | Switches active response variant; clears thinking/toolCalls for variants with contentBlocks |
+| `applySavedTurnToHistory(history, turn, operation, localPatch?)` | Applies a server-saved turn to local history for submit/retry/edit operations |
+| `serializeMessageForCopy(msg)` | Serializes full message to plain text for clipboard, using contentBlocks when present |
+| `normalizeTimestamp(ts)` | Converts Unix seconds to milliseconds if `ts < 1_000_000_000_000` |
+| `formatMessageTimestamp(ts)` | Returns locale time string (HH:MM AM/PM) |
+
+```ts
+interface LocalTurnPatch {
+  user?: ChatMessage
+  assistant?: ChatMessage
+}
+```
