@@ -6,25 +6,29 @@ This guide covers common development tasks, code patterns, and conventions used 
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Full dev mode (React + Electron + Python) |
-| `npm run dev:react` | Vite dev server on port 5123 |
-| `npm run dev:electron` | Electron app (expects React dev server) |
-| `npm run dev:pyserver` | Python FastAPI server via UV |
-| `npm run build` | Production build (Python exe + React + Electron) |
-| `npm run dist:win` | Windows installer via electron-builder |
-| `npm run install:python` | Install Python deps via UV |
+| `bun run dev` | Full dev mode (React + Electron + Python + Ollama) |
+| `bun run dev:react` | Vite dev server on port 5123 |
+| `bun run dev:electron` | Electron app (expects React dev server) |
+| `bun run dev:pyserver` | Python FastAPI server via UV |
+| `bun run build` | Production build (Python exe + React + Electron) |
+| `bun run dist:win` | Windows installer via electron-builder |
+| `bun run install:python` | Install Python deps via UV (`uv sync --group dev`) |
 | `uv sync --group dev` | Install all Python deps including dev tools |
 | `uv add <package>` | Add a new Python dependency |
+| `uv run python -m pytest tests/ -v` | Run all tests |
 
 ## Code Conventions
 
 ### Python Backend
 
-- **Async-first**: All API handlers are async. CPU-bound work uses `asyncio.to_thread()`.
-- **Lifecycle Management**: Every user query is wrapped in a `RequestContext` (`source/core/request_context.py`). Use `ctx.on_cancel()` to register cleanup handlers (e.g., killing processes).
-- **State management**: Global state lives in `AppState` (singleton in `source/core/state.py`).
-- **Thread safety**: Use `app_state.server_loop_holder` to schedule coroutines from non-async threads.
-- **Unified Terminal Logic**: Use `execute_terminal_tool()` from `source/mcp_integration/terminal_executor.py` for any shell-related tool calls. This ensures approval flow and PTY consistency.
+- **Async-first**: All API handlers are async. Blocking or CPU-heavy work uses `run_in_thread()` from `source/core/thread_pool.py` — never `asyncio.to_thread()` directly.
+- **Lifecycle Management**: Every user query is wrapped in a `RequestContext` (`source/core/request_context.py`). Use `ctx.on_cancel()` to register cleanup handlers (e.g., killing processes). Check `is_current_request_cancelled()` inside long-running loops.
+- **Multi-tab state isolation**: Per-request state (model, cancellation, tab id) uses Python `ContextVar` via `set_current_request()`, `set_current_model()`, `set_tab_id()`. Never read `app_state.selected_model` from LLM layers — use `get_current_model()` instead.
+- **State management**: Process-level shared state lives in `AppState` (singleton in `source/core/state.py`).
+- **Thread safety**: Use `app_state.server_loop_holder` to schedule coroutines from non-async threads. Use `wrap_with_tab_ctx(tab_id, coro)` when scheduling from background threads so the correct tab context is stamped.
+- **Broadcasting**: Always use `broadcast_message()` from `core.connection` (not `manager.broadcast()` directly) — it auto-stamps `tab_id` from the ContextVar.
+- **Unified Terminal Logic**: Use `execute_terminal_tool()` from `source/mcp_integration/terminal_executor.py` for any shell-related tool calls.
+- **Skills**: Builtin skills live in `source/skills_seed/<name>/`. They are seeded to `user_data/skills/builtin/` on every startup by `SkillManager`. Never hardcode skill content in Python code.
 - **Logging**: Use `print()` with `[MODULE]` prefixes (e.g., `[MCP]`, `[WS]`, `[SS]`).
 - **Constants**: All magic numbers and defaults live in `source/config.py`.
 - **Security**: Never commit secrets. Use `KeyManager` for sensitive user data.
@@ -67,28 +71,26 @@ This guide covers common development tasks, code patterns, and conventions used 
 
 **Backend (Python):**
 
-1. Add the message type handler in `source/api/handlers.py`:
+1. Add the message type handler in `source/api/handlers.py` as a method on `MessageHandler`. The framework automatically dispatches `msg_type` to `_handle_<msg_type>`:
    ```python
    async def _handle_new_message(self, data: dict) -> None:
        # Process the message
        result = await some_operation()
-       await self.connection_manager.broadcast_json("new_message_response", result)
+       await broadcast_message("new_message_response", result)
    ```
 
-2. Register it in `source/api/websocket.py` in the message routing:
-   ```python
-   elif msg_type == "new_message":
-       await handler._handle_new_message(data)
-   ```
+   > No registration needed — naming the method `_handle_<type>` is sufficient. Update the WS protocol docstring in `source/api/websocket.py`.
 
 **Frontend (React):**
 
-3. Handle the response in `App.tsx`'s WebSocket message handler:
+2. Handle the response in `App.tsx`'s WebSocket message handler:
    ```tsx
    case 'new_message_response':
        // Update state
        break;
    ```
+
+3. Add the send helper to `createApiService` in `src/ui/services/api.ts`.
 
 ### Adding a New REST API Endpoint
 
@@ -123,6 +125,13 @@ See the dedicated [MCP Guide](./mcp-guide.md) for detailed instructions.
    ```
 3. Update the corresponding read/write methods
 4. If the change affects the frontend, update `src/ui/types/index.ts`
+
+### Adding a Builtin Skill
+
+1. Create a folder under `source/skills_seed/<name>/` with:
+   - `skill.json` — `{ name, description, slash_command, trigger_servers, version }`
+   - `SKILL.md` — the full prompt content injected when the skill is triggered
+2. The skill is automatically seeded to `user_data/skills/builtin/<name>/` on the next app startup (existing user customizations are preserved).
 
 ### Adding a Cloud Provider
 
@@ -188,7 +197,7 @@ const currentHistory = chatHistoryRef.current; // Always current
 The Python backend is bundled into a single executable:
 
 ```bash
-pyinstaller build-server.spec
+bun run build:python-exe
 ```
 
 Output goes to `dist-python/main.exe`, which is included as an extra resource in the Electron package.

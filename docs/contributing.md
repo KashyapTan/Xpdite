@@ -12,8 +12,8 @@ Thank you for your interest in contributing to Xpdite. This document outlines th
    ```
 3. Install dependencies:
    ```bash
-   npm install
-   uv sync --group dev
+   bun install
+   bun run install:python
    ```
 4. Create a feature branch:
    ```bash
@@ -23,8 +23,8 @@ Thank you for your interest in contributing to Xpdite. This document outlines th
 ## Development Workflow
 
 1. Make your changes following the [Development Guide](./development.md)
-2. Test your changes locally with `npm run dev`
-3. Ensure the build succeeds: `npm run build`
+2. Test your changes locally with `bun run dev`
+3. Ensure the build succeeds: `bun run build`
 4. Commit with a clear, descriptive message
 5. Push to your fork and open a Pull Request
 
@@ -33,7 +33,7 @@ Thank you for your interest in contributing to Xpdite. This document outlines th
 ### High Priority
 
 - **macOS Support** - Porting the screenshot system and DPI handling
-- **MCP Server Implementations** - Gmail, Calendar, Discord, Canvas servers
+- **MCP Server Implementations** - Completing the Discord and Canvas servers (Gmail/Calendar are now active)
 - **Test Coverage** - Unit and integration tests for both Python and React
 - **Accessibility** - Keyboard navigation, screen reader support
 

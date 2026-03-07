@@ -45,7 +45,7 @@ For tools that require deep integration with the core application (like terminal
 Instead of spawning a standalone MCP server as a child process, these tools are registered directly in the `McpToolManager`. This avoids the overhead of "ghost processes" -- servers that exist purely to provide schemas but whose execution is intercepted by the backend.
 
 - **Implementation**: Handled via `mcp_manager.register_inline_tools(server_name, tools)`.
-- **Execution**: Intercepted in `mcp_integration/handlers.py` or `mcp_integration/cloud_tool_handlers.py` and routed to a dedicated internal executor (e.g., `terminal_executor.py`).
+- **Execution**: Intercepted in `mcp_integration/handlers.py` and routed to a dedicated internal executor (e.g., `terminal_executor.py`).
 - **Benefits**: Lower memory usage, faster startup, and deterministic lifecycle management (e.g., stopping a request immediately kills associated terminal processes).
 
 ## Tool Retrieval and Selection
@@ -151,6 +151,7 @@ Internet search and web page reading capabilities.
 | Tool | Description |
 |------|-------------|
 | `get_events` | List upcoming events for the next N days |
+| `get_event` | Get full details of a specific event by ID |
 | `search_events` | Search events by keyword |
 | `create_event` | Create a new calendar event |
 | `quick_add_event` | Create event from natural language text |
@@ -207,17 +208,7 @@ await mcp_manager.connect_server(
 )
 ```
 
-Also add it to `mcp_servers/config/servers.json`:
-
-```json
-{
-    "my_tool": {
-        "enabled": true,
-        "module": "mcp_servers.servers.my_tool.server",
-        "description": "Description of what this server provides"
-    }
-}
-```
+> **Note:** `mcp_servers/config/servers.json` is **UI metadata only** — it is **not** read by the backend at runtime. Tools are registered/connected programmatically in `manager.py`.
 
 ### Step 3: Test and Restart
 

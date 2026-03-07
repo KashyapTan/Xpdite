@@ -15,17 +15,22 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 ## Key Features
 
 - **Screenshot + Vision AI** -- Capture any region of your screen (Alt+.) and ask questions about it
-- **Multi-Model Support** -- Switch between any Ollama model from the UI; default: `qwen3-vl:8b-instruct`
-- **Streaming Responses** -- Real-time token-by-token response display with thinking/reasoning visibility
-- **MCP Tool Integration** -- Extensible tool system (file operations, web search, calculators) via Model Context Protocol
+- **Multi-Model Support** -- Local Ollama models + cloud (Claude, GPT, Gemini) from one UI
+- **Streaming Responses** -- Real-time token-by-token display with thinking/reasoning visibility
+- **Multi-Tab** -- Multiple independent AI conversations running in parallel
+- **MCP Tool Integration** -- File ops, web search, Gmail, Calendar, and terminal via Model Context Protocol
+- **Inline Terminal** -- AI-commanded shell execution with approval flow inline in the chat
+- **Skills / Slash Commands** -- Type `/terminal`, `/fs`, `/websearch` etc. to force-inject expert instruction sets
+- **Meeting Recorder** -- System audio capture + AI transcription (WhisperX + diarization) + action extraction
+- **Response Retry / Edit** -- Re-generate any response or edit past messages; browse alternate versions with arrows
+- **Cloud Models** -- Anthropic (Claude), OpenAI (GPT / o-series), Google Gemini via LiteLLM
+- **Gmail & Calendar** -- Read, send emails and manage calendar events via your Google account
 - **Web Search** -- DuckDuckGo-powered search and web page reading through MCP tools
 - **Voice Input** -- Voice-to-text transcription via faster-whisper
-- **Chat History** -- SQLite-backed conversation persistence with search
+- **Chat History** -- SQLite-backed conversation persistence with full-text search (FTS5)
 - **Token Tracking** -- Context window usage monitoring per conversation
-- **Stop Streaming** -- Interrupt AI responses mid-generation
 - **Always-on-Top** -- Frameless, transparent floating window that stays above all apps (including fullscreen)
-- **Mini Mode** -- Collapse to a 52x52 widget when not in use
-- **100% Local** -- All processing happens on your machine. No data leaves your computer.
+- **Mini Mode** -- Collapse to a 52×52 widget when not in use
 
 ## Getting Started
 
@@ -79,112 +84,108 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 | 3. Real-time response | <img alt="Response" src="./assets/demo-3.png" width="300"> |
 | 4. Final result | <img alt="Result" src="./assets/demo-4.png" width="300"> |
 
-## Architecture
-
-```
-Electron (Desktop Shell)
-    |
-    +-- React Frontend (Chat UI, Settings, History)
-    |       |
-    |       +-- WebSocket <--> Python Backend (FastAPI)
-    |                              |
-    |                              +-- Ollama (LLM inference)
-    |                              +-- SQLite (persistence)
-    |                              +-- MCP Servers (tools)
-    |                              +-- faster-whisper (voice)
-    +-- Screenshot Service (Alt+. hotkey, region selection)
-```
-
-**Tech Stack:**
-- **Frontend:** React 19, TypeScript 5.8, Vite 6, React Router 7
-- **Backend:** Python 3.13+, FastAPI, Ollama, SQLite3
-- **Desktop:** Electron 37+
-- **Tools:** MCP SDK, DuckDuckGo Search, crawl4ai, faster-whisper
-- **Build:** PyInstaller, electron-builder, UV
-
 ## MCP Tools
 
-Xpdite uses the [Model Context Protocol](https://modelcontextprotocol.io/) to give the AI access to external tools:
+Xpdite gives the AI hands. It can read files, search the web, send emails, manage your calendar, and run terminal commands — all from within the chat.
 
-| Server | Tools | Status |
-|--------|-------|--------|
-| **Demo** | `add`, `divide` | Active |
-| **Filesystem** | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file` | Active |
-| **Web Search** | `search_web_pages`, `read_website` | Active |
-| Gmail | Email operations | Planned |
-| Calendar | Event management | Planned |
-| Discord | Message operations | Planned |
-| Canvas | LMS integration | Planned |
+| Server | What it can do | Status |
+|--------|---------------|--------|
+| **Filesystem** | Read, write, move, rename files and folders | Active |
+| **Web Search** | Search DuckDuckGo, read any web page as clean text | Active |
+| **Gmail** | Search, read, send, reply, draft, trash, label emails | Active |
+| **Calendar** | List, search, create, update, delete events; check free/busy | Active |
+| **Terminal** | Run shell commands inline in chat with per-command approval | Active |
+| Discord | Message operations | In Progress |
+| Canvas | LMS integration | In Progress |
 
 Adding new tools is straightforward -- see the [MCP Guide](./docs/mcp-guide.md).
 
-## Development
+## What's Changed
 
-```bash
-# Clone and install
-git clone https://github.com/KashyapTan/xpdite.git
-cd xpdite
-npm install
-uv sync --group dev
+Every feature that exists in Xpdite today:
 
-# Run in dev mode (React + Electron + Python server)
-npm run dev
+**Vision & Chat**
+- Screenshot any region of your screen with `Alt + .` and ask questions about it
+- Fullscreen and meeting-mode screenshot capture
+- Real-time streaming responses with thinking/reasoning visible as it happens
+- Stop any response mid-generation
+- Edit any past message and re-generate from that point
+- Retry any AI response to get a different answer; browse all versions with ← → arrows
+- Voice-to-text input transcribed locally via faster-whisper
 
-# Build for production
-npm run build
-npm run dist:win
-```
+**Multi-Tab**
+- Up to 10 independent AI conversations open at the same time, each with their own history, screenshots, and model
+- Queue multiple questions per tab (up to 5) — they run back-to-back while you keep typing
+- Ollama GPU requests are serialized globally so tabs never fight over the GPU
 
-### Project Structure
+**AI Models**
+- Any locally installed Ollama model (default: `qwen3-vl:8b-instruct`)
+- Anthropic Claude (all tiers, including latest Sonnet and Opus)
+- OpenAI GPT-4o, GPT-4.1, and o-series reasoning models
+- Google Gemini (all tiers)
+- Switch models per-message; each conversation tracks which model generated each response
 
-```
-src/
-  electron/           # Electron main process
-  ui/                 # React frontend (pages, components, hooks)
-source/               # Python backend
-  api/                # WebSocket + REST endpoints
-  core/               # State management, connections
-  services/           # Business logic
-  llm/                # Ollama integration
-  mcp_integration/    # MCP server management
-mcp_servers/          # MCP tool implementations
-  servers/            # demo, filesystem, websearch
-docs/                 # Documentation
-```
+**Tools & Skills**
+- File operations, web search, Gmail, Calendar, and terminal accessible via natural language
+- Semantic tool retrieval — only the tools relevant to your query are sent to the model (no context bloat)
+- Always-on tool overrides configurable in Settings
+- 6 builtin skills: `terminal`, `filesystem`, `websearch`, `gmail`, `calendar`, `browser`
+- Slash commands: type `/terminal`, `/fs`, `/websearch` etc. to force-inject an expert skill for that turn
+- Full skill editor — create, edit, delete, and reset skills in Settings
+
+**Inline Terminal**
+- The AI can run shell commands directly in the chat flow
+- Every command shows an approval card — approve once, deny, or "Allow & Remember" to skip future prompts for that command
+- Full PTY support for interactive programs
+- Background sessions for long-running processes
+- Every command is logged with exit code, output, duration, and working directory
+
+**Meeting Recorder**
+- Captures system audio (WASAPI loopback) and microphone simultaneously
+- Live transcription during the meeting (Tier 1, fast)
+- Full post-processing after recording ends: WhisperX large-v3 + speaker diarization (SpeechBrain)
+- AI generates a summary, title, and a list of action items from the transcript
+- Action items link directly to Calendar and Gmail — schedule meetings and send follow-ups in one click
+- View all past recordings grouped by date; each has the full transcript and AI analysis
+
+**Gmail & Calendar**
+- Connect your Google account in Settings > Connections with one click (OAuth, no password stored)
+- Gmail: search, read, send, reply, create drafts, trash emails, manage labels, check unread count
+- Calendar: list events, search, create, update, delete, quick-add from natural language, check free/busy
+
+**History & Search**
+- All conversations saved automatically to a local SQLite database
+- Full-text search across every conversation title and message (FTS5 — fast even with thousands of entries)
+- Resume any past conversation with full state restored (messages, screenshots, token count)
+- Delete conversations individually
+
+**Customization**
+- Custom system prompt template — write your own instructions that apply to every conversation
+- Settings > Skills — manage which skills are active and what their instructions say
+- Settings > Tools — tune how many tools the AI sees per query and which are always active
+- Settings > Models — enable/disable any installed local or cloud model
+
+**Privacy & Security**
+- Runs entirely on your machine — nothing is sent anywhere except to your chosen model provider
+- API keys are encrypted at rest with Fernet (per-install encryption key)
+- Terminal commands require explicit approval (configurable)
+- Content protection prevents other apps from capturing the Xpdite window
 
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
+| [Getting Started](./docs/getting-started.md) | Installation, setup, and first run |
 | [Architecture](./docs/architecture.md) | System design and data flow |
-| [Getting Started](./docs/getting-started.md) | Installation and setup guide |
-| [Development](./docs/development.md) | Developer guide and conventions |
+| [Development](./docs/development.md) | Developer guide, conventions, and common tasks |
 | [API Reference](./docs/api-reference.md) | WebSocket and REST API docs |
 | [MCP Guide](./docs/mcp-guide.md) | Tool integration guide |
 | [Configuration](./docs/configuration.md) | All configurable settings |
 | [Contributing](./docs/contributing.md) | How to contribute |
 
-## What's Changed (v0.1.0)
+## Development
 
-Since the initial release, Xpdite has been significantly refactored:
-
-- **Complete backend refactor** -- Modular architecture with separated concerns (api/, core/, services/, llm/, mcp_integration/)
-- **Model selection** -- Switch between any installed Ollama model from the Settings UI
-- **MCP tool system** -- Full Model Context Protocol integration with demo, filesystem, and web search servers
-- **Web search** -- DuckDuckGo search and web page reading via crawl4ai with stealth mode
-- **Voice input** -- Voice-to-text transcription via faster-whisper
-- **Thinking/reasoning display** -- Collapsible display of model's chain-of-thought reasoning
-- **Tool call visualization** -- UI cards showing tool executions with arguments and results
-- **Stop streaming** -- Interrupt AI responses mid-generation
-- **Token usage tracking** -- Real-time context window monitoring with visual indicator
-- **Chat history with search** -- Browse, search, and resume past conversations
-- **Screenshot improvements** -- Alt+. hotkey, fullscreen + precision modes, multi-monitor DPI awareness
-- **REST API** -- Model management endpoints alongside WebSocket protocol
-- **Settings page** -- Model enable/disable with toggle UI
-- **Conversation resume** -- Full state restoration including thumbnails and token counts
-- **React hooks refactor** -- Extracted `useChatState`, `useScreenshots`, `useTokenUsage` for clean separation
-- **Component library** -- Modular chat components (ThinkingSection, ToolCallsDisplay, CodeBlock, etc.)
-- **Production docs** -- Comprehensive documentation suite
+See the [Getting Started guide](./docs/getting-started.md) for dev setup and the [Development guide](./docs/development.md) for conventions, common tasks, and how to add new features.
 
 ## Contributing
 
