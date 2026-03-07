@@ -1,123 +1,97 @@
 import os
 from pathlib import Path
 
+from mcp_servers.servers.description_format import build_tool_description
+
 # --- Configuration (dynamic — works on any machine / OS) ---
 USERNAME = os.getenv("USERNAME") or os.getenv("USER") or Path.home().name
 BASE_PATH = os.path.abspath(str(Path.home()))
 
 
-LIST_DIRECTORY_DESCRIPTION = f"""
-**PRIMARY DISCOVERY TOOL - MUST BE CALLED FIRST**
-Inspects a directory to understand the file structure.
+LIST_DIRECTORY_DESCRIPTION = build_tool_description(
+    purpose="List the contents of a directory inside the filesystem sandbox.",
+    use_when=(
+        "You need to discover real paths, inspect folder structure, or verify a "
+        "directory before using any other filesystem tool."
+    ),
+    inputs=(
+        f"path = an absolute, relative, or home-relative directory path inside "
+        f"{BASE_PATH}."
+    ),
+    returns="A list of up to 50 file or folder names sorted by most recently modified first, or a one-item error list.",
+    notes=(
+        "Call this first before read_file, write_file, create_folder, "
+        f"move_file, or rename_file to verify real paths. Access is restricted "
+        f"to {BASE_PATH} for user {USERNAME}."
+    ),
+)
 
-MANDATORY WORKFLOW:
-You MUST call this tool before using `read_file`, `write_file`, `move_file`, or `rename_file` to verify paths exist and prevent hallucinated file locations.
+READ_FILE_DESCRIPTION = build_tool_description(
+    purpose="Read the full text content of a file inside the filesystem sandbox.",
+    use_when=(
+        "You need to inspect a text file, verify the current contents before an "
+        "edit, or gather source material for an answer."
+    ),
+    inputs=f"path = the exact absolute, relative, or home-relative file path inside {BASE_PATH}.",
+    returns="The file text, decoded as UTF-8 with replacement for invalid bytes, or an error string.",
+    notes="Call list_directory first to confirm the exact path. This tool is for files, not directories.",
+)
 
-Use this tool to:
-1. Explore the folder layout when you are unsure where files are located.
-2. Find specific resources (images, text files, code, logs) by name or extension.
-3. Validate paths before attempting to read or write.
+WRITE_FILE_DESCRIPTION = build_tool_description(
+    purpose="Create a file or replace an existing file's full contents.",
+    use_when=(
+        "You need to create a new text file or fully rewrite an existing file "
+        "after checking its current state."
+    ),
+    inputs=(
+        f"path = target absolute, relative, or home-relative file path inside "
+        f"{BASE_PATH}; content = raw file text to write."
+    ),
+    returns="A success string with the number of characters written, or an error string.",
+    notes=(
+        "Call list_directory first, and call read_file before overwriting an "
+        "existing file. WARNING: this fully overwrites existing files. Do not "
+        "include markdown fences in content."
+    ),
+)
 
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
+CREATE_FOLDER_DESCRIPTION = build_tool_description(
+    purpose="Create a new folder inside an existing parent directory.",
+    use_when=(
+        "You need to set up a directory before writing files or organizing "
+        "existing content."
+    ),
+    inputs=(
+        f"path = the parent directory inside {BASE_PATH}; folder_name = the new "
+        "folder name only."
+    ),
+    returns="A success string or an error string.",
+    notes="Call list_directory first to verify the parent directory. Do not include the new folder name inside path.",
+)
 
-READ_FILE_DESCRIPTION = f"""
-Reads the content of a file.
+MOVE_FILE_DESCRIPTION = build_tool_description(
+    purpose="Move a file or directory into a different destination folder.",
+    use_when=(
+        "You want to relocate an existing file or folder without changing its name."
+    ),
+    inputs=(
+        f"source_path = existing file or folder inside {BASE_PATH}; "
+        f"destination_folder = existing target directory inside {BASE_PATH}."
+    ),
+    returns="A success string or an error string.",
+    notes="Call list_directory on both source and destination first. Use rename_file for same-folder renames.",
+)
 
-PREREQUISITES:
-1. **Call `list_directory` FIRST** to verify the file exists and get the exact path. Do not guess paths.
-
-Use this tool to:
-1. Analyze text documents, code files, logs, or configuration files.
-2. Retrieve context required to answer the user's question.
-3. Verify the current state of a file before making edits (see `write_file`).
-
-If the file is large, consider reading it in chunks or summarizing it (if your capabilities allow).
-
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
-
-WRITE_FILE_DESCRIPTION = f"""
-Writes content to a specific file path.
-
-PREREQUISITES:
-1. **Call `list_directory` FIRST** to verify the target directory exists and check for filename conflicts.
-2. **Call `read_file` FIRST** if you are editing an existing file. You must know the current content to ensure you do not overwrite important data accidentally.
-
-Use this tool to:
-1. Create new files (e.g., notes, scripts, reports, config files).
-2. Overwrite existing files with updated content.
-
-CRITICAL SAFETY RULES:
-- If the file already exists, this tool will OVERWRITE it completely.
-- Confirm the directory exists before writing.
-
-NOTE: If you are writing code to a file, dont use backticks or markdown formatting in the content. Just write the raw code as it should appear in the file.
-
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
-
-CREATE_FOLDER_DESCRIPTION = f"""
-Creates a new directory (folder) with a specific 'folder_name' INSIDE the directory specified by 'path'.
-
-PREREQUISITES:
-1. **Call `list_directory` FIRST** to verify the PARENT path where you intend to create the new folder.
-
-CRITICAL ARGUMENT RULES:
-- `path`: The **PARENT** directory. Do NOT include the new folder name here.
-- `folder_name`: The name of the new folder only.
-
-Use this tool to:
-1. Set up new project structures or workspaces.
-2. Create categories for organizing files (e.g., "make a 'Photos' folder").
-
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
-
-MOVE_FILE_DESCRIPTION = f"""
-Moves a file or directory from one location to another.
-
-PREREQUISITES:
-1. **Call `list_directory` FIRST** to confirm the `source_path` exists.
-2. **Call `list_directory` on the destination** to confirm the `destination_folder` exists.
-
-Use this tool to:
-1. Organize files by transferring them into appropriate subfolders.
-2. Relocate entire directories to new parent folders.
-
-CRITICAL SAFETY RULES:
-- Strictly for changing locations, NOT for renaming files in place.
-- If a file with the same name exists in the destination, check system settings first.
-
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
-
-RENAME_FILE_DESCRIPTION = f"""
-Renames a file or directory without moving it.
-
-PREREQUISITES:
-1. **Call `list_directory` FIRST** to confirm the `source_path` exists.
-2. **Call `list_directory`** to ensure the `new_name` does not already exist in that location (to avoid overwrite errors).
-
-Use this tool to:
-1. Fix typos in filenames.
-2. Update naming conventions (e.g., 'data.csv' -> '2023_data.csv').
-3. Change file extensions.
-
-CRITICAL SAFETY RULES:
-- The 'new_name' must be a filename only, not a path.
-
-CURRENT CONTEXT:
-- Username: {USERNAME}
-- Base Path: {BASE_PATH}
-"""
+RENAME_FILE_DESCRIPTION = build_tool_description(
+    purpose="Rename a file or directory without moving it to another folder.",
+    use_when=(
+        "You want to fix a filename, change a naming convention, or update an "
+        "extension in place."
+    ),
+    inputs=(
+        f"source_path = existing file or folder inside {BASE_PATH}; "
+        "new_name = filename or folder name only, not a path."
+    ),
+    returns="A success string or an error string.",
+    notes="Call list_directory first to confirm the source and check for name conflicts. Use move_file to change directories.",
+)

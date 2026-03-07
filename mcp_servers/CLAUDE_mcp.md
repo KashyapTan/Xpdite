@@ -51,7 +51,7 @@ from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("myserver")
 
-@mcp.tool(description=MCP_TOOL_DESCRIPTION) # MCP_TOOL_DESCRIPTION is the descripiton that the model will read in order to decicde weather or not to use a tool
+@mcp.tool(description=MCP_TOOL_DESCRIPTION) # MCP_TOOL_DESCRIPTION is what the model reads to decide when and how to use the tool
 def do_thing(param: str) -> str:
     return f"result: {param}"
 
@@ -59,7 +59,13 @@ if __name__ == "__main__":
     mcp.run()
 ```
 
-Keep descriptions crisp — the tool retriever uses them for semantic search, so vague descriptions lead to low retrieval scores.
+Keep descriptions crisp and consistent — the tool retriever uses them for semantic search, so vague descriptions lead to low retrieval scores.
+Use the shared helper in `mcp_servers/servers/description_format.py` and keep each description in this order:
+- `Purpose:` literal output prefix for what the tool does
+- `Use when:` literal output prefix for when the LLM should choose it
+- `Inputs:` literal output prefix for the important parameters and format constraints
+- `Returns:` literal output prefix for what comes back
+- `Notes:` optional literal output prefix only when workflow or safety guidance matters
 
 ### 2. Connect in `source/mcp_integration/manager.py`
 Inside `init_mcp_servers()`:
