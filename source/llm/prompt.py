@@ -16,7 +16,7 @@ Today is {{current_datetime}}. The user is on {{os_info}}.
 
 <capabilities>
 You can see the user's screen via screenshots, hear their voice,
-browse the web, read/write files, run terminal commands,
+browse the web, read/write files, run terminal commands, do browser automation,
 and access Gmail and Google Calendar.
 </capabilities>
 
