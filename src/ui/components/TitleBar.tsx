@@ -1,16 +1,26 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTabs } from '../contexts/TabContext';
 import '../CSS/TitleBar.css';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
 
 
 interface TitleBarProps {
-  onClearContext: () => void;
   setMini: (mini: boolean) => void;
 }
 
-const TitleBar: React.FC<TitleBarProps> = ({ onClearContext, setMini }) => {
+const TitleBar: React.FC<TitleBarProps> = ({ setMini }) => {
   const navigate = useNavigate();
+  const { createTab } = useTabs();
+
+  const handleNewChat = () => {
+    const tabId = createTab();
+    if (!tabId) {
+      return;
+    }
+
+    navigate('/', { state: { newChat: true, tabId } });
+  };
 
   return (
     <div className="title-bar">
@@ -39,7 +49,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ onClearContext, setMini }) => {
       </div>
       <div className="blank-space-to-drag" onClick={() => navigate('/')}></div>
       <div className="nav-bar-right-side">
-        <div className="newChatButton" onClick={() => { onClearContext(); navigate('/', { state: { newChat: true } }); }} title="Start new chat">
+        <div className="newChatButton" onClick={handleNewChat} title="Start new chat">
           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="new-chat-icon">
             <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
             <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>

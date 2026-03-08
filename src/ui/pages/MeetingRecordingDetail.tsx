@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
+import { useOutletContext, useParams } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import { api } from '../services/api';
 import TitleBar from '../components/TitleBar';
@@ -13,9 +13,9 @@ interface MeetingRecording {
     duration_seconds: number | null;
     status: string;
     tier1_transcript: string;
-    tier2_transcript_json: any;
+    tier2_transcript_json: string | Tier2Segment[] | null;
     ai_summary: string | null;
-    ai_actions_json: any;
+    ai_actions_json: string | ActionSuggestion[] | null;
     ai_title_generated: boolean;
 }
 
@@ -52,7 +52,6 @@ const MeetingRecordingDetail: React.FC = () => {
         setMini: (val: boolean) => void;
     }>();
     const { id } = useParams<{ id: string }>();
-    const navigate = useNavigate();
     const { send: sendMessage, subscribe } = useWebSocket();
 
     const [recording, setRecording] = useState<MeetingRecording | null>(null);
@@ -302,7 +301,7 @@ const MeetingRecordingDetail: React.FC = () => {
 
     return (
         <>
-            <TitleBar onClearContext={() => { }} setMini={setMini} />
+            <TitleBar setMini={setMini} />
             <div className="meeting-detail-content">
                 {/* <button className="meeting-detail-back" onClick={() => navigate('/album')}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">

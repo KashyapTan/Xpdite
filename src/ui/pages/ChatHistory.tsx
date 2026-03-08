@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import TitleBar from '../components/TitleBar';
+import { useTabs } from '../contexts/TabContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../CSS/ChatHistory.css';
 
@@ -14,6 +15,7 @@ const ChatHistory: React.FC = () => {
   const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
   const navigate = useNavigate();
   const { send, subscribe, isConnected } = useWebSocket();
+  const { createTab } = useTabs();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
@@ -73,8 +75,12 @@ const ChatHistory: React.FC = () => {
   }, [send]);
 
   const handleConversationClick = (conversationId: string) => {
-    // Navigate to the main chat page with the conversation ID in state
-    navigate('/', { state: { conversationId } });
+    const tabId = createTab();
+    if (!tabId) {
+      return;
+    }
+
+    navigate('/', { state: { conversationId, tabId } });
   };
 
   const handleDeleteConversation = (e: React.MouseEvent, conversationId: string) => {
@@ -154,7 +160,7 @@ const ChatHistory: React.FC = () => {
 
   return (
     <>
-      <TitleBar onClearContext={() => { }} setMini={setMini} />
+      <TitleBar setMini={setMini} />
       <div className="chat-history-container">
         <div className="chat-history-search-box-container">
           <form className='chat-history-search-box-form' onSubmit={(e) => e.preventDefault()}>

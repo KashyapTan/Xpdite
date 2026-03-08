@@ -150,6 +150,7 @@ function App() {
   const mainInteractionRef = useRef<HTMLDivElement | null>(null);
   const pendingConversationRef = useRef<string | null>(null);
   const pendingNewChatRef = useRef<boolean>(false);
+  const pendingCreatedTabIdRef = useRef<string | null>(null);
   const generatingModelRef = useRef<string>('');
   const pendingTurnActionsRef = useRef<Map<string, PendingTurnAction>>(new Map());
   // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
@@ -159,11 +160,13 @@ function App() {
   // Tab Management
   // ============================================
   const {
-    tabs, activeTabId, createTab, updateTabTitle,
-    queueMap, setQueueItems, registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
+    tabs, activeTabId, updateTabTitle,
+    queueMap, setQueueItems, getTabSnapshot, setTabSnapshot, deleteTabSnapshot,
+    registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
   } = useTabs();
   const activeTabIdRef = useRef(activeTabId);
-  const tabRegistryRef = useRef<Map<string, TabSnapshot>>(new Map());
+  const saveTabStateRef = useRef<(tabId: string) => void>(() => {});
+  const hasRestoredInitialTabRef = useRef(false);
 
   // ============================================
   // Context from Layout
@@ -268,7 +271,7 @@ function App() {
 
   /** Save current React state into the registry for the given tab. */
   const saveTabState = useCallback((tabId: string) => {
-    tabRegistryRef.current.set(tabId, {
+    setTabSnapshot(tabId, {
       chat: chatState.getSnapshot(),
       screenshots: screenshotState.getSnapshot(),
       tokens: tokenState.getSnapshot(),
@@ -278,41 +281,75 @@ function App() {
       },
       generatingModel: generatingModelRef.current,
     });
-  }, [chatState, screenshotState, tokenState, terminalSessionActive, terminalSessionRequest]);
+  }, [chatState, screenshotState, tokenState, terminalSessionActive, terminalSessionRequest, setTabSnapshot]);
 
   /** Restore React state from the registry for the given tab. */
   const restoreTabState = useCallback((tabId: string) => {
-    const snap = tabRegistryRef.current.get(tabId) ?? freshSnapshot();
+    const snap = getTabSnapshot(tabId) ?? freshSnapshot();
     chatState.restoreSnapshot(snap.chat);
     screenshotState.restoreSnapshot(snap.screenshots);
     tokenState.restoreSnapshot(snap.tokens);
     setTerminalSessionActive(snap.terminal.terminalSessionActive);
     setTerminalSessionRequest(snap.terminal.terminalSessionRequest);
     generatingModelRef.current = snap.generatingModel;
-  }, [chatState, screenshotState, tokenState, freshSnapshot]);
+  }, [chatState, screenshotState, tokenState, freshSnapshot, getTabSnapshot]);
+
+  saveTabStateRef.current = saveTabState;
 
   // Register tab switch callbacks with TabContext
   useEffect(() => {
-    registerBeforeSwitch((oldTabId: string) => {
+    const unregisterBeforeSwitch = registerBeforeSwitch((oldTabId: string) => {
       saveTabState(oldTabId);
     });
-    registerAfterSwitch((newTabId: string) => {
+    const unregisterAfterSwitch = registerAfterSwitch((newTabId: string) => {
       activeTabIdRef.current = newTabId;
       restoreTabState(newTabId);
       setShowScrollBottom(false);
       // Notify the backend so hotkey-captured screenshots route to the correct tab
       wsSend({ type: 'tab_activated', tab_id: newTabId });
     });
-    registerOnTabClosed((closedTabId: string) => {
-      tabRegistryRef.current.delete(closedTabId);
+    const unregisterOnTabClosed = registerOnTabClosed((closedTabId: string) => {
+      deleteTabSnapshot(closedTabId);
       pendingTurnActionsRef.current.delete(closedTabId);
     });
-  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState, wsSend]);
+    return () => {
+      unregisterBeforeSwitch();
+      unregisterAfterSwitch();
+      unregisterOnTabClosed();
+    };
+  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState, wsSend, deleteTabSnapshot]);
 
   // Keep activeTabIdRef in sync when activeTabId changes (e.g. from external triggers)
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  useEffect(() => {
+    if (hasRestoredInitialTabRef.current) {
+      return;
+    }
+
+    hasRestoredInitialTabRef.current = true;
+    activeTabIdRef.current = activeTabId;
+    restoreTabState(activeTabId);
+    setShowScrollBottom(false);
+  }, [activeTabId, restoreTabState]);
+
+  useEffect(() => {
+    const state = location.state as { tabId?: string } | null;
+
+    if (!isConnected || state?.tabId) {
+      return;
+    }
+
+    wsSend({ type: 'tab_activated', tab_id: activeTabIdRef.current });
+  }, [isConnected, location.state, wsSend]);
+
+  useEffect(() => {
+    return () => {
+      saveTabStateRef.current(activeTabIdRef.current);
+    };
+  }, []);
 
   // ============================================
   // Background tab message handler
@@ -323,7 +360,7 @@ function App() {
    * UI-only messages (screenshot_start, terminal_running_notice, etc.) are ignored.
    */
   const applyToBackgroundTab = useCallback((tabId: string, data: WebSocketMessage) => {
-    const snap = tabRegistryRef.current.get(tabId) ?? freshSnapshot();
+    const snap = getTabSnapshot(tabId) ?? freshSnapshot();
     const chat = { ...snap.chat };
     const pendingTurnAction = pendingTurnActionsRef.current.get(tabId);
 
@@ -593,7 +630,7 @@ function App() {
         tu.total = (tu.total || 0) + input + output;
         tu.input = (tu.input || 0) + input;
         tu.output = (tu.output || 0) + output;
-        tabRegistryRef.current.set(tabId, { ...snap, chat, tokens: { tokenUsage: tu } });
+        setTabSnapshot(tabId, { ...snap, chat, tokens: { tokenUsage: tu } });
         return;
       }
 
@@ -610,7 +647,7 @@ function App() {
           : data.content) as unknown as ScreenshotAddedContent;
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = [...screenshots.screenshots, ssData as unknown as Screenshot];
-        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        setTabSnapshot(tabId, { ...snap, chat, screenshots });
         return;
       }
 
@@ -620,14 +657,14 @@ function App() {
           : data.content) as unknown as ScreenshotRemovedContent;
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = screenshots.screenshots.filter(ss => ss.id !== removeData.id);
-        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        setTabSnapshot(tabId, { ...snap, chat, screenshots });
         return;
       }
 
       case 'screenshots_cleared': {
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = [];
-        tabRegistryRef.current.set(tabId, { ...snap, chat, screenshots });
+        setTabSnapshot(tabId, { ...snap, chat, screenshots });
         return;
       }
 
@@ -635,8 +672,8 @@ function App() {
         return; // Ignore other types for background tabs
     }
 
-    tabRegistryRef.current.set(tabId, { ...snap, chat });
-  }, [freshSnapshot, setQueueItems]);
+    setTabSnapshot(tabId, { ...snap, chat });
+  }, [freshSnapshot, getTabSnapshot, setQueueItems, setTabSnapshot]);
 
   // ============================================
   // Fetch enabled models on mount & when returning from Settings
@@ -686,6 +723,12 @@ function App() {
         chatState.setStatus(String(data.content) || 'Ready to chat.');
         chatState.setCanSubmit(true);
         chatState.setError('');
+
+        if (pendingCreatedTabIdRef.current) {
+          wsSend({ type: 'tab_created', tab_id: pendingCreatedTabIdRef.current });
+          wsSend({ type: 'tab_activated', tab_id: pendingCreatedTabIdRef.current });
+          pendingCreatedTabIdRef.current = null;
+        }
 
         // Handle pending operations
         if (pendingConversationRef.current) {
@@ -1095,25 +1138,35 @@ function App() {
   // Navigation Handler
   // ============================================
   useEffect(() => {
-    const state = location.state as { conversationId?: string; newChat?: boolean } | null;
+    const state = location.state as { conversationId?: string; newChat?: boolean; tabId?: string } | null;
 
     if (state?.conversationId) {
       setShowScrollBottom(false);
       if (isConnected) {
+        if (state.tabId) {
+          wsSend({ type: 'tab_created', tab_id: state.tabId });
+          wsSend({ type: 'tab_activated', tab_id: state.tabId });
+        }
         wsSend({
           type: 'resume_conversation',
           conversation_id: state.conversationId,
         });
         window.history.replaceState({}, '');
       } else {
+        pendingCreatedTabIdRef.current = state.tabId ?? null;
         pendingConversationRef.current = state.conversationId;
       }
     } else if (state?.newChat) {
       setShowScrollBottom(false);
       if (isConnected) {
+        if (state.tabId) {
+          wsSend({ type: 'tab_created', tab_id: state.tabId });
+          wsSend({ type: 'tab_activated', tab_id: state.tabId });
+        }
         wsSend({ type: 'clear_context' });
         window.history.replaceState({}, '');
       } else {
+        pendingCreatedTabIdRef.current = state.tabId ?? null;
         pendingNewChatRef.current = true;
       }
     }
@@ -1254,14 +1307,6 @@ function App() {
     wsSend({ type: 'stop_streaming' });
   };
 
-  /** Create a new tab and notify the backend. */
-  const handleNewTab = useCallback(() => {
-    const id = createTab();
-    if (id) {
-      wsSend({ type: 'tab_created', tab_id: id });
-    }
-  }, [createTab, wsSend]);
-
   const handleRemoveScreenshot = (id: string) => {
     wsSend({ type: 'remove_screenshot', id });
   };
@@ -1389,7 +1434,7 @@ function App() {
 
   return (
     <div className="content-container" style={{ width: '100%', height: '100%', position: 'relative' }}>
-      <TitleBar onClearContext={handleNewTab} setMini={setMini} />
+      <TitleBar setMini={setMini} />
       <TabBar wsSend={wsSend} />
 
       <ResponseArea

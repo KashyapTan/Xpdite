@@ -68,7 +68,7 @@ const Settings: React.FC = () => {
 
   return (
     <>
-      <TitleBar onClearContext={() => { }} setMini={setMini} />
+      <TitleBar setMini={setMini} />
       <div className="settings-container">
         {/* ====== SIDEBAR ====== */}
         <div className="settings-side-bar">

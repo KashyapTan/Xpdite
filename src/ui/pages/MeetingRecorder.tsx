@@ -45,7 +45,7 @@ const MeetingRecorder: React.FC = () => {
 
     return (
         <div className="meeting-recorder-container">
-            <TitleBar onClearContext={() => { }} setMini={setMini} />
+            <TitleBar setMini={setMini} />
 
             <div className="meeting-recorder-content">
                 {/* Recording Control */}

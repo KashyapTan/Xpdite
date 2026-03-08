@@ -2,11 +2,11 @@
 /**
  * Tab context — manages the list of open tabs and the active tab ID.
  *
- * Pure UI state. The per-tab chat/screenshot/token state is managed by a state
- * registry inside App.tsx (snapshot / restore on switch).
+ * Owns the list of open tabs, the active tab ID, and a persistent per-tab
+ * snapshot registry that survives route changes.
  */
 import React, { createContext, useContext, useState, useCallback, useRef } from 'react';
-import type { TabInfo, QueueItem } from '../types';
+import type { TabInfo, QueueItem, TabSnapshot } from '../types';
 
 const MAX_TABS = 10;
 
@@ -28,22 +28,28 @@ interface TabContextValue {
   updateTabTitle: (tabId: string, title: string) => void;
   /** Update the queue items for a tab (called from WS handler). */
   setQueueItems: (tabId: string, items: QueueItem[]) => void;
+  /** Read a persisted snapshot for a tab. */
+  getTabSnapshot: (tabId: string) => TabSnapshot | undefined;
+  /** Persist a snapshot for a tab. */
+  setTabSnapshot: (tabId: string, snapshot: TabSnapshot) => void;
+  /** Remove a persisted snapshot for a tab. */
+  deleteTabSnapshot: (tabId: string) => void;
 
   /**
    * Register a handler that is called BEFORE the active tab actually changes.
    * This lets App.tsx snapshot the outgoing tab's state.
    */
-  registerBeforeSwitch: (fn: (oldTabId: string) => void) => void;
+  registerBeforeSwitch: (fn: (oldTabId: string) => void) => () => void;
   /**
    * Register a handler that is called AFTER the active tab has changed.
    * This lets App.tsx restore the incoming tab's state.
    */
-  registerAfterSwitch: (fn: (newTabId: string) => void) => void;
+  registerAfterSwitch: (fn: (newTabId: string) => void) => () => void;
   /**
    * Register a handler called when a tab is closed.
    * This lets App.tsx clean up the state registry entry.
    */
-  registerOnTabClosed: (fn: (closedTabId: string) => void) => void;
+  registerOnTabClosed: (fn: (closedTabId: string) => void) => () => void;
 }
 
 const TabContext = createContext<TabContextValue | null>(null);
@@ -58,17 +64,45 @@ export function TabProvider({ children }: { children: React.ReactNode }) {
   const beforeSwitchRef = useRef<((oldTabId: string) => void) | null>(null);
   const afterSwitchRef = useRef<((newTabId: string) => void) | null>(null);
   const onTabClosedRef = useRef<((closedTabId: string) => void) | null>(null);
+  const tabSnapshotsRef = useRef<Map<string, TabSnapshot>>(new Map());
 
   const registerBeforeSwitch = useCallback((fn: (oldTabId: string) => void) => {
     beforeSwitchRef.current = fn;
+    return () => {
+      if (beforeSwitchRef.current === fn) {
+        beforeSwitchRef.current = null;
+      }
+    };
   }, []);
 
   const registerAfterSwitch = useCallback((fn: (newTabId: string) => void) => {
     afterSwitchRef.current = fn;
+    return () => {
+      if (afterSwitchRef.current === fn) {
+        afterSwitchRef.current = null;
+      }
+    };
   }, []);
 
   const registerOnTabClosed = useCallback((fn: (closedTabId: string) => void) => {
     onTabClosedRef.current = fn;
+    return () => {
+      if (onTabClosedRef.current === fn) {
+        onTabClosedRef.current = null;
+      }
+    };
+  }, []);
+
+  const getTabSnapshot = useCallback((tabId: string) => {
+    return tabSnapshotsRef.current.get(tabId);
+  }, []);
+
+  const setTabSnapshot = useCallback((tabId: string, snapshot: TabSnapshot) => {
+    tabSnapshotsRef.current.set(tabId, snapshot);
+  }, []);
+
+  const deleteTabSnapshot = useCallback((tabId: string) => {
+    tabSnapshotsRef.current.delete(tabId);
   }, []);
 
   const createTab = useCallback((): string | null => {
@@ -107,7 +141,6 @@ export function TabProvider({ children }: { children: React.ReactNode }) {
         // Switch to the nearest remaining tab
         const newIdx = Math.min(idx, newTabs.length - 1);
         const newActiveId = newTabs[newIdx].id;
-        beforeSwitchRef.current?.(tabId);
         setActiveTabId(newActiveId);
         afterSwitchRef.current?.(newActiveId);
       }
@@ -145,6 +178,9 @@ export function TabProvider({ children }: { children: React.ReactNode }) {
         switchTab,
         updateTabTitle,
         setQueueItems,
+        getTabSnapshot,
+        setTabSnapshot,
+        deleteTabSnapshot,
         registerBeforeSwitch,
         registerAfterSwitch,
         registerOnTabClosed,

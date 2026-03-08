@@ -136,7 +136,7 @@ const MeetingAlbum: React.FC = () => {
 
   return (
     <>
-      <TitleBar onClearContext={() => { }} setMini={setMini} />
+      <TitleBar setMini={setMini} />
       <div className="meeting-album-container">
         <div className="meeting-album-search-box-container">
           <form className="meeting-album-search-box-form" onSubmit={handleSearch}>

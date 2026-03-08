@@ -94,15 +94,15 @@ src/
 Never call `ws.send()` directly in a component — go through `useWebSocket().send`.
 
 ### Multi-Tab Architecture
-- **TabContext** (`contexts/TabContext.tsx`) manages the list of open tabs, active tab ID, and per-tab queue items. Pure UI state — no chat/token/screenshot data here.
-- **State registry** (`App.tsx → tabRegistryRef`) is a `Map<string, TabSnapshot>` held in a ref. On tab switch, the outgoing tab's state is snapshot'ed (via hook `.getSnapshot()` methods) and the incoming tab's state is restored (via `.restoreSnapshot()`).
+- **TabContext** (`contexts/TabContext.tsx`) manages the list of open tabs, active tab ID, per-tab queue items, and a persistent `Map<string, TabSnapshot>` registry that survives route changes.
+- **State registry** is accessed by `App.tsx` through `getTabSnapshot()` / `setTabSnapshot()`. On tab switch, the outgoing tab's state is snapshot'ed (via hook `.getSnapshot()` methods) and the incoming tab's state is restored (via `.restoreSnapshot()`). `App.tsx` also saves the active tab during unmount so navigating to Settings / History does not blank tabs.
 - **Three-tier WS routing** in `App.tsx`:
   1. **Global messages** (e.g., `screenshot_start`, `ready`, `screenshot_ready`) — applied regardless of tab
   2. **Active tab messages** — routed to live React state via hooks (includes `screenshot_added`, `screenshot_removed`, `screenshots_cleared`)
   3. **Background tab messages** — applied to the registry via `applyToBackgroundTab()` mini-reducer (handles `screenshot_added`, `screenshot_removed`, `screenshots_cleared` in the snapshot)
 - **`wsSend`** helper auto-injects `tab_id: activeTabIdRef.current` as a default, but explicit `tab_id` fields in the message object override it (spread order: `{ tab_id: default, ...msg }`).
-- **Tab lifecycle**: `TabBar` creates/closes tabs; `TitleBar`'s "new chat" button creates a new tab. Max 10 tabs. Tabs are ephemeral (don't survive app restart). TabBar is hidden when only 1 tab is open.
-- **Cleanup**: When a tab is closed, `registerOnTabClosed` fires a callback that deletes the tab's snapshot from `tabRegistryRef`.
+- **Tab lifecycle**: `TabBar` creates/closes tabs; `TitleBar`'s "new chat" button and `ChatHistory.tsx` both create a new tab before navigating back to the chat route. Max 10 tabs. Tabs are ephemeral (don't survive app restart). TabBar is hidden when only 1 tab is open.
+- **Cleanup**: When a tab is closed, `registerOnTabClosed` fires a callback that deletes the tab's persisted snapshot from `TabContext`.
 
 ### Stale closure prevention — ref-based WS handler
 `App.tsx` subscribes to the WebSocket via `wsSubscribe` with an empty-ish dependency array to avoid re-subscribing on every render. To prevent stale closures, a `handleWebSocketMessageRef` is kept in sync with the latest `handleWebSocketMessage` on every render. The subscription callback calls `handleWebSocketMessageRef.current(data)` instead of the stale closure. The same pattern is used by `MeetingRecorderContext` via `handlersRef`.
