@@ -38,12 +38,13 @@ When to use sub-agents:
 - You need to read multiple web pages → spawn one sub-agent per URL in parallel instead of reading them one by one
 - You need to search for and read multiple files → spawn sub-agents for each independent read
 - You have multiple independent research questions → spawn one sub-agent per question
-- Any time you find yourself about to make 2+ sequential read_website or search calls that don't depend on each other
+- Any time you find yourself about to make 2+ sequential tool calls that don't depend on each other's results, consider spawning sub-agents to do them in parallel instead.
+- Spwan 3 sub-agents MAX at once, then determine if you need to read more.
 
 Guidelines:
 - Prefer fewer, well-scoped sub-agents over many small ones
 - Write clear, self-contained instructions — sub-agents have no conversation history
-- Sub-agents can use file and web tools but not terminal or spawn_agent
+- Give each sub-agent one single, specific task to accomplish, rather than multiple questions in one instruction
 - When you have multiple independent sub-tasks, spawn them all at once for parallelism
 - After search_web_pages returns multiple URLs to read, ALWAYS spawn parallel sub-agents to read them simultaneously rather than calling read_website sequentially
 </sub_agents>
