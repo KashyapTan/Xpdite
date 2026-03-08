@@ -642,6 +642,54 @@ async def init_mcp_servers():
         ],
     )
 
+    # ── Sub-Agent tool (inline — no subprocess) ─────────────────────
+    # The spawn_agent tool is intercepted at the handler layer and
+    # executed by source/services/sub_agent.py.  Registration makes
+    # it visible to LLMs; actual execution never hits an MCP session.
+    from mcp_servers.servers.description_format import build_tool_description
+
+    spawn_agent_description = build_tool_description(
+        purpose="Delegate a focused, self-contained task to an independent sub-agent LLM call.",
+        use_when="You need to parallelize work, offload context-heavy tasks, or trigger post-work review without polluting the main context window.",
+        inputs="instruction (required string — fully self-contained task description with all context), model_tier (optional: 'fast'|'smart'|'self', default 'fast'), agent_name (optional string for display)",
+        returns="The sub-agent's complete response as a string.",
+        notes="Sub-agents have no access to conversation history — include all relevant context in the instruction. "
+              "Default to 'fast' for informational tasks. Use 'smart' for analysis/review. Use 'self' sparingly (most expensive). "
+              "Emit multiple spawn_agent calls in a single turn to run tasks in parallel. "
+              "Sub-agents cannot run terminal commands or spawn further sub-agents.",
+    )
+
+    mcp_manager.register_inline_tools(
+        "sub_agent",
+        [
+            {
+                "name": "spawn_agent",
+                "description": spawn_agent_description.strip(),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "instruction": {
+                            "type": "string",
+                            "description": "Fully self-contained task description. Must include all context the sub-agent needs.",
+                        },
+                        "model_tier": {
+                            "type": "string",
+                            "description": "Model tier: 'fast' (default, cheap), 'smart' (mid-tier), 'self' (same model as caller)",
+                            "enum": ["fast", "smart", "self"],
+                            "default": "fast",
+                        },
+                        "agent_name": {
+                            "type": "string",
+                            "description": "Human-readable label for display (e.g. 'Code Reviewer', 'Web Researcher')",
+                            "default": "Sub-Agent",
+                        },
+                    },
+                    "required": ["instruction"],
+                },
+            },
+        ],
+    )
+
     # ── Add more servers here as you implement them ────────────────
     # Example:
     # await mcp_manager.connect_server(

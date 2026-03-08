@@ -200,7 +200,30 @@ async def handle_mcp_tool_calls(
         messages.append(assistant_msg)
 
         # Execute each tool call
-        for tc in current_tool_calls:
+        # ── Collect spawn_agent calls for parallel execution ──
+        spawn_agent_indices: List[int] = []
+        spawn_agent_calls: List[Dict[str, Any]] = []
+        for idx, tc in enumerate(current_tool_calls):
+            fn_name = tc["name"]
+            fn_args = tc["args"]
+            sn = mcp_manager.get_tool_server_name(fn_name)
+            if fn_name == "spawn_agent" and sn == "sub_agent":
+                spawn_agent_indices.append(idx)
+                spawn_agent_calls.append({
+                    "instruction": fn_args.get("instruction", ""),
+                    "model_tier": fn_args.get("model_tier", "fast"),
+                    "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+                })
+
+        # Run all spawn_agent calls in parallel (if any)
+        spawn_results: Dict[int, str] = {}
+        if spawn_agent_calls and not is_current_request_cancelled():
+            from ..services.sub_agent import execute_sub_agents_parallel
+            results = await execute_sub_agents_parallel(spawn_agent_calls)
+            for i, result_str in enumerate(results):
+                spawn_results[spawn_agent_indices[i]] = result_str
+
+        for idx, tc in enumerate(current_tool_calls):
             fn_name = tc["name"]
             fn_args = tc["args"]
             server_name = mcp_manager.get_tool_server_name(fn_name)
@@ -210,42 +233,46 @@ async def handle_mcp_tool_calls(
             if is_current_request_cancelled():
                 break
 
-            await broadcast_message(
-                "tool_call",
-                json.dumps(
-                    {
-                        "name": fn_name,
-                        "args": fn_args,
-                        "server": server_name,
-                        "status": "calling",
-                    }
-                ),
-            )
-
-            # Execute (terminal interception or standard MCP)
-            if is_terminal_tool(fn_name, server_name):
-                result = await execute_terminal_tool(fn_name, fn_args, server_name)
+            # spawn_agent results already computed in parallel — skip outer broadcast
+            if idx in spawn_results:
+                result_str = _truncate_result(spawn_results[idx])
             else:
-                try:
-                    result = await mcp_manager.call_tool(fn_name, dict(fn_args))
-                except Exception as e:
-                    result = f"Error executing tool: {e}"
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps(
+                        {
+                            "name": fn_name,
+                            "args": fn_args,
+                            "server": server_name,
+                            "status": "calling",
+                        }
+                    ),
+                )
 
-            result_str = _truncate_result(str(result))
-            logger.debug("Tool result:\n%s...", result_str[:100])
+                # Execute (terminal interception or standard MCP)
+                if is_terminal_tool(fn_name, server_name):
+                    result = await execute_terminal_tool(fn_name, fn_args, server_name)
+                else:
+                    try:
+                        result = await mcp_manager.call_tool(fn_name, dict(fn_args))
+                    except Exception as e:
+                        result = f"Error executing tool: {e}"
 
-            await broadcast_message(
-                "tool_call",
-                json.dumps(
-                    {
-                        "name": fn_name,
-                        "args": fn_args,
-                        "result": result_str,
-                        "server": server_name,
-                        "status": "complete",
-                    }
-                ),
-            )
+                result_str = _truncate_result(str(result))
+                logger.debug("Tool result:\n%s...", result_str[:100])
+
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps(
+                        {
+                            "name": fn_name,
+                            "args": fn_args,
+                            "result": result_str,
+                            "server": server_name,
+                            "status": "complete",
+                        }
+                    ),
+                )
 
             tool_calls_made.append(
                 {

@@ -13,6 +13,7 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 | `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
 | `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
 | `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Executed inline by `terminal_executor.py` with approval UI. |
+| `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Registered as inline tool in `manager.py`, intercepted in `cloud_provider.py` and `handlers.py`, executed by `services/sub_agent.py`. |
 | `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
 | `discord` | 📝 Placeholder | — | Needs `DISCORD_BOT_TOKEN` in `config/servers.json` |
 | `canvas` | 📝 Placeholder | — | Needs `CANVAS_URL` + `CANVAS_TOKEN` |
@@ -105,3 +106,5 @@ Tools are auto-discovered on startup, indexed by the semantic retriever, and rou
 **Placeholder servers have stub `server.py` files.** Running them will fail or return empty results. Check `config/servers.json` `"enabled"` before assuming a server works.
 
 **Google-authenticated servers (`gmail`, `calendar`)** require a valid `user_data/google/token.json`. If the token is missing or expired, the tools will fail. Users must complete OAuth via Settings → Google.
+
+**The `sub_agent` server is an inline tool like `terminal`.** The `spawn_agent` tool is registered in `manager.py`'s `init_mcp_servers()` via `register_inline_tools("sub_agent", [...])`. Tool calls are intercepted in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) before reaching the MCP subprocess router. Sub-agents have no access to terminal tools or `spawn_agent` itself (enforced by `_EXCLUDED_TOOLS` set in `services/sub_agent.py`). Tier-to-model mapping is configurable via Settings → Sub-Agents (stored as `sub_agent_tier_fast` / `sub_agent_tier_smart` in the `settings` DB table).

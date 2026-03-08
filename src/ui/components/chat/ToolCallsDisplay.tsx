@@ -91,6 +91,8 @@ function getChainSummary(toolCalls: ToolCall[]): string {
       parts.push('searched the web');
     } else if (server === 'terminal') {
       parts.push(`ran ${tcs.length} command${tcs.length > 1 ? 's' : ''}`);
+    } else if (server === 'sub_agent') {
+      parts.push(`spawned ${tcs.length} sub-agent${tcs.length > 1 ? 's' : ''}`);
     } else if (server === 'demo') {
       parts.push(`performed ${tcs.length} calculation${tcs.length > 1 ? 's' : ''}`);
     } else {

@@ -33,6 +33,11 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
     if (name === 'get_environment') text = `Getting environment info`;
     if (name === 'request_session_mode') text = `Requesting terminal session`;
     if (name === 'end_session_mode') text = `Ending terminal session`;
+  } else if (server === 'sub_agent') {
+    badge = 'SUB-AGENT';
+    const agentName = args.agent_name || 'Sub-Agent';
+    const tier = args.model_tier || 'fast';
+    text = `${agentName} (${tier})`;
   }
 
   return { badge, text };

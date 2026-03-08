@@ -583,6 +583,51 @@ async def set_tools_settings(body: ToolsSettingsUpdate):
 
 
 # ============================================
+# Sub-Agent Settings API
+# ============================================
+
+
+class SubAgentSettingsUpdate(BaseModel):
+    """Request body for updating sub-agent tier settings."""
+    fast_model: Optional[str] = None
+    smart_model: Optional[str] = None
+
+
+@router.get("/settings/sub-agents")
+async def get_sub_agent_settings():
+    """Get current sub-agent tier model settings."""
+    from ..database import db
+
+    fast_model = db.get_setting("sub_agent_tier_fast") or ""
+    smart_model = db.get_setting("sub_agent_tier_smart") or ""
+
+    return {
+        "fast_model": fast_model,
+        "smart_model": smart_model,
+    }
+
+
+@router.put("/settings/sub-agents")
+async def set_sub_agent_settings(body: SubAgentSettingsUpdate):
+    """Update sub-agent tier model settings."""
+    from ..database import db
+
+    if body.fast_model is not None:
+        if body.fast_model.strip():
+            db.set_setting("sub_agent_tier_fast", body.fast_model.strip())
+        else:
+            db.delete_setting("sub_agent_tier_fast")
+
+    if body.smart_model is not None:
+        if body.smart_model.strip():
+            db.set_setting("sub_agent_tier_smart", body.smart_model.strip())
+        else:
+            db.delete_setting("sub_agent_tier_smart")
+
+    return {"status": "updated"}
+
+
+# ============================================
 # System Prompt API
 # ============================================
 

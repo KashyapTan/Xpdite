@@ -445,6 +445,30 @@ export const api = {
   },
 
   // ============================================
+  // Sub-Agent Settings
+  // ============================================
+
+  async getSubAgentSettings(): Promise<{ fast_model: string; smart_model: string }> {
+    try {
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/settings/sub-agents`);
+      if (!response.ok) throw new Error('Failed to fetch sub-agent settings');
+      return response.json();
+    } catch {
+      return { fast_model: '', smart_model: '' };
+    }
+  },
+
+  async setSubAgentSettings(settings: { fast_model: string; smart_model: string }): Promise<void> {
+    const base = await baseUrl();
+    await fetch(`${base}/api/settings/sub-agents`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+  },
+
+  // ============================================
   // System Prompt
   // ============================================
 

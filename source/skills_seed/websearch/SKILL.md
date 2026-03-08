@@ -11,6 +11,7 @@ trigger-servers: websearch
 - Read the full page content for detailed questions — search snippets are often too brief.
 - Prefer primary sources (official docs, repos, gov sites) over aggregators.
 - If the user provides a URL, fetch it directly rather than searching for it.
+- **When you need to read 2+ URLs**, use spawn_agent to read them in parallel — one sub-agent per URL up to 3 URLs unless it's important to read all of them. Do NOT call read_website sequentially when the reads are independent.
 
 ## Quality
 - Summarize findings in your own words — do not reproduce large blocks of source text.

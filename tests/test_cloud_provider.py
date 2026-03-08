@@ -226,7 +226,7 @@ class TestHelpers:
         with patch("source.llm.cloud_provider.litellm.get_model_info",
                     return_value={"supports_reasoning": True}):
             params = _get_reasoning_params("anthropic/claude-sonnet-4-20250514")
-        assert params == {"reasoning_effort": "medium"}
+        assert params == {"reasoning_effort": "high"}
 
     def test_get_reasoning_params_not_supported(self):
         """Models that don't support reasoning should get empty dict."""
@@ -636,7 +636,7 @@ class TestStreamLitellm:
             )
 
         call_kwargs = mock_acomp.call_args.kwargs
-        assert call_kwargs.get("reasoning_effort") == "medium"
+        assert call_kwargs.get("reasoning_effort") == "high"
 
     @pytest.mark.asyncio
     async def test_no_reasoning_for_non_reasoning_model(self, _mock_broadcast, _mock_cancelled):

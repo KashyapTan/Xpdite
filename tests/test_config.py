@@ -28,7 +28,7 @@ class TestConstants:
         assert len(DEFAULT_MODEL) > 0
 
     def test_max_mcp_tool_rounds(self):
-        assert MAX_MCP_TOOL_ROUNDS == 30
+        assert MAX_MCP_TOOL_ROUNDS == 50
 
     def test_ollama_ctx_size(self):
         assert OLLAMA_CTX_SIZE == 32768

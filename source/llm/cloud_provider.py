@@ -608,15 +608,53 @@ async def _stream_litellm(
                 # Execute each tool and append results
                 tool_result_messages: List[Dict[str, str]] = []
                 cancelled_during_tool_loop = False
-                for tc_info in assistant_tool_calls:
+
+                # ── Collect spawn_agent calls for parallel execution ──
+                spawn_agent_indices: List[int] = []
+                spawn_agent_calls: List[Dict[str, Any]] = []
+                parsed_args_by_index: Dict[int, Dict[str, Any]] = {}
+
+                for idx, tc_info in enumerate(assistant_tool_calls):
+                    fn_name = tc_info["function"]["name"]
+                    raw_args = tc_info["function"]["arguments"]
+                    try:
+                        fn_args = json.loads(raw_args) if raw_args else {}
+                    except json.JSONDecodeError:
+                        continue
+                    parsed_args_by_index[idx] = fn_args
+
+                    from ..mcp_integration.manager import mcp_manager as _mm
+                    try:
+                        sn = _mm.get_tool_server_name(fn_name) or "unknown"
+                    except Exception:
+                        sn = "unknown"
+
+                    if fn_name == "spawn_agent" and sn == "sub_agent":
+                        spawn_agent_indices.append(idx)
+                        spawn_agent_calls.append({
+                            "instruction": fn_args.get("instruction", ""),
+                            "model_tier": fn_args.get("model_tier", "fast"),
+                            "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+                        })
+
+                # Run all spawn_agent calls in parallel (if any)
+                spawn_results: Dict[int, str] = {}
+                if spawn_agent_calls and not is_current_request_cancelled():
+                    from ..services.sub_agent import execute_sub_agents_parallel
+                    results = await execute_sub_agents_parallel(spawn_agent_calls)
+                    for i, result_str in enumerate(results):
+                        spawn_results[spawn_agent_indices[i]] = result_str
+
+                # Now iterate all tool calls — spawn_agents already have results
+                for idx, tc_info in enumerate(assistant_tool_calls):
                     fn_name = tc_info["function"]["name"]
                     raw_args = tc_info["function"]["arguments"]
 
                     try:
-                        fn_args = json.loads(raw_args) if raw_args else {}
+                        fn_args = parsed_args_by_index.get(idx)
+                        if fn_args is None:
+                            fn_args = json.loads(raw_args) if raw_args else {}
                     except json.JSONDecodeError:
-                        # Report malformed JSON back to the model so it can
-                        # self-correct in the next round.
                         error_result = (
                             f"System error: you provided invalid JSON arguments "
                             f"for tool '{fn_name}': {raw_args}"
@@ -671,10 +709,22 @@ async def _stream_litellm(
                         cancelled_during_tool_loop = True
                         break
 
-                    result_str = await _execute_and_broadcast_tool(
-                        fn_name, fn_args, provider.capitalize(),
-                        tool_calls_list, interleaved_blocks,
-                    )
+                    # spawn_agent results already computed in parallel
+                    if idx in spawn_results:
+                        result_str = spawn_results[idx]
+                        _append_tool_result(
+                            fn_name,
+                            fn_args,
+                            result_str,
+                            "sub_agent",
+                            tool_calls_list,
+                            interleaved_blocks,
+                        )
+                    else:
+                        result_str = await _execute_and_broadcast_tool(
+                            fn_name, fn_args, provider.capitalize(),
+                            tool_calls_list, interleaved_blocks,
+                        )
 
                     # Append tool result in OpenAI format (LiteLLM translates)
                     tool_result_messages.append({
