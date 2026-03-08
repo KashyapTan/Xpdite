@@ -4,15 +4,14 @@ WebSocket endpoint for real-time communication.
 Handles bidirectional WebSocket connections with the frontend.
 """
 import json
-import traceback
 import logging
+
 from fastapi import WebSocket, WebSocketDisconnect
-
-logger = logging.getLogger(__name__)
-
 from ..core.connection import manager
 from ..core.state import app_state
 from .handlers import MessageHandler
+
+logger = logging.getLogger(__name__)
 
 
 async def websocket_endpoint(websocket: WebSocket):

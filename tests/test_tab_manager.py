@@ -1,6 +1,5 @@
 """Tests for source/services/tab_manager.py — TabState and TabManager."""
 
-import asyncio
 from unittest.mock import AsyncMock
 
 import pytest

@@ -9,15 +9,15 @@ Use for:
 """
 
 from fastapi import APIRouter, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import logging
+
+from ollama import AsyncClient as OllamaAsyncClient
 from pydantic import BaseModel
 from typing import Any, List, Optional
-import logging
-from ollama import AsyncClient as OllamaAsyncClient
-
-logger = logging.getLogger(__name__)
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api")

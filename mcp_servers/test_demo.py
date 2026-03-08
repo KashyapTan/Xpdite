@@ -30,15 +30,15 @@ import asyncio
 import sys
 import os
 
-# Add project root to path so imports work
-project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
-from mcp_servers.client.ollama_bridge import McpOllamaBridge
-
 
 async def main():
+    # Add project root to path so imports work
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from mcp_servers.client.ollama_bridge import McpOllamaBridge
+
     # ── 1. Choose your Ollama model ────────────────────────────────────
     # Change this to whatever tool-capable model you have.
     # Vision models (qwen3-vl) typically DON'T support tool calling.

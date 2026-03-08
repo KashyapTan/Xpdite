@@ -2,7 +2,6 @@
 # uv run python -m pytest tests/ -v
 import os
 import sys
-import pytest
 from unittest.mock import MagicMock
 
 # Ensure `source` package is importable from the repo root

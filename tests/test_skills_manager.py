@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from source.services.skills import Skill, SkillManager
+from source.services.skills import SkillManager
 
 
 # ── Helpers ───────────────────────────────────────────────────────

@@ -1,7 +1,5 @@
 """Tests for DatabaseManager CRUD operations."""
 
-import os
-import tempfile
 
 import pytest
 import sqlite3
@@ -28,8 +26,8 @@ class TestConversations:
         assert len(cid) == 36  # UUID4 has 36 chars including hyphens
 
     def test_get_recent_conversations(self, db_manager):
-        c1 = db_manager.start_new_conversation("First")
-        c2 = db_manager.start_new_conversation("Second")
+        db_manager.start_new_conversation("First")
+        db_manager.start_new_conversation("Second")
         recent = db_manager.get_recent_conversations(limit=10)
         assert len(recent) >= 2
         titles = [c["title"] for c in recent]

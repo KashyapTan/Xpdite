@@ -28,6 +28,11 @@ def set_current_tab_id(tab_id: Optional[str]) -> contextvars.Token[Optional[str]
     return _current_tab_id.set(tab_id)
 
 
+def reset_current_tab_id(token: contextvars.Token[Optional[str]]) -> None:
+    """Restore the previous tab_id for the current async context."""
+    _current_tab_id.reset(token)
+
+
 def get_current_tab_id() -> Optional[str]:
     """Get the tab_id for the current async context."""
     return _current_tab_id.get()
@@ -51,7 +56,7 @@ def wrap_with_tab_ctx(tab_id: Optional[str], coro: Coroutine) -> Coroutine:
         try:
             await coro
         finally:
-            _current_tab_id.reset(tok)
+            reset_current_tab_id(tok)
 
     return _ctx_coro()
 

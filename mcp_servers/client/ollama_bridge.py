@@ -43,10 +43,7 @@ KEY CONCEPTS:
   which MCP server owns tool X and calls it via the MCP protocol.
 """
 
-import asyncio
 import json
-import sys
-import os
 from typing import Any
 from pathlib import Path
 

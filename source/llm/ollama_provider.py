@@ -14,16 +14,15 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 
-logger = logging.getLogger(__name__)
-
 from ollama import AsyncClient as OllamaAsyncClient
-
-from ..core.connection import broadcast_message
-from ..core.state import app_state
-from ..core.request_context import get_current_model, get_current_request, is_current_request_cancelled
 from ..config import OLLAMA_CTX_SIZE
+from ..core.connection import broadcast_message
+from ..core.request_context import get_current_model, get_current_request, is_current_request_cancelled
+from ..core.state import app_state
 from ..mcp_integration.handlers import handle_mcp_tool_calls
 from ..mcp_integration.manager import mcp_manager
+
+logger = logging.getLogger(__name__)
 
 
 def _build_messages(

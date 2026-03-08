@@ -27,7 +27,7 @@ def init_tab_manager() -> TabManager:
     if tab_manager is not None:
         return tab_manager
 
-    from ..core.connection import broadcast_to_tab, set_current_tab_id
+    from ..core.connection import broadcast_to_tab, reset_current_tab_id, set_current_tab_id
     from ..core.state import app_state
     from ..services.conversations import ConversationService
     from .query_queue import QueuedQuery
@@ -42,7 +42,6 @@ def init_tab_manager() -> TabManager:
         Ollama queries are routed through the global Ollama queue so that
         only one Ollama request runs at a time (the GPU can only serve one).
         """
-        from .tab_manager import TabManager as _TM  # avoid shadowing
         from .ollama_global_queue import ollama_global_queue
 
         tm: TabManager = tab_manager  # type: ignore[assignment]
@@ -66,7 +65,7 @@ def init_tab_manager() -> TabManager:
                     target_message_id=query.target_message_id,
                 )
             finally:
-                set_current_tab_id(None)
+                reset_current_tab_id(token)
 
         if provider == "ollama":
             # Serialize all Ollama requests globally

@@ -9,10 +9,8 @@ the stored token from GOOGLE_TOKEN_FILE environment variable.
 """
 
 import os
-import sys
 import json
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
 
 from mcp.server.fastmcp import FastMCP
 from google.oauth2.credentials import Credentials

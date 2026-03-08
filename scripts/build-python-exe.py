@@ -38,7 +38,7 @@ def build_python_server():
     print(f"Command: {' '.join(cmd)}")
     
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
         print("✅ Python server built successfully!")
         print(f"Executable created at: {dist_dir / 'xpdite-server.exe'}")
         

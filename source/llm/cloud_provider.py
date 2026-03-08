@@ -19,11 +19,11 @@ from typing import AsyncIterator, List, Dict, Any, Optional, Set, cast
 
 import litellm
 
-logger = logging.getLogger(__name__)
-
 from ..core.connection import broadcast_message
-from ..core.request_context import is_current_request_cancelled
 from ..config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
+from ..core.request_context import is_current_request_cancelled
+
+logger = logging.getLogger(__name__)
 
 # Let LiteLLM handle provider-specific quirks automatically.
 # Critical for Anthropic thinking + tools: drops the ``thinking`` param

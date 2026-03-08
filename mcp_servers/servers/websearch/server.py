@@ -4,7 +4,6 @@ from typing import Any, Dict, List
 import re
 import random
 import sys
-import os
 from io import StringIO
 from contextlib import redirect_stdout
 from crawl4ai import AsyncWebCrawler

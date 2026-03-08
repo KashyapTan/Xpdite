@@ -8,17 +8,22 @@ Tab-scoped operations are routed through the ``TabManager`` singleton.
 
 import json
 import logging
-from typing import Dict, Any
+from typing import Any, Dict
+
 from fastapi import WebSocket
-
-logger = logging.getLogger(__name__)
-
+from ..core.connection import (
+    broadcast_message,
+    broadcast_to_tab,
+    reset_current_tab_id,
+    set_current_tab_id,
+)
 from ..core.state import app_state
-from ..core.connection import set_current_tab_id, broadcast_to_tab, broadcast_message
+from ..database import db
 from ..services.conversations import ConversationService
 from ..services.screenshots import ScreenshotHandler
 from ..services.terminal import terminal_service
-from ..database import db
+
+logger = logging.getLogger(__name__)
 
 
 class MessageHandler:
@@ -129,7 +134,7 @@ class MessageHandler:
             try:
                 await ScreenshotHandler.capture_fullscreen(tab_state=session.state)
             finally:
-                set_current_tab_id(None)
+                reset_current_tab_id(token)
 
         queued = QueuedQuery(
             tab_id=tab_id,
@@ -299,7 +304,7 @@ class MessageHandler:
         except ValueError as exc:
             await broadcast_to_tab(tab_id, "error", str(exc))
         finally:
-            set_current_tab_id(None)
+            reset_current_tab_id(token)
 
     # ── Stop / cancel ─────────────────────────────────────────────
 
@@ -333,7 +338,7 @@ class MessageHandler:
         try:
             await ConversationService.clear_context(tab_state=tab_state)
         finally:
-            set_current_tab_id(None)
+            reset_current_tab_id(token)
 
         # Reset the queue's resolved conversation_id
         if session:
@@ -351,7 +356,7 @@ class MessageHandler:
                 # Update the queue's resolved conversation_id
                 session.queue.resolved_conversation_id = conv_id
             finally:
-                set_current_tab_id(None)
+                reset_current_tab_id(token)
 
     async def _handle_remove_screenshot(self, data: Dict[str, Any]):
         """Handle screenshot removal — routes to the correct tab's screenshot list."""

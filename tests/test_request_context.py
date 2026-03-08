@@ -1,8 +1,6 @@
 """Tests for RequestContext cancellation semantics."""
 
-import asyncio
 
-import pytest
 
 from source.core.request_context import RequestContext
 

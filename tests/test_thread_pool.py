@@ -1,6 +1,5 @@
 """Tests for source/core/thread_pool.py — run_in_thread."""
 
-import asyncio
 import time
 
 import pytest

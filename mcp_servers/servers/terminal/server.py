@@ -22,12 +22,11 @@ import glob
 import shutil
 import platform
 import subprocess
-import time
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
-from mcp_servers.servers.terminal.blocklist import check_blocklist, check_path_injection
+from mcp_servers.servers.terminal.blocklist import check_blocklist
 from mcp_servers.servers.terminal.terminal_descriptions import (
     GET_ENVIRONMENT_DESCRIPTION,
     RUN_COMMAND_DESCRIPTION,

@@ -3,7 +3,7 @@ import shutil
 from mcp.server.fastmcp import FastMCP
 
 from mcp_servers.servers.filesystem.filesystem_descriptions import (
-    USERNAME, BASE_PATH,
+    BASE_PATH,
     LIST_DIRECTORY_DESCRIPTION, READ_FILE_DESCRIPTION, 
     WRITE_FILE_DESCRIPTION, CREATE_FOLDER_DESCRIPTION, 
     MOVE_FILE_DESCRIPTION, RENAME_FILE_DESCRIPTION,

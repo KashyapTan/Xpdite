@@ -5,12 +5,10 @@ and Whisper model inference for speech-to-text.
 """
 
 import threading
-import time
 import queue
 import tempfile
 import os
 import logging
-import asyncio
 import pyaudio
 import wave
 from faster_whisper import WhisperModel

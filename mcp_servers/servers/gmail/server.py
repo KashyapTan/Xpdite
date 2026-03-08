@@ -9,11 +9,10 @@ the stored token from GOOGLE_TOKEN_FILE environment variable.
 """
 
 import os
-import sys
 import json
 import base64
 from email.mime.text import MIMEText
-from typing import List, Optional
+from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 from google.oauth2.credentials import Credentials
@@ -419,9 +418,9 @@ def modify_labels(
         service = _get_gmail_service()
 
         # Parse comma-separated label strings into lists
-        add_list = [l.strip() for l in add_labels.split(",")] if add_labels else []
+        add_list = [label.strip() for label in add_labels.split(",")] if add_labels else []
         remove_list = (
-            [l.strip() for l in remove_labels.split(",")] if remove_labels else []
+            [label.strip() for label in remove_labels.split(",")] if remove_labels else []
         )
 
         if not add_list and not remove_list:

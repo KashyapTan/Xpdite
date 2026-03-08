@@ -6,12 +6,11 @@ Covers:
 - Cross-tab isolation (removing from tab A doesn't affect tab B)
 """
 
-import asyncio
 import os
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch
 
-import pytest
 
+from source.core.connection import reset_current_tab_id, set_current_tab_id
 from source.core.state import app_state
 
 
@@ -162,7 +161,6 @@ class TestGetActiveTabState:
     def test_prefers_contextvar(self):
         from source.services.screenshots import ScreenshotHandler
         from source.services.tab_manager import TabManager
-        from source.core.connection import set_current_tab_id
 
         # Build a minimal tab manager with two tabs
         async def _noop(q):
@@ -190,6 +188,6 @@ class TestGetActiveTabState:
                     result = ScreenshotHandler._get_active_tab_state()
                     assert result is ctx_tab.state
                 finally:
-                    set_current_tab_id(None)
+                    reset_current_tab_id(token)
         finally:
             app_state.active_tab_id = saved_tab

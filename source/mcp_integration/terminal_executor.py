@@ -12,12 +12,9 @@ save logic.
 
 import asyncio
 import glob
-import json
 import os
 import shlex
-from typing import Optional
 
-from ..core.connection import broadcast_message
 from ..core.state import app_state
 from ..core.thread_pool import run_in_thread
 from ..services.terminal import terminal_service

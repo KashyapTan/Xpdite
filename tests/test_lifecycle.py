@@ -1,6 +1,5 @@
 """Tests for source/core/lifecycle.py — _clear_folder."""
 
-import os
 
 from source.core.lifecycle import _clear_folder
 

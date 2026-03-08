@@ -13,14 +13,14 @@ import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
-logger = logging.getLogger(__name__)
-
 from ..core.state import app_state
 from ..core.connection import broadcast_message
 from ..config import SCREENSHOT_FOLDER, CaptureMode
 
 if TYPE_CHECKING:
     from .tab_manager import TabState
+
+logger = logging.getLogger(__name__)
 
 
 class ScreenshotHandler:
@@ -79,7 +79,7 @@ class ScreenshotHandler:
 
         try:
             # Import here to avoid circular imports
-            from ..ss import take_fullscreen_screenshot, create_thumbnail
+            from ..ss import take_fullscreen_screenshot
             
             # Notify about screenshot capture start
             await broadcast_message("screenshot_start", "Taking fullscreen screenshot...")
@@ -214,7 +214,7 @@ class ScreenshotHandler:
             return
         
         # tab_state is resolved inside add_screenshot via active_tab_id
-        ss_id = await ScreenshotHandler.add_screenshot(image_path)
+        await ScreenshotHandler.add_screenshot(image_path)
         
         # Send legacy message for backwards compatibility
         await broadcast_message("screenshot_ready", "Screenshot captured. Enter your query and press Enter.")

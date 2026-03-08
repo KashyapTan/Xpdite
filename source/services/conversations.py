@@ -10,20 +10,19 @@ import json
 import logging
 import re
 import uuid
-from typing import Callable, List, Dict, Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from ..core.connection import broadcast_message
+from ..core.request_context import RequestContext
+from ..core.state import app_state
+from ..core.thread_pool import run_in_thread
+from ..database import db
+from ..llm.router import route_chat
+from .screenshots import ScreenshotHandler
 
 logger = logging.getLogger(__name__)
 
 _SLASH_COMMAND_PATTERN = re.compile(r"(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)")
-
-from ..core.state import app_state
-from ..core.request_context import RequestContext
-from ..core.connection import broadcast_message
-from ..core.thread_pool import run_in_thread
-from ..llm.router import route_chat
-from .screenshots import ScreenshotHandler
-from ..database import db
-
 if TYPE_CHECKING:
     from .tab_manager import TabState
     from .query_queue import ConversationQueue
@@ -260,7 +259,6 @@ class ConversationService:
 
         If *tab_state* is provided, loads into per-tab state.
         """
-        from .terminal import terminal_service
 
         # Resolve state target
         chat_history_target = tab_state.chat_history if tab_state else app_state.chat_history
@@ -344,14 +342,14 @@ class ConversationService:
             await broadcast_message("error", f"Unsupported conversation action: {action}")
             return None
 
-        _get_conv_id: Callable[[], Optional[str]] = lambda: (
-            tab_state.conversation_id if tab_state else app_state.conversation_id
-        )
-        _set_conv_id = lambda v: (
-            setattr(tab_state, "conversation_id", v)
-            if tab_state
-            else setattr(app_state, "conversation_id", v)
-        )
+        def _get_conv_id() -> Optional[str]:
+            return tab_state.conversation_id if tab_state else app_state.conversation_id
+
+        def _set_conv_id(value: Optional[str]) -> None:
+            if tab_state:
+                setattr(tab_state, "conversation_id", value)
+            else:
+                setattr(app_state, "conversation_id", value)
 
         def _require_conv_id() -> str:
             """Return conversation_id or raise — used after we know it's been set."""

@@ -31,7 +31,6 @@ import platform
 import re
 import uuid
 import time
-import json
 from typing import Optional
 
 from ..core.connection import broadcast_message

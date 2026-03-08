@@ -1,6 +1,5 @@
 """Tests for source/llm/prompt.py — system prompt builder."""
 
-from unittest.mock import patch
 
 from source.llm.prompt import build_system_prompt, _get_datetime, _get_os_info, _BASE_TEMPLATE
 

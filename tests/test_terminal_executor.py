@@ -1,10 +1,8 @@
 """Tests for source/mcp_integration/terminal_executor.py — pure logic functions."""
 
-import os
 import platform
 from unittest.mock import patch
 
-import pytest
 
 from source.mcp_integration.terminal_executor import (
     is_terminal_tool,

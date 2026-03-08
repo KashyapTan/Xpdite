@@ -1,12 +1,10 @@
 import tkinter as tk
-from tkinter import filedialog
 import PIL.ImageGrab as ImageGrab
 from PIL import Image, ImageTk
 import os
 import datetime
 from pynput import keyboard
 import threading
-import sys
 import platform
 import time
 import logging
@@ -25,15 +23,15 @@ if platform.system() == "Windows":
         try:
             # Windows 10, version 1703 and later (best option)
             ctypes.windll.shcore.SetProcessDpiAwarenessContext(-4)  # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-        except:
+        except Exception:
             try:
                 # Windows 10, version 1607 and later  
                 ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
-            except:
+            except Exception:
                 try:
                     # Windows Vista and later (fallback)
                     ctypes.windll.user32.SetProcessDPIAware()
-                except:
+                except Exception:
                     pass  # Fallback: do nothing if DPI functions aren't available
                 
         def get_dpi_scale():
@@ -57,13 +55,13 @@ if platform.system() == "Windows":
                         monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)  # MDT_EFFECTIVE_DPI
                     )
                     return dpi_x.value / 96.0
-                except:
+                except Exception:
                     # Fallback to system DPI
                     hdc = ctypes.windll.user32.GetDC(0)
                     dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
                     ctypes.windll.user32.ReleaseDC(0, hdc)
                     return dpi / 96.0
-            except:
+            except Exception:
                 return 1.0
                 
     except ImportError:
@@ -83,7 +81,6 @@ def copy_image_to_clipboard(image, dpi_scale=None):
         
     try:
         import ctypes
-        from ctypes import wintypes
         import io
         
         # If no scale provided, try to get it
@@ -249,7 +246,7 @@ def take_region_screenshot(save_folder="screenshots", debug=False):
             if platform.system() == "Windows":
                 try:
                     root.tk.call('tk', 'scaling', self.dpi_scale)
-                except:
+                except Exception:
                     pass
             
             root.attributes('-fullscreen', True)

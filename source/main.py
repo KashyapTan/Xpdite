@@ -42,21 +42,13 @@ Architecture:
         └── approval_history.py # Command approval cache
 """
 
-import sys
-import os
 import socket
 import threading
 import time
 import asyncio
 import logging
-import uvicorn
 
-# Configure logging before anything else
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-)
-logger = logging.getLogger(__name__)
+import uvicorn
 
 # Import configuration (relative to source package)
 from .config import SCREENSHOT_FOLDER, DEFAULT_PORT, MAX_PORT_ATTEMPTS
@@ -73,6 +65,13 @@ from .mcp_integration.manager import init_mcp_servers
 
 # Import screenshot service hooks
 from .services.screenshots import process_screenshot, process_screenshot_start
+
+# Configure logging before runtime startup.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 def find_available_port(

@@ -11,19 +11,18 @@ follow-up calls — no background threads or wrap_with_tab_ctx needed.
 
 import json
 import logging
-from typing import List, Dict, Any, Optional
-
-logger = logging.getLogger(__name__)
+from typing import Any, Dict, List, Optional
 
 from ollama import AsyncClient as OllamaAsyncClient
-
+from ..config import MAX_TOOL_RESULT_LENGTH
+from ..core.connection import broadcast_message
+from ..core.request_context import is_current_request_cancelled, get_current_model
+from ..core.state import app_state
 from .manager import mcp_manager
 from .retriever import retriever
-from .terminal_executor import is_terminal_tool, execute_terminal_tool
-from ..core.connection import broadcast_message
-from ..core.state import app_state
-from ..core.request_context import is_current_request_cancelled, get_current_model
-from ..config import MAX_TOOL_RESULT_LENGTH
+from .terminal_executor import execute_terminal_tool, is_terminal_tool
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------

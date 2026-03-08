@@ -8,12 +8,12 @@ import asyncio
 import os
 import sys
 import logging
-from typing import List, Dict, Any
-
-logger = logging.getLogger(__name__)
+from typing import Any, Dict, List
 
 from ..config import PROJECT_ROOT
 from .retriever import retriever
+
+logger = logging.getLogger(__name__)
 
 
 class McpToolManager:
@@ -165,8 +165,6 @@ class McpToolManager:
                         else {"type": "object", "properties": {}},
                     }
                 )
-
-                print_name = tool.name  # noqa: avoid f-string in loop
                 logger.debug("Registered tool: %s (from %s)", tool.name, server_name)
 
             logger.info(

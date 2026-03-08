@@ -59,6 +59,7 @@ Spawn a **single judge sub-agent** that receives all raw reports from Stage 1 (a
 
 ### Post-Review Action
 Read the Testing section and determine if new tests are needed based on the changes made. Once the entire task is complete, update any relevant CLAUDE and documentation files to reflect the changes.
+After every code implementation, run `uv run ruff check .` and fix all reported issues before considering the task complete.
 
 ### Read More Than Less
 Always read all relevant and connected files before writing new code. It is always better to over-read than to miss context.

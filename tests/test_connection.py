@@ -1,11 +1,16 @@
 """Tests for source/core/connection.py — ConnectionManager."""
 
-import asyncio
 import json
 
 import pytest
 
-from source.core.connection import ConnectionManager, wrap_with_tab_ctx, get_current_tab_id, set_current_tab_id
+from source.core.connection import (
+    ConnectionManager,
+    get_current_tab_id,
+    reset_current_tab_id,
+    set_current_tab_id,
+    wrap_with_tab_ctx,
+)
 
 
 class _FakeWebSocket:
@@ -113,7 +118,7 @@ class TestWrapWithTabCtx:
             await wrap_with_tab_ctx("inner", inner())
             assert get_current_tab_id() == "outer"
         finally:
-            set_current_tab_id(None)
+            reset_current_tab_id(tok)
 
     @pytest.mark.asyncio
     async def test_none_tab_id_returns_coro_unchanged(self):
@@ -138,4 +143,4 @@ class TestWrapWithTabCtx:
                 await wrap_with_tab_ctx("error-tab", failing())
             assert get_current_tab_id() == "before"
         finally:
-            set_current_tab_id(None)
+            reset_current_tab_id(tok)

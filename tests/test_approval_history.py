@@ -11,8 +11,6 @@ from source.services.approval_history import (
     remember_approval,
     get_approval_count,
     clear_approvals,
-    _load_approvals,
-    _save_approvals,
 )
 import source.services.approval_history as ah_mod
 

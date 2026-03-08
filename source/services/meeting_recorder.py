@@ -21,7 +21,6 @@ import time
 import wave
 from typing import Any
 
-from ..config import PROJECT_ROOT
 from ..core.connection import broadcast_message
 from ..database import db
 

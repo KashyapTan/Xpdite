@@ -14,9 +14,9 @@ import socket
 import logging
 from typing import Optional
 
-logger = logging.getLogger(__name__)
-
 from cryptography.fernet import Fernet, InvalidToken
+
+logger = logging.getLogger(__name__)
 
 
 # Valid provider names
