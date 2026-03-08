@@ -14,16 +14,20 @@ Parallelism:
 import asyncio
 import json
 import logging
+import os
+import uuid
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import litellm
 
-from ..config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE
+from ..config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE, USER_DATA_DIR
 from ..core.connection import broadcast_message
 from ..core.request_context import (
     get_current_model,
     is_current_request_cancelled,
 )
+from ..core.thread_pool import run_in_thread
 from ..database import db
 
 logger = logging.getLogger(__name__)
@@ -37,6 +41,28 @@ _concurrency_semaphore = asyncio.Semaphore(_CONCURRENCY_CAP)
 
 # Hard timeout per sub-agent call (seconds)
 _SUB_AGENT_TIMEOUT = 300
+
+
+def _tool_progress_description(fn_name: str, fn_args: dict) -> str:
+    """Human-readable one-liner describing a tool the sub-agent is calling."""
+    desc = ""
+    if fn_name == "read_website":
+        url = fn_args.get("url", "")
+        # Show domain only for brevity
+        short = url.split("//")[-1].split("/")[0] if "//" in url else url
+        desc = f"Reading {short[:100]}..."
+    elif fn_name == "search_web_pages":
+        query = fn_args.get("query", "")[:100]
+        desc = f'Searching: "{query}"'
+    elif fn_name == "read_file":
+        desc = f"Reading file {fn_args.get('path', '')[:100]}..."
+    elif fn_name == "list_directory":
+        desc = f"Listing {fn_args.get('path', '')[:100]}..."
+    elif fn_name == "thinking":
+        desc = "Thinking..."
+    else:
+        desc = f"Using {fn_name}..."
+    return desc[:200]
 
 # Tools that sub-agents must never access
 _EXCLUDED_TOOLS = {
@@ -71,6 +97,47 @@ def _truncate_safely(text: str, max_length: int) -> str:
     if last_space > max_length // 2:
         truncated = truncated[:last_space]
     return truncated + "... [truncated]"
+
+
+# Max chars of a tool result to include in the live transcript steps
+_TRANSCRIPT_RESULT_PREVIEW = 1000
+
+
+_SUB_AGENT_LOG_FILE = str(USER_DATA_DIR / "sub_agent_calls.txt")
+
+
+def _log_sub_agent_call(
+    agent_id: str,
+    agent_name: str,
+    model_tier: str,
+    model_name: str,
+    instruction: str,
+    result_text: str,
+    error: str | None,
+    token_stats: dict,
+) -> None:
+    """Append a sub-agent call record to the debug log file."""
+    try:
+        os.makedirs(os.path.dirname(_SUB_AGENT_LOG_FILE), exist_ok=True)
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        entry = (
+            f"\n{'=' * 80}\n"
+            f"[{ts}] agent_id={agent_id}  name={agent_name}  tier={model_tier}  model={model_name}\n"
+            f"{'=' * 80}\n"
+            f"INSTRUCTION:\n{instruction[:2000]}\n"
+            f"{'-' * 40}\n"
+            f"RESULT ({len(result_text)} chars):\n{result_text[:3000]}\n"
+        )
+        if error:
+            entry += f"ERROR: {error}\n"
+        if token_stats:
+            entry += f"TOKENS: prompt={token_stats.get('prompt_tokens', 0)} completion={token_stats.get('completion_tokens', 0)}\n"
+        entry += f"{'=' * 80}\n"
+
+        with open(_SUB_AGENT_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception as e:
+        logger.debug("Failed to write sub-agent log: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +237,9 @@ async def _run_cloud_sub_agent(
     model_name: str,
     instruction: str,
     tools: Optional[List[Dict[str, Any]]],
+    agent_id: str = "",
+    agent_name: str = "Sub-Agent",
+    model_tier: str = "fast",
 ) -> Dict[str, Any]:
     """Execute a sub-agent call via LiteLLM (cloud providers).
 
@@ -205,6 +275,7 @@ async def _run_cloud_sub_agent(
 
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
+    transcript_steps: list[dict[str, Any]] = []  # Structured transcript for live UI display
 
     try:
         model_info = litellm.get_model_info(litellm_model)
@@ -259,6 +330,20 @@ async def _run_cloud_sub_agent(
         # Collect text
         if message.content:
             accumulated_text.append(message.content)
+            transcript_steps.append({"type": "text", "content": message.content})
+            if agent_id:
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps({
+                        "name": "spawn_agent",
+                        "args": {"agent_name": agent_name, "model_tier": model_tier},
+                        "server": "sub_agent",
+                        "status": "progress",
+                        "agent_id": agent_id,
+                        "description": _tool_progress_description("thinking", {}),
+                        "partial_result": json.dumps(transcript_steps),
+                    }),
+                )
 
         # Check for tool calls
         if message.tool_calls:
@@ -288,15 +373,34 @@ async def _run_cloud_sub_agent(
                 except json.JSONDecodeError:
                     result_str = f"Error: Invalid JSON arguments for {fn_name}"
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
                     continue
 
                 if fn_name in _EXCLUDED_TOOLS:
                     result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_str})
                     continue
 
                 if is_current_request_cancelled():
                     break
+
+                # Add tool call to transcript and broadcast before execution
+                step_index = len(transcript_steps)
+                transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                if agent_id:
+                    await broadcast_message(
+                        "tool_call",
+                        json.dumps({
+                            "name": "spawn_agent",
+                            "args": {"agent_name": agent_name, "model_tier": model_tier},
+                            "server": "sub_agent",
+                            "status": "progress",
+                            "agent_id": agent_id,
+                            "description": _tool_progress_description(fn_name, fn_args),
+                            "partial_result": json.dumps(transcript_steps),
+                        }),
+                    )
 
                 try:
                     result = await mcp_manager.call_tool(fn_name, fn_args)
@@ -308,6 +412,8 @@ async def _run_cloud_sub_agent(
                     result_str = f"Tool execution error: {type(e).__name__}"
 
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
+                result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
+                transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
         else:
             # No tool calls — response is complete
             break
@@ -328,6 +434,9 @@ async def _run_ollama_sub_agent(
     model_name: str,
     instruction: str,
     tools: Optional[List[Dict[str, Any]]],
+    agent_id: str = "",
+    agent_name: str = "Sub-Agent",
+    model_tier: str = "fast",
 ) -> Dict[str, Any]:
     """Execute a sub-agent call via Ollama AsyncClient.
 
@@ -344,6 +453,7 @@ async def _run_ollama_sub_agent(
 
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
+    transcript_steps: list[dict[str, Any]] = []  # Structured transcript for live UI display
 
     # Strip provider prefix if present (e.g., "ollama/model" → "model")
     if "/" in model_name:
@@ -399,6 +509,20 @@ async def _run_ollama_sub_agent(
 
         if content:
             accumulated_text.append(content)
+            transcript_steps.append({"type": "text", "content": content})
+            if agent_id:
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps({
+                        "name": "spawn_agent",
+                        "args": {"agent_name": agent_name, "model_tier": model_tier},
+                        "server": "sub_agent",
+                        "status": "progress",
+                        "agent_id": agent_id,
+                        "description": _tool_progress_description("thinking", {}),
+                        "partial_result": json.dumps(transcript_steps),
+                    }),
+                )
 
         if tool_calls:
             # Append assistant message
@@ -426,6 +550,7 @@ async def _run_ollama_sub_agent(
                     except json.JSONDecodeError:
                         result_str = f"Error: Invalid JSON arguments for {fn_name}"
                         messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
                         continue
                 elif not isinstance(fn_args, dict):
                     fn_args = {}
@@ -433,10 +558,28 @@ async def _run_ollama_sub_agent(
                 if fn_name in _EXCLUDED_TOOLS:
                     result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
                     messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_str})
                     continue
 
                 if is_current_request_cancelled():
                     break
+
+                # Add tool call to transcript and broadcast before execution
+                step_index = len(transcript_steps)
+                transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                if agent_id:
+                    await broadcast_message(
+                        "tool_call",
+                        json.dumps({
+                            "name": "spawn_agent",
+                            "args": {"agent_name": agent_name, "model_tier": model_tier},
+                            "server": "sub_agent",
+                            "status": "progress",
+                            "agent_id": agent_id,
+                            "description": _tool_progress_description(fn_name, fn_args),
+                            "partial_result": json.dumps(transcript_steps),
+                        }),
+                    )
 
                 try:
                     result = await mcp_manager.call_tool(fn_name, fn_args)
@@ -448,6 +591,8 @@ async def _run_ollama_sub_agent(
                     result_str = f"Tool execution error: {type(e).__name__}"
 
                 messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
+                transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
         else:
             break
 
@@ -481,10 +626,12 @@ async def execute_sub_agent(
         logger.warning("Invalid model_tier '%s', defaulting to 'fast'", model_tier)
         model_tier = "fast"
 
+    agent_id = uuid.uuid4().hex[:12]
+
     model_name = _resolve_tier_model(model_tier)
     logger.info(
-        "Spawning sub-agent '%s' (tier=%s, model=%s)",
-        agent_name, model_tier, model_name,
+        "Spawning sub-agent '%s' [%s] (tier=%s, model=%s)",
+        agent_name, agent_id, model_tier, model_name,
     )
 
     # Broadcast status update: sub-agent starting
@@ -495,7 +642,8 @@ async def execute_sub_agent(
             "args": {"agent_name": agent_name, "model_tier": model_tier},
             "server": "sub_agent",
             "status": "calling",
-            "description": f"Sub-Agent {agent_name} ({model_tier})",
+            "agent_id": agent_id,
+            "description": f"{agent_name} ({model_tier})",
         }),
     )
 
@@ -506,12 +654,18 @@ async def execute_sub_agent(
         async with _concurrency_semaphore:
             if _uses_ollama_client(model_name):
                 result = await asyncio.wait_for(
-                    _run_ollama_sub_agent(model_name, instruction, tools),
+                    _run_ollama_sub_agent(
+                        model_name, instruction, tools,
+                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
+                    ),
                     timeout=_SUB_AGENT_TIMEOUT,
                 )
             else:
                 result = await asyncio.wait_for(
-                    _run_cloud_sub_agent(model_name, instruction, tools),
+                    _run_cloud_sub_agent(
+                        model_name, instruction, tools,
+                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
+                    ),
                     timeout=_SUB_AGENT_TIMEOUT,
                 )
     except asyncio.TimeoutError:
@@ -524,8 +678,9 @@ async def execute_sub_agent(
                 "args": {"agent_name": agent_name, "model_tier": model_tier},
                 "server": "sub_agent",
                 "status": "complete",
+                "agent_id": agent_id,
                 "result": error_msg,
-                "description": f"Sub-Agent {agent_name} (timed out)",
+                "description": f"{agent_name} (timed out)",
             }),
         )
         return f"Error: Sub-agent '{agent_name}' timed out after {_SUB_AGENT_TIMEOUT}s"
@@ -540,8 +695,9 @@ async def execute_sub_agent(
                 "args": {"agent_name": agent_name, "model_tier": model_tier},
                 "server": "sub_agent",
                 "status": "complete",
+                "agent_id": agent_id,
                 "result": error_msg,
-                "description": f"Sub-Agent {agent_name} (error)",
+                "description": f"{agent_name} (error)",
             }),
         )
         return f"Error: {error_msg}"
@@ -550,10 +706,23 @@ async def execute_sub_agent(
     token_stats = result.get("token_stats", {})
     error = result.get("error")
 
-    total_tokens = token_stats.get("prompt_tokens", 0) + token_stats.get("completion_tokens", 0)
-    token_label = f" • {total_tokens} tokens" if total_tokens else ""
+    # Log to debug file for inspection (offloaded to thread to avoid blocking)
+    await run_in_thread(
+        _log_sub_agent_call,
+        agent_id=agent_id,
+        agent_name=agent_name,
+        model_tier=model_tier,
+        model_name=model_name,
+        instruction=instruction,
+        result_text=response_text,
+        error=error,
+        token_stats=token_stats,
+    )
 
-    # Broadcast completion
+    total_tokens = token_stats.get("prompt_tokens", 0) + token_stats.get("completion_tokens", 0)
+    token_label = f" \u2022 {total_tokens} tokens" if total_tokens else ""
+
+    # Broadcast completion with full result
     await broadcast_message(
         "tool_call",
         json.dumps({
@@ -561,8 +730,9 @@ async def execute_sub_agent(
             "args": {"agent_name": agent_name, "model_tier": model_tier},
             "server": "sub_agent",
             "status": "complete",
-            "result": response_text[:500] + ("..." if len(response_text) > 500 else ""),
-            "description": f"Sub-Agent {agent_name}{token_label}",
+            "agent_id": agent_id,
+            "result": response_text,
+            "description": f"{agent_name}{token_label}",
             "token_stats": token_stats,
         }),
     )

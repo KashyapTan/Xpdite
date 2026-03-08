@@ -11,7 +11,13 @@ export interface ToolCall {
   args: Record<string, unknown>;
   result?: string;
   server: string;
-  status?: 'calling' | 'complete';
+  status?: 'calling' | 'progress' | 'complete';
+  /** Unique ID for sub-agent calls — used for matching progress updates */
+  agentId?: string;
+  /** Human-readable progress description (e.g. "Reading docs.openclaw.ai...") */
+  description?: string;
+  /** Accumulated LLM output while sub-agent is still running */
+  partialResult?: string;
 }
 
 export type ContentBlock =
@@ -263,7 +269,10 @@ export interface ToolCallContent {
   args: Record<string, unknown>;
   result?: string;
   server: string;
-  status: 'calling' | 'complete';
+  status: 'calling' | 'progress' | 'complete';
+  agent_id?: string;
+  description?: string;
+  partial_result?: string;
 }
 
 export interface TokenUsageContent {

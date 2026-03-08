@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
+import { SubAgentTranscript } from './SubAgentTranscript';
 import { getHumanReadableDescription } from './toolCallUtils';
 import '../../CSS/InlineTerminal.css';
 
@@ -60,8 +61,8 @@ function ChevronIcon({ expanded, small }: { expanded: boolean; small?: boolean }
 function getChainSummary(toolCalls: ToolCall[]): string {
   if (toolCalls.length === 0) return 'Processing...';
 
-  const isAnyRunning = toolCalls.some(tc => tc.status === 'calling');
-  const runningTool = toolCalls.find(tc => tc.status === 'calling');
+  const isAnyRunning = toolCalls.some(tc => tc.status === 'calling' || tc.status === 'progress');
+  const runningTool = toolCalls.find(tc => tc.status === 'calling' || tc.status === 'progress');
 
   // Single tool: use its description directly
   if (toolCalls.length === 1) {
@@ -134,9 +135,22 @@ function ChainThinkingItem({ text }: { text: string }) {
 
 function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: boolean }) {
   const [showResult, setShowResult] = useState(false);
+  const resultRef = useRef<HTMLDivElement>(null);
   const { badge, text } = getHumanReadableDescription(toolCall);
-  const isRunning = toolCall.status === 'calling';
+  const isRunning = toolCall.status === 'calling' || toolCall.status === 'progress';
   const hasResult = !isRunning && !!toolCall.result;
+  const isSubAgent = toolCall.server === 'sub_agent';
+  const hasPartial = isSubAgent && isRunning && !!toolCall.partialResult;
+  // Sub-agents are always expandable while running (to peek at output) or when complete
+  const isExpandable = hasResult || (isSubAgent && isRunning);
+  const displayContent = hasResult ? toolCall.result : toolCall.partialResult;
+
+  // Auto-scroll the result container when new partial content arrives
+  useEffect(() => {
+    if (showResult && resultRef.current && isRunning) {
+      resultRef.current.scrollTop = resultRef.current.scrollHeight;
+    }
+  }, [displayContent, showResult, isRunning]);
 
   return (
     <div className="chain-item">
@@ -148,15 +162,20 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
       </div>
       <div className="chain-item-body">
         <div
-          className={`chain-tool-header ${hasResult ? 'clickable' : ''}`}
-          onClick={() => hasResult && setShowResult(!showResult)}
+          className={`chain-tool-header ${isExpandable ? 'clickable' : ''}`}
+          onClick={() => isExpandable && setShowResult(!showResult)}
         >
           <span className="chain-tool-badge">{badge}</span>
           <span className="chain-tool-text">{text}</span>
-          {hasResult && <ChevronIcon expanded={showResult} small />}
+          {isExpandable && <ChevronIcon expanded={showResult} small />}
         </div>
-        {showResult && toolCall.result && (
-          <pre className="chain-tool-result">{toolCall.result}</pre>
+        {showResult && isSubAgent && (
+          <div className="chain-tool-result chain-subagent-result" ref={resultRef}>
+            <SubAgentTranscript stepsJson={displayContent} isRunning={isRunning} />
+          </div>
+        )}
+        {showResult && !isSubAgent && displayContent && (
+          <pre className="chain-tool-result">{displayContent}</pre>
         )}
       </div>
     </div>
@@ -200,7 +219,7 @@ function ToolChainTimeline({
     .filter((b): b is { type: 'tool_call'; toolCall: ToolCall } => b.type === 'tool_call')
     .map(b => b.toolCall);
 
-  const isAnyRunning = toolCalls.some(tc => tc.status === 'calling');
+  const isAnyRunning = toolCalls.some(tc => tc.status === 'calling' || tc.status === 'progress');
   const allDone = toolCalls.length > 0 && !isAnyRunning;
   const [expanded, setExpanded] = useState(isAnyRunning);
 

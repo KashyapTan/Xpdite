@@ -135,26 +135,20 @@ export function useChatState(): UseChatStateReturn {
   }, []);
 
   const updateToolCall = useCallback((updatedToolCall: ToolCall) => {
-    setToolCalls(prev => prev.map(tc => 
-      (tc.name === updatedToolCall.name && JSON.stringify(tc.args) === JSON.stringify(updatedToolCall.args)) 
-        ? { ...tc, ...updatedToolCall } 
-        : tc
-    ));
+    // Match by agentId for sub-agents, fall back to (name, args) for regular tools
+    const matches = (tc: ToolCall) =>
+      updatedToolCall.agentId
+        ? tc.agentId === updatedToolCall.agentId
+        : tc.name === updatedToolCall.name && JSON.stringify(tc.args) === JSON.stringify(updatedToolCall.args);
+
+    setToolCalls(prev => prev.map(tc => matches(tc) ? { ...tc, ...updatedToolCall } : tc));
     
     // Update ref as well
-    toolCallsRef.current = toolCallsRef.current.map(tc => 
-       (tc.name === updatedToolCall.name && JSON.stringify(tc.args) === JSON.stringify(updatedToolCall.args))
-        ? { ...tc, ...updatedToolCall }
-        : tc
-    );
+    toolCallsRef.current = toolCallsRef.current.map(tc => matches(tc) ? { ...tc, ...updatedToolCall } : tc);
 
     // Update the matching tool_call block in contentBlocks
     const newBlocks = contentBlocksRef.current.map(block => {
-      if (
-        block.type === 'tool_call' &&
-        block.toolCall.name === updatedToolCall.name &&
-        JSON.stringify(block.toolCall.args) === JSON.stringify(updatedToolCall.args)
-      ) {
+      if (block.type === 'tool_call' && matches(block.toolCall)) {
         return { ...block, toolCall: { ...block.toolCall, ...updatedToolCall } };
       }
       return block;

@@ -43,6 +43,7 @@ import type {
   ConversationSavedContent,
   ConversationResumedContent,
   ConversationTurnPayload,
+  ToolCall,
   ToolCallContent,
   TokenUsageContent,
   ChatMessage,
@@ -570,17 +571,31 @@ function App() {
           }
           break;
         }
+        const safeAgentId = typeof tc.agent_id === 'string' && tc.agent_id ? tc.agent_id : undefined;
+        const safeDesc = typeof tc.description === 'string' ? tc.description.slice(0, 500) : undefined;
+        const safePartial = typeof tc.partial_result === 'string' ? tc.partial_result : undefined;
         if (tc.status === 'calling') {
-          chat.toolCalls = [...chat.toolCalls, { name: tc.name, args: tc.args, server: tc.server, status: 'calling' }];
-          chat.contentBlocks = [...chat.contentBlocks, { type: 'tool_call', toolCall: { name: tc.name, args: tc.args, server: tc.server, status: 'calling' } }];
-        } else if (tc.status === 'complete' && tc.result) {
+          const newTc: ToolCall = { name: tc.name, args: tc.args, server: tc.server, status: 'calling', agentId: safeAgentId, description: safeDesc };
+          chat.toolCalls = [...chat.toolCalls, newTc];
+          chat.contentBlocks = [...chat.contentBlocks, { type: 'tool_call', toolCall: newTc }];
+        } else if (tc.status === 'progress' && safeAgentId) {
+          // Update description + partial result on matching sub-agent
+          const matchAgent = (t: ToolCall) => t.agentId === safeAgentId;
+          chat.toolCalls = chat.toolCalls.map(t => matchAgent(t) ? { ...t, description: safeDesc, partialResult: safePartial } : t);
+          chat.contentBlocks = chat.contentBlocks.map(b =>
+            b.type === 'tool_call' && matchAgent(b.toolCall) ? { ...b, toolCall: { ...b.toolCall, description: safeDesc, partialResult: safePartial } } : b
+          );
+        } else if (tc.status === 'complete') {
+          // Match by agentId for sub-agents, fall back to (name, args) for others
+          const matchTc = (t: ToolCall) =>
+            safeAgentId ? t.agentId === safeAgentId
+            : t.name === tc.name && JSON.stringify(t.args) === JSON.stringify(tc.args);
           chat.toolCalls = chat.toolCalls.map(t =>
-            t.name === tc.name && JSON.stringify(t.args) === JSON.stringify(tc.args)
-              ? { ...t, ...tc } : t
+            matchTc(t) ? { ...t, result: tc.result, status: 'complete', description: safeDesc, partialResult: undefined } : t
           );
           chat.contentBlocks = chat.contentBlocks.map(b =>
-            b.type === 'tool_call' && b.toolCall.name === tc.name && JSON.stringify(b.toolCall.args) === JSON.stringify(tc.args)
-              ? { ...b, toolCall: { ...b.toolCall, ...tc } } : b
+            b.type === 'tool_call' && matchTc(b.toolCall)
+              ? { ...b, toolCall: { ...b.toolCall, result: tc.result, status: 'complete', description: safeDesc, partialResult: undefined } } : b
           );
         }
         break;
@@ -861,21 +876,24 @@ function App() {
           break;
         }
 
+        const safeAgentId2 = typeof tc.agent_id === 'string' && tc.agent_id ? tc.agent_id : undefined;
+        const safeDesc2 = typeof tc.description === 'string' ? tc.description.slice(0, 500) : undefined;
+        const safePartial2 = typeof tc.partial_result === 'string' ? tc.partial_result : undefined;
         if (tc.status === 'calling') {
           chatState.setStatus(`Calling tool: ${tc.name}...`);
           chatState.addToolCall({
-            name: tc.name,
-            args: tc.args,
-            server: tc.server,
-            status: 'calling'
+            name: tc.name, args: tc.args, server: tc.server,
+            status: 'calling', agentId: safeAgentId2, description: safeDesc2,
           });
-        } else if (tc.status === 'complete' && tc.result) {
+        } else if (tc.status === 'progress' && safeAgentId2) {
           chatState.updateToolCall({
-            name: tc.name,
-            args: tc.args,
-            result: tc.result,
-            server: tc.server,
-            status: 'complete'
+            name: tc.name, args: tc.args, server: tc.server,
+            status: 'calling', agentId: safeAgentId2, description: safeDesc2, partialResult: safePartial2,
+          });
+        } else if (tc.status === 'complete') {
+          chatState.updateToolCall({
+            name: tc.name, args: tc.args, result: tc.result, server: tc.server,
+            status: 'complete', agentId: safeAgentId2, description: safeDesc2, partialResult: undefined,
           });
           chatState.setStatus('Tool call complete.');
         }

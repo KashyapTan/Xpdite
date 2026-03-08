@@ -37,7 +37,8 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
     badge = 'SUB-AGENT';
     const agentName = args.agent_name || 'Sub-Agent';
     const tier = args.model_tier || 'fast';
-    text = `${agentName} (${tier})`;
+    // Show live progress description while running, otherwise static label
+    text = tc.description || `${agentName} (${tier})`;
   }
 
   return { badge, text };

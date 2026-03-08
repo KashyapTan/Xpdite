@@ -1523,6 +1523,167 @@ textarea,
   margin-top: 6px;
 }
 
+.chain-subagent-result {
+  font-family: 'Montserrat', sans-serif;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.65);
+  white-space: normal;
+  max-height: 400px;
+  scroll-behavior: smooth;
+}
+
+.chain-subagent-waiting {
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+  font-size: 0.78rem;
+}
+
+.chain-subagent-streaming-indicator {
+  display: inline-block;
+  width: 6px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.4);
+  border-radius: 1px;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  animation: subagent-cursor-blink 1s step-end infinite;
+}
+
+@keyframes subagent-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* ── Sub-Agent Transcript (structured nested view) ────────────── */
+
+.sa-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px 0;
+}
+
+.sa-transcript-text {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.5;
+}
+
+.sa-transcript-text p {
+  margin: 0 0 4px 0;
+}
+
+.sa-transcript-text p:last-child {
+  margin-bottom: 0;
+}
+
+/* Tool step card */
+.sa-tool-step {
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+}
+
+.sa-tool-step-calling {
+  border-color: rgba(100, 180, 255, 0.15);
+}
+
+.sa-tool-step-complete {
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.sa-tool-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.sa-tool-step-header:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sa-tool-step-status {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.sa-tool-step-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sa-transcript-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.sa-transcript-icon-spinner {
+  color: rgba(100, 180, 255, 0.7);
+  animation: spin 1.5s linear infinite;
+}
+
+.sa-transcript-icon-check {
+  color: rgba(100, 200, 120, 0.7);
+}
+
+.sa-transcript-chevron {
+  width: 14px;
+  height: 14px;
+  color: rgba(255, 255, 255, 0.3);
+  transition: transform 0.15s ease;
+  flex-shrink: 0;
+}
+
+.sa-transcript-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+.sa-tool-step-body {
+  padding: 0 8px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sa-tool-step-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sa-tool-step-label {
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+
+.sa-tool-step-pre {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.5);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
 /* ── Done marker ──────────────────────────────────────────────── */
 
 .chain-done-text {
