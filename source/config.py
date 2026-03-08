@@ -49,11 +49,11 @@ MAX_PORT_ATTEMPTS = 10
 
 # Model configuration
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"
-MAX_MCP_TOOL_ROUNDS = 30
+MAX_MCP_TOOL_ROUNDS = 50
 
 # Reasoning effort for thinking models ("low", "medium", "high")
 # LiteLLM translates to native format per provider.
-REASONING_EFFORT = "medium"
+REASONING_EFFORT = "high"
 OLLAMA_CTX_SIZE = 32768
 
 # Tool result truncation
