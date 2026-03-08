@@ -1,133 +1,128 @@
-GET_EVENTS_DESCRIPTION = """
-**CALENDAR VIEWER — Get upcoming events**
-Retrieves upcoming calendar events for the next N days from the user's Google Calendar.
+from mcp_servers.servers.description_format import build_tool_description
 
-Use this tool to:
-1. Show the user their schedule for today, this week, or upcoming days.
-2. Check what meetings or events are coming up.
-3. Help the user plan their time.
-4. Answer questions like "What's on my calendar today?" or "Am I free tomorrow?"
 
-Parameters: days_ahead (optional, default 7), max_results (optional, default 20), calendar_id (optional, default "primary").
-Returns: List of events with title, start time, end time, location, description, and attendees.
-"""
+GET_EVENTS_DESCRIPTION = build_tool_description(
+    purpose="Get upcoming Google Calendar events from the next N days.",
+    use_when=(
+        "The user wants to browse their schedule by time range, review upcoming "
+        "meetings, or get event IDs before inspecting or editing a specific "
+        "event."
+    ),
+    inputs=(
+        'days_ahead (default 7), max_results (default 20, capped at 100), '
+        'calendar_id (default "primary").'
+    ),
+    returns=(
+        "JSON with events, count, and period. Each event includes id, title, "
+        "start, end, location, description, status, link, and may include "
+        "attendees, meet_link, or recurrence."
+    ),
+    notes='Use list_calendars first if the user mentions a non-primary calendar.',
+)
 
-SEARCH_EVENTS_DESCRIPTION = """
-**CALENDAR SEARCH — Find events by keyword**
-Searches for calendar events matching a keyword query.
+SEARCH_EVENTS_DESCRIPTION = build_tool_description(
+    purpose="Search upcoming Google Calendar events by keyword.",
+    use_when=(
+        "The user wants to search upcoming events by keyword, person, topic, "
+        "or appointment name and needs matching event IDs."
+    ),
+    inputs='query, days_ahead (default 30), calendar_id (default "primary").',
+    returns=(
+        "JSON with matching events and count. Event objects use the same shape "
+        "as get_events."
+    ),
+    notes='Use list_calendars first if the user mentions a non-primary calendar.',
+)
 
-Use this tool to:
-1. Find specific meetings or events by name.
-2. Look up events with a particular person or topic.
-3. Answer questions like "When is my dentist appointment?" or "Do I have a meeting with John?"
+GET_EVENT_DESCRIPTION = build_tool_description(
+    purpose="Get the full details for one calendar event by event_id.",
+    use_when=(
+        "You already know the event_id and need complete fields such as attendees, "
+        "description, meet link, or recurrence."
+    ),
+    inputs='event_id, calendar_id (default "primary").',
+    returns="JSON for the event with the same fields returned by get_events plus any extra metadata.",
+    notes="Usually call get_events or search_events first to find the event_id.",
+)
 
-Parameters: query (required), days_ahead (optional, default 30), calendar_id (optional, default "primary").
-Returns: List of matching events with title, start time, end time, location, and description.
-"""
+CREATE_EVENT_DESCRIPTION = build_tool_description(
+    purpose="Create a new Google Calendar event.",
+    use_when=(
+        "The user wants to schedule a meeting, appointment, reminder, or time block "
+        "with explicit details."
+    ),
+    inputs=(
+        'title, start, end, description (optional), location (optional), '
+        'attendees (optional comma-separated email string), calendar_id '
+        '(default "primary").'
+    ),
+    returns="JSON with success, event_id, title, link, and a confirmation message.",
+    notes=(
+        "Confirm details before creating. Use ISO 8601 for timed events and "
+        "YYYY-MM-DD for all-day events."
+    ),
+)
 
-GET_EVENT_DESCRIPTION = """
-**EVENT DETAILS — Get full information about a specific event**
-Retrieves detailed information about a single calendar event by its ID.
+UPDATE_EVENT_DESCRIPTION = build_tool_description(
+    purpose="Update selected fields on an existing Google Calendar event.",
+    use_when=(
+        "The user wants to reschedule an event or change its title, description, "
+        "location, start, or end time."
+    ),
+    inputs=(
+        'event_id, title (optional), start (optional), end (optional), '
+        'description (optional), location (optional), calendar_id '
+        '(default "primary").'
+    ),
+    returns="JSON with success, event_id, title, link, and a confirmation message.",
+    notes=(
+        "Confirm changes before updating. Only supplied fields change. start/end "
+        "use the same formats as create_event."
+    ),
+)
 
-Use this tool to:
-1. Get full details of an event found via get_events or search_events.
-2. Check attendees, descriptions, or meeting links for a specific event.
-3. Get event metadata like recurrence rules or reminders.
+DELETE_EVENT_DESCRIPTION = build_tool_description(
+    purpose="Delete a Google Calendar event by event_id.",
+    use_when="The user wants to cancel or remove a known calendar event.",
+    inputs='event_id, calendar_id (default "primary").',
+    returns="JSON with success and a confirmation message.",
+    notes="Confirm with the user before deleting. This action cannot be undone.",
+)
 
-Parameters: event_id (required), calendar_id (optional, default "primary").
-Returns: Full event details including title, time, location, description, attendees, meet link, and recurrence info.
-"""
+QUICK_ADD_EVENT_DESCRIPTION = build_tool_description(
+    purpose="Create a Google Calendar event from one natural-language text string.",
+    use_when=(
+        "The user describes an event informally and you want Google to interpret "
+        "the time and title for you."
+    ),
+    inputs='text, calendar_id (default "primary").',
+    returns="JSON with success, the created event, and a confirmation message.",
+    notes=(
+        "Prefer create_event when you already have exact structured start/end "
+        "times and want full control."
+    ),
+)
 
-CREATE_EVENT_DESCRIPTION = """
-**EVENT CREATOR — Create a new calendar event**
-Creates a new event on the user's Google Calendar.
+LIST_CALENDARS_DESCRIPTION = build_tool_description(
+    purpose="List the calendars the user can access.",
+    use_when=(
+        "You need to discover available calendars or find the calendar_id for a "
+        "tool call that should not use the primary calendar."
+    ),
+    inputs="None.",
+    returns="JSON with calendars and count. Each calendar includes id, name, description, access_role, primary, and color.",
+)
 
-Use this tool to:
-1. Schedule a new meeting, appointment, or reminder.
-2. Block time on the user's calendar.
-3. Create events with specific times, locations, and descriptions.
-4. Add attendees who will receive email invitations.
-
-IMPORTANT:
-- Always confirm event details with the user before creating.
-- Times should be in ISO 8601 format (e.g., "2025-03-15T10:00:00-05:00").
-- For all-day events, use date format (e.g., "2025-03-15").
-
-Parameters: title (required), start (required), end (required), description (optional), location (optional), attendees (optional list of emails).
-Returns: Confirmation with the created event ID and a link to the event.
-"""
-
-UPDATE_EVENT_DESCRIPTION = """
-**EVENT UPDATER — Modify an existing calendar event**
-Updates an existing event on the user's Google Calendar.
-
-Use this tool to:
-1. Reschedule a meeting to a different time.
-2. Change the title, description, or location of an event.
-3. Update event details after finding them via get_events or search_events.
-
-IMPORTANT:
-- Always confirm changes with the user before updating.
-- Only specified fields will be updated; unspecified fields remain unchanged.
-
-Parameters: event_id (required), title (optional), start (optional), end (optional), description (optional), location (optional), calendar_id (optional).
-Returns: Confirmation of the updated event.
-"""
-
-DELETE_EVENT_DESCRIPTION = """
-**EVENT DELETER — Remove a calendar event**
-Deletes an event from the user's Google Calendar.
-
-Use this tool to:
-1. Cancel a meeting or appointment.
-2. Remove events the user no longer needs.
-3. Clean up the calendar.
-
-IMPORTANT: Always confirm with the user before deleting. This action cannot be undone.
-
-Parameters: event_id (required), calendar_id (optional, default "primary").
-Returns: Confirmation that the event was deleted.
-"""
-
-QUICK_ADD_EVENT_DESCRIPTION = """
-**QUICK EVENT — Create event from natural language**
-Creates a calendar event from a natural language text string using Google's Quick Add feature.
-
-Use this tool to:
-1. Quickly create events from casual descriptions.
-2. Parse natural language like "Lunch with Sarah tomorrow at noon" or "Team standup every Monday at 9am".
-3. When the user describes an event informally and you want to let Google parse it.
-
-EXAMPLES:
-- "Dentist appointment on March 15 at 2pm"
-- "Coffee with Alex next Tuesday 3-4pm"
-- "Project deadline January 31"
-
-Parameters: text (required — the natural language event description), calendar_id (optional).
-Returns: The created event details.
-"""
-
-LIST_CALENDARS_DESCRIPTION = """
-**CALENDAR LISTER — List all available calendars**
-Retrieves all calendars the user has access to, including shared and subscribed calendars.
-
-Use this tool to:
-1. Show the user all their calendars (personal, work, shared).
-2. Find a specific calendar's ID for use with other calendar tools.
-3. Check which calendars are available for event creation.
-
-Returns: List of calendars with id, name, description, and access role.
-"""
-
-GET_FREE_BUSY_DESCRIPTION = """
-**FREE/BUSY CHECKER — Check availability for a time range**
-Checks the free/busy status for one or more calendars within a specified time range.
-
-Use this tool to:
-1. Check if the user is available at a specific time.
-2. Find free slots for scheduling a new meeting.
-3. Answer questions like "Am I free on Friday afternoon?" or "When am I available this week?"
-
-Parameters: time_min (required, ISO 8601), time_max (required, ISO 8601), calendar_ids (optional, default ["primary"]).
-Returns: List of busy time blocks within the specified range.
-"""
+GET_FREE_BUSY_DESCRIPTION = build_tool_description(
+    purpose="Check free/busy blocks for one or more calendars in a time range.",
+    use_when=(
+        "The user asks whether they are free at a given time or needs availability "
+        "before scheduling."
+    ),
+    inputs=(
+        'time_min (ISO 8601), time_max (ISO 8601), calendar_ids '
+        '(optional comma-separated calendar IDs, default "primary").'
+    ),
+    returns="JSON with the requested time range and busy blocks for each calendar.",
+    notes="Use list_calendars first if you need calendar IDs beyond the primary calendar.",
+)

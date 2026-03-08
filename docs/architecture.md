@@ -45,13 +45,15 @@ The Electron layer manages the desktop application shell:
 **Window Configuration:**
 - Frameless, transparent window (`frame: false`, `transparent: true`)
 - Always-on-top at `screen-saver` level (stays above full-screen apps)
-- Content protection enabled (`setContentProtection(true)`)
-- Normal mode: 450x450 | Mini mode: 52x52
+- Content protection enabled (`setContentProtection(true)`) - prevents screen recording
+- Normal mode: 550×550 | Mini mode: 52×52
 - `skipTaskbar: true` for minimal desktop footprint
+- `setDisplayMediaRequestHandler` auto-approves WASAPI loopback for meeting audio
 
 **IPC Channels:**
 - `set-mini-mode` - Toggles between normal and mini window sizes
-- `focus-window` - Programmatically brings the window to foreground
+- `set-hidden` - Hides window content (opacity: 0) during screenshot capture
+- `get-python-port` - Returns the Python backend port (production only)
 
 **Python Lifecycle (Production):**
 1. On `app.whenReady()`, spawns the bundled Python executable
@@ -65,58 +67,63 @@ The frontend follows a modular architecture with custom hooks for state manageme
 
 ```
 src/ui/
-  main.tsx                    # HashRouter setup (/, /settings, /history, /album)
+  main.tsx                    # createHashRouter setup (/, /settings, /history, /album, /recorder, /recording/:id)
   pages/
-    App.tsx                   # Main chat interface
-    ChatHistory.tsx           # Conversation browser with search
-    Settings.tsx              # Tabbed settings interface
-    MeetingAlbum.tsx          # Place holder for meeting recorder transcriptions
+    App.tsx                   # Main chat interface — tab routing, WS dispatch, retry/edit
+    ChatHistory.tsx           # Conversation browser with full-text search
+    Settings.tsx              # Tabbed settings (models, connections, tools, skills, meeting, system-prompt)
+    MeetingRecorder.tsx       # Live meeting recording UI
+    MeetingAlbum.tsx          # Past recordings list (grouped by date)
+    MeetingRecordingDetail.tsx# Recording detail + AI analysis + calendar/email action execution
   components/
-    Layout.tsx                # App shell with mini mode transitions
-    TitleBar.tsx              # Custom draggable title bar
-    WebSocketContext.tsx      # WebSocket provider
+    Layout.tsx                # App shell; manages mini/hidden state via Outlet context
+    TitleBar.tsx              # Custom title bar: new-chat button, nav icons, mini-mode toggle
+    TabBar.tsx                # Multi-tab strip (hidden when 1 tab open)
     chat/
-      ChatMessage.tsx         # Individual message rendering
-      ThinkingSection.tsx     # Collapsible reasoning display
-      ToolCallsDisplay.tsx    # MCP tool execution cards
+      ChatMessage.tsx         # Message with inline edit, retry, response version navigation
+      ThinkingSection.tsx     # Collapsible reasoning/thinking display
+      ToolCallsDisplay.tsx    # ToolChainTimeline (primary) + legacy flat view
+      InlineTerminalBlock.tsx # Inline xterm.js PTY / ansi-to-html terminal in chat flow
       CodeBlock.tsx           # Syntax-highlighted code blocks
-      ResponseArea.tsx        # Chat history display area
-      SlashCommandMenu.tsx    # Contextual skills menu
+      ResponseArea.tsx        # Scrollable message list (dynamic topInset/bottomInset)
+      SlashCommandMenu.tsx    # Skill autocomplete menu used by QueryInput
       LoadingDots.tsx         # Typing indicator
     input/
-      QueryInput.tsx          # User input with attachments
-      ModeSelector.tsx        # Screenshot mode selector
+      QueryInput.tsx          # Chip-aware contentEditable div with slash command chips
+      ModeSelector.tsx        # Screenshot mode selector (precision / fullscreen / meeting)
       ScreenshotChips.tsx     # Screenshot thumbnail chips
-      SlashCommandChips.tsx   # Active skill indicators
+      QueueDropdown.tsx       # Per-tab conversation queue display
       TokenUsagePopup.tsx     # Context window usage indicator
     settings/
-      SettingsModels.tsx      # Model toggle UI
+      SettingsModels.tsx      # Ollama + cloud model enable/disable toggles
       SettingsApiKey.tsx      # API key management (Anthropic/OpenAI/Gemini)
-      SettingsConnections.tsx # Google OAuth connection card
-      SettingsTools.tsx       # Semantic tool retrieval configuration
-      SettingsSystemPrompt.tsx# Custom system prompt configuration
-      SettingsSkills.tsx       # Skill editor and manager
+      SettingsConnections.tsx # Google OAuth connection (Gmail + Calendar)
+      SettingsTools.tsx       # Semantic tool retrieval config (topK, always-on)
+      SettingsSystemPrompt.tsx# Custom system prompt template editor
+      SettingsSkills.tsx      # Full CRUD for user skills and builtin overrides
+      MeetingRecorderSettings.tsx # Whisper model, diarization, audio retention
     terminal/
-      TerminalPanel.tsx       # Integrated xterm.js terminal
-      TerminalCard.tsx        # Inline command execution view
-      ApprovalCard.tsx        # Security approval prompts
-      SessionBanner.tsx       # Autonomous mode status
+      InlineTerminalBlock.tsx # (also under chat/) — approval, PTY, ansi output
+      TerminalCard.tsx        # Past terminal event in chat history
+      ApprovalCard.tsx        # Legacy standalone approval prompt
+      SessionBanner.tsx       # Autonomous session status
   hooks/
-    useChatState.ts           # Chat history, streaming, status
-    useScreenshots.ts         # Screenshot context management
+    useChatState.ts           # Chat history, streaming, terminal block management
+    useScreenshots.ts         # Screenshot context + meetingRecordingMode flag
     useTokenUsage.ts          # Token tracking
+    useAudioCapture.ts        # System audio capture (WASAPI loopback + mic mix)
   services/
-    api.ts                    # REST API client + WS command factory
+    api.ts                    # REST API client (18+ endpoints) + WS command factory
+    portDiscovery.ts          # Concurrent port probe (8000-8009)
   types/
-    index.ts                  # TypeScript interfaces
-  CSS/                        # Component stylesheets
-    App.css
-    ChatHistory.css
-    Settings.css
-    SettingsApiKey.css
-    SettingsConnections.css
-    SettingsModels.css
-    SettingsTools.css
+    index.ts                  # TypeScript interfaces (ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant…)
+  contexts/
+    WebSocketContext.tsx      # Single WS connection, pub/sub, exponential backoff
+    TabContext.tsx            # Tab list and active tab (pure UI state)
+    MeetingRecorderContext.tsx# Recording state (persists across routes)
+  utils/
+    chatMessages.ts           # Message mapping, merging, retry/edit reconciliation
+  CSS/                        # Per-component stylesheets
 ```
 
 **State Management Pattern:**
@@ -138,52 +145,62 @@ source/
   main.py                     # Entry point: service init, Uvicorn launch
   app.py                      # FastAPI app factory with CORS
   config.py                   # Centralized constants (ports, models, limits)
-  database.py                 # SQLite operations (thread-safe)
-  ss.py                       # Screenshot capture (hotkey, overlay, DPI)
+  database.py                 # SQLite operations (thread-safe), FTS5 search, response versioning
+  ss.py                       # Screenshot capture (hotkey, overlay, DPI, clipboard copy)
   api/
-    websocket.py              # /ws endpoint, message routing
+    websocket.py              # /ws endpoint, message routing to MessageHandler
     http.py                   # /api/* REST endpoints
-    handlers.py               # WebSocket message handler logic
-    terminal.py               # Terminal-specific WebSocket handlers
+    handlers.py               # MessageHandler: _handle_<type> per WS message
+    terminal.py               # Terminal-specific REST endpoints
   core/
-    state.py                  # Global mutable state (AppState)
-    request_context.py        # Request lifecycle (RequestContext class)
-    connection.py             # WebSocket connection registry
-    lifecycle.py              # Graceful shutdown & cleanup
-    thread_pool.py            # Async execution helper
+    state.py                  # AppState singleton + server_loop_holder + active_tab_id
+    request_context.py        # RequestContext: cancellation, forced_skills, on_cancel callbacks
+    connection.py             # ConnectionManager, broadcast_message, broadcast_to_tab, wrap_with_tab_ctx
+    lifecycle.py              # Graceful shutdown, tab_manager.close_all()
+    thread_pool.py            # run_in_thread — offload blocking calls from event loop
   services/
-    conversations.py          # Chat flow orchestration (lifecycle + streaming)
-    screenshots.py            # Screenshot lifecycle management
-    transcription.py          # Voice-to-text (faster-whisper)
-    google_auth.py            # Google OAuth 2.0 flow manager
-    terminal.py               # Terminal approval flow, PTY, notice tracking
-    approval_history.py       # Persistence for "remember" approvals
+    conversations.py          # submit_query: full turn orchestration, retry/edit, slash extraction
+    screenshots.py            # Screenshot lifecycle (per-tab, hotkey, blur window)
+    transcription.py          # Voice-to-text (pyaudio + faster-whisper base.en)
+    google_auth.py            # Google OAuth 2.0 (InstalledAppFlow)
+    terminal.py               # TerminalSession, PTY, kill_process_tree, resize_all_pty
+    approval_history.py       # SHA256-hashed "Allow & Remember" persistence
+    skills.py                 # SkillManager: filesystem-backed skill CRUD, cache, references
+    query_queue.py            # Per-tab ConversationQueue (maxsize=5, lazy consumer task)
+    tab_manager.py            # TabState, TabSession, TabManager (MAX_TABS=10)
+    tab_manager_instance.py   # Lazy singleton + _process_fn bridging queue → ConversationService
+    ollama_global_queue.py    # Global serializer for Ollama (GPU single-tenant)
+    meeting_recorder.py       # MeetingRecorderService: live Tier 1 + full Tier 2 pipeline
+    gpu_detector.py           # CUDA vs CPU detection, compute_type, VRAM info
   llm/
-    router.py                 # Routes requests to Ollama or Cloud providers
-    ollama_provider.py        # Ollama streaming bridge with tool support
-    cloud_provider.py         # Anthropic/OpenAI/Gemini streaming with inline tool calling
-    key_manager.py            # Encrypted API key storage
-    prompt.py                 # System prompt builder with variable interpolation
+    router.py                 # parse_provider() + route_chat()
+    ollama_provider.py        # 2-phase tool detect + streaming via AsyncClient
+    cloud_provider.py         # Unified Anthropic/OpenAI/Gemini via LiteLLM
+    key_manager.py            # Fernet-encrypted API key storage
+    prompt.py                 # build_system_prompt with skills_block + template
+    types.py                  # Shared LLM type definitions
   mcp_integration/
-    manager.py                # MCP server process management + inline tools
-    retriever.py              # Semantic tool retrieval (Top-K selection)
-    handlers.py               # Tool call routing loop (up to 30 rounds)
-    cloud_tool_handlers.py    # Legacy cloud tool handler (superseded by inline tool calling in cloud_provider.py)
-    skill_injector.py         # Dynamic skill injection based on category
-    default_skills.py         # Hardcoded system instructions for tools
-    terminal_executor.py      # Unified terminal tool execution logic
+    manager.py                # McpToolManager: spawn servers, discover tools, route calls
+    handlers.py               # Ollama tool loop + retrieve_relevant_tools
+    retriever.py              # Semantic tool retrieval (cosine sim, embedding cache)
+    skill_injector.py         # Two-phase skill injection (manifest + full SKILL.md)
+    terminal_executor.py      # Inline terminal execution (approval, PTY, DB persist)
+  skills_seed/                # Builtin skills shipped with app (seeded to user_data on startup)
+    terminal/, filesystem/, websearch/, gmail/, calendar/, browser/
 ```
 
 **Key Patterns:**
-- `AppState` (singleton) holds all mutable state, shared across threads
-- `RequestContext` replaces raw boolean flags for managing request lifecycles (cancellation, cleanup).
-- `server_loop_holder` stores the asyncio event loop for cross-thread scheduling (hotkey thread -> WebSocket thread)
-- `find_available_port()` probes ports 8000-8009 to avoid conflicts
-- Thread-safe SQLite with `check_same_thread=False`
-- **Hybrid LLM Support**: Routes requests between local Ollama and cloud APIs (Anthropic, OpenAI, Gemini). Cloud providers handle tool execution inline during streaming — the user sees text, tool calls, and results interleaved in real-time.
-- **Skills and Slash Commands**: Dynamic behavioral guidance injected into the system prompt.
-- **Unified Terminal Executor**: Centralizes all terminal tool logic (approval, PTY, notice tracking, DB) in a single module.
-- **Ghost Process Prevention**: Terminal tools are registered inline; no background process is spawned.
+- **Multi-Tab Isolation**: Each tab has its own `TabState` (chat history, screenshots, conversation_id, current request). `TabManager` (max 10 tabs) and per-tab `ConversationQueue` ensure requests are queued and isolated. Active tab is tracked by `MessageHandler` on every incoming WS message.
+- **ContextVars for per-request state**: `set_current_request()`, `set_current_model()`, `set_tab_id()` use Python `ContextVar` so that per-tab model and cancellation state are isolated across concurrent async tasks on the same event loop. Never read `app_state.selected_model` from LLM layers.
+- `AppState` (singleton) holds process-level shared state (server loop, active_tab_id, screenshot service).
+- `RequestContext` manages per-request lifecycle: `cancelled` flag, `forced_skills` list, `on_cancel()` callbacks, `mark_done()` cleanup.
+- `server_loop_holder` stores the asyncio event loop for cross-thread scheduling (hotkey thread → WebSocket broadcast).
+- `wrap_with_tab_ctx(tab_id, coro)` stamps `_current_tab_id` on coroutines scheduled from background threads (e.g., precision screenshot hotkey) so `broadcast_message()` routes to the correct tab.
+- `find_available_port()` probes ports 8000-8009 to avoid conflicts.
+- Thread-safe SQLite with `check_same_thread=False`, WAL mode, `busy_timeout=5000`.
+- **Skill System**: Skills are filesystem-backed folders under `user_data/skills/`. Builtin skills live under `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). `skill_injector.py` uses two-phase injection: a compact manifest always in the system prompt, and full `SKILL.md` content when the skill is triggered.
+- **Ollama Global Queue**: `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU serves one at a time). Cloud requests bypass this and run concurrently.
+- **Inline LLM routing via LiteLLM**: All cloud providers (Anthropic, OpenAI, Gemini) use `litellm.acompletion()` with `litellm.modify_params=True`. Tool definitions use OpenAI format; LiteLLM translates to native formats.
 
 ## Data Flow
 
@@ -339,55 +356,113 @@ cloud_provider.py: stream_cloud_chat(allowed_tool_names=...)
 ## Database Schema
 
 ```sql
+-- Conversations index
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,                    -- UUID v4
-    title TEXT,                             -- Auto-generated from first message
-    created_at REAL,                        -- Unix timestamp
-    updated_at REAL,                        -- Updated on each new message
+    title TEXT,
+    created_at REAL,
+    updated_at REAL,
     total_input_tokens INTEGER DEFAULT 0,
     total_output_tokens INTEGER DEFAULT 0
 );
 
+-- Messages with versioning support
 CREATE TABLE messages (
     num_messages INTEGER PRIMARY KEY AUTOINCREMENT,
-    conversation_id TEXT,                   -- FK to conversations.id
-    role TEXT,                              -- 'user' or 'assistant'
-    content TEXT,                           -- Message text
+    conversation_id TEXT NOT NULL,
+    role TEXT NOT NULL,                     -- 'user' or 'assistant'
+    content TEXT,
     images TEXT,                            -- JSON array of base64 image strings
-    model TEXT,                             -- Model used for this message
-    created_at REAL                         -- Unix timestamp
+    model TEXT,
+    content_blocks TEXT,                    -- JSON array of ContentBlock
+    message_id TEXT UNIQUE,                 -- Stable UUID for retry/edit targeting
+    turn_id TEXT,                           -- Groups a user+assistant pair
+    active_response_index INTEGER DEFAULT 0,-- Which response variant is visible
+    created_at REAL
 );
 
+-- Response variants (retry/edit creates new versions)
+CREATE TABLE message_response_versions (
+    id TEXT PRIMARY KEY,
+    assistant_message_id TEXT,              -- FK → messages.message_id
+    response_index INTEGER,
+    content TEXT,
+    model TEXT,
+    content_blocks TEXT,                    -- JSON
+    created_at REAL,
+    UNIQUE(assistant_message_id, response_index)
+);
+
+-- Terminal command audit trail
+CREATE TABLE terminal_events (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    message_index INTEGER,
+    command TEXT,
+    exit_code INTEGER,
+    output_preview TEXT,
+    full_output TEXT,
+    cwd TEXT,
+    duration_ms INTEGER,
+    timed_out INTEGER,
+    denied INTEGER,
+    pty INTEGER,
+    background INTEGER,
+    created_at REAL
+);
+
+-- Meeting recordings
+CREATE TABLE meeting_recordings (
+    id TEXT PRIMARY KEY,
+    title TEXT,
+    started_at REAL,
+    ended_at REAL,
+    duration_seconds REAL,
+    status TEXT,                            -- 'recording'|'processing'|'completed'|'failed'
+    audio_file_path TEXT,
+    tier1_transcript TEXT,
+    tier2_transcript_json TEXT,             -- JSON (WhisperX aligned + diarized)
+    ai_summary TEXT,
+    ai_actions_json TEXT,
+    ai_title_generated INTEGER DEFAULT 0
+);
+
+-- FTS5 virtual tables for full-text search
+CREATE VIRTUAL TABLE conversations_fts USING fts5(conversation_id, title, tokenize='unicode61');
+CREATE VIRTUAL TABLE messages_fts USING fts5(conversation_id, content, tokenize='unicode61');
+-- Auto-updated by triggers: *_ai (after insert), *_au (after update), *_ad (after delete)
+
 CREATE TABLE settings (
-    key TEXT PRIMARY KEY,                   -- Setting identifier
-    value TEXT                              -- JSON-serialized value
+    key TEXT PRIMARY KEY,
+    value TEXT
 );
 ```
 
 **Key Settings Stored:**
 - `enabled_models`: List of active models
-- `api_key_anthropic`: Encrypted API key
-- `api_key_openai`: Encrypted API key
-- `api_key_gemini`: Encrypted API key
+- `api_key_anthropic` / `api_key_openai` / `api_key_gemini`: Fernet-encrypted API keys
 - `encryption_salt`: Per-install salt for key encryption
 - `tool_always_on`: List of tool names to always include in context
 - `tool_retriever_top_k`: Number of semantic matches for tool retrieval
 - `system_prompt_template`: Custom system prompt template string
 
+**Skills** are no longer stored in the DB — they are filesystem-backed folders under `user_data/skills/`. Enabled/disabled state is in `user_data/skills/preferences.json`.
+
 ## Technology Stack
 
 | Layer | Technologies |
 |-------|-------------|
-| **Desktop** | Electron 37+, frameless transparent window |
-| **Frontend** | React 19, TypeScript 5.8, Vite 6, React Router 7, react-markdown |
+| **Desktop** | Electron 37+, frameless transparent 550×550 window |
+| **Frontend** | React 19, TypeScript 5.8, Vite 6, React Router 7, xterm.js, ansi-to-html |
 | **Backend** | Python 3.13+, FastAPI, Uvicorn, asyncio |
-| **LLM (Local)** | Ollama (default: qwen3-vl:8b-instruct) |
-| **LLM (Cloud)** | Anthropic (Claude), OpenAI (GPT/o1), Google (Gemini) |
-| **Database** | SQLite3 (thread-safe) |
-| **Security** | Fernet encryption (cryptography) for API keys |
-| **MCP** | Model Context Protocol SDK, stdio transport |
-| **Screenshots** | pynput (hotkeys), Pillow (images), tkinter (overlay) |
-| **Transcription** | faster-whisper, pyaudio |
-| **Auth** | Google OAuth 2.0 (Gmail/Calendar integration) |
-| **Web Search** | DuckDuckGo Search (ddgs), crawl4ai, trafilatura |
-| **Build** | PyInstaller (Python), electron-builder (desktop), UV (package manager) |
+| **LLM (Local)** | Ollama via `ollama.AsyncClient` (default: qwen3-vl:8b-instruct) |
+| **LLM (Cloud)** | Anthropic (Claude), OpenAI (GPT/o-series), Google (Gemini) via LiteLLM |
+| **Database** | SQLite3 (WAL mode, FTS5 full-text search, response versioning) |
+| **Security** | Fernet encryption (`cryptography`) for API keys; SHA256-hashed approval history |
+| **MCP** | Model Context Protocol SDK, stdio transport, semantic tool retrieval |
+| **Screenshots** | pynput (hotkeys), Pillow (images), tkinter (overlay), SetProcessDpiAwarenessContext |
+| **Transcription** | faster-whisper (base.en for live), pyaudio, WhisperX (large-v3 for meetings) |
+| **Diarization** | SpeechBrain, torchaudio |
+| **Auth** | Google OAuth 2.0 (`InstalledAppFlow`) for Gmail/Calendar |
+| **Web Search** | DuckDuckGo Search (ddgs), crawl4ai (stealth Playwright), trafilatura |
+| **Build** | PyInstaller (Python), electron-builder (desktop), UV (Python pkg manager), Bun (JS) |

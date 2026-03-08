@@ -46,12 +46,15 @@ Or download from the [Releases](https://github.com/KashyapTan/xpdite/releases) p
 | New conversation | Click the "New Chat" button in the title bar |
 | Browse history | Navigate to the History page |
 | Mini mode | Click the Xpdite logo to minimize to 52x52 |
+| **Multi-tab** | Open multiple independent AI conversations with the tab bar |
 | **Cloud Models** | Go to Settings > Models to add API keys for Claude, GPT, or Gemini |
-| **Google Integration** | Go to Settings > Connections to link your Google account |
+| **Google Integration** | Go to Settings > Connections to link your Google account (Gmail + Calendar) |
 | Model selection | Toggle models in Settings > Models |
 | Stop streaming | Click stop while the AI is responding |
-| **Slash Commands** | Type `/` followed by a command (e.g., `/fs`) to force-inject a skill |
-| **Skills** | Custom instructions auto-injected based on tool usage or slash commands |
+| **Slash Commands / Skills** | Type `/` followed by a command (e.g., `/fs`, `/terminal`) to force-inject a skill |
+| **Inline Terminal** | Terminal command tool calls execute inline in the chat; approve, deny, or allow-always |
+| **Meeting Recorder** | Navigate to Recorder page to capture + transcribe meetings with AI analysis |
+| **Response Retry/Edit** | Hover a message to retry or edit it; browse alternate responses with ←/→ arrows |
 | Web search | Ask questions that trigger web search tools |
 
 ---
@@ -60,7 +63,7 @@ Or download from the [Releases](https://github.com/KashyapTan/xpdite/releases) p
 
 ### Prerequisites
 
-- **Node.js** 18+ and npm
+- **Node.js** 18+ and **Bun** (package manager) — [Install Bun](https://bun.sh/)
 - **Python** 3.13+
 - **UV** (Python package manager) - [Install UV](https://docs.astral.sh/uv/getting-started/installation/)
 - **Ollama** running locally (optional)
@@ -73,11 +76,11 @@ Or download from the [Releases](https://github.com/KashyapTan/xpdite/releases) p
 git clone https://github.com/KashyapTan/xpdite.git
 cd xpdite
 
-# Install Node.js dependencies
-npm install
+# Install JavaScript dependencies
+bun install
 
 # Install Python dependencies (uses UV)
-npm run install:python
+bun run install:python
 # or directly:
 uv sync --group dev
 ```
@@ -85,8 +88,8 @@ uv sync --group dev
 ### Running in Development
 
 ```bash
-# Start everything (React + Electron + Python server)
-npm run dev
+# Start everything (React + Electron + Python server + Ollama)
+bun run dev
 ```
 
 This runs three services in parallel:
@@ -97,19 +100,19 @@ This runs three services in parallel:
 You can also run services individually:
 
 ```bash
-npm run dev:react      # Vite dev server only
-npm run dev:pyserver   # Python backend only (via uv run)
-npm run dev:electron   # Electron shell only
+bun run dev:react      # Vite dev server only
+bun run dev:pyserver   # Python backend only (via uv run)
+bun run dev:electron   # Electron shell only
 ```
 
 ### Building for Production
 
 ```bash
 # Full build (Python exe + React + Electron)
-npm run build
+bun run build
 
 # Package Windows installer
-npm run dist:win
+bun run dist:win
 ```
 
 The build process:
@@ -133,10 +136,11 @@ xpdite/
       CSS/            # Stylesheets
   source/             # Python backend
     api/              # WebSocket + REST endpoints
-    core/             # State, connections, lifecycle
-    services/         # Business logic (Google Auth, Chat)
-    llm/              # Ollama + Cloud Providers (Claude, OpenAI, Gemini)
-    mcp_integration/  # MCP server management
+    core/             # State, connections, lifecycle, thread pool
+    services/         # Business logic (conversations, skills, tab manager, meeting recorder, terminal…)
+    llm/              # Ollama + Cloud Providers (Claude, OpenAI, Gemini via LiteLLM)
+    mcp_integration/  # MCP server management + semantic retrieval
+    skills_seed/      # Builtin skills (terminal, filesystem, websearch, gmail, calendar, browser)
   mcp_servers/        # MCP tool server implementations
     servers/          # Individual server modules (gmail, calendar, etc.)
     client/           # Standalone bridge client
@@ -148,7 +152,7 @@ xpdite/
 ### Verifying Your Setup
 
 1. Ensure Ollama is running: `ollama list` should show installed models
-2. Start the dev server: `npm run dev`
+2. Start the dev server: `bun run dev`
 3. The Xpdite window should appear and show "ready" in the console
 4. Take a screenshot with `Alt + .` and ask a question
 
@@ -160,5 +164,5 @@ xpdite/
 | Port already in use | The server auto-probes ports 8000-8009; kill stale processes |
 | Ollama not responding | Run `ollama serve` and verify with `ollama list` |
 | Google Auth fails | Check internet connection; ensure `client_config.json` is embedded |
-| MCP tools missing | Verify `npm run install:python` installed all deps including `mcp` |
+| MCP tools missing | Verify `bun run install:python` installed all deps including `mcp` |
 | WebSocket disconnects | Check the Python server console for error logs |

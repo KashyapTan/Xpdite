@@ -137,6 +137,30 @@ DELETE /api/keys/{provider}
 
 Removes the stored API key for the specified provider.
 
+#### Validate API Key
+
+```
+POST /api/keys/{provider}/validate
+Content-Type: application/json
+```
+
+Validates an API key by making a lightweight probe call to the provider. Does **not** save the key.
+
+**Request Body:**
+```json
+{
+    "key": "sk-..."
+}
+```
+
+**Response:**
+```json
+{
+    "valid": true,
+    "error": null
+}
+```
+
 ### Google OAuth
 
 #### Get Connection Status
@@ -271,18 +295,34 @@ Updates the custom system prompt template. Send an empty string to reset to the 
 GET /api/skills
 ```
 
-Returns all skills (default and user-created).
+Returns all skills (builtin and user-created) with enabled state.
+
+**Response:**
+```json
+[
+    {
+        "name": "terminal",
+        "display_name": "Terminal",
+        "slash_command": "terminal",
+        "enabled": true,
+        "is_builtin": true,
+        "is_modified": false
+    }
+]
+```
 
 #### Create Skill
 
 ```
 POST /api/skills
+Content-Type: application/json
 ```
 
 #### Update Skill
 
 ```
 PUT /api/skills/{skill_name}
+Content-Type: application/json
 ```
 
 #### Delete Skill
@@ -291,10 +331,53 @@ PUT /api/skills/{skill_name}
 DELETE /api/skills/{skill_name}
 ```
 
-#### Reset Skill
+#### Reset Skill to Default
 
 ```
 POST /api/skills/{skill_name}/reset
+```
+
+Resets a modified builtin skill back to the seed version.
+
+#### Get Skill Content
+
+```
+GET /api/skills/{skill_name}/content
+```
+
+Returns the full `SKILL.md` content for a skill.
+
+#### Toggle Skill Enabled
+
+```
+POST /api/skills/{skill_name}/toggle
+```
+
+Toggles the enabled/disabled state for a skill.
+
+#### Get Skill References
+
+```
+GET /api/skills/{skill_name}/references
+```
+
+Returns conversations where this skill was used.
+
+### Terminal Settings
+
+#### Get Terminal Settings
+
+```
+GET /api/terminal/settings
+```
+
+Returns terminal configuration (working directory, shell, environment).
+
+#### Update Terminal Settings
+
+```
+PUT /api/terminal/settings
+Content-Type: application/json
 ```
 
 ---
@@ -435,6 +518,166 @@ Permanently deletes a conversation.
 ```
 
 Stops voice recording and triggers transcription.
+
+#### Retry Message
+
+```json
+{
+    "type": "retry_message",
+    "message_id": "uuid-string",
+    "model": "anthropic/claude-opus-4-5"
+}
+```
+
+Regenerates the assistant response for the given `message_id`. Creates a new response version and increments `active_response_index`. The `model` field is optional (defaults to current model selection).
+
+#### Edit Message
+
+```json
+{
+    "type": "edit_message",
+    "message_id": "uuid-string",
+    "new_content": "Updated user message",
+    "model": "qwen3-vl:8b-instruct"
+}
+```
+
+Edits a past user message and regenerates all subsequent responses.
+
+#### Set Active Response
+
+```json
+{
+    "type": "set_active_response",
+    "message_id": "uuid-string",
+    "response_index": 2
+}
+```
+
+Switches which response variant is displayed (navigating the retry history).
+
+#### Cancel Queued Item
+
+```json
+{
+    "type": "cancel_queued_item",
+    "item_id": "uuid-string"
+}
+```
+
+Cancels a query that is waiting in the tab's conversation queue (not yet processing).
+
+#### Terminal Kill Command
+
+```json
+{
+    "type": "terminal_kill_command",
+    "request_id": "req_uuid"
+}
+```
+
+Sends SIGTERM (then SIGKILL) to the process tree for a running terminal command.
+
+#### Terminal Resize
+
+```json
+{
+    "type": "terminal_resize",
+    "cols": 120,
+    "rows": 30
+}
+```
+
+Resizes the active PTY terminal.
+
+#### Tab Created
+
+```json
+{
+    "type": "tab_created",
+    "tab_id": "tab_uuid"
+}
+```
+
+Creates a new isolated tab session on the backend.
+
+#### Tab Closed
+
+```json
+{
+    "type": "tab_closed",
+    "tab_id": "tab_uuid"
+}
+```
+
+Destroys a tab session and all its state.
+
+#### Tab Activated
+
+```json
+{
+    "type": "tab_activated",
+    "tab_id": "tab_uuid"
+}
+```
+
+Sets the given tab as the active tab for screenshot hotkey routing.
+
+### Meeting Recorder Messages (Client → Server)
+
+#### Start Meeting Recording
+
+```json
+{
+    "type": "meeting_start_recording",
+    "tab_id": "tab_uuid"
+}
+```
+
+#### Stop Meeting Recording
+
+```json
+{
+    "type": "meeting_stop_recording"
+}
+```
+
+#### Get Meeting Recordings
+
+```json
+{
+    "type": "get_meeting_recordings",
+    "limit": 20,
+    "offset": 0
+}
+```
+
+#### Get Meeting Recording Detail
+
+```json
+{
+    "type": "get_meeting_recording",
+    "recording_id": "uuid-string"
+}
+```
+
+#### Delete Meeting Recording
+
+```json
+{
+    "type": "delete_meeting_recording",
+    "recording_id": "uuid-string"
+}
+```
+
+#### Update Meeting Recording Settings
+
+```json
+{
+    "type": "update_meeting_settings",
+    "settings": { "whisper_model": "large-v3", "diarize": true }
+}
+```
 
 ### Terminal Interaction Messages
 
@@ -621,3 +864,98 @@ A terminal command has finished executing.
 ```
 
 Sent every 10 seconds for long-running commands to keep the UI informed.
+
+### Tab and Queue Events (Server → Client)
+
+#### Query Queued
+
+```json
+{
+    "type": "query_queued",
+    "content": "{\"item_id\": \"uuid\", \"position\": 2, \"tab_id\": \"...\"}"
+}
+```
+
+The submitted query was accepted into the tab's conversation queue (another query is already processing).
+
+#### Queue Full
+
+```json
+{
+    "type": "queue_full",
+    "content": "{\"message\": \"Queue is full (max 5)\"}"
+}
+```
+
+The tab's queue has reached its maximum capacity (5). The query was rejected.
+
+#### Ollama Queue Status
+
+```json
+{
+    "type": "ollama_queue_status",
+    "content": "{\"position\": 3, \"tab_id\": \"...\"}"
+}
+```
+
+Emitted when an Ollama request is waiting in the global GPU queue (behind other tabs).
+
+### Tab Snapshot (Server → Client)
+
+#### Tab Snapshot
+
+```json
+{
+    "type": "tab_snapshot",
+    "content": "{\"tab_id\": \"...\", \"conversation_id\": \"...\", \"history\": [...], \"screenshots\": [...], \"terminal\": {...}, \"generatingModel\": \"...\"}"
+}
+```
+
+Full state snapshot sent when a tab is activated, allowing the frontend to restore the chat view.
+
+### Meeting Recorder Events (Server → Client)
+
+#### Meeting Recording Started
+
+```json
+{ "type": "meeting_recording_started", "content": "{\"recording_id\": \"...\"}" }
+```
+
+#### Meeting Recording Stopped
+
+```json
+{ "type": "meeting_recording_stopped", "content": "{\"recording_id\": \"\", \"duration_seconds\": 123}" }
+```
+
+#### Meeting Processing Progress
+
+```json
+{ "type": "meeting_processing_progress", "content": "{\"recording_id\": \"...\", \"stage\": \"tier2_transcription\", \"pct\": 55}" }
+```
+
+#### Meeting Processing Complete
+
+```json
+{
+    "type": "meeting_processing_complete",
+    "content": "{\"recording_id\": \"...\", \"tier1_transcript\": \"...\", \"ai_summary\": \"...\", \"ai_actions\": [...], \"ai_title\": \"...\"}"
+}
+```
+
+#### Meeting Processing Failed
+
+```json
+{ "type": "meeting_processing_failed", "content": "{\"recording_id\": \"...\", \"error\": \"...\"}" }
+```
+
+#### Meeting Recordings List
+
+```json
+{ "type": "meeting_recordings_list", "content": "[{...}, ...]" }
+```
+
+#### Meeting Recording Detail
+
+```json
+{ "type": "meeting_recording_detail", "content": "{...full recording row...}" }
+```

@@ -195,6 +195,12 @@ def find_files(pattern: str, directory: Optional[str] = None) -> str:
     if not os.path.isdir(search_dir):
         return f"Error: Directory does not exist: {search_dir}"
 
+    try:
+        if os.path.commonpath([os.path.realpath(_DEFAULT_CWD), os.path.realpath(search_dir)]) != os.path.realpath(_DEFAULT_CWD):
+            return "Error: find_files is restricted to the current working directory tree."
+    except ValueError:
+        return "Error: find_files is restricted to the current working directory tree."
+
     search_pattern = os.path.join(search_dir, pattern)
 
     try:

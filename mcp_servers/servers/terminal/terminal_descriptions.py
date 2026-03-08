@@ -1,128 +1,106 @@
-GET_ENVIRONMENT_DESCRIPTION = """
-Returns the current working directory, OS, Python version, shell,
-and versions of common tools found on PATH (node, npm, git, python, etc.).
-Always call this first before running any commands to understand the environment.
-NOTE: This tool only returns some basic os and computer info and the python, node, npm, git, pip, uv, cargo, and docker versions.
-NOTE: Just because a tool that the user says to use is not listed here does not necessarily mean it is unavailable.
-"""
+from mcp_servers.servers.description_format import build_tool_description
 
-RUN_COMMAND_DESCRIPTION = """
-    Run a shell command and return stdout + stderr.
-    Note: You are on windows
 
-    Parameters:
-    - command: the shell command to run
-    - cwd: working directory (absolute path). Defaults to project root.
-    - timeout: seconds before force-killing (max 120 for foreground, 1800 for background).
-    **IMPORTANT**:
-    - pty: set to True for interactive/TUI commands (claudecode, opencode, OpenAI Codex, vim, htop, etc.)
-           that need a real terminal. When pty=True the command runs in a
-           pseudoterminal and its full TUI renders in the user's terminal panel.
-    - background: set to True for long-running commands. Instead of blocking
-                  until completion, the command runs in the background and you
-                  receive a session_id. Use send_input / read_output / kill_process
-                  to interact with it later.
-    - yield_ms: when background=True, how long (ms) to wait before returning
-                control to you. You'll get whatever output appeared so far plus
-                the session_id. Default: 10000 (10 seconds).
-    - When running code using file paths: Always wrap file paths in double quotes (e.g., "C:/Users/Name With Space/script.py"). 
-      Windows shells split commands at spaces; failing to quote paths containing spaces 
-      will cause 'File Not Found' errors.
+GET_ENVIRONMENT_DESCRIPTION = build_tool_description(
+    purpose="Report the current OS, shell, working directory, and versions of common CLI tools.",
+    use_when=(
+        "You need to understand the runtime before planning terminal work or "
+        "checking whether a common tool is installed."
+    ),
+    inputs="None.",
+    returns=(
+        "A text summary with OS, Python version, shell, CWD, and detected "
+        "versions for common tools on PATH such as python, node, npm, git, "
+        "pip, uv, cargo, docker, and java."
+    ),
+    notes=(
+        "Call this first when environment details matter. A tool can still "
+        "exist even if it is not listed here."
+    ),
+)
 
-    Security:
-    - Commands touching OS system paths are always blocked regardless of other settings
-    - env.PATH overrides are always rejected
-    - User approval is handled by the calling layer before this tool is invoked
+RUN_COMMAND_DESCRIPTION = build_tool_description(
+    purpose="Run a shell command and return combined stdout and stderr.",
+    use_when=(
+        "You need to execute a CLI command, script, build step, or one-off shell task."
+    ),
+    inputs=(
+        "command, cwd (optional absolute path), timeout seconds (optional), "
+        "pty (optional for interactive TUIs), background (optional for PTY "
+        "sessions that should keep running), yield_ms (optional wait before "
+        "returning from a background PTY session)."
+    ),
+    returns=(
+        "Foreground calls return command output. Background PTY calls return a "
+        "session_id plus recent output so you can continue with send_input, "
+        "read_output, or kill_process."
+    ),
+    notes=(
+        "Use pty=True for interactive CLIs. background is useful with PTY "
+        "sessions. Quote Windows paths that contain spaces. Security: commands "
+        "touching OS system paths are always blocked, PATH overrides are "
+        "rejected, and user approval is required before execution."
+    ),
+)
 
-    Returns the command output (stdout + stderr combined).
-    For background commands that are still running, returns a session_id
-    and recent output. Use send_input / read_output / kill_process with that session_id.
+FIND_FILES_DESCRIPTION = build_tool_description(
+    purpose="Find files that match a glob pattern under the current working directory tree.",
+    use_when=(
+        "You need to discover candidate files before opening, editing, or running commands on them."
+    ),
+    inputs="pattern (for example *.py or **/*.ts) and directory (optional, must stay inside the current working directory tree).",
+    returns="A text list of matching file paths, capped at the first 200 matches.",
+    notes="Use this for file discovery only. It does not read file contents and does not require user approval.",
+)
 
-    Examples:
-    - Simple: run_command(command="dir")
-    - Interactive TUI: run_command(command="opencode", pty=True, background=True)
-    - Long build: run_command(command="npm run build", background=True, yield_ms=30000)
-"""
+REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(
+    purpose="Ask the user for temporary autonomous approval for a multi-step terminal task.",
+    use_when=(
+        "You expect to run several related commands and stopping for approval on each command would be noisy."
+    ),
+    inputs="reason = a short explanation of the planned batch of work.",
+    returns="A status string indicating whether session mode was approved.",
+)
 
-FIND_FILES_DESCRIPTION = """
-    Find files matching a glob pattern in a directory.
-    Never requires user approval.
+END_SESSION_MODE_DESCRIPTION = build_tool_description(
+    purpose="End an approved terminal session early.",
+    use_when=(
+        "You are done with the batch of commands or need to return control before the turn ends."
+    ),
+    inputs="None.",
+    returns="A status string confirming the session ended.",
+    notes="Session mode also expires automatically at the end of the turn.",
+)
 
-    Parameters:
-    - pattern: glob pattern (e.g., '*.py', '**/*.ts')
-    - directory: directory to search in (defaults to project root)
+SEND_INPUT_DESCRIPTION = build_tool_description(
+    purpose="Send text or control input to a running PTY background session.",
+    use_when=(
+        "run_command returned a session_id for an interactive CLI that needs more input."
+    ),
+    inputs=(
+        "session_id, input_text, press_enter (default True), wait_ms (default 3000). "
+        "Use escapes like \\x03 for Ctrl-C when needed."
+    ),
+    returns="A status message plus recent session output after the input is processed.",
+    notes="After this call you usually do not need read_output immediately because recent output is already included.",
+)
 
-    Returns a newline-separated list of matching file paths.
-"""
+READ_OUTPUT_DESCRIPTION = build_tool_description(
+    purpose="Read the latest buffered output from a PTY background session.",
+    use_when=(
+        "You need another snapshot from a running or recently finished interactive session without sending input."
+    ),
+    inputs="session_id, lines (default 50).",
+    returns="A status header plus recent output with ANSI escape codes stripped for readability.",
+    notes="If the session has already exited, the response tells you not to call read_output or kill_process again.",
+)
 
-REQUEST_SESSION_MODE_DESCRIPTION = """
-    Request autonomous operation for a multi-step task.
-    Call this when you need to run a sequence of commands without
-    per-command interruptions. Describe what you plan to do and
-    approximately how many steps are involved.
-
-    Note: This request is routed to the user for approval. The user
-    can deny the request, in which case each command will still
-    require individual approval.
-
-    Returns: 'approved' or 'denied'
-"""
-
-END_SESSION_MODE_DESCRIPTION = """
-    Signal that your autonomous task is complete early.
-    Session mode auto-expires at the end of each turn, so calling this
-    is optional. Use it only if you want to relinquish autonomous
-    access before your response is finished (e.g. after encountering
-    an error that requires user input).
-    Returns: 'session ended'
-"""
-
-SEND_INPUT_DESCRIPTION = """
-    Send input text to a running background/interactive session.
-
-    Use this to type into interactive CLIs that were started with
-    run_command(pty=True, background=True).
-
-    Parameters:
-    - session_id: the session ID returned by run_command when background=True
-    - input_text: the text to send. Just type naturally — Enter is pressed
-                  automatically unless press_enter=False.
-                  For control characters: use \\x03 for Ctrl-C, \\x1b for Escape.
-    - press_enter: (default True) automatically press Enter after the input.
-                   Set to False for partial input, arrow keys, or control chars.
-    - wait_ms: (default 3000) milliseconds to wait after sending before
-               returning. The response includes recent output so you can
-               see the effect of your input. Increase for slow operations.
-
-    IMPORTANT: After sending input, this tool waits and then returns the
-    latest output. You do NOT need to call read_output separately — just
-    check the response from send_input to see what happened.
-
-    Returns confirmation and recent output from the session.
-"""
-
-READ_OUTPUT_DESCRIPTION = """
-    Read recent output from a running background session.
-
-    Returns the latest output (ANSI escape codes stripped for readability).
-    The raw output with ANSI codes is simultaneously rendered in the user's
-    terminal panel for full TUI display.
-
-    Parameters:
-    - session_id: the session ID returned by run_command when background=True
-    - lines: number of recent lines to return (default 50)
-
-    Returns the recent output text and session status (running/exited).
-"""
-
-KILL_PROCESS_DESCRIPTION = """
-    Kill a running background session.
-
-    Terminates the process and cleans up the session.
-    Always call this when you're done with an interactive CLI session.
-
-    Parameters:
-    - session_id: the session ID returned by run_command when background=True
-
-    Returns confirmation or error message.
-"""
+KILL_PROCESS_DESCRIPTION = build_tool_description(
+    purpose="Terminate a running PTY background session by session_id.",
+    use_when=(
+        "The interactive command is no longer needed, is hung, or should be stopped."
+    ),
+    inputs="session_id.",
+    returns="A confirmation string or an error string.",
+    notes="Use this to clean up background interactive sessions when you are done.",
+)
