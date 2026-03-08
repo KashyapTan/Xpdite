@@ -20,7 +20,7 @@ from .query_queue import ConversationQueue, QueuedQuery
 
 logger = logging.getLogger(__name__)
 
-MAX_TABS = 10
+MAX_TABS = 30
 
 
 @dataclass
