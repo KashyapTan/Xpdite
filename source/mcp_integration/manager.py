@@ -170,7 +170,9 @@ class McpToolManager:
             logger.info(
                 "Connected to '%s' — %d tool(s)", server_name, len(tools_result.tools)
             )
-            # Re-embed tools for the retriever (blocking call, run in thread)
+            # Incremental refresh only. A batch-level prune runs after the full
+            # server registration sequence completes so startup doesn't evict
+            # cache entries for servers that have not connected yet.
             from ..core.thread_pool import run_in_thread
             try:
                 await run_in_thread(retriever.embed_tools, self._ollama_tools)
@@ -224,7 +226,8 @@ class McpToolManager:
             logger.debug("Registered inline tool: %s (from %s)", name, server_name)
 
         logger.info("Registered %d inline tool(s) for '%s'", len(tools), server_name)
-        # Re-embed tools for the retriever
+        # Incremental refresh only. init_mcp_servers() performs the final prune
+        # once all inline and subprocess-backed tools are registered.
         retriever.embed_tools(self._ollama_tools)
 
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
@@ -368,7 +371,9 @@ class McpToolManager:
 
         logger.info("Removed %d tool(s) from '%s'", len(tools_to_remove), server_name)
         # Re-embed tools for the retriever
-        retriever.embed_tools(self._ollama_tools)
+        # Both Google servers have finished connecting, so the current tool set
+        # is now stable enough to safely prune stale cache entries.
+        retriever.embed_tools(self._ollama_tools, prune_removed=True)
 
     def is_server_connected(self, server_name: str) -> bool:
         """Check if a specific MCP server is currently connected."""
@@ -416,6 +421,7 @@ class McpToolManager:
                 env=env,
             )
 
+        retriever.embed_tools(self._ollama_tools, prune_removed=True)
         logger.info(
             "Google servers connected — %d total tool(s) available", len(self._ollama_tools)
         )
@@ -698,5 +704,8 @@ async def init_mcp_servers():
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "my_server" / "server.py")],
     # )
 
+    # Final startup pass: all always-on tools have been registered, so stale
+    # embeddings for removed descriptions/tools can now be pruned safely.
+    retriever.embed_tools(mcp_manager._ollama_tools, prune_removed=True)
     mcp_manager._initialized = True
     logger.info("Ready — %d total tool(s) available", len(mcp_manager._ollama_tools))

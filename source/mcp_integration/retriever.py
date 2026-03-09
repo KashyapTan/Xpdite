@@ -1,6 +1,10 @@
-import os
+import io
+import json
 import hashlib
 import logging
+import os
+import tempfile
+import threading
 import numpy as np
 import ollama
 from typing import List, Dict, Any, Optional
@@ -20,6 +24,7 @@ except ImportError:
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _CACHE_DIR = os.path.join(_PROJECT_ROOT, "user_data", "cache")
 _CACHE_FILE = os.path.join(_CACHE_DIR, "tool_embeddings.npz")
+_CACHE_INDEX_FILE = os.path.join(_CACHE_DIR, "tool_embedding_index.json")
 
 
 class ToolRetriever:
@@ -31,13 +36,16 @@ class ToolRetriever:
     """
 
     def __init__(self):
+        self._cache_lock = threading.RLock()
         self._tool_embeddings: Dict[str, np.ndarray] = {}
         self._embedding_model_type = "unknown"  # "ollama" or "sentence-transformers"
         self._st_model = None
         self._ollama_model_name = "nomic-embed-text"
         self._embedding_cache: Dict[str, np.ndarray] = {}
+        self._tool_cache_index: Dict[str, str] = {}
         self._check_embedding_backend()
         self._load_cache()
+        self._load_cache_index()
 
     def _check_embedding_backend(self):
         """Determine which embedding backend to use."""
@@ -144,29 +152,89 @@ class ToolRetriever:
 
     def _load_cache(self) -> None:
         """Load cached embeddings from disk (if file exists)."""
+        with self._cache_lock:
+            try:
+                if os.path.exists(_CACHE_FILE):
+                    with np.load(_CACHE_FILE, allow_pickle=False) as data:
+                        self._embedding_cache = {k: data[k] for k in data.files}
+                    logger.info("Loaded %d cached embeddings.", len(self._embedding_cache))
+            except Exception as e:
+                logger.warning("Could not load embedding cache: %s", e)
+                self._embedding_cache = {}
+
+    @staticmethod
+    def _write_file_atomically(path: str, payload: bytes) -> None:
+        """Write a file via a temporary path, then atomically replace it."""
+        directory = os.path.dirname(path) or "."
+        fd, temp_path = tempfile.mkstemp(
+            dir=directory,
+            prefix=f"{os.path.basename(path)}.",
+            suffix=".tmp",
+        )
         try:
-            if os.path.exists(_CACHE_FILE):
-                data = np.load(_CACHE_FILE, allow_pickle=False)
-                self._embedding_cache = {k: data[k] for k in data.files}
-                logger.info("Loaded %d cached embeddings.", len(self._embedding_cache))
-        except Exception as e:
-            logger.warning("Could not load embedding cache: %s", e)
-            self._embedding_cache = {}
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(payload)
+            os.replace(temp_path, path)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
 
     def _save_cache(self) -> None:
         """Persist current cache dict to disk."""
-        try:
-            os.makedirs(_CACHE_DIR, exist_ok=True)
-            np.savez(_CACHE_FILE, **self._embedding_cache)
-        except Exception as e:
-            logger.warning("Could not save embedding cache: %s", e)
+        with self._cache_lock:
+            try:
+                os.makedirs(_CACHE_DIR, exist_ok=True)
+                buffer = io.BytesIO()
+                np.savez(buffer, **self._embedding_cache)
+                self._write_file_atomically(_CACHE_FILE, buffer.getvalue())
+            except Exception as e:
+                logger.warning("Could not save embedding cache: %s", e)
 
-    def embed_tools(self, tools: List[Dict]):
+    def _load_cache_index(self) -> None:
+        """Load the current tool-name-to-cache-key mapping from disk."""
+        with self._cache_lock:
+            try:
+                if os.path.exists(_CACHE_INDEX_FILE):
+                    with open(_CACHE_INDEX_FILE, encoding="utf-8") as fh:
+                        data = json.load(fh)
+                    if isinstance(data, dict) and all(
+                        isinstance(name, str) and isinstance(key, str)
+                        for name, key in data.items()
+                    ):
+                        self._tool_cache_index = data
+                        logger.info(
+                            "Loaded cache index for %d tool description(s).",
+                            len(self._tool_cache_index),
+                        )
+                    else:
+                        logger.warning("Embedding cache index is invalid; ignoring it.")
+                        self._tool_cache_index = {}
+            except Exception as e:
+                logger.warning("Could not load embedding cache index: %s", e)
+                self._tool_cache_index = {}
+
+    def _save_cache_index(self) -> None:
+        """Persist the current tool-name-to-cache-key mapping."""
+        with self._cache_lock:
+            try:
+                os.makedirs(_CACHE_DIR, exist_ok=True)
+                payload = json.dumps(
+                    self._tool_cache_index,
+                    indent=2,
+                    sort_keys=True,
+                ).encode("utf-8")
+                self._write_file_atomically(_CACHE_INDEX_FILE, payload)
+            except Exception as e:
+                logger.warning("Could not save embedding cache index: %s", e)
+
+    def embed_tools(self, tools: List[Dict], *, prune_removed: bool = False):
         """
         Embed tool descriptions and cache them.
 
         Uses a disk cache keyed on (model_name, description_text) so only
         new or changed tools require an API call on subsequent launches.
+        When ``prune_removed`` is true, cache entries for tools that are no
+        longer registered are removed from disk as well.
         """
         if self._embedding_model_type == "none":
             return
@@ -177,42 +245,100 @@ class ToolRetriever:
             else "all-MiniLM-L6-v2"
         )
 
-        self._tool_embeddings.clear()
-        cache_hits = 0
-        cache_misses = 0
+        with self._cache_lock:
+            self._tool_embeddings.clear()
+            cache_hits = 0
+            cache_misses = 0
+            stale_prunes = 0
+            cache_changed = False
+            index_changed = False
+            previous_index = self._tool_cache_index.copy()
+            current_tool_keys: Dict[str, str] = {}
 
-        for tool in tools:
-            func = tool.get("function", {})
-            name = func.get("name")
-            description = func.get("description", "")
+            for tool in tools:
+                func = tool.get("function", {})
+                name = func.get("name")
+                description = func.get("description", "")
 
-            if not name:
-                continue
+                if not name:
+                    continue
 
-            text_to_embed = f"{name}: {description}"
-            key = self._cache_key(model_name, text_to_embed)
+                text_to_embed = f"{name}: {description}"
+                key = self._cache_key(model_name, text_to_embed)
+                previous_key = previous_index.get(name)
 
-            # Use cached embedding if available
-            if key in self._embedding_cache:
-                self._tool_embeddings[name] = self._embedding_cache[key]
-                cache_hits += 1
-                continue
+                if key in self._embedding_cache:
+                    self._tool_embeddings[name] = self._embedding_cache[key]
+                    current_tool_keys[name] = key
+                    cache_hits += 1
+                    if previous_key and previous_key != key:
+                        if self._embedding_cache.pop(previous_key, None) is not None:
+                            stale_prunes += 1
+                            cache_changed = True
+                    continue
 
-            # Cache miss — compute and store
-            embedding = self._get_embedding(text_to_embed)
-            if embedding is not None:
-                self._tool_embeddings[name] = embedding
-                self._embedding_cache[key] = embedding
-                cache_misses += 1
+                embedding = self._get_embedding(text_to_embed)
+                if embedding is not None:
+                    self._tool_embeddings[name] = embedding
+                    self._embedding_cache[key] = embedding
+                    current_tool_keys[name] = key
+                    cache_misses += 1
+                    cache_changed = True
+                    if previous_key and previous_key != key:
+                        if self._embedding_cache.pop(previous_key, None) is not None:
+                            stale_prunes += 1
+                    continue
 
-        if cache_misses > 0:
-            self._save_cache()
-            logger.info(
-                "Embedded %d new tool(s), %d from cache (%d total).",
-                cache_misses, cache_hits, cache_hits + cache_misses,
-            )
-        else:
-            logger.info("All %d tool embeddings loaded from cache.", cache_hits)
+                if previous_key and previous_key in self._embedding_cache:
+                    self._tool_embeddings[name] = self._embedding_cache[previous_key]
+                    current_tool_keys[name] = previous_key
+                    cache_hits += 1
+                    logger.warning(
+                        "Embedding refresh failed for '%s'; keeping previous cached embedding.",
+                        name,
+                    )
+                    continue
+
+                logger.warning(
+                    "Embedding refresh failed for '%s' and no previous cached embedding exists.",
+                    name,
+                )
+
+            removed_tool_names = set()
+            if prune_removed:
+                removed_tool_names = set(previous_index) - set(current_tool_keys)
+                for removed_name in removed_tool_names:
+                    stale_key = previous_index.get(removed_name)
+                    if stale_key and self._embedding_cache.pop(stale_key, None) is not None:
+                        stale_prunes += 1
+                        cache_changed = True
+
+            updated_index = previous_index.copy()
+            updated_index.update(current_tool_keys)
+            if prune_removed:
+                for removed_name in removed_tool_names:
+                    updated_index.pop(removed_name, None)
+
+            if updated_index != self._tool_cache_index:
+                self._tool_cache_index = updated_index
+                index_changed = True
+
+            if cache_changed:
+                self._save_cache()
+            if index_changed:
+                self._save_cache_index()
+
+            total_loaded = cache_hits + cache_misses
+            if cache_misses > 0 or stale_prunes > 0:
+                logger.info(
+                    "Embedded %d new tool(s), %d from cache, pruned %d stale embedding(s) (%d total).",
+                    cache_misses,
+                    cache_hits,
+                    stale_prunes,
+                    total_loaded,
+                )
+            else:
+                logger.info("All %d tool embeddings loaded from cache.", cache_hits)
 
     def retrieve_tools(
         self, query: str, all_tools: List[Dict], always_on: List[str], top_k: int = 5
@@ -233,14 +359,19 @@ class ToolRetriever:
         selected_tool_names = set(always_on)
 
         # 2. Semantic retrieval
-        if top_k > 0 and self._embedding_model_type != "none" and query.strip() and self._tool_embeddings:
+        tool_embeddings: Dict[str, np.ndarray] = {}
+        if top_k > 0 and self._embedding_model_type != "none" and query.strip():
+            with self._cache_lock:
+                tool_embeddings = dict(self._tool_embeddings)
+
+        if top_k > 0 and self._embedding_model_type != "none" and query.strip() and tool_embeddings:
             query_embedding = self._get_embedding(query)
             if query_embedding is None:
                 # Embedding failed — fall through; only always-on tools returned
                 pass
             else:
                 scores = []
-                for name, embedding in self._tool_embeddings.items():
+                for name, embedding in tool_embeddings.items():
                     if name in selected_tool_names:
                         continue  # Already selected
 

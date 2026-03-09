@@ -1,11 +1,20 @@
 """Tests for ToolRetriever similarity scoring and threshold behaviour."""
 
+import json
 from unittest.mock import patch
 
 import numpy as np
 import pytest
 
 from source.mcp_integration.retriever import MIN_SIMILARITY_THRESHOLD
+
+
+def _make_tools(descriptions_by_name):
+    """Build a list of tools in Ollama format."""
+    return [
+        {"function": {"name": name, "description": description}}
+        for name, description in descriptions_by_name.items()
+    ]
 
 
 # ------------------------------------------------------------------
@@ -23,31 +32,41 @@ def test_min_similarity_threshold_value():
 
 
 @pytest.fixture()
-def retriever():
+def retriever(tmp_path, monkeypatch):
     """Create a ToolRetriever with embedding backend disabled."""
-    with patch(
-        "source.mcp_integration.retriever.ToolRetriever._check_embedding_backend"
-    ):
-        from source.mcp_integration.retriever import ToolRetriever
+    import source.mcp_integration.retriever as retriever_module
 
+    cache_dir = tmp_path / "cache"
+    monkeypatch.setattr(retriever_module, "_CACHE_DIR", str(cache_dir))
+    monkeypatch.setattr(
+        retriever_module, "_CACHE_FILE", str(cache_dir / "tool_embeddings.npz")
+    )
+    monkeypatch.setattr(
+        retriever_module,
+        "_CACHE_INDEX_FILE",
+        str(cache_dir / "tool_embedding_index.json"),
+    )
+
+    with patch.object(retriever_module.ToolRetriever, "_check_embedding_backend"):
+        ToolRetriever = retriever_module.ToolRetriever
         r = ToolRetriever()
-        # Use a fake backend type so embed/retrieve paths aren't short-circuited
-        r._embedding_model_type = "test"
+        # Use a fake Ollama backend name so cache keys are stable and local.
+        r._embedding_model_type = "ollama"
+        r._ollama_model_name = "test-embed-model"
     return r
 
 
 class TestRetrieveTools:
-    def _make_tools(self, names):
-        """Helper — build a list of tools in Ollama format."""
-        return [
-            {"function": {"name": n, "description": f"Description of {n}"}}
-            for n in names
-        ]
-
     def test_returns_empty_when_no_embeddings(self, retriever):
         """With no embeddings available, retrieve_tools should return the
         always-on tools plus nothing else."""
-        tools = self._make_tools(["read_file", "write_file", "search"])
+        tools = _make_tools(
+            {
+                "read_file": "Description of read_file",
+                "write_file": "Description of write_file",
+                "search": "Description of search",
+            }
+        )
         result = retriever.retrieve_tools("open a file", tools, always_on=["read_file"])
         # At minimum, always-on should be included
         names = [t["function"]["name"] for t in result]
@@ -55,7 +74,12 @@ class TestRetrieveTools:
 
     def test_always_on_tools_included_regardless_of_score(self, retriever):
         """Always-on tools should be returned even with zero similarity."""
-        tools = self._make_tools(["always_tool", "other_tool"])
+        tools = _make_tools(
+            {
+                "always_tool": "Description of always_tool",
+                "other_tool": "Description of other_tool",
+            }
+        )
         # Pre-populate embeddings so the scoring path runs
         vec_a = np.array([1.0, 0.0, 0.0])
         vec_b = np.array([0.0, 1.0, 0.0])
@@ -74,7 +98,7 @@ class TestRetrieveTools:
 
     def test_threshold_filters_low_similarity(self, retriever):
         """Tools below MIN_SIMILARITY_THRESHOLD should be excluded."""
-        tools = self._make_tools(["high", "low"])
+        tools = _make_tools({"high": "Description of high", "low": "Description of low"})
         # high has cosine sim 1.0, low has cosine sim ~0 with query
         query_vec = np.array([1.0, 0.0])
         retriever._tool_embeddings = {
@@ -90,7 +114,7 @@ class TestRetrieveTools:
     def test_top_k_limits_results(self, retriever):
         """Only top_k tools should be returned (plus always-on)."""
         tool_names = [f"tool_{i}" for i in range(10)]
-        tools = self._make_tools(tool_names)
+        tools = _make_tools({name: f"Description of {name}" for name in tool_names})
         # All embeddings aligned with query, so all score 1.0
         vec = np.array([1.0, 0.0])
         retriever._tool_embeddings = {n: vec.copy() for n in tool_names}
@@ -100,7 +124,13 @@ class TestRetrieveTools:
 
     def test_cosine_similarity_ordering(self, retriever):
         """Higher-similarity tools should appear before lower ones."""
-        tools = self._make_tools(["best", "good", "ok"])
+        tools = _make_tools(
+            {
+                "best": "Description of best",
+                "good": "Description of good",
+                "ok": "Description of ok",
+            }
+        )
         query_vec = np.array([1.0, 0.0, 0.0])
         retriever._tool_embeddings = {
             "best": np.array([1.0, 0.0, 0.0]),   # cos = 1.0
@@ -111,3 +141,106 @@ class TestRetrieveTools:
             result = retriever.retrieve_tools("query", tools, always_on=[], top_k=3)
         names = [t["function"]["name"] for t in result]
         assert names[0] == "best"
+
+
+class TestEmbedToolsCacheCleanup:
+    def test_description_change_keeps_old_cache_until_reembed_succeeds(self, retriever):
+        initial_tools = _make_tools({"search_docs": "Search the docs"})
+        updated_tools = _make_tools({"search_docs": "Search the updated docs"})
+        initial_key = retriever._cache_key(
+            retriever._ollama_model_name, "search_docs: Search the docs"
+        )
+        updated_key = retriever._cache_key(
+            retriever._ollama_model_name, "search_docs: Search the updated docs"
+        )
+
+        with patch.object(
+            retriever,
+            "_get_embedding",
+            side_effect=[np.array([1.0, 0.0]), None],
+        ):
+            retriever.embed_tools(initial_tools)
+            retriever.embed_tools(updated_tools)
+
+        assert initial_key in retriever._embedding_cache
+        assert updated_key not in retriever._embedding_cache
+        assert retriever._tool_cache_index == {"search_docs": initial_key}
+        assert np.array_equal(
+            retriever._tool_embeddings["search_docs"],
+            retriever._embedding_cache[initial_key],
+        )
+
+        import source.mcp_integration.retriever as retriever_module
+
+        with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
+            assert initial_key in data.files
+            assert updated_key not in data.files
+        with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
+            assert json.load(fh) == {"search_docs": initial_key}
+
+    def test_description_change_replaces_stale_cache_entry(self, retriever):
+        initial_tools = _make_tools({"search_docs": "Search the docs"})
+        updated_tools = _make_tools({"search_docs": "Search the updated docs"})
+        initial_key = retriever._cache_key(
+            retriever._ollama_model_name, "search_docs: Search the docs"
+        )
+        updated_key = retriever._cache_key(
+            retriever._ollama_model_name, "search_docs: Search the updated docs"
+        )
+
+        with patch.object(
+            retriever,
+            "_get_embedding",
+            side_effect=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        ):
+            retriever.embed_tools(initial_tools)
+            retriever.embed_tools(updated_tools)
+
+        assert initial_key not in retriever._embedding_cache
+        assert updated_key in retriever._embedding_cache
+        assert retriever._tool_cache_index == {"search_docs": updated_key}
+
+        import source.mcp_integration.retriever as retriever_module
+
+        with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
+            assert initial_key not in data.files
+            assert updated_key in data.files
+        with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
+            assert json.load(fh) == {"search_docs": updated_key}
+
+    def test_prune_removed_tools_deletes_orphaned_cache_entries(self, retriever):
+        tools = _make_tools(
+            {
+                "search_docs": "Search the docs",
+                "open_ticket": "Open a support ticket",
+            }
+        )
+        search_key = retriever._cache_key(
+            retriever._ollama_model_name, "search_docs: Search the docs"
+        )
+        ticket_key = retriever._cache_key(
+            retriever._ollama_model_name, "open_ticket: Open a support ticket"
+        )
+
+        with patch.object(
+            retriever,
+            "_get_embedding",
+            side_effect=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        ):
+            retriever.embed_tools(tools)
+
+        with patch.object(retriever, "_get_embedding") as get_embedding:
+            retriever.embed_tools(_make_tools({"search_docs": "Search the docs"}), prune_removed=True)
+
+        get_embedding.assert_not_called()
+        assert search_key in retriever._embedding_cache
+        assert ticket_key not in retriever._embedding_cache
+        assert retriever._tool_cache_index == {"search_docs": search_key}
+
+        import source.mcp_integration.retriever as retriever_module
+
+        with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
+            assert search_key in data.files
+            assert ticket_key not in data.files
+        with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
+            assert json.load(fh) == {"search_docs": search_key}
