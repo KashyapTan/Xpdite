@@ -19,7 +19,7 @@ export function QueueDropdown({ items, onCancel }: QueueDropdownProps) {
   if (items.length === 0) return null;
 
   const nextItem = items[0];
-  const queueLabel = items.length === 1 ? 'Queued next' : 'Queued follow-ups';
+  const queueLabel = 'Queued next';
 
   return (
     <div className="queue-dropdown">
@@ -33,7 +33,7 @@ export function QueueDropdown({ items, onCancel }: QueueDropdownProps) {
         <div className="queue-dropdown-header-copy">
           <span className="queue-dropdown-title">{queueLabel}</span>
           <div className="queue-dropdown-summary">
-            <span className="queue-dropdown-order">{nextItem.position}</span>
+            {/* <span className="queue-dropdown-order">{nextItem.position}</span> */}
             <span className="queue-dropdown-preview" title={nextItem.preview}>{nextItem.preview}</span>
           </div>
         </div>
