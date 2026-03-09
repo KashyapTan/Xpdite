@@ -12,6 +12,11 @@ import { useWebSocket } from './WebSocketContext';
 
 // ---- Types ----
 
+const DEFAULT_VISUALIZER_BARS = Array.from({ length: 24 }, () => 0.12);
+const RECORDING_ACK_TIMEOUT_MS = 10000;
+
+type PendingRecordingAction = 'starting' | 'stopping' | null;
+
 export interface TranscriptChunk {
     text: string;
     start_time: number;
@@ -20,12 +25,15 @@ export interface TranscriptChunk {
 
 interface MeetingRecorderState {
     isRecording: boolean;
+    isRecordingUi: boolean;
     isPending: boolean;
+    pendingAction: PendingRecordingAction;
     recordingId: string | null;
     liveTranscript: TranscriptChunk[];
     recordingDuration: number;
     startedAt: number | null;
     error: string | null;
+    visualizerBars: number[];
 }
 
 interface MeetingRecorderActions {
@@ -49,20 +57,55 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
     const { send: wsSend, subscribe } = useWebSocket();
 
     const [isRecording, setIsRecording] = useState(false);
-    const isPendingRef = useRef(false);
+    const [pendingAction, setPendingAction] = useState<PendingRecordingAction>(null);
     const [recordingId, setRecordingId] = useState<string | null>(null);
     const [liveTranscript, setLiveTranscript] = useState<TranscriptChunk[]>([]);
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [startedAt, setStartedAt] = useState<number | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [visualizerBars, setVisualizerBars] = useState<number[]>(DEFAULT_VISUALIZER_BARS);
 
     const durationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const pendingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const shouldAcceptTranscriptRef = useRef(false);
 
     const sendMessage = useCallback((msg: Record<string, unknown>) => {
         wsSend(msg);
     }, [wsSend]);
 
-    const { startCapture, stopCapture } = useAudioCapture(sendMessage);
+    const handleVisualizerFrame = useCallback((levels: number[]) => {
+        setVisualizerBars(levels.length > 0 ? levels : DEFAULT_VISUALIZER_BARS);
+    }, []);
+
+    const { startCapture, stopCapture } = useAudioCapture(sendMessage, handleVisualizerFrame);
+    const isRecordingUi = pendingAction === 'starting' || (isRecording && pendingAction !== 'stopping');
+
+    const clearPendingTimeout = useCallback(() => {
+        if (pendingTimeoutRef.current) {
+            clearTimeout(pendingTimeoutRef.current);
+            pendingTimeoutRef.current = null;
+        }
+    }, []);
+
+    const schedulePendingTimeout = useCallback((nextAction: Exclude<PendingRecordingAction, null>) => {
+        clearPendingTimeout();
+        pendingTimeoutRef.current = setTimeout(() => {
+            setPendingAction(null);
+            setIsRecording(false);
+            setRecordingId(null);
+            setStartedAt(null);
+            setRecordingDuration(0);
+            setVisualizerBars(DEFAULT_VISUALIZER_BARS);
+            if (nextAction === 'starting') {
+                stopCapture();
+            }
+            setError(
+                nextAction === 'starting'
+                    ? 'Recording did not start in time. Please try again.'
+                    : 'Recording did not stop in time. Please try again.'
+            );
+        }, RECORDING_ACK_TIMEOUT_MS);
+    }, [clearPendingTimeout, stopCapture]);
 
     // Duration timer
     useEffect(() => {
@@ -79,10 +122,20 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
         };
     }, [isRecording, startedAt]);
 
+    useEffect(() => {
+        return () => {
+            clearPendingTimeout();
+        };
+    }, [clearPendingTimeout]);
+
     const startRecording = useCallback(async () => {
-        if (isRecording || isPendingRef.current) return;
+        if (isRecording || pendingAction !== null) return;
         setError(null);
-        isPendingRef.current = true;
+        shouldAcceptTranscriptRef.current = false;
+        setPendingAction('starting');
+        setRecordingDuration(0);
+        setLiveTranscript([]);
+        schedulePendingTimeout('starting');
 
         try {
             // Start audio capture first
@@ -94,21 +147,32 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
             console.error('Failed to start recording:', err);
             const message = err instanceof Error ? err.message : 'Failed to start audio capture';
             setError(message);
+            clearPendingTimeout();
+            setPendingAction(null);
+            setIsRecording(false);
+            setStartedAt(null);
+            setRecordingDuration(0);
             stopCapture();
-        } finally {
-            isPendingRef.current = false;
         }
-    }, [isRecording, startCapture, sendMessage, stopCapture]);
+    }, [isRecording, pendingAction, startCapture, sendMessage, stopCapture, schedulePendingTimeout, clearPendingTimeout]);
 
     const stopRecording = useCallback(async () => {
-        if (!isRecording) return;
+        if ((!isRecording && pendingAction !== 'starting') || pendingAction === 'stopping') return;
+
+        shouldAcceptTranscriptRef.current = false;
+        setPendingAction('stopping');
+        setStartedAt(null);
+        setRecordingDuration(0);
+        setLiveTranscript([]);
+        setVisualizerBars(DEFAULT_VISUALIZER_BARS);
+        schedulePendingTimeout('stopping');
 
         // Stop audio capture
         stopCapture();
 
         // Tell backend to stop recording
         sendMessage({ type: 'meeting_stop_recording' });
-    }, [isRecording, stopCapture, sendMessage]);
+    }, [isRecording, pendingAction, stopCapture, sendMessage, schedulePendingTimeout]);
 
     const clearTranscript = useCallback(() => {
         setLiveTranscript([]);
@@ -121,25 +185,36 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
     // Handle incoming WS messages for recording state
     // This will be called from the parent component that manages WS
     const handleRecordingStarted = useCallback((data: { recording_id: string; started_at: number }) => {
+        clearPendingTimeout();
+        shouldAcceptTranscriptRef.current = true;
+        setPendingAction(null);
         setIsRecording(true);
         setRecordingId(data.recording_id);
         setStartedAt(data.started_at);
         setRecordingDuration(0);
         setLiveTranscript([]);
-    }, []);
+    }, [clearPendingTimeout]);
 
     const handleRecordingStopped = useCallback(() => {
+        clearPendingTimeout();
+        shouldAcceptTranscriptRef.current = false;
+        setPendingAction(null);
         setIsRecording(false);
         setRecordingId(null);
         setStartedAt(null);
+        setRecordingDuration(0);
         setLiveTranscript([]);
+        setVisualizerBars(DEFAULT_VISUALIZER_BARS);
         if (durationIntervalRef.current) {
             clearInterval(durationIntervalRef.current);
             durationIntervalRef.current = null;
         }
-    }, []);
+    }, [clearPendingTimeout]);
 
     const handleTranscriptChunk = useCallback((chunk: TranscriptChunk) => {
+        if (!shouldAcceptTranscriptRef.current) {
+            return;
+        }
         setLiveTranscript((prev) => [...prev, chunk]);
     }, []);
 
@@ -165,6 +240,15 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
                     handlersRef.current.handleTranscriptChunk(content as TranscriptChunk);
                     break;
                 case 'meeting_recording_error':
+                    clearPendingTimeout();
+                    shouldAcceptTranscriptRef.current = false;
+                    setPendingAction(null);
+                    setIsRecording(false);
+                    setRecordingId(null);
+                    setStartedAt(null);
+                    setRecordingDuration(0);
+                    setLiveTranscript([]);
+                    setVisualizerBars(DEFAULT_VISUALIZER_BARS);
                     setError(typeof content === 'object' && content !== null && 'error' in content
                         ? String((content as { error: string }).error)
                         : 'Recording error');
@@ -173,18 +257,21 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
                     break;
             }
         });
-    }, [subscribe]);
+    }, [subscribe, clearPendingTimeout]);
 
     return (
         <MeetingRecorderContext.Provider
             value={{
                 isRecording,
-                isPending: isPendingRef.current,
+                isRecordingUi,
+                isPending: pendingAction !== null,
+                pendingAction,
                 recordingId,
                 liveTranscript,
                 recordingDuration,
                 startedAt,
                 error,
+                visualizerBars,
                 startRecording,
                 stopRecording,
                 clearTranscript,
@@ -198,6 +285,7 @@ export const MeetingRecorderProvider: React.FC<ProviderProps> = ({ children }) =
 
 // ---- Hook ----
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useMeetingRecorder(): MeetingRecorderContextValue {
     const ctx = useContext(MeetingRecorderContext);
     if (!ctx) {

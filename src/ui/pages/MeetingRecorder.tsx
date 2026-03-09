@@ -12,8 +12,12 @@ const MeetingRecorder: React.FC = () => {
     const navigate = useNavigate();
     const {
         isRecording,
+        isRecordingUi,
+        isPending,
+        pendingAction,
         liveTranscript,
         recordingDuration,
+        visualizerBars,
         startRecording,
         stopRecording,
         error,
@@ -43,71 +47,108 @@ const MeetingRecorder: React.FC = () => {
         return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
+    const recordButtonLabel = pendingAction === 'starting'
+        ? 'Starting...'
+        : pendingAction === 'stopping'
+            ? 'Stopping...'
+            : isRecordingUi
+                ? 'Stop Recording'
+                : 'Start Recording';
+
+    const transcriptEmptyState = pendingAction === 'starting'
+        ? 'Starting audio capture... transcript will appear here'
+        : isRecordingUi
+            ? 'Listening... transcript will appear here'
+            : 'Press Start Recording to begin';
+
+    const transcriptStatus = pendingAction === 'starting'
+        ? 'Starting...'
+        : pendingAction === 'stopping'
+            ? 'Stopping...'
+            : isRecordingUi
+                ? 'Live'
+                : 'Standby';
+
     return (
         <div className="meeting-recorder-container">
             <TitleBar setMini={setMini} />
 
             <div className="meeting-recorder-content">
-                {/* Recording Control */}
-                <div className="meeting-recorder-controls">
-                    {error && (
-                        <div className="meeting-recorder-error" role="alert" onClick={clearError}>
-                            {error}
-                            <span className="meeting-recorder-error-dismiss">×</span>
-                        </div>
-                    )}
-                    <button
-                        className={`meeting-record-btn ${isRecording ? 'recording' : ''}`}
-                        onClick={isRecording ? stopRecording : startRecording}
-                    >
-                        <span className="meeting-record-btn-icon">
-                            {isRecording ? '■' : '●'}
-                        </span>
-                        <span className="meeting-record-btn-label">
-                            {isRecording ? 'Stop Recording' : 'Start Recording'}
-                        </span>
-                    </button>
+                {error && (
+                    <div className="meeting-recorder-error" role="alert" onClick={clearError}>
+                        {error}
+                        <span className="meeting-recorder-error-dismiss">×</span>
+                    </div>
+                )}
 
-                    {isRecording && (
-                        <div className="meeting-recorder-timer">
-                            <span className="meeting-recorder-pulse" />
-                            {formatDuration(recordingDuration)}
-                        </div>
-                    )}
-                </div>
+                <section className="meeting-recorder-control-panel">
+                    <div className="meeting-recorder-controls">
+                        <button
+                            className={`meeting-record-btn ${isRecordingUi ? 'recording' : ''}`}
+                            onClick={isRecordingUi ? stopRecording : startRecording}
+                            disabled={isPending}
+                            aria-busy={isPending}
+                        >
+                            <span className="meeting-record-btn-icon">
+                                {isRecording || pendingAction === 'stopping' ? '■' : '●'}
+                            </span>
+                            <span className="meeting-record-btn-label">{recordButtonLabel}</span>
+                        </button>
+                    </div>
 
-                {/* Live Transcript */}
-                <div className="meeting-recorder-transcript-header">Live Transcript</div>
-                <div
-                    className="meeting-recorder-transcript"
-                    ref={transcriptContainerRef}
-                    onScroll={handleScroll}
-                >
-                    {liveTranscript.length === 0 ? (
-                        <div className="meeting-recorder-empty">
-                            {isRecording
-                                ? 'Listening... transcript will appear here'
-                                : 'Press Start Recording to begin'}
+                    <div className={`meeting-recorder-visualizer ${isRecordingUi ? 'active' : ''}`} aria-hidden="true">
+                        {visualizerBars.map((level, index) => (
+                            <span
+                                key={index}
+                                className="meeting-recorder-visualizer-bar"
+                                style={{ '--bar-scale': level } as React.CSSProperties}
+                            />
+                        ))}
+                    </div>
+                </section>
+
+                <section className="meeting-recorder-transcript-panel">
+                    <div className="meeting-recorder-transcript-topbar">
+                        <div className="meeting-recorder-transcript-heading-row">
+                            <div className="meeting-recorder-transcript-header">Live Transcript</div>
+                            <div className="meeting-recorder-transcript-badge">{transcriptStatus}</div>
                         </div>
-                    ) : (
-                        liveTranscript.map((chunk, i) => (
-                            <div key={i} className="meeting-transcript-chunk">
-                                <span className="meeting-transcript-time">
-                                    [{formatDuration(Math.floor(chunk.start_time))}]
-                                </span>
-                                <span className="meeting-transcript-text">{chunk.text}</span>
+
+                        <div className="meeting-recorder-meta-row">
+                            <div className={`meeting-recorder-timer${isRecordingUi ? ' live' : ''}`}>
+                                <span className={`meeting-recorder-pulse${isRecording ? ' active' : ''}`} />
+                                {formatDuration(recordingDuration)}
                             </div>
-                        ))
-                    )}
-                    <div ref={transcriptEndRef} />
-                </div>
+                        </div>
+                    </div>
+
+                    <div
+                        className="meeting-recorder-transcript"
+                        ref={transcriptContainerRef}
+                        onScroll={handleScroll}
+                    >
+                        {liveTranscript.length === 0 ? (
+                            <div className="meeting-recorder-empty">{transcriptEmptyState}</div>
+                        ) : (
+                            liveTranscript.map((chunk, i) => (
+                                <div key={i} className="meeting-transcript-chunk">
+                                    <span className="meeting-transcript-time">
+                                        [{formatDuration(Math.floor(chunk.start_time))}]
+                                    </span>
+                                    <span className="meeting-transcript-text">{chunk.text}</span>
+                                </div>
+                            ))
+                        )}
+                        <div ref={transcriptEndRef} />
+                    </div>
+                </section>
             </div>
 
             <ModeSelector
                 captureMode="none"
                 meetingRecordingMode={true}
-                onFullscreenMode={() => navigate('/')}
-                onPrecisionMode={() => navigate('/')}
+                onFullscreenMode={() => navigate('/', { state: { selectedCaptureMode: 'fullscreen' } })}
+                onPrecisionMode={() => navigate('/', { state: { selectedCaptureMode: 'precision' } })}
                 onMeetingMode={() => { /* already on recorder */ }}
                 regionSSIcon={regionSSIcon}
                 fullscreenSSIcon={fullscreenSSIcon}

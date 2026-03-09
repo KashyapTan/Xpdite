@@ -154,6 +154,7 @@ function App() {
   const pendingCreatedTabIdRef = useRef<string | null>(null);
   const generatingModelRef = useRef<string>('');
   const pendingTurnActionsRef = useRef<Map<string, PendingTurnAction>>(new Map());
+  const hasNormalizedCaptureModeRef = useRef(false);
   // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
   const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
 
@@ -1116,7 +1117,9 @@ function App() {
     if (handleGlobalMessage(data)) return;
 
     // Determine which tab this message is for
-    const messageTabId = (data as Record<string, unknown>).tab_id as string | undefined ?? 'default';
+    const messageTabId = 'tab_id' in data && typeof data.tab_id === 'string'
+      ? data.tab_id
+      : 'default';
 
     if (messageTabId === activeTabIdRef.current) {
       handleActiveTabMessage(data);
@@ -1329,9 +1332,39 @@ function App() {
     wsSend({ type: 'remove_screenshot', id });
   };
 
-  const sendCaptureMode = (mode: 'fullscreen' | 'precision' | 'none') => {
+  const sendCaptureMode = useCallback((mode: 'fullscreen' | 'precision' | 'none') => {
     wsSend({ type: 'set_capture_mode', mode });
-  };
+  }, [wsSend]);
+
+  useEffect(() => {
+    if (hasNormalizedCaptureModeRef.current) {
+      return;
+    }
+
+    hasNormalizedCaptureModeRef.current = true;
+
+    const state = location.state as { selectedCaptureMode?: 'fullscreen' | 'precision' } | null;
+    const selectedCaptureMode = state?.selectedCaptureMode;
+
+    if (selectedCaptureMode) {
+      screenshotState.setMeetingRecordingMode(false);
+      screenshotState.setCaptureMode(selectedCaptureMode);
+      sendCaptureMode(selectedCaptureMode);
+      return;
+    }
+
+    if (screenshotState.meetingRecordingMode) {
+      const fallbackCaptureMode = screenshotState.captureMode === 'none'
+        ? 'precision'
+        : screenshotState.captureMode;
+
+      screenshotState.setMeetingRecordingMode(false);
+      if (screenshotState.captureMode === 'none') {
+        screenshotState.setCaptureMode(fallbackCaptureMode);
+      }
+      sendCaptureMode(fallbackCaptureMode);
+    }
+  }, [location.state, screenshotState, sendCaptureMode]);
 
   const fullscreenModeEnabled = () => {
     screenshotState.setCaptureMode('fullscreen');
@@ -1346,7 +1379,6 @@ function App() {
   };
 
   const meetingRecordingModeEnabled = () => {
-    screenshotState.setCaptureMode('none');
     screenshotState.setMeetingRecordingMode(true);
     sendCaptureMode('none');
     navigate('/recorder');

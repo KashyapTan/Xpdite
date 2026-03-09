@@ -25,26 +25,37 @@ export function ModeSelector({
   regionSSIcon,
   fullscreenSSIcon,
 }: ModeSelectorProps) {
+  const activeMode = meetingRecordingMode ? 'meeting' : captureMode;
+
   return (
-    <div className="mode-selection-section">
-      <div
-        className={`regionssmode${captureMode === 'precision' ? '-active' : ''}`}
+    <div className="mode-selection-section" role="tablist" aria-label="Capture mode selector">
+      <button
+        type="button"
+        className={`mode-selector-button${activeMode === 'precision' ? ' mode-selector-button-active' : ''}`}
         onClick={onPrecisionMode}
         title="Talk to a specific region of your screen"
+        aria-label="Precision capture mode"
+        aria-pressed={activeMode === 'precision'}
       >
         <img src={regionSSIcon} alt="Region Screenshot Mode" className="region-ss-icon" />
-      </div>
-      <div
-        className={`fullscreenssmode${captureMode === 'fullscreen' ? '-active' : ''}`}
+      </button>
+      <button
+        type="button"
+        className={`mode-selector-button${activeMode === 'fullscreen' ? ' mode-selector-button-active' : ''}`}
         onClick={onFullscreenMode}
         title="Talk to anything on your screen"
+        aria-label="Fullscreen capture mode"
+        aria-pressed={activeMode === 'fullscreen'}
       >
         <img src={fullscreenSSIcon} alt="Full Screen Screenshot Mode" className="fullscreen-ss-icon" />
-      </div>
-      <div
-        className={`meetingrecordermode${meetingRecordingMode ? '-active' : ''}`}
+      </button>
+      <button
+        type="button"
+        className={`mode-selector-button${activeMode === 'meeting' ? ' mode-selector-button-active' : ''}`}
         onClick={onMeetingMode}
         title="Meeting recorder mode"
+        aria-label="Meeting recorder mode"
+        aria-pressed={activeMode === 'meeting'}
       >
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="meeting-recording-icon">
           <path d="M2 10v3"/>
@@ -54,7 +65,7 @@ export function ModeSelector({
           <path d="M18 5v13"/>
           <path d="M22 10v3"/>
         </svg>
-      </div>
+      </button>
     </div>
   );
 }

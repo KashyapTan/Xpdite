@@ -17,15 +17,20 @@ import { useRef, useCallback } from 'react';
 // Audio constants matching backend expectations
 const TARGET_SAMPLE_RATE = 16000;
 const CHUNK_INTERVAL_MS = 500; // Send a chunk every 500ms
+const VISUALIZER_BAR_COUNT = 24;
+const VISUALIZER_INTERVAL_MS = 60;
 
 export function useAudioCapture(
     sendMessage: (msg: Record<string, unknown>) => void,
+    onVisualizerFrame?: (levels: number[]) => void,
 ) {
     const audioContextRef = useRef<AudioContext | null>(null);
     const loopbackStreamRef = useRef<MediaStream | null>(null);
     const micStreamRef = useRef<MediaStream | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const analyserRef = useRef<AnalyserNode | null>(null);
     const chunkerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+    const visualizerIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const pcmBufferRef = useRef<Float32Array[]>([]);
 
     // Shared cleanup logic — used by both stopCapture and startCapture's
@@ -36,12 +41,20 @@ export function useAudioCapture(
             clearInterval(chunkerIntervalRef.current);
             chunkerIntervalRef.current = null;
         }
+        if (visualizerIntervalRef.current) {
+            clearInterval(visualizerIntervalRef.current);
+            visualizerIntervalRef.current = null;
+        }
         if (processorRef.current) {
             processorRef.current.disconnect();
             processorRef.current = null;
         }
+        if (analyserRef.current) {
+            analyserRef.current.disconnect();
+            analyserRef.current = null;
+        }
         if (audioContextRef.current) {
-            audioContextRef.current.close();
+            void audioContextRef.current.close().catch(() => undefined);
             audioContextRef.current = null;
         }
         if (loopbackStreamRef.current) {
@@ -53,7 +66,8 @@ export function useAudioCapture(
             micStreamRef.current = null;
         }
         pcmBufferRef.current = [];
-    }, []);
+        onVisualizerFrame?.([]);
+    }, [onVisualizerFrame]);
 
     const startCapture = useCallback(async () => {
         // Guard against double-start: clean up any existing capture first
@@ -108,17 +122,54 @@ export function useAudioCapture(
             audioContextRef.current = ctx;
 
             const destination = ctx.createMediaStreamDestination();
+            let visualizerSource: MediaStreamAudioSourceNode | null = null;
 
             // Connect loopback audio
             if (loopbackStream.getAudioTracks().length > 0) {
                 const loopbackSource = ctx.createMediaStreamSource(loopbackStream);
                 loopbackSource.connect(destination);
+                visualizerSource ??= loopbackSource;
             }
 
             // Connect mic audio
             if (micStream && micStream.getAudioTracks().length > 0) {
                 const micSource = ctx.createMediaStreamSource(micStream);
                 micSource.connect(destination);
+                visualizerSource = micSource;
+            }
+
+            if (visualizerSource && onVisualizerFrame) {
+                const analyser = ctx.createAnalyser();
+                analyser.fftSize = 256;
+                analyser.smoothingTimeConstant = 0.82;
+                visualizerSource.connect(analyser);
+                analyserRef.current = analyser;
+
+                const frequencyData = new Uint8Array(analyser.frequencyBinCount);
+                visualizerIntervalRef.current = setInterval(() => {
+                    analyser.getByteFrequencyData(frequencyData);
+
+                    const levels = Array.from({ length: VISUALIZER_BAR_COUNT }, (_, index) => {
+                        const start = Math.floor((index * frequencyData.length) / VISUALIZER_BAR_COUNT);
+                        const end = Math.max(start + 1, Math.floor(((index + 1) * frequencyData.length) / VISUALIZER_BAR_COUNT));
+
+                        let total = 0;
+                        for (let binIndex = start; binIndex < end; binIndex += 1) {
+                            total += frequencyData[binIndex];
+                        }
+
+                        const average = total / (end - start);
+                        const normalized = average / 255;
+                        const boosted = Math.pow(normalized, 0.58) * 1.5;
+                        return Math.min(1, Math.max(0.14, boosted));
+                    });
+
+                    try {
+                        onVisualizerFrame(levels);
+                    } catch (error) {
+                        console.error('Failed to update meeting visualizer:', error);
+                    }
+                }, VISUALIZER_INTERVAL_MS);
             }
 
             // 4. Set up ScriptProcessorNode to capture PCM data
@@ -170,10 +221,14 @@ export function useAudioCapture(
                 const b64 = btoa(binary);
 
                 // Send as JSON message
-                sendMessage({
-                    type: 'meeting_audio_chunk',
-                    audio: b64,
-                });
+                try {
+                    sendMessage({
+                        type: 'meeting_audio_chunk',
+                        audio: b64,
+                    });
+                } catch (error) {
+                    console.error('Failed to send meeting audio chunk:', error);
+                }
             }, CHUNK_INTERVAL_MS);
 
         } catch (err) {
@@ -182,7 +237,7 @@ export function useAudioCapture(
             cleanupRefs();
             throw err;
         }
-    }, [sendMessage, cleanupRefs]);
+    }, [sendMessage, cleanupRefs, onVisualizerFrame]);
 
     const stopCapture = useCallback(() => {
         cleanupRefs();
