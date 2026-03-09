@@ -130,7 +130,7 @@ const SettingsTools: React.FC = () => {
                    className={`settings-tools-expand-btn ${isExpanded ? 'expanded' : ''}`}
                    onClick={() => toggleExpand(server.server)}
                  >
-                   <ChevronRightIcon size={12} />
+                   <ChevronRightIcon size={16} />
                  </button>
                 
                 <div className="settings-tools-server-info" onClick={() => toggleExpand(server.server)}>
