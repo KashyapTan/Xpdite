@@ -4,6 +4,7 @@
  * Shows the model's reasoning process in a collapsible section.
  */
 import ReactMarkdown from 'react-markdown';
+import { ChevronRightIcon } from '../icons/AppIcons';
 import { LoadingDots } from './LoadingDots';
 
 interface ThinkingSectionProps {
@@ -21,7 +22,10 @@ export function ThinkingSection({ thinking, isThinking, collapsed, onToggle }: T
   return (
     <div className="thinking-section">
       <div className="thinking-header" onClick={onToggle}>
-        <span className={`thinking-arrow ${collapsed ? '' : 'expanded'}`}>▶</span>
+        <ChevronRightIcon
+          size={12}
+          className={`thinking-arrow ${collapsed ? '' : 'expanded'}`}
+        />
         <span className="thinking-label">
           {isThinking ? 'Thinking...' : 'Thought process'}
         </span>

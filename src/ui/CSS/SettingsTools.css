@@ -117,13 +117,20 @@
   border: none;
   color: rgba(255, 255, 255, 0.4);
   margin-right: 15px;
-  font-size: 0.8rem;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: transform 0.2s;
 }
 
 .settings-tools-expand-btn.expanded {
   transform: rotate(90deg);
+}
+
+.settings-tools-expand-btn svg {
+  display: block;
 }
 
 .settings-tools-server-info {

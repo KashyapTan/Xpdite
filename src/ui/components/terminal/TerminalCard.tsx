@@ -5,6 +5,14 @@
  * Shows command summary with expand/collapse for output preview.
  */
 import { useState } from 'react';
+import {
+  BanIcon,
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  TerminalIcon,
+  XIcon,
+} from '../icons/AppIcons';
 import type { TerminalEvent } from '../../types';
 
 interface TerminalCardProps {
@@ -24,14 +32,16 @@ export function TerminalCard({ events }: TerminalCardProps) {
         className="terminal-history-header"
         onClick={() => setIsExpanded(!isExpanded)}
       >
-        <span className="terminal-history-icon">📟</span>
+        <TerminalIcon size={14} className="terminal-history-icon" />
         <span className="terminal-history-title">
           Terminal Activity · {events.length} command{events.length !== 1 ? 's' : ''}
           · {(totalDuration / 1000).toFixed(1)}s total
         </span>
-        <span className="terminal-history-toggle">
-          {isExpanded ? '▼' : '▶'}
-        </span>
+        {isExpanded ? (
+          <ChevronDownIcon size={10} className="terminal-history-toggle" />
+        ) : (
+          <ChevronRightIcon size={10} className="terminal-history-toggle" />
+        )}
       </div>
 
       {isExpanded && (
@@ -48,7 +58,7 @@ export function TerminalCard({ events }: TerminalCardProps) {
 function TerminalEventRow({ event }: { event: TerminalEvent }) {
   const [showOutput, setShowOutput] = useState(false);
 
-  const icon = event.denied ? '⊘' : event.exit_code === 0 ? '✓' : '✗';
+  const EventStatusIcon = event.denied ? BanIcon : event.exit_code === 0 ? CheckIcon : XIcon;
   const iconClass = event.denied
     ? 'denied'
     : event.exit_code === 0
@@ -61,7 +71,7 @@ function TerminalEventRow({ event }: { event: TerminalEvent }) {
         className="terminal-event-summary"
         onClick={() => setShowOutput(!showOutput)}
       >
-        <span className={`terminal-event-icon ${iconClass}`}>{icon}</span>
+        <EventStatusIcon size={12} className={`terminal-event-icon ${iconClass}`} />
         <span className="terminal-event-command">{event.command}</span>
         <span className="terminal-event-duration">
           {(event.duration_ms / 1000).toFixed(1)}s

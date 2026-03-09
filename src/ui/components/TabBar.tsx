@@ -1,12 +1,12 @@
 /**
  * TabBar — horizontal tab strip between the title bar and the chat area.
  *
- * Shows one tab per open conversation, with a close (×) button on each tab
+ * Shows one tab per open conversation, with a close button on each tab
  * and a "new chat" button that reuses the existing new-chat icon.
  */
 import React from 'react';
 import { useTabs } from '../contexts/TabContext';
-import newChatIcon from '../assets/new-chat-icon.svg';
+import { XIcon } from './icons/AppIcons';
 import '../CSS/TabBar.css';
 
 interface TabBarProps {
@@ -15,14 +15,7 @@ interface TabBarProps {
 }
 
 const TabBar: React.FC<TabBarProps> = ({ wsSend }) => {
-  const { tabs, activeTabId, createTab, closeTab, switchTab } = useTabs();
-
-  const handleCreate = () => {
-    const id = createTab();
-    if (id) {
-      wsSend({ type: 'tab_created', tab_id: id });
-    }
-  };
+  const { tabs, activeTabId, closeTab, switchTab } = useTabs();
 
   const handleClose = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
@@ -46,19 +39,18 @@ const TabBar: React.FC<TabBarProps> = ({ wsSend }) => {
             <span className="tab-bar-tab-title">{tab.title}</span>
             {tabs.length > 1 && (
               <button
+                type="button"
                 className="tab-bar-tab-close"
                 onClick={e => handleClose(e, tab.id)}
                 title="Close tab"
+                aria-label={`Close ${tab.title}`}
               >
-                ×
+                <XIcon size={12} />
               </button>
             )}
           </div>
         ))}
       </div>
-      {/* <button className="tab-bar-new" onClick={handleCreate} title="New tab">
-        <img src={newChatIcon} alt="New Tab" className="tab-bar-new-icon" />
-      </button> */}
     </div>
   );
 };

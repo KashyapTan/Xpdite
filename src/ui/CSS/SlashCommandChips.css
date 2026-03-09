@@ -54,10 +54,8 @@
     flex-shrink: 0;
 }
 
-.chip-remove-btn::before {
-    content: '×';
-    font-size: 0.8rem;
-    line-height: 1;
+.chip-remove-btn svg {
+    display: block;
 }
 
 .chip-remove-btn:hover {

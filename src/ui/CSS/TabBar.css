@@ -65,7 +65,9 @@
   background: none;
   border: none;
   color: inherit;
-  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   line-height: 1;
   padding: 0 2px;
   cursor: pointer;
@@ -74,8 +76,14 @@
   flex-shrink: 0;
 }
 
+.tab-bar-tab-close svg {
+  display: block;
+}
+
 .tab-bar-tab:hover .tab-bar-tab-close,
-.tab-bar-tab.active .tab-bar-tab-close {
+.tab-bar-tab.active .tab-bar-tab-close,
+.tab-bar-tab:focus-within .tab-bar-tab-close,
+.tab-bar-tab-close:focus-visible {
   opacity: 0.6;
 }
 

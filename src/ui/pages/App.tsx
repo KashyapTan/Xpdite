@@ -26,6 +26,7 @@ import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
 import TabBar from '../components/TabBar';
 import { ResponseArea } from '../components/chat/ResponseArea';
+import { BoltIcon } from '../components/icons/AppIcons';
 import { QueryInput } from '../components/input/QueryInput';
 import { QueueDropdown } from '../components/input/QueueDropdown';
 import { ModeSelector } from '../components/input/ModeSelector';
@@ -1521,14 +1522,20 @@ function App() {
         {/* Session mode indicators */}
         {terminalSessionRequest && (
           <div className="terminal-session-chip">
-            <span>⚡ Session mode requested</span>
+            <span className="terminal-session-chip-label">
+              <BoltIcon size={12} className="terminal-session-chip-icon" />
+              <span>Session mode requested</span>
+            </span>
             <button onClick={() => handleTerminalSessionResponse(true)}>Allow</button>
             <button onClick={() => handleTerminalSessionResponse(false)}>Deny</button>
           </div>
         )}
         {terminalSessionActive && (
           <div className="terminal-session-chip">
-            <span>⚡ Session Mode Active</span>
+            <span className="terminal-session-chip-label">
+              <BoltIcon size={12} className="terminal-session-chip-icon" />
+              <span>Session Mode Active</span>
+            </span>
             <button onClick={handleStopSession}>Stop</button>
           </div>
         )}

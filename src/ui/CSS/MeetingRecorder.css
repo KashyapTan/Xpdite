@@ -135,7 +135,7 @@
 }
 
 .meeting-recorder-error-dismiss {
-  font-size: 1rem;
+  display: block;
   opacity: 0.6;
   margin-left: 4px;
   flex-shrink: 0;
@@ -181,7 +181,9 @@
 }
 
 .meeting-record-btn-icon {
-  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: #ff6d7f;
 }
 

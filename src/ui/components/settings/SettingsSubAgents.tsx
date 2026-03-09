@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
+import { CheckIcon } from '../icons/AppIcons';
 import '../../CSS/SettingsSubAgents.css';
 
 interface SubAgentSettings {
@@ -117,7 +118,12 @@ const SettingsSubAgents: React.FC = () => {
         </div>
       </div>
 
-      {status === 'saved' && <div className="sub-agent-saved">Settings saved ✓</div>}
+      {status === 'saved' && (
+        <div className="sub-agent-saved">
+          <CheckIcon size={14} className="sub-agent-saved-icon" />
+          <span>Settings saved</span>
+        </div>
+      )}
 
       <div className="sub-agent-info-section">
         <h3>How Sub-Agents Work</h3>

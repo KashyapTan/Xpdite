@@ -391,6 +391,16 @@
   margin: 4px 0;
 }
 
+.terminal-session-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-session-chip-icon {
+  flex-shrink: 0;
+}
+
 .terminal-session-chip button {
   background: none;
   border: none;

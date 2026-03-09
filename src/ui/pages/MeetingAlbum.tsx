@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
+import { XIcon } from '../components/icons/AppIcons';
 import '../CSS/MeetingAlbum.css';
 
 interface MeetingRecordingSummary {
@@ -197,11 +198,13 @@ const MeetingAlbum: React.FC = () => {
                         {formatDuration(rec.duration_seconds)} · {formatTime(rec.started_at)}
                       </span>
                       <button
+                        type="button"
                         className="meeting-album-delete-btn"
                         onClick={(e) => handleDelete(rec.id, e)}
                         title="Delete recording"
+                        aria-label={`Delete ${rec.title || 'recording'}`}
                       >
-                        ×
+                        <XIcon size={14} />
                       </button>
                     </div>
                   </div>

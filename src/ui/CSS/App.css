@@ -641,7 +641,9 @@ textarea,
 }
 
 .thinking-arrow {
-  font-size: 0.6rem;
+  width: 12px;
+  height: 12px;
+  display: block;
   transition: transform 0.2s ease;
   color: rgba(255, 255, 255, 0.4);
 }
@@ -946,8 +948,10 @@ textarea,
 }
 
 .message-chip-icon {
-  font-size: 0.6rem;
+  width: 12px;
+  height: 12px;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 
 .message-chip-name {
@@ -1113,7 +1117,9 @@ textarea,
 }
 
 .chip-icon {
-  font-size: 0.6rem;
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .chip-name {
@@ -1128,7 +1134,6 @@ textarea,
   border: none;
   color: rgba(255, 255, 255, 0.5);
   cursor: pointer;
-  font-size: 0.8rem;
   line-height: 1;
   padding: 0;
   margin-left: 2px;

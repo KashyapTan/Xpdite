@@ -3,6 +3,10 @@ import { api } from '../../services/api';
 import type { Skill } from '../../types';
 import '../../CSS/SettingsSkills.css';
 
+function getErrorMessage(error: unknown, fallback: string): string {
+    return error instanceof Error ? error.message : fallback;
+}
+
 const SettingsSkills: React.FC = () => {
     const [skills, setSkills] = useState<Skill[]>([]);
     const [loading, setLoading] = useState(true);
@@ -38,9 +42,9 @@ const SettingsSkills: React.FC = () => {
             const newEnabled = !skill.enabled;
             await api.skillsApi.toggle(skill.name, newEnabled);
             setSkills(prev => prev.map(s => s.name === skill.name ? { ...s, enabled: newEnabled } : s));
-        } catch (e: any) {
-            console.error("Failed to toggle skill", e);
-            alert(e.message || "Failed to toggle skill");
+        } catch (error: unknown) {
+            console.error("Failed to toggle skill", error);
+            alert(getErrorMessage(error, "Failed to toggle skill"));
         }
     };
 
@@ -107,8 +111,8 @@ const SettingsSkills: React.FC = () => {
             await loadSkills();
             setEditingSkill(null);
             setIsCreating(false);
-        } catch (e: any) {
-            setEditError(e.message || "Failed to save skill");
+        } catch (error: unknown) {
+            setEditError(getErrorMessage(error, "Failed to save skill"));
         }
     };
 
@@ -117,8 +121,8 @@ const SettingsSkills: React.FC = () => {
         try {
             await api.skillsApi.delete(name);
             await loadSkills();
-        } catch (e: any) {
-            alert(e.message || "Failed to delete skill");
+        } catch (error: unknown) {
+            alert(getErrorMessage(error, "Failed to delete skill"));
         }
     };
 

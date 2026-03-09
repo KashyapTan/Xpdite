@@ -51,15 +51,21 @@
     align-items: center;
     justify-content: center;
     border-radius: 6px;
-    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.78);
+}
+
+.gpu-badge svg {
+    display: block;
 }
 
 .gpu-cuda {
     background: rgba(118, 185, 0, 0.15);
+    color: #9fd156;
 }
 
 .gpu-cpu {
     background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.68);
 }
 
 .gpu-label {

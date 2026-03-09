@@ -2,6 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import { api } from '../services/api';
+import {
+    CalendarIcon,
+    CheckIcon,
+    ClipboardListIcon,
+    HourglassIcon,
+    MailIcon,
+    RecordIcon,
+    XIcon,
+} from '../components/icons/AppIcons';
 import TitleBar from '../components/TitleBar';
 import '../CSS/MeetingRecordingDetail.css';
 
@@ -227,9 +236,11 @@ const MeetingRecordingDetail: React.FC = () => {
     const renderActionCard = (action: ActionSuggestion, idx: number) => {
         const edited = editingActions[idx] || action;
         const result = actionResults[idx];
-        const typeLabel = action.type === 'calendar_event' ? '📅 Calendar Event'
-            : action.type === 'email' ? '✉️ Email Draft'
-                : '📋 Task';
+        const { label: typeLabel, Icon: TypeIcon } = action.type === 'calendar_event'
+            ? { label: 'Calendar Event', Icon: CalendarIcon }
+            : action.type === 'email'
+                ? { label: 'Email Draft', Icon: MailIcon }
+                : { label: 'Task', Icon: ClipboardListIcon };
         const typeColor = action.type === 'calendar_event' ? '#4f8cff'
             : action.type === 'email' ? '#ff6b9d'
                 : '#50cc50';
@@ -238,10 +249,16 @@ const MeetingRecordingDetail: React.FC = () => {
         return (
             <div key={idx} className="meeting-action-card" style={{ borderLeftColor: typeColor }}>
                 <div className="meeting-action-card-header">
-                    <span style={{ color: typeColor }}>{typeLabel}</span>
+                    <span className="meeting-action-type" style={{ color: typeColor }}>
+                        <TypeIcon size={14} className="meeting-action-type-icon" />
+                        <span>{typeLabel}</span>
+                    </span>
                     {result && (
                         <span className={`meeting-action-result ${result.success ? 'success' : 'error'}`}>
-                            {result.success ? '✓ Done' : '✗ Failed'}
+                            {result.success
+                                ? <CheckIcon size={12} className="meeting-action-result-icon" />
+                                : <XIcon size={12} className="meeting-action-result-icon" />}
+                            <span>{result.success ? 'Done' : 'Failed'}</span>
                         </span>
                     )}
                 </div>
@@ -328,12 +345,18 @@ const MeetingRecordingDetail: React.FC = () => {
 
                         {/* Status Banners */}
                         {recording.status === 'recording' && (
-                            <div className="meeting-detail-banner recording">● Recording in progress</div>
+                            <div className="meeting-detail-banner recording">
+                                <RecordIcon size={12} className="meeting-detail-banner-icon" />
+                                <span>Recording in progress</span>
+                            </div>
                         )}
                         {recording.status === 'processing' && (
                             <div className="meeting-detail-banner processing">
-                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                                    <span>⏳ Processing — {processingProgress?.step || 'starting'}...</span>
+                                <div className="meeting-detail-banner-processing-header" style={{ marginBottom: 6 }}>
+                                    <span className="meeting-detail-banner-label">
+                                        <HourglassIcon size={14} className="meeting-detail-banner-icon" />
+                                        <span>Processing — {processingProgress?.step || 'starting'}...</span>
+                                    </span>
                                     <span style={{ fontSize: '0.8em', opacity: 0.7 }}>
                                         {processingProgress ? `${Math.round(processingProgress.percentage)}%` : ''}
                                     </span>

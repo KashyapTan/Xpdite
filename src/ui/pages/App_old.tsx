@@ -6,7 +6,6 @@ import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import '../CSS/App.css';
 import TitleBar from '../components/TitleBar';
-import xpditeLogo from '../assets/transparent-xpdite-logo.png';
 // import plusSignSvg from '../assets/plus-icon.svg';
 import micSignSvg from '../assets/mic-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
@@ -14,6 +13,7 @@ import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import meetingRecordingIcon from '../assets/meeting-record-icon.svg';
 import contextWindowInsightsIcon from '../assets/context-window-icon.svg';
 import scrollDownIcon from '../assets/scroll-down-icon.svg';
+import { CameraIcon, ChevronRightIcon, XIcon } from '../components/icons/AppIcons';
 // Extend the Window interface to include electronAPI
 declare global {
   interface Window {
@@ -30,10 +30,10 @@ function App() {
   const [thinking, setThinking] = useState<string>('');
   const [isThinking, setIsThinking] = useState<boolean>(false);
   const [thinkingCollapsed, setThinkingCollapsed] = useState<boolean>(true);
-  const [status, setStatus] = useState<string>('Connecting to server...');
+  const [, setStatus] = useState<string>('Connecting to server...');
   const [error, setError] = useState<string>('');
   const [canSubmit, setCanSubmit] = useState<boolean>(false);
-  const { setMini, setIsHidden, isHidden } = useOutletContext<{ 
+  const { setMini, setIsHidden } = useOutletContext<{ 
     setMini: (val: boolean) => void, 
     setIsHidden: (val: boolean) => void,
     isHidden: boolean
@@ -47,7 +47,7 @@ function App() {
   // Chat history for multi-turn conversations
   const [chatHistory, setChatHistory] = useState<Array<{role: 'user' | 'assistant', content: string, thinking?: string, images?: Array<{name: string, thumbnail: string}>, toolCalls?: Array<{name: string, args: Record<string, unknown>, result: string, server: string}>}>>([]);
   const [currentQuery, setCurrentQuery] = useState<string>('');
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [, setConversationId] = useState<string | null>(null);
   
   const location = useLocation();
   
@@ -316,7 +316,11 @@ function App() {
                 const resumeData = JSON.parse(data.content);
                 setConversationId(resumeData.conversation_id);
                 // Load the conversation messages into chat history
-                const msgs = resumeData.messages.map((m: any) => ({
+                const msgs = resumeData.messages.map((m: {
+                  role: 'user' | 'assistant';
+                  content: string;
+                  images?: Array<{ name: string; thumbnail: string }>;
+                }) => ({
                   role: m.role as 'user' | 'assistant',
                   content: m.content,
                   images: m.images && m.images.length > 0 ? m.images : undefined,
@@ -565,7 +569,7 @@ function App() {
                               className="message-chip-thumb"
                             />
                           ) : (
-                            <span className="message-chip-icon">📷</span>
+                            <CameraIcon size={12} className="message-chip-icon" />
                           )}
                           <span className="message-chip-name">{img.name || `Image ${imgIdx + 1}`}</span>
                           {/* Hover preview popup */}
@@ -659,7 +663,10 @@ function App() {
                 className="thinking-header"
                 onClick={() => setThinkingCollapsed(!thinkingCollapsed)}
               >
-                <span className={`thinking-arrow ${thinkingCollapsed ? '' : 'expanded'}`}>▶</span>
+                <ChevronRightIcon
+                  size={12}
+                  className={`thinking-arrow ${thinkingCollapsed ? '' : 'expanded'}`}
+                />
                 <span className="thinking-label">
                   {isThinking ? 'Thinking...' : 'Thought process'}
                 </span>
@@ -783,7 +790,7 @@ function App() {
                               className="chip-thumb"
                             />
                           ) : (
-                            <span className="chip-icon">📷</span>
+                            <CameraIcon size={12} className="chip-icon" />
                           )}
                         </div>
                         <span className="chip-name">SS{index + 1}</span>
@@ -792,7 +799,7 @@ function App() {
                           onClick={() => handleRemoveScreenshot(ss.id)}
                           title="Remove"
                         >
-                          ×
+                          <XIcon size={12} />
                         </button>
                         {/* Hover preview popup */}
                         <div className="chip-hover-preview">
