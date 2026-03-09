@@ -160,8 +160,8 @@ export function useAudioCapture(
 
                         const average = total / (end - start);
                         const normalized = average / 255;
-                        const boosted = Math.pow(normalized, 0.58) * 1.5;
-                        return Math.min(1, Math.max(0.14, boosted));
+                        const boosted = Math.pow(normalized, 0.68) * 1.22;
+                        return Math.min(1, Math.max(0.12, boosted));
                     });
 
                     try {
