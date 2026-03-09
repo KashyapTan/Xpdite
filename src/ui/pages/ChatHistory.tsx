@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import TitleBar from '../components/TitleBar';
+import { XIcon } from '../components/icons/AppIcons';
 import { useTabs } from '../contexts/TabContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../CSS/ChatHistory.css';
@@ -144,11 +145,13 @@ const ChatHistory: React.FC = () => {
             <div className="chat-history-list-item-date-section">
 
               <button
+                type="button"
                 className="chat-history-delete-btn"
                 onClick={(e) => handleDeleteConversation(e, convo.id)}
                 title="Delete conversation"
+                aria-label={`Delete ${convo.title}`}
               >
-                ×
+                <XIcon size={14} />
               </button>
               <span className="chat-history-list-item-time">{formatTime(convo.date)}</span>
             </div>

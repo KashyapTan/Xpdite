@@ -24,7 +24,10 @@ src/
     ├── components/
     │   ├── Layout.tsx        # Shell; manages mini/hidden state; passes {setMini,setIsHidden} via Outlet context
     │   ├── TitleBar.tsx      # Custom title bar: new-chat button, nav icons, mini-mode toggle
-    │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), switch/close; new-tab button commented out
+    │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), switch/close
+    │   ├── icons/
+    │   │   ├── AppIcons.tsx  # Shared inline SVG icon components used across the UI
+    │   │   └── iconPaths.ts  # Shared SVG path constants for React and DOM-built icons
     │   ├── chat/
     │   │   ├── ChatMessage.tsx          # User + assistant message; inline edit, retry, response version nav
     │   │   ├── CodeBlock.tsx            # Syntax-highlighted code block with copy button
@@ -118,6 +121,9 @@ This is intentional: mutating React state inside a streaming callback causes sta
 
 ### Content blocks — interleaved rendering
 The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, and `{ type: 'terminal_command' }` entries to render tool calls inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
+
+### Shared inline icons
+Reuse `src/ui/components/icons/AppIcons.tsx` for UI iconography instead of pasted Unicode glyphs or ad-hoc SVG duplication. If a non-React DOM builder needs the same icon (for example `QueryInput.tsx` chip rendering), reuse `src/ui/components/icons/iconPaths.ts` so the SVG path data stays centralized.
 
 ### Chat message metadata and footer actions
 `ChatMessage` now carries stable `messageId`, `turnId`, `timestamp`, `activeResponseIndex`, and `responseVersions`. `components/chat/ChatMessage.tsx` owns footer UI (copy, retry, timestamp, and user-only edit); `ResponseArea.tsx` just wires callbacks from `App.tsx`.

@@ -5,6 +5,7 @@
  * each with a cancel button.  Hidden when there are no items.
  */
 import { useState } from 'react';
+import { ChevronRightIcon, XIcon } from '../icons/AppIcons';
 import type { QueueItem } from '../../types';
 
 interface QueueDropdownProps {
@@ -36,7 +37,10 @@ export function QueueDropdown({ items, onCancel }: QueueDropdownProps) {
             <span className="queue-dropdown-preview" title={nextItem.preview}>{nextItem.preview}</span>
           </div>
         </div>
-        <span className={`queue-dropdown-chevron ${expanded ? 'open' : ''}`} aria-hidden="true">›</span>
+        <ChevronRightIcon
+          size={14}
+          className={`queue-dropdown-chevron ${expanded ? 'open' : ''}`}
+        />
       </button>
 
       {expanded && (
@@ -54,7 +58,7 @@ export function QueueDropdown({ items, onCancel }: QueueDropdownProps) {
                 title="Cancel this queued message"
                 aria-label="Cancel this queued message"
               >
-                <span aria-hidden="true">×</span>
+                <XIcon size={12} className="queue-dropdown-cancel-icon" />
               </button>
             </li>
           ))}

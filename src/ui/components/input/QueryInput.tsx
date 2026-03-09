@@ -15,6 +15,7 @@ import React, {
 } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import SlashCommandMenu from '../chat/SlashCommandMenu';
+import { X_ICON_PATHS } from '../icons/iconPaths';
 import { api } from '../../services/api';
 import type { Skill } from '../../types';
 import '../../CSS/SlashCommandChips.css';
@@ -41,6 +42,17 @@ type SlashTrigger = {
 const COMMAND_TOKEN_PATTERN = /(?<!\S)\/([a-zA-Z0-9_-]+)(?=\s|$)/g;
 const COMMAND_BODY_PATTERN = /^[a-zA-Z0-9_-]*$/;
 const SLASH_MENU_WIDTH = 250;
+
+function normalizeDomLabel(value: string): string {
+  return Array.from(value)
+    .map((character) => {
+      const codePoint = character.charCodeAt(0);
+      return codePoint < 0x20 || codePoint === 0x7f ? ' ' : character;
+    })
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 function mergeTextSegments(segments: QuerySegment[]): QuerySegment[] {
   const merged: QuerySegment[] = [];
@@ -281,6 +293,26 @@ function restoreSelectionOffset(editor: HTMLDivElement, offset: number): void {
   selection.addRange(range);
 }
 
+function buildChipRemoveIcon(): SVGSVGElement {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('width', '11');
+  svg.setAttribute('height', '11');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  svg.setAttribute('aria-hidden', 'true');
+
+  for (const pathValue of X_ICON_PATHS) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', pathValue);
+    svg.append(path);
+  }
+  return svg;
+}
+
 function buildChipNode(segment: Extract<QuerySegment, { type: 'chip' }>, index: number): HTMLSpanElement {
   const chipNode = document.createElement('span');
   chipNode.className = 'slash-command-chip query-input-chip';
@@ -288,7 +320,7 @@ function buildChipNode(segment: Extract<QuerySegment, { type: 'chip' }>, index: 
   chipNode.dataset.slashChip = 'true';
   chipNode.dataset.plainTextLength = String(`/${segment.command}`.length);
   chipNode.dataset.chipIndex = String(index);
-  chipNode.title = segment.skillName;
+  chipNode.title = normalizeDomLabel(segment.skillName);
 
   const chipTextNode = document.createElement('span');
   chipTextNode.className = 'chip-text';
@@ -297,10 +329,11 @@ function buildChipNode(segment: Extract<QuerySegment, { type: 'chip' }>, index: 
   const removeButton = document.createElement('button');
   removeButton.type = 'button';
   removeButton.className = 'chip-remove-btn';
-  removeButton.setAttribute('aria-label', `Remove /${segment.command}`);
+  removeButton.ariaLabel = `Remove /${normalizeDomLabel(segment.command)}`;
   removeButton.dataset.chipRemove = 'true';
   removeButton.dataset.chipIndex = String(index);
   removeButton.tabIndex = -1;
+  removeButton.append(buildChipRemoveIcon());
 
   chipNode.append(chipTextNode, removeButton);
   return chipNode;

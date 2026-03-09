@@ -132,6 +132,13 @@
   color: #34d399;
   font-size: 0.85rem;
   margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sub-agent-saved-icon {
+  flex-shrink: 0;
 }
 
 /* --- Info section --- */

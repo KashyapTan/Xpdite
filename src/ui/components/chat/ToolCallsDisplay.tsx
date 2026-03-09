@@ -140,7 +140,6 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
   const isRunning = toolCall.status === 'calling' || toolCall.status === 'progress';
   const hasResult = !isRunning && !!toolCall.result;
   const isSubAgent = toolCall.server === 'sub_agent';
-  const hasPartial = isSubAgent && isRunning && !!toolCall.partialResult;
   // Sub-agents are always expandable while running (to peek at output) or when complete
   const isExpandable = hasResult || (isSubAgent && isRunning);
   const displayContent = hasResult ? toolCall.result : toolCall.partialResult;

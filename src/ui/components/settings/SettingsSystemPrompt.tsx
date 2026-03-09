@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../../services/api";
+import { CheckIcon } from "../icons/AppIcons";
 import "../../CSS/SettingsSystemPrompt.css";
 
 export default function SettingsSystemPrompt() {
@@ -50,7 +51,12 @@ export default function SettingsSystemPrompt() {
                         Reset to Default
                     </button>
                     <button onClick={handleSave} className="primary-button" disabled={status === "saving"}>
-                        {status === "saving" ? "Saving…" : status === "saved" ? "Saved ✓" : "Save"}
+                        {status === "saving" ? "Saving…" : status === "saved" ? (
+                            <>
+                                <CheckIcon size={14} className="primary-button-icon" />
+                                Saved
+                            </>
+                        ) : "Save"}
                     </button>
 
                 </div>

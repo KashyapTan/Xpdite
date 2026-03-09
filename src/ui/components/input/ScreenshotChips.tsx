@@ -4,6 +4,7 @@
  * Displays screenshot thumbnails as removable chips.
  */
 import React from 'react';
+import { CameraIcon, XIcon } from '../icons/AppIcons';
 import type { Screenshot } from '../../types';
 
 interface ScreenshotChipsProps {
@@ -28,16 +29,18 @@ export function ScreenshotChips({ screenshots, onRemove }: ScreenshotChipsProps)
                 className="chip-thumb"
               />
             ) : (
-              <span className="chip-icon">📷</span>
+              <CameraIcon size={12} className="chip-icon" />
             )}
           </div>
           <span className="chip-name">SS{index + 1}</span>
           <button
+            type="button"
             className="chip-remove"
             onClick={() => onRemove(ss.id)}
-            title="Remove"
+            title="Remove screenshot"
+            aria-label={`Remove ${ss.name || `screenshot ${index + 1}`}`}
           >
-            ×
+            <XIcon size={12} />
           </button>
           {/* Hover preview popup */}
           <div className="chip-hover-preview">

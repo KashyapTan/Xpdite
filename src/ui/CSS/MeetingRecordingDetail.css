@@ -68,6 +68,9 @@
 /* ── Status Banner ───────────────────── */
 
 .meeting-detail-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 8px 14px;
     border-radius: 6px;
     font-size: 0.8rem;
@@ -155,9 +158,27 @@
 /* ── Processing banner ──────────────── */
 
 .meeting-detail-banner.processing {
+    display: block;
     background: rgba(255, 170, 0, 0.08);
     color: #ffaa00;
     border: 1px solid rgba(255, 170, 0, 0.2);
+}
+
+.meeting-detail-banner-processing-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.meeting-detail-banner-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.meeting-detail-banner-icon {
+    flex-shrink: 0;
 }
 
 /* ── Tier 2 Transcript with speakers ── */
@@ -333,6 +354,18 @@
     justify-content: space-between;
     font-size: 0.78rem;
     font-weight: 600;
+}
+
+.meeting-action-type,
+.meeting-action-result {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.meeting-action-type-icon,
+.meeting-action-result-icon {
+    flex-shrink: 0;
 }
 
 .meeting-action-result.success {

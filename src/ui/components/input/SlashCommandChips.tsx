@@ -1,4 +1,5 @@
 import React from 'react';
+import { XIcon } from '../icons/AppIcons';
 import '../../CSS/SlashCommandChips.css';
 
 interface SlashCommandChipsProps {
@@ -25,11 +26,14 @@ const SlashCommandChips: React.FC<SlashCommandChipsProps> = ({ query, onRemoveCo
                 <div key={cmd} className="slash-command-chip">
                     <span className="chip-text">{cmd}</span>
                     <button
+                        type="button"
                         className="chip-remove-btn"
                         aria-label={`Remove ${cmd}`}
                         onClick={() => onRemoveCommand(cmd)}
                         title={`Remove ${cmd}`}
-                    />
+                    >
+                        <XIcon size={11} />
+                    </button>
                 </div>
             ))}
         </div>

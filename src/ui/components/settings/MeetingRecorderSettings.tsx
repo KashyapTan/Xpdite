@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../../contexts/WebSocketContext';
+import { BoltIcon, MonitorIcon } from '../icons/AppIcons';
 import '../../CSS/MeetingRecorderSettings.css';
 
 interface ComputeInfo {
@@ -68,7 +69,9 @@ const MeetingRecorderSettings: React.FC = () => {
                 <div className="meeting-settings-label">GPU Acceleration</div>
                 <div className="meeting-settings-gpu-display">
                     <span className={`gpu-badge ${computeInfo?.backend === 'cuda' ? 'gpu-cuda' : 'gpu-cpu'}`}>
-                        {computeInfo?.backend === 'cuda' ? '⚡' : '🖥️'}
+                        {computeInfo?.backend === 'cuda'
+                            ? <BoltIcon size={16} />
+                            : <MonitorIcon size={16} />}
                     </span>
                     <span className="gpu-label">{gpuLabel}</span>
                 </div>

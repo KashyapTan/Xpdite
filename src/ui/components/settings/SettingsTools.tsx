@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
+import { ChevronRightIcon } from '../icons/AppIcons';
 import '../../CSS/SettingsTools.css';
 
 interface McpServer {
@@ -124,12 +125,13 @@ const SettingsTools: React.FC = () => {
           return (
             <div key={server.server} className="settings-tools-server-card">
               <div className="settings-tools-server-header">
-                <button 
-                  className={`settings-tools-expand-btn ${isExpanded ? 'expanded' : ''}`}
-                  onClick={() => toggleExpand(server.server)}
-                >
-                  ▶
-                </button>
+                 <button 
+                   type="button"
+                   className={`settings-tools-expand-btn ${isExpanded ? 'expanded' : ''}`}
+                   onClick={() => toggleExpand(server.server)}
+                 >
+                   <ChevronRightIcon size={12} />
+                 </button>
                 
                 <div className="settings-tools-server-info" onClick={() => toggleExpand(server.server)}>
                   <span className="settings-tools-server-name">{server.server}</span>

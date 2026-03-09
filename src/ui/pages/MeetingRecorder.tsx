@@ -1,5 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
+import { RecordIcon, StopSquareIcon, XIcon } from '../components/icons/AppIcons';
 import TitleBar from '../components/TitleBar';
 import { ModeSelector } from '../components/input/ModeSelector';
 import { useMeetingRecorder } from '../contexts/MeetingRecorderContext';
@@ -77,7 +78,7 @@ const MeetingRecorder: React.FC = () => {
                 {error && (
                     <div className="meeting-recorder-error" role="alert" onClick={clearError}>
                         {error}
-                        <span className="meeting-recorder-error-dismiss">×</span>
+                        <XIcon size={14} className="meeting-recorder-error-dismiss" />
                     </div>
                 )}
 
@@ -90,7 +91,9 @@ const MeetingRecorder: React.FC = () => {
                             aria-busy={isPending}
                         >
                             <span className="meeting-record-btn-icon">
-                                {isRecording || pendingAction === 'stopping' ? '■' : '●'}
+                                {isRecording || pendingAction === 'stopping'
+                                    ? <StopSquareIcon size={10} />
+                                    : <RecordIcon size={12} />}
                             </span>
                             <span className="meeting-record-btn-label">{recordButtonLabel}</span>
                         </button>

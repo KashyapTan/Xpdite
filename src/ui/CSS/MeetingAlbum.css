@@ -118,13 +118,18 @@
     background: none;
     border: none;
     color: rgba(255, 255, 255, 0.3);
-    font-size: 1.3em;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
     padding: 2px 6px;
     border-radius: 4px;
     line-height: 1;
     opacity: 0;
     transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.meeting-album-delete-btn svg {
+    display: block;
 }
 .meeting-album-list-item:hover .meeting-album-delete-btn {
     opacity: 1;
