@@ -5,10 +5,10 @@
  */
 import React from 'react';
 import { ChatMessage } from './ChatMessage';
-import { ThinkingSection } from './ThinkingSection';
 import { LoadingDots } from './LoadingDots';
 import { InlineContentBlocks } from './ToolCallsDisplay';
 import type { ChatMessage as ChatMessageType, ContentBlock } from '../../types';
+import { buildRenderableContentBlocks } from '../../utils/chatMessages';
 
 interface ResponseAreaProps {
   chatHistory: ChatMessageType[];
@@ -70,7 +70,15 @@ export function ResponseArea({
   bottomInset,
   scrollButtonBottom,
 }: ResponseAreaProps) {
-  const hasContentBlocks = contentBlocks && contentBlocks.length > 0;
+  const liveBlocks = buildRenderableContentBlocks({
+    content: '',
+    thinking,
+    contentBlocks,
+  });
+  const hasContentBlocks = !!liveBlocks && liveBlocks.length > 0;
+  const isSingleThinkingTimeline = !!liveBlocks
+    && liveBlocks.length === 1
+    && liveBlocks[0].type === 'thinking';
   const responseAreaStyle = {
     marginTop: hasTabBar ? 0 : `${topInset}px`,
     marginBottom: `${bottomInset}px`,
@@ -113,22 +121,15 @@ export function ResponseArea({
         {/* Loading animation while waiting for first content */}
         <LoadingDots isVisible={!error && !canSubmit && !thinking && !hasContentBlocks} />
 
-        {/* Current thinking process — only shown when no tool calls are in flight */}
-        {!error && thinking && !contentBlocks?.some(b => b.type === 'tool_call') && (
-          <ThinkingSection
-            thinking={thinking}
-            isThinking={isThinking}
-            collapsed={thinkingCollapsed}
-            onToggle={onToggleThinking}
-          />
-        )}
-
         {/* Live inline content blocks (text interleaved with tool calls) */}
         {!error && hasContentBlocks && (
           <div className="response">
             <div className="assistant-header">Xpdite • {generatingModel}</div>
             <InlineContentBlocks
-              blocks={contentBlocks!}
+              blocks={liveBlocks!}
+              isThinking={isThinking}
+              expanded={isSingleThinkingTimeline ? !thinkingCollapsed : undefined}
+              onToggleExpanded={isSingleThinkingTimeline ? onToggleThinking : undefined}
               onTerminalApprove={onTerminalApprove}
               onTerminalDeny={onTerminalDeny}
               onTerminalApproveRemember={onTerminalApproveRemember}

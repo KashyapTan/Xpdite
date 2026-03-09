@@ -140,7 +140,6 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
   const isRunning = toolCall.status === 'calling' || toolCall.status === 'progress';
   const hasResult = !isRunning && !!toolCall.result;
   const isSubAgent = toolCall.server === 'sub_agent';
-  const hasPartial = isSubAgent && isRunning && !!toolCall.partialResult;
   // Sub-agents are always expandable while running (to peek at output) or when complete
   const isExpandable = hasResult || (isSubAgent && isRunning);
   const displayContent = hasResult ? toolCall.result : toolCall.partialResult;
@@ -186,6 +185,9 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
 
 interface ToolChainTimelineProps {
   blocks: ContentBlock[];
+  isThinking?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
@@ -195,6 +197,9 @@ interface ToolChainTimelineProps {
 
 function ToolChainTimeline({
   blocks,
+  isThinking = false,
+  expanded: controlledExpanded,
+  onToggleExpanded,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
@@ -218,15 +223,29 @@ function ToolChainTimeline({
   const toolCalls = chainBlocks
     .filter((b): b is { type: 'tool_call'; toolCall: ToolCall } => b.type === 'tool_call')
     .map(b => b.toolCall);
+  const terminalBlocks = chainBlocks.filter(
+    (b): b is ContentBlock & { type: 'terminal_command' } => b.type === 'terminal_command',
+  );
+  const hasThinkingBlocks = chainBlocks.some((b) => b.type === 'thinking');
 
   const isAnyRunning = toolCalls.some(tc => tc.status === 'calling' || tc.status === 'progress');
+  const isTerminalRunning = terminalBlocks.some(
+    (block) => block.terminal.status === 'pending_approval' || block.terminal.status === 'running',
+  );
+  const isChainActive = isThinking || isAnyRunning || isTerminalRunning;
   const allDone = toolCalls.length > 0 && !isAnyRunning;
-  const [expanded, setExpanded] = useState(isAnyRunning);
+  const isThinkingOnlyChain = hasThinkingBlocks && toolCalls.length === 0 && terminalBlocks.length === 0;
+  const [internalExpanded, setInternalExpanded] = useState(isChainActive || isThinkingOnlyChain);
 
   // Auto-expand while tools are running
   useEffect(() => {
-    if (isAnyRunning) setExpanded(true);
-  }, [isAnyRunning]);
+    if (isChainActive || isThinkingOnlyChain) {
+      setInternalExpanded(true);
+    }
+  }, [isChainActive, isThinkingOnlyChain]);
+
+  const expanded = controlledExpanded ?? internalExpanded;
+  const handleToggleExpanded = onToggleExpanded ?? (() => setInternalExpanded((prev) => !prev));
 
   // Build the flat list of timeline items
   const timelineItems: Array<
@@ -254,16 +273,32 @@ function ToolChainTimeline({
     timelineItems.push({ kind: 'done' });
   }
 
-  const summary = getChainSummary(toolCalls);
+  const summary = (() => {
+    if (toolCalls.length > 0) {
+      return getChainSummary(toolCalls);
+    }
+
+    if (terminalBlocks.length > 0) {
+      const noun = terminalBlocks.length === 1 ? 'terminal command' : 'terminal commands';
+      return isChainActive ? `Running ${noun}` : `Ran ${terminalBlocks.length === 1 ? 'a' : terminalBlocks.length} ${noun}`;
+    }
+
+    if (hasThinkingBlocks) {
+      return isThinking ? 'Thinking...' : 'Thought process';
+    }
+
+    return 'Processing...';
+  })();
+  const headerIcon = isChainActive ? <SpinnerIcon /> : (isThinkingOnlyChain ? <HourglassIcon /> : <CheckIcon />);
 
   return (
     <>
       {/* Chain section */}
       {chainBlocks.length > 0 && (
         <div className="tool-chain">
-          <div className="tool-chain-header" onClick={() => setExpanded(!expanded)}>
+          <div className="tool-chain-header" onClick={handleToggleExpanded}>
             <div className="tool-chain-header-icon">
-              {isAnyRunning ? <SpinnerIcon /> : <CheckIcon />}
+              {headerIcon}
             </div>
             <span className="tool-chain-summary" title={summary}>{summary}</span>
             <ChevronIcon expanded={expanded} />
@@ -392,6 +427,9 @@ function ToolChainTimeline({
 
 interface InlineContentBlocksProps {
   blocks: ContentBlock[];
+  isThinking?: boolean;
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
@@ -401,18 +439,26 @@ interface InlineContentBlocksProps {
 
 export function InlineContentBlocks({
   blocks,
+  isThinking,
+  expanded,
+  onToggleExpanded,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
   onTerminalKill,
   onTerminalResize,
 }: InlineContentBlocksProps) {
-  const hasToolCalls = blocks.some(b => b.type === 'tool_call');
+  const hasTimelineBlocks = blocks.some(
+    (block) => block.type === 'thinking' || block.type === 'tool_call' || block.type === 'terminal_command',
+  );
 
-  if (hasToolCalls) {
+  if (hasTimelineBlocks) {
     return (
       <ToolChainTimeline
         blocks={blocks}
+        isThinking={isThinking}
+        expanded={expanded}
+        onToggleExpanded={onToggleExpanded}
         onTerminalApprove={onTerminalApprove}
         onTerminalDeny={onTerminalDeny}
         onTerminalApproveRemember={onTerminalApproveRemember}

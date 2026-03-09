@@ -7,10 +7,10 @@ import { useEffect, useState } from 'react';
 import type { ComponentPropsWithRef, ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from './CodeBlock';
-import { ThinkingSection } from './ThinkingSection';
-import { ToolCallsDisplay, InlineContentBlocks } from './ToolCallsDisplay';
+import { InlineContentBlocks } from './ToolCallsDisplay';
 import { copyToClipboard } from '../../utils/clipboard';
 import {
+  buildRenderableContentBlocks,
   formatMessageTimestamp,
   serializeMessageForCopy,
 } from '../../utils/chatMessages';
@@ -113,6 +113,12 @@ export function ChatMessage({
   const formattedTimestamp = formatMessageTimestamp(message.timestamp);
   const canPersistActions = !!message.messageId;
   const canSaveEdit = draftContent.trim().length > 0 && draftContent.trim() !== message.content.trim();
+  const renderableBlocks = buildRenderableContentBlocks(message);
+  const canControlThoughtTimeline = !!renderableBlocks
+    && renderableBlocks.some((block) => block.type === 'thinking')
+    && !renderableBlocks.some(
+      (block) => block.type === 'tool_call' || block.type === 'terminal_command',
+    );
   const footerClassName =
     message.role === 'user'
       ? 'message-footer message-footer-user'
@@ -188,17 +194,22 @@ export function ChatMessage({
   };
 
   const renderAssistantContent = () => {
-    if (message.contentBlocks && message.contentBlocks.length > 0) {
+    if (renderableBlocks && renderableBlocks.length > 0) {
       return (
         <InlineContentBlocks
-          blocks={message.contentBlocks}
+          blocks={renderableBlocks}
+          expanded={canControlThoughtTimeline ? !thinkingCollapsed : undefined}
+          onToggleExpanded={
+            canControlThoughtTimeline
+              ? () => setThinkingCollapsed((prev) => !prev)
+              : undefined
+          }
         />
       );
     }
 
     return (
       <>
-        {message.toolCalls && <ToolCallsDisplay toolCalls={message.toolCalls} />}
         <ReactMarkdown
           components={{
             code: CodeBlock as ComponentType<ComponentPropsWithRef<'code'>>,
@@ -212,22 +223,6 @@ export function ChatMessage({
 
   return (
     <div className={message.role === 'user' ? 'chat-user' : 'chat-assistant'}>
-      {message.role === 'assistant' && message.thinking && (
-        (() => {
-          const hasToolCalls =
-            message.contentBlocks?.some(b => b.type === 'tool_call') ||
-            (message.toolCalls && message.toolCalls.length > 0);
-          if (hasToolCalls) return null; // thinking is integrated into the chain
-          return (
-            <ThinkingSection
-              thinking={message.thinking}
-              isThinking={false}
-              collapsed={thinkingCollapsed}
-              onToggle={() => setThinkingCollapsed((prev) => !prev)}
-            />
-          );
-        })()
-      )}
       <div className="message-stack">
         <div className={message.role === 'user' ? 'query' : 'response'}>
           {message.role === 'assistant' && (

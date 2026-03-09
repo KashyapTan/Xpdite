@@ -54,13 +54,16 @@ export function serializeMessageForCopy(message: ChatMessage): string {
   if (message.contentBlocks && message.contentBlocks.length > 0) {
     return message.contentBlocks
       .map((block) => {
-        if (block.type === 'text') {
+        if (block.type === 'text' || block.type === 'thinking') {
           return block.content;
         }
         if (block.type === 'tool_call') {
           return serializeToolCall(block.toolCall);
         }
-        return serializeTerminalBlock(block.terminal);
+        if (block.type === 'terminal_command') {
+          return serializeTerminalBlock(block.terminal);
+        }
+        return '';
       })
       .filter(Boolean)
       .join('\n\n')
@@ -72,6 +75,13 @@ export function serializeMessageForCopy(message: ChatMessage): string {
 export function mapConversationContentBlock(
   block: ConversationContentBlockPayload,
 ): ContentBlock {
+  if (block.type === 'thinking') {
+    return {
+      type: 'thinking',
+      content: block.content ?? '',
+    };
+  }
+
   if (block.type === 'tool_call') {
     return {
       type: 'tool_call',
@@ -107,6 +117,35 @@ export function mapConversationContentBlock(
     type: 'text',
     content: block.content ?? '',
   };
+}
+
+export function buildRenderableContentBlocks(
+  message: Pick<ChatMessage, 'content' | 'thinking' | 'toolCalls' | 'contentBlocks'>,
+): ContentBlock[] | undefined {
+  if (message.contentBlocks && message.contentBlocks.length > 0) {
+    return message.contentBlocks;
+  }
+
+  const blocks: ContentBlock[] = [];
+
+  if (message.thinking?.trim()) {
+    blocks.push({ type: 'thinking', content: message.thinking });
+  }
+
+  if (message.toolCalls && message.toolCalls.length > 0) {
+    blocks.push(
+      ...message.toolCalls.map((toolCall) => ({
+        type: 'tool_call' as const,
+        toolCall,
+      })),
+    );
+  }
+
+  if (message.content.trim()) {
+    blocks.push({ type: 'text', content: message.content });
+  }
+
+  return blocks.length > 0 ? blocks : undefined;
 }
 
 function mapResponseVariantPayload(
