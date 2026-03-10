@@ -1,14 +1,23 @@
-import { StrictMode } from 'react'
+import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createHashRouter, RouterProvider } from 'react-router-dom'
 import { TabProvider } from './contexts/TabContext'
+import { BootProvider } from './contexts/BootContext'
 import Layout from './components/Layout.tsx'
 import App from './pages/App.tsx'
-import Settings from './pages/Settings.tsx'
-import ChatHistory from './pages/ChatHistory.tsx'
-import MeetingAlbum from './pages/MeetingAlbum.tsx'
-import MeetingRecorder from './pages/MeetingRecorder.tsx'
-import MeetingRecordingDetail from './pages/MeetingRecordingDetail.tsx'
+
+// Lazy-load non-chat pages to keep initial bundle small
+const Settings = lazy(() => import('./pages/Settings.tsx'))
+const ChatHistory = lazy(() => import('./pages/ChatHistory.tsx'))
+const MeetingAlbum = lazy(() => import('./pages/MeetingAlbum.tsx'))
+const MeetingRecorder = lazy(() => import('./pages/MeetingRecorder.tsx'))
+const MeetingRecordingDetail = lazy(() => import('./pages/MeetingRecordingDetail.tsx'))
+
+const LazyFallback = () => (
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.5)', fontFamily: 'Montserrat, sans-serif', fontSize: '13px' }}>
+    Loading...
+  </div>
+)
 
 const router = createHashRouter([
   {
@@ -21,23 +30,23 @@ const router = createHashRouter([
       },
       {
         path: '/settings',
-        element: <Settings />,
+        element: <Suspense fallback={<LazyFallback />}><Settings /></Suspense>,
       },
       {
         path: '/history',
-        element: <ChatHistory />,
+        element: <Suspense fallback={<LazyFallback />}><ChatHistory /></Suspense>,
       },
       {
         path: '/album',
-        element: <MeetingAlbum />,
+        element: <Suspense fallback={<LazyFallback />}><MeetingAlbum /></Suspense>,
       },
       {
         path: '/recorder',
-        element: <MeetingRecorder />,
+        element: <Suspense fallback={<LazyFallback />}><MeetingRecorder /></Suspense>,
       },
       {
         path: '/recording/:id',
-        element: <MeetingRecordingDetail />,
+        element: <Suspense fallback={<LazyFallback />}><MeetingRecordingDetail /></Suspense>,
       },
     ]
   }
@@ -45,8 +54,10 @@ const router = createHashRouter([
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <TabProvider>
-      <RouterProvider router={router} />
-    </TabProvider>
+    <BootProvider>
+      <TabProvider>
+        <RouterProvider router={router} />
+      </TabProvider>
+    </BootProvider>
   </StrictMode>,
 )

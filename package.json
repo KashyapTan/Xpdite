@@ -6,7 +6,7 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "npm-run-all --parallel dev:react dev:electron dev:ollama dev:pyserver",
+    "dev": "npm-run-all --parallel dev:react dev:electron dev:ollama",
     "dev:react": "vite",
     "dev:electron": "bun run transpile:electron && cross-env NODE_ENV=development electron .",
     "dev:pyserver": "\".venv\\\\Scripts\\\\python.exe\" -m source.main",

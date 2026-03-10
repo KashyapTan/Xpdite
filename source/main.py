@@ -47,6 +47,8 @@ import threading
 import time
 import asyncio
 import logging
+import json
+import sys as _sys
 
 import uvicorn
 
@@ -74,6 +76,13 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _emit_boot_marker(phase: str, message: str, progress: int) -> None:
+    """Emit a structured boot marker to stdout for Electron to parse."""
+    marker = json.dumps({"phase": phase, "message": message, "progress": progress})
+    print(f"XPDITE_BOOT {marker}", flush=True)  # noqa: T201
+    _sys.stdout.flush()
+
+
 def find_available_port(
     start_port: int = DEFAULT_PORT, max_attempts: int = MAX_PORT_ATTEMPTS
 ) -> int:
@@ -92,6 +101,8 @@ def find_available_port(
 
 def start_server():
     """Start FastAPI server in the current thread & store its loop."""
+    _emit_boot_marker("loading_runtime", "Loading AI runtime", 20)
+
     try:
         port = find_available_port()
         logger.info("Starting server on port %d", port)
@@ -105,6 +116,7 @@ def start_server():
     asyncio.set_event_loop(loop)
 
     # Initialize MCP servers
+    _emit_boot_marker("initializing_mcp", "Connecting tool servers", 45)
     try:
         loop.run_until_complete(init_mcp_servers())
     except Exception as e:
@@ -126,6 +138,7 @@ def start_server():
         logger.warning("Failed to start Google servers (non-fatal): %s", e)
 
     # Start uvicorn server
+    _emit_boot_marker("starting_http", "Preparing chat features", 75)
     config = uvicorn.Config(
         app, host="0.0.0.0", port=port, log_level="warning", loop="asyncio"
     )

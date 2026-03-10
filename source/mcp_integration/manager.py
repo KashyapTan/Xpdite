@@ -183,7 +183,7 @@ class McpToolManager:
             logger.warning("The server will work without '%s' tools.", server_name)
 
     def register_inline_tools(
-        self, server_name: str, tools: List[Dict[str, Any]]
+        self, server_name: str, tools: List[Dict[str, Any]], *, skip_embed: bool = False
     ) -> None:
         """Register tool schemas without spawning a subprocess.
 
@@ -194,6 +194,9 @@ class McpToolManager:
         The tool registry entry has ``session=None`` so ``call_tool()``
         will return an error if something accidentally tries to call the
         MCP session — the handler layer should intercept first.
+
+        Pass ``skip_embed=True`` during bulk initialization to defer
+        embedding to a single batch call at the end.
         """
         for tool in tools:
             name = tool["name"]
@@ -226,9 +229,10 @@ class McpToolManager:
             logger.debug("Registered inline tool: %s (from %s)", name, server_name)
 
         logger.info("Registered %d inline tool(s) for '%s'", len(tools), server_name)
-        # Incremental refresh only. init_mcp_servers() performs the final prune
-        # once all inline and subprocess-backed tools are registered.
-        retriever.embed_tools(self._ollama_tools)
+        if not skip_embed:
+            # Incremental refresh only. init_mcp_servers() performs the final prune
+            # once all inline and subprocess-backed tools are registered.
+            retriever.embed_tools(self._ollama_tools)
 
     async def call_tool(self, tool_name: str, arguments: dict) -> str:
         """Route a tool call to the correct MCP server."""
@@ -395,31 +399,41 @@ class McpToolManager:
             "GOOGLE_TOKEN_FILE": str(GOOGLE_TOKEN_FILE),
         }
 
-        # Connect Gmail server
+        # Connect Gmail and Calendar servers in parallel
+        connect_tasks = []
         if not self.is_server_connected("gmail"):
-            await self.connect_server(
-                "gmail",
-                sys.executable,
-                [str(PROJECT_ROOT / "mcp_servers" / "servers" / "gmail" / "server.py")],
-                env=env,
+            connect_tasks.append(
+                self.connect_server(
+                    "gmail",
+                    sys.executable,
+                    [str(PROJECT_ROOT / "mcp_servers" / "servers" / "gmail" / "server.py")],
+                    env=env,
+                )
             )
 
-        # Connect Calendar server
         if not self.is_server_connected("calendar"):
-            await self.connect_server(
-                "calendar",
-                sys.executable,
-                [
-                    str(
-                        PROJECT_ROOT
-                        / "mcp_servers"
-                        / "servers"
-                        / "calendar"
-                        / "server.py"
-                    )
-                ],
-                env=env,
+            connect_tasks.append(
+                self.connect_server(
+                    "calendar",
+                    sys.executable,
+                    [
+                        str(
+                            PROJECT_ROOT
+                            / "mcp_servers"
+                            / "servers"
+                            / "calendar"
+                            / "server.py"
+                        )
+                    ],
+                    env=env,
+                )
             )
+
+        if connect_tasks:
+            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.warning("Google server connection failed: %s", result)
 
         retriever.embed_tools(self._ollama_tools, prune_removed=True)
         logger.info(
@@ -472,17 +486,30 @@ async def init_mcp_servers():
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "demo" / "server.py")],
     # )
 
-    # ── Filesystem server ──────────────────────────────────────────
-    await mcp_manager.connect_server(
-        "filesystem",
-        sys.executable,
-        [str(PROJECT_ROOT / "mcp_servers" / "servers" / "filesystem" / "server.py")],
-    )
+    # ── Subprocess servers (connected in parallel) ──────────────────
+    async def _connect_with_timeout(name: str, cmd: str, args: list, timeout_s: float = 30.0):
+        """Connect a single MCP server with a timeout."""
+        try:
+            await asyncio.wait_for(
+                mcp_manager.connect_server(name, cmd, args),
+                timeout=timeout_s,
+            )
+        except asyncio.TimeoutError:
+            logger.warning("MCP server '%s' timed out after %.0fs", name, timeout_s)
+        except Exception as e:
+            logger.warning("MCP server '%s' connection failed: %s", name, e)
 
-    await mcp_manager.connect_server(
-        "websearch",
-        sys.executable,
-        [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
+    await asyncio.gather(
+        _connect_with_timeout(
+            "filesystem",
+            sys.executable,
+            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "filesystem" / "server.py")],
+        ),
+        _connect_with_timeout(
+            "websearch",
+            sys.executable,
+            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
+        ),
     )
 
     # ── Terminal tools (inline — no subprocess) ─────────────────────
@@ -646,6 +673,7 @@ async def init_mcp_servers():
                 },
             },
         ],
+        skip_embed=True,
     )
 
     # ── Sub-Agent tool (inline — no subprocess) ─────────────────────
@@ -694,6 +722,7 @@ async def init_mcp_servers():
                 },
             },
         ],
+        skip_embed=True,
     )
 
     # ── Add more servers here as you implement them ────────────────

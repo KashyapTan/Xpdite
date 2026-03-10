@@ -295,12 +295,30 @@ export interface Conversation {
 // Electron API Types
 // ============================================
 
+export type ElectronBootPhase =
+  | 'starting'
+  | 'launching_backend'
+  | 'connecting_tools'
+  | 'loading_interface'
+  | 'ready'
+  | 'error';
+
+export interface ElectronBootState {
+  phase: ElectronBootPhase;
+  message: string;
+  progress: number;
+  error?: string;
+}
+
 declare global {
   interface Window {
     electronAPI?: {
       focusWindow: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
       getServerPort: () => Promise<number>;
+      getBootState: () => Promise<ElectronBootState>;
+      onBootState: (callback: (state: ElectronBootState) => void) => () => void;
+      retryBoot: () => Promise<void>;
     };
   }
 }

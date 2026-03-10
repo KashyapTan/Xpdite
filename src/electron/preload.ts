@@ -14,4 +14,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getServerPort: () => {
         return ipcRenderer.invoke('get-server-port');
     },
+    getBootState: () => {
+        return ipcRenderer.invoke('get-boot-state');
+    },
+    onBootState: (callback: (state: unknown) => void) => {
+        const handler = (_event: unknown, state: unknown) => callback(state);
+        ipcRenderer.on('boot-state', handler);
+        return () => {
+            ipcRenderer.removeListener('boot-state', handler);
+        };
+    },
+    retryBoot: () => {
+        return ipcRenderer.invoke('retry-boot');
+    },
 });

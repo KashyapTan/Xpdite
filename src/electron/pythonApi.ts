@@ -7,6 +7,15 @@ import fs from 'fs';
 let pythonProcess: ChildProcess | null = null;
 let detectedPort: number = 8000;
 
+/** Callback for XPDITE_BOOT markers parsed from Python stdout. */
+type BootMarkerCallback = (marker: { phase: string; message: string; progress: number }) => void;
+let bootMarkerCallback: BootMarkerCallback | null = null;
+
+/** Register a listener for structured boot markers from the Python child process. */
+export function onBootMarker(cb: BootMarkerCallback) {
+    bootMarkerCallback = cb;
+}
+
 /** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
 const SERVER_PORT_RANGE = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
 
@@ -144,9 +153,6 @@ export async function startPythonServer(): Promise<void> {
     console.log('Cleaning up any existing processes before starting...');
     await killProcessesOnPorts(SERVER_PORT_RANGE);
     
-    // Wait a moment for cleanup to complete
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
     return new Promise((resolve, reject) => {
         const pythonPath = findPythonExecutable();
         const args = getPythonServerArgs();
@@ -178,23 +184,62 @@ export async function startPythonServer(): Promise<void> {
 
         pythonProcess = spawn(pythonPath, args, options);
         let serverStarted = false;
+        let settled = false;
+        let pollTimerId: ReturnType<typeof setTimeout> | null = null;
+
+        const safeResolve = () => {
+            if (settled) return;
+            settled = true;
+            if (pollTimerId) clearTimeout(pollTimerId);
+            resolve();
+        };
+        const safeReject = (err: Error) => {
+            if (settled) return;
+            settled = true;
+            if (pollTimerId) clearTimeout(pollTimerId);
+            reject(err);
+        };
+
+        // Line-buffer stdout so boot markers are never split across chunks
+        let stdoutBuffer = '';
+
+        const processStdoutLine = (line: string) => {
+            // Parse XPDITE_BOOT markers for boot state updates
+            const bootMatch = line.match(/XPDITE_BOOT\s+(\{.*\})/);
+            if (bootMatch) {
+                try {
+                    const marker = JSON.parse(bootMatch[1]);
+                    bootMarkerCallback?.(marker);
+                } catch {
+                    console.warn('Malformed XPDITE_BOOT marker:', bootMatch[1]);
+                }
+            }
+
+            // Extract port number from server output
+            const portMatch = line.match(/Starting server on port (\d+)/);
+            if (portMatch) {
+                detectedPort = parseInt(portMatch[1]);
+                console.log(`Detected server port: ${detectedPort}`);
+            }
+
+            // Track whether Python thinks it started (used to avoid
+            // false-positive rejection on process close, NOT for resolving)
+            if (line.includes('Starting FastAPI WebSocket server') ||
+                line.includes('Application startup complete')) {
+                serverStarted = true;
+            }
+        };
 
         if (pythonProcess) {
             pythonProcess.stdout?.on('data', (data) => {
-                const output = data.toString();
-                console.log(`Python stdout: ${output}`);
-                
-                // Extract port number from server output
-                const portMatch = output.match(/Starting server on port (\d+)/);
-                if (portMatch) {
-                    detectedPort = parseInt(portMatch[1]);
-                    console.log(`Detected server port: ${detectedPort}`);
-                }
-                
-                // Check if server started successfully
-                if (output.includes('Starting FastAPI WebSocket server') || 
-                    output.includes('Application startup complete')) {
-                    serverStarted = true;
+                stdoutBuffer += data.toString();
+                const lines = stdoutBuffer.split('\n');
+                stdoutBuffer = lines.pop()!; // keep the trailing incomplete line
+                for (const line of lines) {
+                    if (line.trim()) {
+                        console.log(`Python stdout: ${line}`);
+                        processStdoutLine(line);
+                    }
                 }
             });
 
@@ -206,87 +251,82 @@ export async function startPythonServer(): Promise<void> {
                 if (error.includes('error while attempting to bind on address') || 
                     error.includes('Address already in use')) {
                     console.log('Port conflict detected, Python server will try alternative ports...');
-                    return; // Don't reject immediately, let Python handle port finding
+                    return;
                 }
                 
-                // If we see other startup failures, reject immediately
+                // If we see startup-fatal failures, reject immediately
                 if (error.includes('ImportError') || 
                     error.includes('ModuleNotFoundError') || 
                     error.includes('SyntaxError')) {
                     if (!serverStarted) {
-                        reject(new Error(`Python server failed to start: ${error}`));
+                        safeReject(new Error(`Python server failed to start: ${error}`));
                     }
                 }
             });
 
             pythonProcess.on('error', (error) => {
                 console.error(`Failed to start Python process: ${error}`);
-                reject(error);
+                safeReject(error instanceof Error ? error : new Error(String(error)));
             });
 
             pythonProcess.on('close', (code) => {
                 console.log(`Python process exited with code ${code}`);
                 pythonProcess = null;
                 if (code !== 0 && !serverStarted) {
-                    reject(new Error(`Python process exited with code ${code}`));
+                    safeReject(new Error(`Python process exited with code ${code}`));
                 }
             });
         }
 
-        // Poll for server readiness: retry every 1s for up to 20s.
-        // PyInstaller unpacking can be slow on cold start.
+        // Poll for server readiness via health endpoint.
+        // Only a successful HTTP response confirms readiness.
         const POLL_INTERVAL_MS = 1000;
         const MAX_POLL_ATTEMPTS = 20;
         let pollAttempt = 0;
 
         const pollForServer = () => {
+            if (settled) return;
             pollAttempt++;
             const checkServerPorts = async () => {
                 try {
-                    // Try to find the server on the detected port or fallback ports
-                    // Build a de-duplicated list: detected first, then remaining range ports
                     const portsToTry = [detectedPort, ...SERVER_PORT_RANGE.filter(p => p !== detectedPort)];
-                    let serverFound = false;
                     
-                for (const port of portsToTry) {
-                    try {
-                        // Test if the server is responding with the health endpoint
-                        const controller = new AbortController();
-                        const timeoutId = setTimeout(() => controller.abort(), 1000);
-                        
-                        const response = await fetch(`http://localhost:${port}/api/health`, {
-                            method: 'GET',
-                            signal: controller.signal
-                        }).catch(() => null);
-                        
-                        clearTimeout(timeoutId);
-                        
-                        if (response && response.ok) {
-                            detectedPort = port;
-                            console.log(`Python server found on port ${port}`);
-                            serverFound = true;
-                            break;
+                    for (const port of portsToTry) {
+                        try {
+                            const controller = new AbortController();
+                            const timeoutId = setTimeout(() => controller.abort(), 1000);
+                            
+                            const response = await fetch(`http://localhost:${port}/api/health`, {
+                                method: 'GET',
+                                signal: controller.signal
+                            }).catch(() => null);
+                            
+                            clearTimeout(timeoutId);
+                            
+                            if (response && response.ok) {
+                                detectedPort = port;
+                                console.log(`Python server found on port ${port}`);
+                                safeResolve();
+                                return;
+                            }
+                        } catch {
+                            continue;
                         }
-                    } catch {
-                        // Continue to next port
-                        continue;
                     }
-                }                    if (serverFound || serverStarted) {
-                        console.log('Python server started successfully');
-                        resolve();
-                    } else if (pollAttempt < MAX_POLL_ATTEMPTS) {
+
+                    if (pollAttempt < MAX_POLL_ATTEMPTS) {
                         console.log(`Server not ready yet (attempt ${pollAttempt}/${MAX_POLL_ATTEMPTS}), retrying...`);
-                        setTimeout(pollForServer, POLL_INTERVAL_MS);
+                        pollTimerId = setTimeout(pollForServer, POLL_INTERVAL_MS);
                     } else {
                         console.error('Python server failed to start - no response on any port after retries');
-                        reject(new Error('Python server failed to start'));
+                        safeReject(new Error('Python server failed to start'));
                     }
                 } catch (error) {
                     console.error('Error checking Python server status:', error);
                     if (pollAttempt < MAX_POLL_ATTEMPTS) {
-                        setTimeout(pollForServer, POLL_INTERVAL_MS);
+                        pollTimerId = setTimeout(pollForServer, POLL_INTERVAL_MS);
                     } else {
-                        reject(error);
+                        safeReject(error instanceof Error ? error : new Error(String(error)));
                     }
                 }
             };
@@ -294,8 +334,9 @@ export async function startPythonServer(): Promise<void> {
             checkServerPorts();
         };
 
-        // Start first poll after 1s to give the process time to begin
-        setTimeout(pollForServer, POLL_INTERVAL_MS);
+        // Start polling immediately. The health checks already gate readiness,
+        // so delaying the first probe only adds dead time to startup.
+        pollForServer();
     });
 }
 
@@ -306,6 +347,7 @@ export async function stopPythonServer(): Promise<void> {
     if (cleaningUp) return;
     cleaningUp = true;
     console.log('Stopping Python server...');
+    try {
     
     // First try to gracefully stop the process
     if (pythonProcess) {
@@ -333,6 +375,9 @@ export async function stopPythonServer(): Promise<void> {
     }
     
     console.log('Python server cleanup completed');
+    } finally {
+        cleaningUp = false;
+    }
 }
 
 export function getServerPort(): number {

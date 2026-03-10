@@ -151,6 +151,8 @@ uv run <file_name>                            # run python files for testing
 
 **New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `manager.py`). Add interception in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`.
 
+**Boot system** → The Electron window loads instantly, showing a boot screen overlay (`src/ui/components/boot/BootScreen.tsx` + `BootContext.tsx`) while the Python backend starts. Boot progress is communicated via structured `XPDITE_BOOT {"phase":"...","message":"...","progress":N}` markers on stdout (emitted by `_emit_boot_marker()` in `source/main.py`), parsed in `pythonApi.ts`, and relayed to the renderer via the `boot-state` IPC channel. The backend is only considered ready after a successful HTTP health-check response — not from stdout markers alone. In dev mode (no Electron), `BootContext` falls back to polling `/api/health` on ports 8000–8009.
+
 ---
 
 ## Testing

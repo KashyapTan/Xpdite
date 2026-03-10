@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { WebSocketProvider } from '../contexts/WebSocketContext';
 import { MeetingRecorderProvider } from '../contexts/MeetingRecorderContext';
+import BootScreen from './boot/BootScreen';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
 import '../CSS/App.css';
 
@@ -35,6 +36,7 @@ const Layout: React.FC = () => {
           </div>
 
           <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
+            <BootScreen />
             <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
           </div>
         </div>

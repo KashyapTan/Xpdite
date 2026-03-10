@@ -7,9 +7,276 @@
     <title>Xpdite</title>
     <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300&family=Open+Sans:wght@300&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300&display=swap" rel="stylesheet">
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+
+      .boot-screen {
+        position: absolute;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: radial-gradient(ellipse at center, rgba(15, 15, 15, 0.95) 0%, rgba(0, 0, 0, 0.98) 100%);
+        border-radius: 8px;
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .boot-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 32px;
+      }
+
+      .bh-container {
+        position: relative;
+        width: 120px;
+        height: 120px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .bh-halo {
+        position: absolute;
+        width: 120px;
+        height: 120px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.06) 0%, transparent 70%);
+        animation: bh-pulse 3s ease-in-out infinite;
+      }
+
+      .bh-ring {
+        position: absolute;
+        width: 72px;
+        height: 72px;
+        border-radius: 50%;
+        border: 1px solid rgba(255, 255, 255, 0.25);
+        animation: bh-rotate 8s linear infinite;
+      }
+
+      .bh-void {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        background: rgba(5, 5, 5, 1);
+        box-shadow: 0 0 20px 4px rgba(0, 0, 0, 0.6);
+      }
+
+      .boot-status {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        width: 240px;
+      }
+
+      .boot-phase {
+        margin: 0;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.52);
+      }
+
+      .boot-progress {
+        display: grid;
+        gap: 8px;
+        width: 100%;
+      }
+
+      .boot-progress.hidden {
+        display: none;
+      }
+
+      .boot-progress-meta {
+        display: flex;
+        justify-content: flex-end;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 10px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(255, 255, 255, 0.55);
+      }
+
+      .boot-progress-value {
+        flex-shrink: 0;
+      }
+
+      .boot-progress-track {
+        width: 100%;
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.1);
+        overflow: hidden;
+      }
+
+      .boot-progress-fill {
+        height: 100%;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.4);
+        transition: width 0.25s ease-out;
+      }
+
+      .boot-status-detail {
+        min-height: 16px;
+        margin: 0;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 11px;
+        text-align: center;
+        color: rgba(255, 255, 255, 0.5);
+      }
+
+      .boot-error {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .boot-error.visible {
+        display: flex;
+      }
+
+      .boot-error-detail {
+        margin: 0;
+        font-family: 'Montserrat', sans-serif;
+        font-size: 11px;
+        color: rgba(255, 100, 100, 0.8);
+        text-align: center;
+        max-width: 280px;
+        word-break: break-word;
+      }
+
+      .boot-retry-btn {
+        padding: 6px 20px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.8);
+        font-family: 'Montserrat', sans-serif;
+        font-size: 12px;
+        cursor: pointer;
+      }
+
+      @keyframes bh-rotate {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      @keyframes bh-pulse {
+        0%, 100% { opacity: 0.5; transform: scale(1); }
+        50% { opacity: 1; transform: scale(1.08); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .bh-ring,
+        .bh-halo {
+          animation: none;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-screen">
+        <div class="boot-content">
+          <div class="bh-container" aria-hidden="true">
+            <div class="bh-halo"></div>
+            <div class="bh-ring"></div>
+            <div class="bh-void"></div>
+          </div>
+
+          <div class="boot-status">
+            <p class="boot-phase" id="fallback-boot-phase">Starting</p>
+
+            <div class="boot-progress" id="fallback-progress-block">
+              <div class="boot-progress-meta">
+                <span class="boot-progress-value" id="fallback-progress-value">5%</span>
+              </div>
+              <div class="boot-progress-track">
+                <div class="boot-progress-fill" id="fallback-progress-fill" style="width: 5%"></div>
+              </div>
+            </div>
+
+            <p class="boot-status-detail" id="fallback-boot-status"></p>
+
+            <div class="boot-error" id="fallback-error-state">
+              <p class="boot-error-detail" id="fallback-error-copy"></p>
+              <button class="boot-retry-btn" type="button" id="fallback-retry-button">Retry startup</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script>
+      (() => {
+        const phase = document.getElementById('fallback-boot-phase');
+        const status = document.getElementById('fallback-boot-status');
+        const progressBlock = document.getElementById('fallback-progress-block');
+        const progressValue = document.getElementById('fallback-progress-value');
+        const progressFill = document.getElementById('fallback-progress-fill');
+        const errorState = document.getElementById('fallback-error-state');
+        const errorCopy = document.getElementById('fallback-error-copy');
+        const retryButton = document.getElementById('fallback-retry-button');
+
+        const phaseLabels = {
+          starting: 'Starting',
+          launching_backend: 'Launching backend',
+          connecting_tools: 'Connecting tools',
+          loading_interface: 'Opening workspace',
+          ready: 'Ready',
+          error: 'Startup failed',
+        };
+
+        const applyState = (state) => {
+          const progress = state.phase === 'error'
+            ? 0
+            : Math.max(5, Math.min(state.progress ?? 0, 100));
+          const isError = state.phase === 'error';
+          if (phase) phase.textContent = phaseLabels[state.phase] || 'Starting';
+          if (progressValue) progressValue.textContent = progress + '%';
+          if (progressFill) progressFill.style.width = progress + '%';
+          if (progressBlock) progressBlock.classList.toggle('hidden', isError);
+          if (errorState) errorState.classList.toggle('visible', isError);
+          if (errorCopy) errorCopy.textContent = state.error || '';
+          if (status) status.textContent = isError ? (state.message || 'Startup failed.') : '';
+        };
+
+        if (retryButton) {
+          retryButton.addEventListener('click', async () => {
+            if (!window.electronAPI?.retryBoot) return;
+            retryButton.disabled = true;
+            retryButton.textContent = 'Retrying...';
+            try {
+              await window.electronAPI.retryBoot();
+            } finally {
+              retryButton.disabled = false;
+              retryButton.textContent = 'Retry startup';
+            }
+          });
+        }
+
+        if (!window.electronAPI?.getBootState) return;
+
+        window.electronAPI.getBootState().then(applyState).catch(() => {});
+        if (window.electronAPI.onBootState) {
+          window.electronAPI.onBootState(applyState);
+        }
+      })();
+    </script>
     <script type="module" src="/src/ui/main.tsx"></script>
   </body>
 </html>
