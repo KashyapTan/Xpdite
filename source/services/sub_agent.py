@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 # Concurrency limit tuned for typical single-GPU setups + cloud API rate limits.
 # Increase for multi-GPU hardware; cloud-only workloads may tolerate higher values.
-_CONCURRENCY_CAP = 5
+_CONCURRENCY_CAP = 10
 
 # Global semaphore enforced on every execute_sub_agent call
 _concurrency_semaphore = asyncio.Semaphore(_CONCURRENCY_CAP)
