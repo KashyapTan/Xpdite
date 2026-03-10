@@ -1,0 +1,1 @@
+"""Inline sub-agent tool metadata."""

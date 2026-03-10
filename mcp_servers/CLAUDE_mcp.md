@@ -12,8 +12,8 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 | `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
 | `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
 | `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
-| `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Executed inline by `terminal_executor.py` with approval UI. |
-| `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Registered as inline tool in `manager.py`, intercepted in `cloud_provider.py` and `handlers.py`, executed by `services/sub_agent.py`. |
+| `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Schemas live in `terminal/inline_tools.py`; execution is inline via `terminal_executor.py` with approval UI. |
+| `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Schema lives in `sub_agent/inline_tools.py`; registration remains in `manager.py`, interception in `cloud_provider.py` and `handlers.py`, execution is in `services/sub_agent.py`. |
 | `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
 | `discord` | 📝 Placeholder | — | Needs `DISCORD_BOT_TOKEN` in `config/servers.json` |
 | `canvas` | 📝 Placeholder | — | Needs `CANVAS_URL` + `CANVAS_TOKEN` |
@@ -34,7 +34,8 @@ mcp_servers/
 │   ├── discord/             📝 server.py placeholder (no tools yet) — needs DISCORD_BOT_TOKEN
 │   ├── filesystem/          ✅ server.py + filesystem_descriptions.py
 │   ├── gmail/               ✅ server.py + gmail_descriptions.py
-│   ├── terminal/            ✅ server.py + terminal_descriptions.py + blocklist.py (tools run inline, not as subprocess)
+│   ├── sub_agent/           ✅ inline_tools.py + sub_agent_descriptions.py (inline-only tool metadata)
+│   ├── terminal/            ✅ server.py + terminal_descriptions.py + inline_tools.py + blocklist.py (tools run inline, not as subprocess)
 │   ├── websearch/           ✅ server.py + websearch_descriptions.py
 │   └── github/, jira/, notion/, obsidian/, outlook/, slack/, teams/, whatsapp/, yahoo/   🗂️ Empty directories (no files)
 └── client/
@@ -107,4 +108,4 @@ Tools are auto-discovered on startup, indexed by the semantic retriever, and rou
 
 **Google-authenticated servers (`gmail`, `calendar`)** require a valid `user_data/google/token.json`. If the token is missing or expired, the tools will fail. Users must complete OAuth via Settings → Google.
 
-**The `sub_agent` server is an inline tool like `terminal`.** The `spawn_agent` tool is registered in `manager.py`'s `init_mcp_servers()` via `register_inline_tools("sub_agent", [...])`. Tool calls are intercepted in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) before reaching the MCP subprocess router. Sub-agents have no access to terminal tools or `spawn_agent` itself (enforced by `_EXCLUDED_TOOLS` set in `services/sub_agent.py`). Tier-to-model mapping is configurable via Settings → Sub-Agents (stored as `sub_agent_tier_fast` / `sub_agent_tier_smart` in the `settings` DB table).
+**The `sub_agent` server is an inline tool like `terminal`.** The `spawn_agent` schema lives in `mcp_servers/servers/sub_agent/inline_tools.py` and is registered in `manager.py`'s `init_mcp_servers()` via `register_inline_tools("sub_agent", SUB_AGENT_INLINE_TOOLS)`. Tool calls are intercepted in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) before reaching the MCP subprocess router. Sub-agents have no access to terminal tools or `spawn_agent` itself (enforced by `_EXCLUDED_TOOLS` set in `services/sub_agent.py`). Tier-to-model mapping is configurable via Settings → Sub-Agents (stored as `sub_agent_tier_fast` / `sub_agent_tier_smart` in the `settings` DB table).
