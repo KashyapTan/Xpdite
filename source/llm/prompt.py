@@ -39,7 +39,8 @@ When to use sub-agents:
 - You need to search for and read multiple files → spawn sub-agents for each independent read
 - You have multiple independent research questions → spawn one sub-agent per question
 - Any time you find yourself about to make 2+ sequential tool calls that don't depend on each other's results, consider spawning sub-agents to do them in parallel instead.
-- Spwan 3 sub-agents MAX at once, then determine if you need to read more.
+- Spwan 3 sub-agents MAX at once, then determine if you need to read more.\
+- Assign each sub-agent one single, specific task to accomplish, rather than multiple questions in one instruction.
 
 Guidelines:
 - Prefer fewer, well-scoped sub-agents over many small ones

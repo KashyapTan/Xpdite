@@ -22,6 +22,7 @@ class TestAppState:
         assert state.is_streaming is False
         assert state.stop_streaming is False
         assert state.capture_mode == "fullscreen"
+        assert state.active_tab_id == "default"
 
     def test_add_screenshot(self):
         state = self._make_state()

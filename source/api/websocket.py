@@ -124,8 +124,12 @@ async def websocket_endpoint(websocket: WebSocket):
     # Screenshots now live per-tab; send each tab's screenshots tagged
     # with the tab_id so the frontend can route them correctly.
     try:
-        from ..services.tab_manager_instance import tab_manager
+        from ..services.tab_manager_instance import _adopt_global_screenshots, tab_manager
         if tab_manager is not None:
+            if app_state.screenshot_list:
+                active_session = tab_manager.get_or_create(app_state.active_tab_id or "default")
+                _adopt_global_screenshots(active_session)
+
             for tid in tab_manager.get_all_tab_ids():
                 ts = tab_manager.get_state(tid)
                 if ts is not None:
@@ -146,6 +150,7 @@ async def websocket_endpoint(websocket: WebSocket):
     for ss in app_state.screenshot_list:
         await websocket.send_text(json.dumps({
             "type": "screenshot_added",
+            "tab_id": app_state.active_tab_id or "default",
             "content": {
                 "id": ss["id"],
                 "name": ss["name"],

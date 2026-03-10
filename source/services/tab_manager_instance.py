@@ -10,11 +10,24 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from .tab_manager import TabManager
+from .tab_manager import TabManager, TabSession
 
 logger = logging.getLogger(__name__)
 
 tab_manager: Optional[TabManager] = None  # type: ignore[assignment]
+
+
+def _adopt_global_screenshots(target_session: TabSession) -> int:
+    """Move legacy global screenshots into a concrete tab session."""
+    from ..core.state import app_state
+
+    if not app_state.screenshot_list:
+        return 0
+
+    adopted_screenshots = list(app_state.screenshot_list)
+    target_session.state.screenshot_list.extend(adopted_screenshots)
+    app_state.screenshot_list = []
+    return len(adopted_screenshots)
 
 
 def init_tab_manager() -> TabManager:
@@ -87,8 +100,12 @@ def init_tab_manager() -> TabManager:
 
     ollama_global_queue.set_broadcast_fn(_broadcast_msg)
 
-    # Create the default tab
-    tab_manager.ensure_default_tab()
+    # Create the default tab and absorb any screenshots that were captured
+    # before the tab manager became available.
+    default_session = tab_manager.ensure_default_tab()
+    adopted_count = _adopt_global_screenshots(default_session)
+    if adopted_count:
+        logger.info("Adopted %d legacy screenshot(s) into the default tab", adopted_count)
 
     logger.info("TabManager initialised with default tab")
     return tab_manager

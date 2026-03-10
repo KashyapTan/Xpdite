@@ -167,6 +167,8 @@ function App() {
     queueMap, setQueueItems, getTabSnapshot, setTabSnapshot, deleteTabSnapshot,
     registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
   } = useTabs();
+  const tabsRef = useRef(tabs);
+  const captureModeRef = useRef(screenshotState.captureMode);
   const activeTabIdRef = useRef(activeTabId);
   const saveTabStateRef = useRef<(tabId: string) => void>(() => {});
   const hasRestoredInitialTabRef = useRef(false);
@@ -326,6 +328,14 @@ function App() {
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
   }, [activeTabId]);
+
+  useEffect(() => {
+    tabsRef.current = tabs;
+  }, [tabs]);
+
+  useEffect(() => {
+    captureModeRef.current = screenshotState.captureMode;
+  }, [screenshotState.captureMode]);
 
   useEffect(() => {
     if (hasRestoredInitialTabRef.current) {
@@ -1143,7 +1153,11 @@ function App() {
         // Connection (re-)established — run onopen logic
         chatState.setStatus('Connected to server');
         chatState.setError('');
-        wsSend({ type: 'set_capture_mode', mode: screenshotState.captureMode });
+        for (const tab of tabsRef.current) {
+          wsSend({ type: 'tab_created', tab_id: tab.id });
+        }
+        wsSend({ type: 'tab_activated', tab_id: activeTabIdRef.current });
+        wsSend({ type: 'set_capture_mode', mode: captureModeRef.current });
         return;
       }
       if (data.type === '__ws_disconnected') {

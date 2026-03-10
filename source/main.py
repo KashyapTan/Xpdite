@@ -72,6 +72,8 @@ from .services.screenshots import process_screenshot, process_screenshot_start
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=_sys.stdout,
+    force=True,
 )
 logger = logging.getLogger(__name__)
 
@@ -111,9 +113,16 @@ def start_server():
         return
 
     loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    # Ensure the default tab exists before any hotkey-driven screenshot
+    # work is scheduled from the background listener thread.
+    from .services.tab_manager_instance import init_tab_manager
+
+    init_tab_manager()
+
     app_state.server_loop_holder["loop"] = loop
     app_state.server_loop_holder["port"] = port
-    asyncio.set_event_loop(loop)
 
     # Initialize MCP servers
     _emit_boot_marker("initializing_mcp", "Connecting tool servers", 45)
@@ -203,8 +212,9 @@ def main():
 
     poll_thread = threading.Thread(target=_poll_server_ready, daemon=True)
     poll_thread.start()
-    if not server_ready.wait(timeout=5.0):
-        logger.warning("Server loop not initialized; continuing anyway.")
+    if not server_ready.wait(timeout=15.0):
+        logger.error("Server loop not initialized; aborting startup.")
+        raise SystemExit(1)
 
     port = app_state.server_loop_holder.get("port", DEFAULT_PORT)
 

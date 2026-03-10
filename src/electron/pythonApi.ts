@@ -18,6 +18,122 @@ export function onBootMarker(cb: BootMarkerCallback) {
 
 /** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
 const SERVER_PORT_RANGE = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
+const HEALTHCHECK_HOST = '127.0.0.1';
+const STARTUP_POLL_INTERVAL_MS = 1000;
+const STARTUP_HEALTHCHECK_TIMEOUT_MS = 1500;
+const STARTUP_TIMEOUT_MS = 90_000;
+const PROCESS_RELEASE_GRACE_MS = 350;
+const OWNED_PROCESS_NAME_PATTERNS = ['python', 'xpdite', 'uvicorn', 'fastapi'];
+const OWNED_COMMAND_LINE_PATTERNS = ['source.main', 'xpdite-server', 'uvicorn', 'fastapi'];
+const OWNED_EXECUTABLE_NAMES = ['python.exe', 'pythonw.exe', 'xpdite-server.exe'];
+
+type PythonOutputSource = 'stdout' | 'stderr';
+type ProcessRecord = {
+    ProcessId?: number;
+    Name?: string;
+    CommandLine?: string | null;
+};
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseListeningPidsByPort(netstatOutput: string, ports: Set<number>): Map<number, Set<string>> {
+    const pidsByPort = new Map<number, Set<string>>();
+
+    for (const line of netstatOutput.split(/\r?\n/)) {
+        if (!line.includes('LISTENING')) {
+            continue;
+        }
+
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 5) {
+            continue;
+        }
+
+        const localAddress = parts[1];
+        const pid = parts[parts.length - 1];
+        const portText = localAddress.split(':').pop();
+        const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
+
+        if (!Number.isInteger(port) || !ports.has(port) || !pid) {
+            continue;
+        }
+
+        const portPids = pidsByPort.get(port) ?? new Set<string>();
+        portPids.add(pid);
+        pidsByPort.set(port, portPids);
+    }
+
+    return pidsByPort;
+}
+
+function parseTasklistProcessName(tasklistOutput: string): string | null {
+    const firstLine = tasklistOutput
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .find(Boolean);
+
+    if (!firstLine || firstLine.startsWith('INFO:')) {
+        return null;
+    }
+
+    const match = firstLine.match(/^"([^"]+)"/);
+    return match?.[1] ?? null;
+}
+
+function isOwnedProcess(processName: string | null): boolean {
+    if (!processName) {
+        return false;
+    }
+
+    const normalizedName = processName.toLowerCase();
+    return OWNED_PROCESS_NAME_PATTERNS.some((pattern) => normalizedName.includes(pattern));
+}
+
+function isOwnedCommandLine(commandLine: string | null | undefined): boolean {
+    if (!commandLine) {
+        return false;
+    }
+
+    const normalizedCommandLine = commandLine.toLowerCase();
+    return OWNED_COMMAND_LINE_PATTERNS.some((pattern) => normalizedCommandLine.includes(pattern));
+}
+
+function parseProcessRecords(stdout: string): ProcessRecord[] {
+    const trimmed = stdout.trim();
+    if (!trimmed) {
+        return [];
+    }
+
+    const parsed = JSON.parse(trimmed) as ProcessRecord | ProcessRecord[];
+    return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+async function collectKnownBackendPids(
+    execAsync: (command: string) => Promise<{ stdout: string; stderr: string }>,
+    pidsToKill: Set<string>,
+): Promise<void> {
+    const command = `powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $processes = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'pythonw.exe', 'xpdite-server.exe') } | Select-Object ProcessId, Name, CommandLine; if ($null -ne $processes) { $processes | ConvertTo-Json -Compress }"`;
+
+    try {
+        const { stdout } = await execAsync(command);
+        for (const record of parseProcessRecords(stdout)) {
+            const processId = record.ProcessId;
+            const processName = record.Name?.toLowerCase();
+
+            if (!processId || !processName || !OWNED_EXECUTABLE_NAMES.includes(processName)) {
+                continue;
+            }
+
+            if (isOwnedCommandLine(record.CommandLine)) {
+                pidsToKill.add(String(processId));
+            }
+        }
+    } catch (error) {
+        console.warn(`Unable to inspect non-listening backend processes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+}
 
 function findPythonExecutable(): string {
     if (isDev()) {
@@ -65,87 +181,56 @@ async function killProcessesOnPorts(ports: number[]): Promise<void> {
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
-    
-    for (const port of ports) {
-        try {
-            console.log(`Checking for processes on port ${port}...`);
-            
-            // Find processes using the port on Windows
-            const { stdout } = await execAsync(`netstat -ano | findstr :${port}`);
-            const lines = stdout.split('\n').filter(line => line.includes('LISTENING'));
-            
-            for (const line of lines) {
-                const parts = line.trim().split(/\s+/);
-                const pid = parts[parts.length - 1];
-                if (pid && !isNaN(parseInt(pid))) {
-                    try {
-                        // Check if process exists and get its name
-                        const { stdout: processInfo } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
-                        const processLines = processInfo.split('\n').filter(line => line.trim());
-                        
-                        for (const processLine of processLines) {
-                            if (processLine.includes(pid)) {
-                                const processName = processLine.split(',')[0].replace(/"/g, '').toLowerCase();
-                                
-                                // Kill if it's Python, our app, or related processes
-                                if (processName.includes('python') || 
-                                    processName.includes('xpdite') ||
-                                    processName.includes('uvicorn') ||
-                                    processName.includes('fastapi')) {
-                                    console.log(`Terminating process ${processName} (PID: ${pid}) on port ${port}`);
-                                    await execAsync(`taskkill /F /PID ${pid}`);
-                                } else {
-                                    console.log(`Found process ${processName} on port ${port}, but not terminating (not our process)`);
-                                }
-                            }
-                        }
-                    } catch {
-                        // Process might have already exited, try to kill anyway
-                        try {
-                            await execAsync(`taskkill /F /PID ${pid}`);
-                            console.log(`Force killed process ${pid} on port ${port}`);
-                        } catch {
-                            // Ignore if we can't kill it
-                        }
-                    }
-                }
-            }
-        } catch (error) {
-            // Port not in use or other error, continue
-            console.log(`No processes found on port ${port} or error checking: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-    }
-    
-    // Also try to kill any remaining Python processes that might be our server
+
+    const portSet = new Set(ports);
+    const pidsToKill = new Set<string>();
+    const rangeLabel = `${Math.min(...ports)}-${Math.max(...ports)}`;
+    console.log(`Checking for existing backend processes on ports ${rangeLabel}...`);
+
     try {
-        console.log('Checking for any remaining Python processes...');
-        const { stdout: allPythonProcesses } = await execAsync(`tasklist /FI "IMAGENAME eq python.exe" /NH /FO CSV`);
-        const pythonLines = allPythonProcesses.split('\n').filter(line => line.trim() && line.includes('python.exe'));
-        
-        for (const line of pythonLines) {
-            const parts = line.split(',');
-            if (parts.length >= 2) {
-                const pid = parts[1].replace(/"/g, '');
-                if (pid && !isNaN(parseInt(pid))) {
-                    try {
-                        // Check command line to see if it's our server
-                        const { stdout: cmdLine } = await execAsync(`wmic process where "ProcessId=${pid}" get CommandLine /value`);
-                        if (cmdLine.includes('xpdite-server') || 
-                            cmdLine.includes('source.main') || 
-                            cmdLine.includes('uvicorn') ||
-                            cmdLine.includes('fastapi')) {
-                            console.log(`Terminating Python server process (PID: ${pid})`);
-                            await execAsync(`taskkill /F /PID ${pid}`);
-                        }
-                    } catch {
-                        // Ignore errors when checking command line
-                    }
-                }
+        const { stdout } = await execAsync('netstat -ano -p tcp');
+        const pidsByPort = parseListeningPidsByPort(stdout, portSet);
+
+        for (const port of ports) {
+            const portPids = pidsByPort.get(port);
+            if (!portPids || portPids.size === 0) {
+                continue;
+            }
+
+            console.log(`Found PID(s) ${Array.from(portPids).join(', ')} listening on port ${port}`);
+            for (const pid of portPids) {
+                pidsToKill.add(pid);
             }
         }
     } catch (error) {
-        console.log(`Error checking for Python processes: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        console.warn(`Unable to inspect listening ports: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+
+    await collectKnownBackendPids(execAsync, pidsToKill);
+
+    if (pidsToKill.size === 0) {
+        console.log('No existing backend processes found on configured ports.');
+        return;
+    }
+
+    for (const pid of pidsToKill) {
+        try {
+            const { stdout: processInfo } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
+            const processName = parseTasklistProcessName(processInfo);
+
+            if (!isOwnedProcess(processName)) {
+                console.log(`Leaving unrelated process ${processName} (PID: ${pid}) running.`);
+                continue;
+            }
+
+            console.log(`Terminating process ${processName ?? 'unknown'} (PID: ${pid})`);
+            await execAsync(`taskkill /F /T /PID ${pid}`);
+        } catch (error) {
+            console.warn(`Failed to terminate PID ${pid}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+    }
+
+    await delay(PROCESS_RELEASE_GRACE_MS);
 }
 
 export async function startPythonServer(): Promise<void> {
@@ -186,6 +271,7 @@ export async function startPythonServer(): Promise<void> {
         let serverStarted = false;
         let settled = false;
         let pollTimerId: ReturnType<typeof setTimeout> | null = null;
+        const startupStartedAt = Date.now();
 
         const safeResolve = () => {
             if (settled) return;
@@ -200,10 +286,7 @@ export async function startPythonServer(): Promise<void> {
             reject(err);
         };
 
-        // Line-buffer stdout so boot markers are never split across chunks
-        let stdoutBuffer = '';
-
-        const processStdoutLine = (line: string) => {
+        const processPythonOutputLine = (line: string, source: PythonOutputSource) => {
             // Parse XPDITE_BOOT markers for boot state updates
             const bootMatch = line.match(/XPDITE_BOOT\s+(\{.*\})/);
             if (bootMatch) {
@@ -228,35 +311,61 @@ export async function startPythonServer(): Promise<void> {
                 line.includes('Application startup complete')) {
                 serverStarted = true;
             }
+
+            if (source === 'stderr') {
+                console.error(`Python error: ${line}`);
+            } else {
+                console.log(`Python: ${line}`);
+            }
         };
 
-        if (pythonProcess) {
-            pythonProcess.stdout?.on('data', (data) => {
-                stdoutBuffer += data.toString();
-                const lines = stdoutBuffer.split('\n');
-                stdoutBuffer = lines.pop()!; // keep the trailing incomplete line
-                for (const line of lines) {
+        const attachBufferedListener = (
+            stream: NodeJS.ReadableStream | null | undefined,
+            source: PythonOutputSource,
+        ) => {
+            if (!stream) {
+                return;
+            }
+
+            let buffer = '';
+            stream.on('data', (data) => {
+                buffer += data.toString();
+                const lines = buffer.split(/\r?\n/);
+                buffer = lines.pop() ?? '';
+
+                for (const rawLine of lines) {
+                    const line = rawLine.trimEnd();
                     if (line.trim()) {
-                        console.log(`Python stdout: ${line}`);
-                        processStdoutLine(line);
+                        processPythonOutputLine(line, source);
                     }
                 }
             });
 
+            stream.on('end', () => {
+                const line = buffer.trim();
+                if (line) {
+                    processPythonOutputLine(line, source);
+                }
+            });
+        };
+
+        if (pythonProcess) {
+            attachBufferedListener(pythonProcess.stdout, 'stdout');
+            attachBufferedListener(pythonProcess.stderr, 'stderr');
+
             pythonProcess.stderr?.on('data', (data) => {
                 const error = data.toString();
-                console.error(`Python stderr: ${error}`);
-                
+
                 // Handle port binding errors specifically
-                if (error.includes('error while attempting to bind on address') || 
+                if (error.includes('error while attempting to bind on address') ||
                     error.includes('Address already in use')) {
                     console.log('Port conflict detected, Python server will try alternative ports...');
                     return;
                 }
-                
+
                 // If we see startup-fatal failures, reject immediately
-                if (error.includes('ImportError') || 
-                    error.includes('ModuleNotFoundError') || 
+                if (error.includes('ImportError') ||
+                    error.includes('ModuleNotFoundError') ||
                     error.includes('SyntaxError')) {
                     if (!serverStarted) {
                         safeReject(new Error(`Python server failed to start: ${error}`));
@@ -272,16 +381,17 @@ export async function startPythonServer(): Promise<void> {
             pythonProcess.on('close', (code) => {
                 console.log(`Python process exited with code ${code}`);
                 pythonProcess = null;
-                if (code !== 0 && !serverStarted) {
-                    safeReject(new Error(`Python process exited with code ${code}`));
+                if (!settled) {
+                    const exitCode = code ?? -1;
+                    safeReject(new Error(
+                        exitCode === 0 && !serverStarted
+                            ? 'Python process exited before the server became ready'
+                            : `Python process exited with code ${exitCode}`,
+                    ));
                 }
             });
         }
 
-        // Poll for server readiness via health endpoint.
-        // Only a successful HTTP response confirms readiness.
-        const POLL_INTERVAL_MS = 1000;
-        const MAX_POLL_ATTEMPTS = 20;
         let pollAttempt = 0;
 
         const pollForServer = () => {
@@ -294,9 +404,9 @@ export async function startPythonServer(): Promise<void> {
                     for (const port of portsToTry) {
                         try {
                             const controller = new AbortController();
-                            const timeoutId = setTimeout(() => controller.abort(), 1000);
+                            const timeoutId = setTimeout(() => controller.abort(), STARTUP_HEALTHCHECK_TIMEOUT_MS);
                             
-                            const response = await fetch(`http://localhost:${port}/api/health`, {
+                            const response = await fetch(`http://${HEALTHCHECK_HOST}:${port}/api/health`, {
                                 method: 'GET',
                                 signal: controller.signal
                             }).catch(() => null);
@@ -314,17 +424,21 @@ export async function startPythonServer(): Promise<void> {
                         }
                     }
 
-                    if (pollAttempt < MAX_POLL_ATTEMPTS) {
-                        console.log(`Server not ready yet (attempt ${pollAttempt}/${MAX_POLL_ATTEMPTS}), retrying...`);
-                        pollTimerId = setTimeout(pollForServer, POLL_INTERVAL_MS);
+                    const elapsedMs = Date.now() - startupStartedAt;
+                    if (elapsedMs < STARTUP_TIMEOUT_MS) {
+                        console.log(
+                            `Server not ready yet (attempt ${pollAttempt}, ${Math.ceil(elapsedMs / 1000)}s elapsed), retrying...`,
+                        );
+                        pollTimerId = setTimeout(pollForServer, STARTUP_POLL_INTERVAL_MS);
                     } else {
-                        console.error('Python server failed to start - no response on any port after retries');
-                        safeReject(new Error('Python server failed to start'));
+                        console.error('Python server failed to start - no response on any port before timeout');
+                        safeReject(new Error(`Python server failed to start within ${Math.round(STARTUP_TIMEOUT_MS / 1000)} seconds`));
                     }
                 } catch (error) {
                     console.error('Error checking Python server status:', error);
-                    if (pollAttempt < MAX_POLL_ATTEMPTS) {
-                        pollTimerId = setTimeout(pollForServer, POLL_INTERVAL_MS);
+                    const elapsedMs = Date.now() - startupStartedAt;
+                    if (elapsedMs < STARTUP_TIMEOUT_MS) {
+                        pollTimerId = setTimeout(pollForServer, STARTUP_POLL_INTERVAL_MS);
                     } else {
                         safeReject(error instanceof Error ? error : new Error(String(error)));
                     }
