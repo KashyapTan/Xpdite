@@ -8,6 +8,7 @@ import asyncio
 import os
 import sys
 import logging
+from datetime import timedelta
 from typing import Any, Dict, List
 
 from ..config import PROJECT_ROOT
@@ -105,7 +106,10 @@ class McpToolManager:
                 """Run inside its own asyncio Task."""
                 try:
                     async with stdio_client(server_params) as (read, write):
-                        async with ClientSession(read, write) as session:
+                        async with ClientSession(
+                            read, write,
+                            read_timeout_seconds=timedelta(seconds=120),
+                        ) as session:
                             await session.initialize()
                             connection_data["session"] = session
                             connected_event.set()
@@ -249,16 +253,26 @@ class McpToolManager:
                 f"session. It must be handled by the inline tool executor."
             )
 
-        import asyncio
-
         try:
             result = await asyncio.wait_for(
-                session.call_tool(tool_name, arguments=arguments),
-                timeout=180.0,  # 3 min safety ceiling
+                session.call_tool(
+                    tool_name,
+                    arguments=arguments,
+                    read_timeout_seconds=timedelta(seconds=90),
+                ),
+                timeout=95.0,  # slightly above MCP SDK read timeout so it fires first
             )
         except asyncio.TimeoutError:
             server = entry.get("server_name", "unknown")
-            return f"Error: Tool '{tool_name}' (server '{server}') timed out after 180s"
+            return f"Error: Tool '{tool_name}' (server '{server}') timed out after 90s"
+        except (ConnectionError, BrokenPipeError, OSError) as e:
+            server = entry.get("server_name", "unknown")
+            logger.error("Tool '%s' (server '%s') transport error: %s", tool_name, server, e)
+            return f"Error: Tool '{tool_name}' (server '{server}') connection lost: {type(e).__name__}"
+        except Exception as e:
+            server = entry.get("server_name", "unknown")
+            logger.error("Tool '%s' (server '%s') unexpected error: %s", tool_name, server, e)
+            return f"Error: Tool '{tool_name}' (server '{server}') failed: {type(e).__name__}"
 
         output_parts = []
         for block in result.content:

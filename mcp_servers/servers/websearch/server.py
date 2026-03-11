@@ -1,15 +1,20 @@
 from mcp.server.fastmcp import FastMCP
 from ddgs import DDGS
 from typing import Any, Dict, List
+import asyncio
+import os
 import re
 import random
-from io import StringIO
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 from crawl4ai import AsyncWebCrawler
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
 from mcp_servers.servers.websearch.websearch_descriptions import READ_WEBSITE_DESCRIPTION, SEARCH_WEB_PAGES_DESCRIPTION
 
 mcp = FastMCP("Web Search Tools")
+
+# Module-level devnull for stdout/stderr suppression during tool execution.
+# Opened once to avoid per-call file handle churn.
+_DEVNULL = open(os.devnull, "w")
 
 # A list of modern, common User-Agents to rotate
 USER_AGENTS = [
@@ -39,23 +44,24 @@ def clean_markdown(md_text: str) -> str:
 @mcp.tool(description=SEARCH_WEB_PAGES_DESCRIPTION)
 def search_web_pages(query: str) -> List[Dict[str, Any]]:
     try:
-        # DDGS().text() returns search results
-        results = DDGS().text(
-            query=query,
-            region='wt-wt',
-            safesearch='off',
-            max_results=10
-        )
-        
-        # Convert iterator/generator to list for JSON serialization
-        results_list = list(results)
-        
+        with redirect_stdout(_DEVNULL), redirect_stderr(_DEVNULL):
+            # DDGS().text() returns search results
+            results = DDGS().text(
+                query=query,
+                region='wt-wt',
+                safesearch='off',
+                max_results=10
+            )
+
+            # Convert iterator/generator to list for JSON serialization
+            results_list = list(results)
+
         # Validate results
         if not results_list:
             return [{"error": "No results found", "query": query}]
-            
+
         return results_list
-        
+
     except Exception as e:
         return [{"error": f"Search failed: {str(e)}", "query": query}]
 
@@ -74,6 +80,7 @@ async def read_website(url: str) -> str:
     browser_config = BrowserConfig(
         headless=True,
         enable_stealth=True,
+        verbose=False,
         headers={
             "User-Agent": random.choice(USER_AGENTS),
             "Accept-Language": "en-US,en;q=0.9",
@@ -97,6 +104,8 @@ async def read_website(url: str) -> str:
     
     run_config = CrawlerRunConfig(
         cache_mode=CacheMode.BYPASS,
+        verbose=False,
+        page_timeout=30000,
         excluded_selector=", ".join(noise_selector),
         excluded_tags=['nav', 'header', 'footer', 'aside', 'form', 'svg', 'noscript', 'script', 'style'],
         # Wait for the page to be idle (all network requests finished)
@@ -104,16 +113,16 @@ async def read_website(url: str) -> str:
     )
     
     try:
-        # Redirect stdout to prevent crawl4ai library output from contaminating MCP JSON-RPC messages
-        stdout_capture = StringIO()
-        
-        with redirect_stdout(stdout_capture):
+        # Safety net: redirect stdout/stderr to devnull during crawl to catch
+        # any stray print() calls from dependencies. Primary defense is
+        # verbose=False on BrowserConfig + CrawlerRunConfig.
+        with redirect_stdout(_DEVNULL), redirect_stderr(_DEVNULL):
             async with AsyncWebCrawler(config=browser_config) as crawler:
-                result = await crawler.arun(url=url, config=run_config)
-        
-        # Log any captured stdout to stderr for debugging (only if length > 0)
-        # captured_output = stdout_capture.getvalue()
-        
+                result = await asyncio.wait_for(
+                    crawler.arun(url=url, config=run_config),
+                    timeout=45.0,
+                )
+
         if result.success:
             cleaned_content = clean_markdown(result.markdown)
             
@@ -130,7 +139,9 @@ async def read_website(url: str) -> str:
             if hasattr(result, 'error_message') and result.error_message:
                 error_msg += f"Error: {result.error_message}"
             return error_msg
-            
+
+    except asyncio.TimeoutError:
+        return f"ERROR: Crawl timed out after 45 seconds for {url}. The page may be too slow or unresponsive."
     except Exception as e:
         return f"ERROR: An unexpected error occurred while crawling {url}: {str(e)}"
 
