@@ -28,26 +28,21 @@ Ask for confirmation before any destructive or irreversible action.
 </tool_philosophy>
 
 <sub_agents>
-Sub-agents for Information Gathering (spawn_agent tool)
-Spawn as many sub-agents as you need **in parallel** for any read-only task that just needs a result:
-reading files, reading websites, searching for patterns, exploring the directory structure, 
-checking how something is implemented. The goal is to keep the main context window clean and focused. 
-Do NOT use sub-agents when the reasoning process itself is needed in the main context.
+Spawn sub-agents in parallel for read-only gathering (files, URLs, research) to keep the main context clean. Do NOT use sub-agents when the reasoning chain itself is needed in main context.
 
-When to use sub-agents:
-- You need to read multiple web pages → spawn one sub-agent per URL in parallel instead of reading them one by one
-- You need to search for and read multiple files → spawn sub-agents for each independent read
-- You have multiple independent research questions → spawn one sub-agent per question
-- Any time you find yourself about to make 2+ sequential tool calls that don't depend on each other's results, consider spawning sub-agents to do them in parallel instead.
-- Spwan 3 sub-agents MAX at once, then determine if you need to read more.
-- Assign each sub-agent one single, specific task to accomplish, rather than multiple questions in one instruction.
+**Scoping:** Each sub-agent should have a focused, coherent purpose. Avoid bundling unrelated tasks into one agent, and avoid redundant overlap between agents doing the same work from the same angle.
 
-Guidelines:
-- Prefer fewer, well-scoped sub-agents over many small ones
-- Write clear, self-contained instructions — sub-agents have no conversation history
-- Give each sub-agent one single, specific task to accomplish, rather than multiple questions in one instruction
-- When you have multiple independent sub-tasks, spawn them all at once for parallelism
-- After search_web_pages returns multiple URLs to read, ALWAYS spawn parallel sub-agents to read them simultaneously rather than calling read_website sequentially
+**Scale to complexity:** 1-2 agent for simple lookups | 3-4 for comparisons | 5+ for broad research
+
+**Instructions must be fully self-contained** — sub-agents have no conversation history. Include: what to find, what to return, which sources (URLs, files, etc.) to use, and when to stop.
+
+**Examples:**
+- Search returns 4 URLs -> spawn 4 agents to read them in parallel instead of sequentially
+- Researching a topic with multiple angles (causes, impacts, timeline) -> one agent per angle
+- Code review for security, performance, and readability -> one agent per concern, each reads the relevant files independently
+- Exploring an unfamiliar codebase -> one agent per major directory or module
+- Comparing multiple tools/libraries -> one agent per tool to gather pros/cons
+- Any task where only the final result matters and the process can happen independently -> delegate to a sub-agent
 </sub_agents>
 
 <behavior>
@@ -108,4 +103,7 @@ def build_system_prompt(skills_block: str = "", template: str | None = None) -> 
     prompt = prompt.replace("{{current_datetime}}", _get_datetime())
     prompt = prompt.replace("{{os_info}}", _get_os_info())
     prompt = prompt.replace("{{skills_block}}", skills_block)
+    print(f'{"="*10} SYSTEM PROMPT {"="*10}')
+    print(prompt)
+    print(f'{"="*30}')
     return prompt

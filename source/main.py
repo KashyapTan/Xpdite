@@ -71,10 +71,15 @@ from .services.screenshots import process_screenshot, process_screenshot_start
 # Configure logging before runtime startup.
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(message)s",
     stream=_sys.stdout,
     force=True,
 )
+# Silence noisy libraries
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("mcp").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 

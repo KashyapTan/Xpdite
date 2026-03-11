@@ -313,9 +313,9 @@ export async function startPythonServer(): Promise<void> {
             }
 
             if (source === 'stderr') {
-                console.error(`Python error: ${line}`);
+                console.error(line);
             } else {
-                console.log(`Python: ${line}`);
+                console.log(line);
             }
         };
 

@@ -3,7 +3,6 @@ from ddgs import DDGS
 from typing import Any, Dict, List
 import re
 import random
-import sys
 from io import StringIO
 from contextlib import redirect_stdout
 from crawl4ai import AsyncWebCrawler
@@ -65,8 +64,7 @@ def search_web_pages(query: str) -> List[Dict[str, Any]]:
 # ------------------------------------------------------------------
 @mcp.tool(description=READ_WEBSITE_DESCRIPTION)
 async def read_website(url: str) -> str:
-    print(f"[INFO] Initializing Stealth Crawl for: {url}...", file=sys.stderr)
-    
+    # 
     # Validate URL
     if not url.startswith(('http://', 'https://')):
         return f"ERROR: Invalid URL: {url}. URL must start with http:// or https://"
@@ -113,13 +111,10 @@ async def read_website(url: str) -> str:
             async with AsyncWebCrawler(config=browser_config) as crawler:
                 result = await crawler.arun(url=url, config=run_config)
         
-        # Log any captured stdout to stderr for debugging
-        captured_output = stdout_capture.getvalue()
-        if captured_output:
-            print(f"[DEBUG] Captured stdout from crawl4ai: {captured_output[:200]}...", file=sys.stderr)
+        # Log any captured stdout to stderr for debugging (only if length > 0)
+        # captured_output = stdout_capture.getvalue()
         
         if result.success:
-            print(f"[SUCCESS] Successfully crawled: {url}", file=sys.stderr)
             cleaned_content = clean_markdown(result.markdown)
             
             # Check if we got any content
