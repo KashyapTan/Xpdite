@@ -222,11 +222,11 @@ class McpOllamaBridge:
                 fn_name = tool_call.function.name
                 fn_args = tool_call.function.arguments
                 
-                print(f"  🔧 Ollama calling tool: {fn_name}({fn_args})")
+                print(f"Ollama calling tool: {fn_name}({fn_args})")
                 
                 # Route to the correct MCP server
                 result = await self._call_mcp_tool(fn_name, fn_args)
-                print(f"  ✅ Tool result: {result[0:10]}...")  # Print first 100 chars of result
+                print(f"Tool result: {result[0:10]}...")  # Print first 100 chars of result
                 
                 # Add the assistant's tool call to history
                 self._chat_history.append(response.message.model_dump())
