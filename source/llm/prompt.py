@@ -103,7 +103,7 @@ def build_system_prompt(skills_block: str = "", template: str | None = None) -> 
     prompt = prompt.replace("{{current_datetime}}", _get_datetime())
     prompt = prompt.replace("{{os_info}}", _get_os_info())
     prompt = prompt.replace("{{skills_block}}", skills_block)
-    print(f'{"="*10} SYSTEM PROMPT {"="*10}')
-    print(prompt)
-    print(f'{"="*30}')
+    # print(f'{"="*10} SYSTEM PROMPT {"="*10}')
+    # print(prompt)
+    # print(f'{"="*30}')
     return prompt

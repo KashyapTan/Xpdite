@@ -1,13 +1,22 @@
+import hashlib
 import io
 import json
-import hashlib
 import logging
 import os
 import tempfile
 import threading
+from typing import Any, Dict, List, Optional
+
 import numpy as np
 import ollama
-from typing import Any, Dict, List, Optional
+
+try:
+    from rank_bm25 import BM25Okapi
+
+    BM25_AVAILABLE = True
+except ImportError:  # pragma: no cover - dependency is managed in pyproject.toml
+    BM25Okapi = None  # type: ignore[assignment]
+    BM25_AVAILABLE = False
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -21,37 +30,46 @@ except ImportError:
     SentenceTransformer = None
 
 
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PROJECT_ROOT = os.path.dirname(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 _CACHE_DIR = os.path.join(_PROJECT_ROOT, "user_data", "cache")
 _CACHE_FILE = os.path.join(_CACHE_DIR, "tool_embeddings.npz")
 _CACHE_INDEX_FILE = os.path.join(_CACHE_DIR, "tool_embedding_index.json")
 
+RRF_K = 10
+DEBUG_SCORE_LOG_LIMIT = 10
+_SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
+
 
 class ToolRetriever:
     """
-    Semantic retriever for MCP tools.
+    Hybrid semantic + BM25 retriever for MCP tools.
 
-    Dynamically selects relevant tools based on user query similarity
-    to tool descriptions.
+    Active tool embeddings are stored as a pre-normalized 2D matrix plus a
+    parallel name index. Retrieval uses one matrix-vector multiply for cosine
+    similarity, BM25 keyword scoring over the same tool corpus, and reciprocal
+    rank fusion to combine the two signals.
     """
 
     def __init__(self):
         self._cache_lock = threading.RLock()
-        self._tool_embeddings: Dict[str, np.ndarray] = {}
+        self._embedding_matrix = np.empty((0, 0), dtype=np.float32)
+        self._tool_name_index: List[str] = []
+        self._bm25_index: Any = None
         self._embedding_model_type = "unknown"  # "ollama" or "sentence-transformers"
         self._st_model = None
         self._ollama_model_name = "nomic-embed-text"
         self._embedding_cache: Dict[str, np.ndarray] = {}
         self._tool_cache_index: Dict[str, str] = {}
+        self._bm25_warning_emitted = False
         self._check_embedding_backend()
         self._load_cache()
         self._load_cache_index()
 
     def _check_embedding_backend(self):
         """Determine which embedding backend to use."""
-        # 1. Try Ollama
         try:
-            # Simple check if ollama is reachable and model exists
             models_response = ollama.list()
 
             model_list: List[Any] = []
@@ -62,25 +80,18 @@ class ToolRetriever:
             elif isinstance(models_response, list):
                 model_list = models_response
             else:
-                # Fallback: single object or unknown format, wrap in list
                 model_list = [models_response]
 
             model_names = []
-            for m in model_list:
-                # Handle both object attribute access and dictionary key access
-                # Use Any to bypass strict type checking on the loop variable
-                model_obj: Any = m
+            for model in model_list:
+                model_obj: Any = model
                 if hasattr(model_obj, "model"):
                     model_names.append(model_obj.model)
                 elif isinstance(model_obj, dict):
-                    # Some versions use 'name', some use 'model'
                     model_names.append(model_obj.get("model") or model_obj.get("name"))
                 else:
-                    # Last resort string conversion
                     model_names.append(str(model_obj))
 
-            # Check for exact match or match with tag
-            # We look for "nomic-embed-text" or similar embedding models
             target_substrings = ["nomic-embed-text", "all-minilm", "mxbai-embed-large"]
             found_model = None
 
@@ -96,48 +107,50 @@ class ToolRetriever:
                 self._embedding_model_type = "ollama"
                 self._ollama_model_name = found_model
                 logger.info(
-                    "Using Ollama embedding model: %s", self._ollama_model_name
+                    "Embedding backend active: ollama (%s)",
+                    self._ollama_model_name,
                 )
                 return
-        except Exception as e:
-            logger.warning("Ollama check failed: %s", e)
+        except Exception as exc:
+            logger.warning("Ollama check failed: %s", exc)
 
-        # 2. Fallback to SentenceTransformers
         if SENTENCE_TRANSFORMERS_AVAILABLE:
             self._embedding_model_type = "sentence-transformers"
-            logger.info("Using sentence-transformers (all-MiniLM-L6-v2)")
-            # Load lazily in embed_text to avoid startup delay if not needed
-        else:
-            logger.warning(
-                "No embedding backend available. Retrieval will return all tools."
+            logger.info(
+                "Embedding backend active: sentence-transformers (%s)",
+                _SENTENCE_TRANSFORMER_MODEL,
             )
-            self._embedding_model_type = "none"
+            return
+
+        logger.warning(
+            "No embedding backend available. Retrieval will be limited to always-on tools."
+        )
+        self._embedding_model_type = "none"
 
     def _get_embedding(self, text: str) -> Optional[np.ndarray]:
         """Get embedding for a single string, or None on failure."""
         if self._embedding_model_type == "ollama":
             try:
                 response = ollama.embeddings(model=self._ollama_model_name, prompt=text)
-                return np.array(response["embedding"])
-            except Exception as e:
-                logger.warning("Ollama embedding failed: %s", e)
+                return np.asarray(response["embedding"], dtype=np.float32)
+            except Exception as exc:
+                logger.warning("Ollama embedding failed: %s", exc)
                 return None
 
-        elif self._embedding_model_type == "sentence-transformers":
+        if self._embedding_model_type == "sentence-transformers":
             if (
                 self._st_model is None
                 and SENTENCE_TRANSFORMERS_AVAILABLE
                 and SentenceTransformer
             ):
                 logger.info("Loading sentence-transformers model...")
-                self._st_model = SentenceTransformer("all-MiniLM-L6-v2")  # type: ignore
+                self._st_model = SentenceTransformer(_SENTENCE_TRANSFORMER_MODEL)  # type: ignore
 
             if self._st_model:
-                # Ensure we return a numpy array, handling potential Tensor output
                 embedding = self._st_model.encode(text)
                 if isinstance(embedding, np.ndarray):
-                    return embedding
-                return np.array(embedding)
+                    return embedding.astype(np.float32, copy=False)
+                return np.asarray(embedding, dtype=np.float32)
 
         return None
 
@@ -150,16 +163,45 @@ class ToolRetriever:
         """Deterministic key: hash of model name + description text."""
         return hashlib.sha256(f"{model_name}|{text}".encode()).hexdigest()
 
+    @staticmethod
+    def _tool_document_text(name: str, description: str) -> str:
+        """Canonical tool document used by both embeddings and BM25."""
+        parts = [name.strip()]
+        if description.strip():
+            parts.append(description.strip())
+        return " ".join(parts)
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        """BM25 tokenization: lowercase + whitespace split."""
+        return text.lower().split()
+
+    @staticmethod
+    def _flatten_embedding(vector: np.ndarray) -> np.ndarray:
+        """Convert embeddings to a contiguous 1D float32 numpy array."""
+        return np.asarray(vector, dtype=np.float32).reshape(-1)
+
+    @classmethod
+    def _normalize_vector(cls, vector: np.ndarray) -> Optional[np.ndarray]:
+        """Return a unit-length 1D vector, or None for zero-norm inputs."""
+        flat_vector = cls._flatten_embedding(vector)
+        norm = float(np.linalg.norm(flat_vector))
+        if norm == 0.0:
+            return None
+        return flat_vector / norm
+
     def _load_cache(self) -> None:
         """Load cached embeddings from disk (if file exists)."""
         with self._cache_lock:
             try:
                 if os.path.exists(_CACHE_FILE):
                     with np.load(_CACHE_FILE, allow_pickle=False) as data:
-                        self._embedding_cache = {k: data[k] for k in data.files}
+                        self._embedding_cache = {
+                            key: self._flatten_embedding(data[key]) for key in data.files
+                        }
                     logger.info("Loaded %d cached embeddings.", len(self._embedding_cache))
-            except Exception as e:
-                logger.warning("Could not load embedding cache: %s", e)
+            except Exception as exc:
+                logger.warning("Could not load embedding cache: %s", exc)
                 self._embedding_cache = {}
 
     @staticmethod
@@ -187,8 +229,8 @@ class ToolRetriever:
                 buffer = io.BytesIO()
                 np.savez(buffer, **self._embedding_cache)
                 self._write_file_atomically(_CACHE_FILE, buffer.getvalue())
-            except Exception as e:
-                logger.warning("Could not save embedding cache: %s", e)
+            except Exception as exc:
+                logger.warning("Could not save embedding cache: %s", exc)
 
     def _load_cache_index(self) -> None:
         """Load the current tool-name-to-cache-key mapping from disk."""
@@ -209,8 +251,8 @@ class ToolRetriever:
                     else:
                         logger.warning("Embedding cache index is invalid; ignoring it.")
                         self._tool_cache_index = {}
-            except Exception as e:
-                logger.warning("Could not load embedding cache index: %s", e)
+            except Exception as exc:
+                logger.warning("Could not load embedding cache index: %s", exc)
                 self._tool_cache_index = {}
 
     def _save_cache_index(self) -> None:
@@ -224,32 +266,118 @@ class ToolRetriever:
                     sort_keys=True,
                 ).encode("utf-8")
                 self._write_file_atomically(_CACHE_INDEX_FILE, payload)
-            except Exception as e:
-                logger.warning("Could not save embedding cache index: %s", e)
+            except Exception as exc:
+                logger.warning("Could not save cache index: %s", exc)
 
-    def embed_tools(
+    def _clear_retrieval_index(self) -> None:
+        """Clear the active matrix and BM25 index."""
+        self._embedding_matrix = np.empty((0, 0), dtype=np.float32)
+        self._tool_name_index = []
+        self._bm25_index = None
+
+    def _rebuild_retrieval_index(
         self,
-        tools: List[Dict],
-    ):
+        active_entries: List[tuple[str, str, np.ndarray]],
+    ) -> None:
         """
-        Embed tool descriptions and cache them.
+        Rebuild the active embedding matrix and BM25 index from embedded tools.
 
-        Uses a disk cache keyed on (model_name, description_text) so only
-        new or changed tools require an API call on subsequent launches.
-        Cached entries are only deleted when a tool description changes and a
-        replacement embedding has been successfully written.
+        Any shape mismatch is resolved here once, at build time, rather than on
+        every query.
+        """
+        self._clear_retrieval_index()
+
+        if not active_entries:
+            logger.info("No active tool embeddings available for retrieval.")
+            return
+
+        flattened_entries: List[tuple[str, str, np.ndarray]] = []
+        shape_counts: Dict[int, int] = {}
+
+        for name, document_text, raw_embedding in active_entries:
+            flat_embedding = self._flatten_embedding(raw_embedding)
+            embedding_dim = int(flat_embedding.shape[0])
+            shape_counts[embedding_dim] = shape_counts.get(embedding_dim, 0) + 1
+            flattened_entries.append((name, document_text, flat_embedding))
+
+        target_dim = max(shape_counts.items(), key=lambda item: (item[1], item[0]))[0]
+
+        normalized_rows = []
+        tool_names = []
+        bm25_documents = []
+        mismatched_tools = []
+        zero_norm_tools = []
+
+        for name, document_text, flat_embedding in flattened_entries:
+            if flat_embedding.shape[0] != target_dim:
+                mismatched_tools.append((name, flat_embedding.shape[0]))
+                continue
+
+            norm = float(np.linalg.norm(flat_embedding))
+            if norm == 0.0:
+                zero_norm_tools.append(name)
+                continue
+
+            normalized_rows.append((flat_embedding / norm).astype(np.float32, copy=False))
+            tool_names.append(name)
+            bm25_documents.append(document_text)
+
+        if mismatched_tools:
+            logger.warning(
+                "Skipping %d tool embedding(s) with mismatched dimensions: %s",
+                len(mismatched_tools),
+                ", ".join(f"{name}({dimension})" for name, dimension in mismatched_tools),
+            )
+
+        if zero_norm_tools:
+            logger.warning(
+                "Skipping %d tool embedding(s) with zero norm: %s",
+                len(zero_norm_tools),
+                ", ".join(zero_norm_tools),
+            )
+
+        if not normalized_rows:
+            logger.warning("No valid tool embeddings available after index rebuild.")
+            return
+
+        self._embedding_matrix = np.vstack(normalized_rows).astype(np.float32, copy=False)
+        self._tool_name_index = tool_names
+
+        if BM25_AVAILABLE and BM25Okapi is not None:
+            self._bm25_index = BM25Okapi(
+                [self._tokenize(document) for document in bm25_documents]
+            )
+        else:
+            if not self._bm25_warning_emitted:
+                logger.warning("rank_bm25 is unavailable. BM25 scoring is disabled.")
+                self._bm25_warning_emitted = True
+            self._bm25_index = None
+
+        logger.info(
+            "Built retrieval index for %d tool(s) with embedding dim %d.",
+            len(self._tool_name_index),
+            target_dim,
+        )
+
+    def embed_tools(self, tools: List[Dict]):
+        """
+        Embed tool descriptions, refresh the active matrix, and update cache.
+
+        The disk cache is keyed on (model_name, tool_document). Cached entries are
+        only pruned after a replacement embedding has been written successfully.
         """
         if self._embedding_model_type == "none":
+            with self._cache_lock:
+                self._clear_retrieval_index()
             return
 
         model_name = (
             self._ollama_model_name
             if self._embedding_model_type == "ollama"
-            else "all-MiniLM-L6-v2"
+            else _SENTENCE_TRANSFORMER_MODEL
         )
 
         with self._cache_lock:
-            self._tool_embeddings.clear()
             cache_hits = 0
             cache_misses = 0
             stale_prunes = 0
@@ -257,6 +385,7 @@ class ToolRetriever:
             index_changed = False
             previous_index = self._tool_cache_index.copy()
             current_tool_keys: Dict[str, str] = {}
+            active_entries: List[tuple[str, str, np.ndarray]] = []
 
             for tool in tools:
                 func = tool.get("function", {})
@@ -266,46 +395,48 @@ class ToolRetriever:
                 if not name:
                     continue
 
-                text_to_embed = f"{name}: {description}"
-                key = self._cache_key(model_name, text_to_embed)
+                document_text = self._tool_document_text(name, description)
+                key = self._cache_key(model_name, document_text)
                 previous_key = previous_index.get(name)
+                embedding = None
 
                 if key in self._embedding_cache:
-                    self._tool_embeddings[name] = self._embedding_cache[key]
+                    embedding = self._embedding_cache[key]
                     current_tool_keys[name] = key
                     cache_hits += 1
+
                     if previous_key and previous_key != key:
                         if self._embedding_cache.pop(previous_key, None) is not None:
                             stale_prunes += 1
                             cache_changed = True
-                    continue
+                else:
+                    embedding = self._get_embedding(document_text)
+                    if embedding is not None:
+                        embedding = self._flatten_embedding(embedding)
+                        self._embedding_cache[key] = embedding
+                        current_tool_keys[name] = key
+                        cache_misses += 1
+                        cache_changed = True
 
-                embedding = self._get_embedding(text_to_embed)
+                        if previous_key and previous_key != key:
+                            if self._embedding_cache.pop(previous_key, None) is not None:
+                                stale_prunes += 1
+                    elif previous_key and previous_key in self._embedding_cache:
+                        embedding = self._embedding_cache[previous_key]
+                        current_tool_keys[name] = previous_key
+                        cache_hits += 1
+                        logger.warning(
+                            "Embedding refresh failed for '%s'; keeping previous cached embedding.",
+                            name,
+                        )
+                    else:
+                        logger.warning(
+                            "Embedding refresh failed for '%s' and no previous cached embedding exists.",
+                            name,
+                        )
+
                 if embedding is not None:
-                    self._tool_embeddings[name] = embedding
-                    self._embedding_cache[key] = embedding
-                    current_tool_keys[name] = key
-                    cache_misses += 1
-                    cache_changed = True
-                    if previous_key and previous_key != key:
-                        if self._embedding_cache.pop(previous_key, None) is not None:
-                            stale_prunes += 1
-                    continue
-
-                if previous_key and previous_key in self._embedding_cache:
-                    self._tool_embeddings[name] = self._embedding_cache[previous_key]
-                    current_tool_keys[name] = previous_key
-                    cache_hits += 1
-                    logger.warning(
-                        "Embedding refresh failed for '%s'; keeping previous cached embedding.",
-                        name,
-                    )
-                    continue
-
-                logger.warning(
-                    "Embedding refresh failed for '%s' and no previous cached embedding exists.",
-                    name,
-                )
+                    active_entries.append((name, document_text, embedding))
 
             updated_index = previous_index.copy()
             updated_index.update(current_tool_keys)
@@ -313,6 +444,8 @@ class ToolRetriever:
             if updated_index != self._tool_cache_index:
                 self._tool_cache_index = updated_index
                 index_changed = True
+
+            self._rebuild_retrieval_index(active_entries)
 
             if cache_changed:
                 self._save_cache()
@@ -331,6 +464,41 @@ class ToolRetriever:
             else:
                 logger.info("All %d tool embeddings loaded from cache.", cache_hits)
 
+    @staticmethod
+    def _build_rank_map(scores_by_name: Dict[str, float]) -> Dict[str, int]:
+        """Assign shared rank positions from descending scores."""
+        if not scores_by_name:
+            return {}
+
+        sorted_items = sorted(scores_by_name.items(), key=lambda item: (-item[1], item[0]))
+        rank_map: Dict[str, int] = {}
+        current_rank = 0
+        previous_score: Optional[float] = None
+
+        for position, (name, score) in enumerate(sorted_items, start=1):
+            if previous_score is None or not np.isclose(
+                score, previous_score, rtol=1e-9, atol=1e-12
+            ):
+                current_rank = position
+                previous_score = score
+            rank_map[name] = current_rank
+
+        return rank_map
+
+    @staticmethod
+    def _format_float(value: Optional[float]) -> str:
+        """Format an optional float for debug logging."""
+        if value is None:
+            return "n/a"
+        return f"{value:.4f}"
+
+    @staticmethod
+    def _format_rank(value: Optional[int]) -> str:
+        """Format an optional rank for debug logging."""
+        if value is None:
+            return "n/a"
+        return str(value)
+
     def retrieve_tools(
         self, query: str, all_tools: List[Dict], always_on: List[str], top_k: int = 5
     ) -> List[Dict]:
@@ -341,73 +509,159 @@ class ToolRetriever:
             query: User's chat message
             all_tools: Full list of available tools
             always_on: List of tool names to always include
-            top_k: Number of semantic matches to include
+            top_k: Number of retrieved matches to include, excluding always-on tools
 
         Returns:
-            Filtered list of tool definitions
+            Filtered list of tool definitions, ordered by fused retrieval score
+            with always-on additions appended afterwards.
         """
-        # 1. Identify always-on tools
-        selected_tool_names = set(always_on)
+        tool_lookup = {
+            tool.get("function", {}).get("name"): tool
+            for tool in all_tools
+            if tool.get("function", {}).get("name")
+        }
+        always_on_names = [name for name in always_on if name in tool_lookup]
 
-        # 2. Semantic retrieval
-        tool_embeddings: Dict[str, np.ndarray] = {}
-        if top_k > 0 and self._embedding_model_type != "none" and query.strip():
-            with self._cache_lock:
-                tool_embeddings = dict(self._tool_embeddings)
+        if top_k <= 0 or not query.strip():
+            return [tool_lookup[name] for name in always_on_names]
 
-        if top_k > 0 and self._embedding_model_type != "none" and query.strip() and tool_embeddings:
+        with self._cache_lock:
+            embedding_matrix = self._embedding_matrix.copy()
+            tool_name_index = list(self._tool_name_index)
+            bm25_index = self._bm25_index
+
+        always_on_set = set(always_on_names)
+        candidate_indices = [
+            index
+            for index, name in enumerate(tool_name_index)
+            if name in tool_lookup and name not in always_on_set
+        ]
+
+        if not candidate_indices:
+            return [tool_lookup[name] for name in always_on_names]
+
+        semantic_scores_by_name: Dict[str, float] = {}
+        if embedding_matrix.size > 0:
             query_embedding = self._get_embedding(query)
             if query_embedding is None:
-                # Embedding failed — fall through; only always-on tools returned
-                pass
+                logger.warning(
+                    "Query embedding failed; falling back to BM25-only tool ranking."
+                )
             else:
-                scores = []
-                for name, embedding in tool_embeddings.items():
-                    if name in selected_tool_names:
-                        continue  # Already selected
+                normalized_query = self._normalize_vector(query_embedding)
+                if normalized_query is None:
+                    logger.warning(
+                        "Query embedding had zero norm; falling back to BM25-only tool ranking."
+                    )
+                elif normalized_query.shape[0] != embedding_matrix.shape[1]:
+                    logger.warning(
+                        "Query embedding dimension %d does not match tool matrix dimension %d.",
+                        normalized_query.shape[0],
+                        embedding_matrix.shape[1],
+                    )
+                else:
+                    semantic_scores = embedding_matrix @ normalized_query
+                    semantic_scores_by_name = {
+                        tool_name_index[index]: float(semantic_scores[index])
+                        for index in candidate_indices
+                    }
 
-                    if embedding.shape != query_embedding.shape:
-                        continue
+        bm25_scores_by_name: Dict[str, float] = {}
+        if bm25_index is not None:
+            query_tokens = self._tokenize(query)
+            if query_tokens:
+                bm25_scores = np.asarray(bm25_index.get_scores(query_tokens), dtype=float)
+                bm25_scores_by_name = {
+                    tool_name_index[index]: float(bm25_scores[index])
+                    for index in candidate_indices
+                }
 
-                    # Cosine similarity
-                    norm_q = np.linalg.norm(query_embedding)
-                    norm_t = np.linalg.norm(embedding)
+        if not semantic_scores_by_name and not bm25_scores_by_name:
+            return [tool_lookup[name] for name in always_on_names]
 
-                    if norm_q == 0 or norm_t == 0:
-                        sim = 0
-                    else:
-                        sim = np.dot(query_embedding, embedding) / (norm_q * norm_t)
+        if not semantic_scores_by_name and bm25_scores_by_name and all(
+            np.isclose(score, 0.0, atol=1e-12) for score in bm25_scores_by_name.values()
+        ):
+            logger.warning(
+                "BM25 produced no keyword matches while semantic retrieval was unavailable."
+            )
+            return [tool_lookup[name] for name in always_on_names]
 
-                    scores.append((sim, name))
+        semantic_ranks = self._build_rank_map(semantic_scores_by_name)
+        bm25_ranks = self._build_rank_map(bm25_scores_by_name)
 
-                # Sort by similarity desc
-                scores.sort(key=lambda x: x[0], reverse=True)
+        candidate_rows = []
+        for index in candidate_indices:
+            name = tool_name_index[index]
+            semantic_score = semantic_scores_by_name.get(name)
+            bm25_score = bm25_scores_by_name.get(name)
+            semantic_rank = semantic_ranks.get(name)
+            bm25_rank = bm25_ranks.get(name)
 
-                # Pick top K, filtering out near-zero similarity
-                for sim, name in scores[:top_k]:
-                    if sim >= MIN_SIMILARITY_THRESHOLD:
-                        selected_tool_names.add(name)
+            if semantic_rank is None and bm25_rank is None:
+                continue
 
-        # 3. Filter the full tool list
-        final_tools = [
-            t
-            for t in all_tools
-            if t.get("function", {}).get("name") in selected_tool_names
+            rrf_score = 0.0
+            if semantic_rank is not None:
+                rrf_score += 1.0 / (RRF_K + semantic_rank)
+            if bm25_rank is not None:
+                rrf_score += 1.0 / (RRF_K + bm25_rank)
+
+            candidate_rows.append(
+                {
+                    "name": name,
+                    "semantic_score": semantic_score,
+                    "bm25_score": bm25_score,
+                    "semantic_rank": semantic_rank,
+                    "bm25_rank": bm25_rank,
+                    "rrf_score": rrf_score,
+                }
+            )
+
+        ranked_candidates = sorted(
+            candidate_rows,
+            key=lambda row: (
+                -row["rrf_score"],
+                -(row["semantic_score"] if row["semantic_score"] is not None else float("-inf")),
+                row["name"],
+            ),
+        )
+
+        if logger.isEnabledFor(logging.DEBUG) and ranked_candidates:
+            debug_limit = min(len(ranked_candidates), max(top_k, DEBUG_SCORE_LOG_LIMIT))
+            logger.debug(
+                "Tool retriever scores for query %r (top %d of %d candidates):",
+                query,
+                debug_limit,
+                len(ranked_candidates),
+            )
+            for row in ranked_candidates[:debug_limit]:
+                logger.debug(
+                    "tool=%s cosine_similarity=%s bm25_score=%s semantic_rank=%s bm25_rank=%s rrf_score=%.6f",
+                    row["name"],
+                    self._format_float(row["semantic_score"]),
+                    self._format_float(row["bm25_score"]),
+                    self._format_rank(row["semantic_rank"]),
+                    self._format_rank(row["bm25_rank"]),
+                    row["rrf_score"],
+                )
+
+        retrieved_names = [row["name"] for row in ranked_candidates[:top_k]]
+        ordered_names = retrieved_names + [
+            name for name in always_on_names if name not in retrieved_names
         ]
+        final_tools = [tool_lookup[name] for name in ordered_names]
 
         logger.debug("Query: '%s'", query)
         logger.debug(
             "Selected %d tools out of %d available.",
-            len(final_tools), len(all_tools)
+            len(final_tools),
+            len(all_tools),
         )
-        for t in final_tools:
-            logger.debug(" - %s", t.get('function', {}).get('name'))
+        for tool in final_tools:
+            logger.debug(" - %s", tool.get("function", {}).get("name"))
 
         return final_tools
-
-# Minimum cosine similarity to include a tool (below this, even top-K tools
-# are ignored to prevent irrelevant tool injection).
-MIN_SIMILARITY_THRESHOLD = 0.3
 
 
 # Lazy-initialised singleton — avoids calling ollama.list() at import time,
@@ -422,7 +676,6 @@ def _get_retriever() -> "ToolRetriever":
     return _retriever_instance
 
 
-# Backward-compatible module-level name that lazily initialises.
 class _LazyRetriever:
     """Proxy that defers ToolRetriever() construction until first attribute access."""
 

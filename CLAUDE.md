@@ -50,8 +50,8 @@ Spawn a **single judge sub-agent** that receives all raw reports from Stage 1 (a
 #### Stage 4 — Fix & Verify
 
 - Incorporate all Critical and High findings before responding.
-- Medium findings: fix if quick; flag for human review if they require architectural decisions.
-- Low findings: mention in the summary but do not block.
+- Fix all problems found Critical first, then High, then medium, then low.
+- If any findings require human review, flag it and mention in review document.
 - After fixes, spawn a **final lightweight verification agent** to confirm the fixes are correct and didn't introduce regressions.
 - Make sure to create a code_review_[topic of review].md file after the review stating all the problems found and how they were fixed.
 

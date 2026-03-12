@@ -71,7 +71,9 @@ from .services.screenshots import process_screenshot, process_screenshot_start
 # Configure logging before runtime startup.
 logging.basicConfig(
     level=logging.INFO,
-    format="%(message)s",
+    # Keep level prefixes visible in the Electron/dev terminal so retrieval and
+    # backend lifecycle logs are easy to spot.
+    format="[%(levelname)s] %(message)s",
     stream=_sys.stdout,
     force=True,
 )
