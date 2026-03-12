@@ -7,7 +7,7 @@ import tempfile
 import threading
 import numpy as np
 import ollama
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -227,14 +227,17 @@ class ToolRetriever:
             except Exception as e:
                 logger.warning("Could not save embedding cache index: %s", e)
 
-    def embed_tools(self, tools: List[Dict], *, prune_removed: bool = False):
+    def embed_tools(
+        self,
+        tools: List[Dict],
+    ):
         """
         Embed tool descriptions and cache them.
 
         Uses a disk cache keyed on (model_name, description_text) so only
         new or changed tools require an API call on subsequent launches.
-        When ``prune_removed`` is true, cache entries for tools that are no
-        longer registered are removed from disk as well.
+        Cached entries are only deleted when a tool description changes and a
+        replacement embedding has been successfully written.
         """
         if self._embedding_model_type == "none":
             return
@@ -304,20 +307,8 @@ class ToolRetriever:
                     name,
                 )
 
-            removed_tool_names = set()
-            if prune_removed:
-                removed_tool_names = set(previous_index) - set(current_tool_keys)
-                for removed_name in removed_tool_names:
-                    stale_key = previous_index.get(removed_name)
-                    if stale_key and self._embedding_cache.pop(stale_key, None) is not None:
-                        stale_prunes += 1
-                        cache_changed = True
-
             updated_index = previous_index.copy()
             updated_index.update(current_tool_keys)
-            if prune_removed:
-                for removed_name in removed_tool_names:
-                    updated_index.pop(removed_name, None)
 
             if updated_index != self._tool_cache_index:
                 self._tool_cache_index = updated_index

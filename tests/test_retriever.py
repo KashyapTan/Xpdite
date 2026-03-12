@@ -144,6 +144,53 @@ class TestRetrieveTools:
 
 
 class TestEmbedToolsCacheCleanup:
+    def test_incremental_refresh_keeps_cache_for_temporarily_absent_tools(self, retriever):
+        full_tools = _make_tools(
+            {
+                "read_file": "Read a file from disk",
+                "list_calendars": "List the user's calendars",
+            }
+        )
+        always_on_tools = _make_tools({"read_file": "Read a file from disk"})
+        read_key = retriever._cache_key(
+            retriever._ollama_model_name, "read_file: Read a file from disk"
+        )
+        calendar_key = retriever._cache_key(
+            retriever._ollama_model_name,
+            "list_calendars: List the user's calendars",
+        )
+
+        with patch.object(
+            retriever,
+            "_get_embedding",
+            side_effect=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        ):
+            retriever.embed_tools(full_tools)
+
+        with patch.object(retriever, "_get_embedding") as get_embedding:
+            retriever.embed_tools(always_on_tools)
+            retriever.embed_tools(full_tools)
+
+        get_embedding.assert_not_called()
+        assert read_key in retriever._embedding_cache
+        assert calendar_key in retriever._embedding_cache
+        assert retriever._tool_cache_index == {
+            "read_file": read_key,
+            "list_calendars": calendar_key,
+        }
+        assert set(retriever._tool_embeddings) == {"read_file", "list_calendars"}
+
+        import source.mcp_integration.retriever as retriever_module
+
+        with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
+            assert read_key in data.files
+            assert calendar_key in data.files
+        with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
+            assert json.load(fh) == {
+                "read_file": read_key,
+                "list_calendars": calendar_key,
+            }
+
     def test_description_change_keeps_old_cache_until_reembed_succeeds(self, retriever):
         initial_tools = _make_tools({"search_docs": "Search the docs"})
         updated_tools = _make_tools({"search_docs": "Search the updated docs"})
@@ -208,7 +255,7 @@ class TestEmbedToolsCacheCleanup:
         with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
             assert json.load(fh) == {"search_docs": updated_key}
 
-    def test_prune_removed_tools_deletes_orphaned_cache_entries(self, retriever):
+    def test_tools_missing_from_current_refresh_stay_cached(self, retriever):
         tools = _make_tools(
             {
                 "search_docs": "Search the docs",
@@ -230,17 +277,68 @@ class TestEmbedToolsCacheCleanup:
             retriever.embed_tools(tools)
 
         with patch.object(retriever, "_get_embedding") as get_embedding:
-            retriever.embed_tools(_make_tools({"search_docs": "Search the docs"}), prune_removed=True)
+            retriever.embed_tools(_make_tools({"search_docs": "Search the docs"}))
 
         get_embedding.assert_not_called()
         assert search_key in retriever._embedding_cache
-        assert ticket_key not in retriever._embedding_cache
-        assert retriever._tool_cache_index == {"search_docs": search_key}
+        assert ticket_key in retriever._embedding_cache
+        assert retriever._tool_cache_index == {
+            "search_docs": search_key,
+            "open_ticket": ticket_key,
+        }
 
         import source.mcp_integration.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert search_key in data.files
-            assert ticket_key not in data.files
+            assert ticket_key in data.files
         with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
-            assert json.load(fh) == {"search_docs": search_key}
+            assert json.load(fh) == {
+                "search_docs": search_key,
+                "open_ticket": ticket_key,
+            }
+
+    def test_optional_tools_reuse_cached_embeddings_after_absence(self, retriever):
+        tools = _make_tools(
+            {
+                "read_file": "Read a file from disk",
+                "list_calendars": "List the user's calendars",
+            }
+        )
+        read_key = retriever._cache_key(
+            retriever._ollama_model_name, "read_file: Read a file from disk"
+        )
+        calendar_key = retriever._cache_key(
+            retriever._ollama_model_name,
+            "list_calendars: List the user's calendars",
+        )
+
+        with patch.object(
+            retriever,
+            "_get_embedding",
+            side_effect=[np.array([1.0, 0.0]), np.array([0.0, 1.0])],
+        ):
+            retriever.embed_tools(tools)
+
+        with patch.object(retriever, "_get_embedding") as get_embedding:
+            retriever.embed_tools(_make_tools({"read_file": "Read a file from disk"}))
+            retriever.embed_tools(tools)
+
+        get_embedding.assert_not_called()
+        assert read_key in retriever._embedding_cache
+        assert calendar_key in retriever._embedding_cache
+        assert retriever._tool_cache_index == {
+            "read_file": read_key,
+            "list_calendars": calendar_key,
+        }
+
+        import source.mcp_integration.retriever as retriever_module
+
+        with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
+            assert read_key in data.files
+            assert calendar_key in data.files
+        with open(retriever_module._CACHE_INDEX_FILE, encoding="utf-8") as fh:
+            assert json.load(fh) == {
+                "read_file": read_key,
+                "list_calendars": calendar_key,
+            }
