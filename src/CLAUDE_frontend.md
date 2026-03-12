@@ -168,6 +168,8 @@ interface ResponseVariant {
 
 Timeline item kinds: `thinking_tokens` (collapsible `ChainThinkingItem`), `thinking` (plain), `tool` (wrench+check), `terminal` (renders `InlineTerminalBlock`), `done` (final check marker). Auto-expands while any tool is running.
 
+`src/ui/components/chat/toolCallUtils.ts` is the source of truth for human-readable tool-call badges, per-tool descriptions, and server summary fragments. When adding new MCP servers or tools, update that file (and keep `ToolCallsDisplay.tsx` wired to its helpers) so chat tool calls stay polished.
+
 ### `InlineTerminalBlock` — embedded terminal in chat
 Filepath: `src/ui/components/chat/InlineTerminalBlock.tsx`
 

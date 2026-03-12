@@ -95,3 +95,50 @@ RENAME_FILE_DESCRIPTION = build_tool_description(
     returns="A success string or an error string.",
     notes="Call list_directory first to confirm the source and check for name conflicts. Use move_file to change directories.",
 )
+
+GLOB_FILES_DESCRIPTION = build_tool_description(
+    purpose="Find files and directories that match a glob pattern inside the filesystem sandbox.",
+    use_when=(
+        "You need structured file discovery and should use this instead of "
+        "run_command with find, ls, dir, or shell glob expansion workflows."
+    ),
+    inputs=(
+        "pattern = relative glob such as **/*.py or src/**/*.ts; "
+        f"base_path = optional directory inside {BASE_PATH} to search from "
+        "(defaults to the current directory); include_hidden = optional boolean "
+        "for dotfiles and hidden directories."
+    ),
+    returns=(
+        "A JSON string with matches (relative paths), total, and truncated."
+    ),
+    notes=(
+        "Results are capped at 500 matches. If truncated is true, narrow the "
+        "pattern or base_path and try again. This tool is sandboxed to "
+        f"{BASE_PATH} for user {USERNAME}."
+    ),
+)
+
+GREP_FILES_DESCRIPTION = build_tool_description(
+    purpose="Search text files for a literal string or regex pattern inside the filesystem sandbox.",
+    use_when=(
+        "You need structured content search and should use this instead of "
+        "run_command with grep, rg, ag, or similar terminal search commands."
+    ),
+    inputs=(
+        "pattern = string or regex to search for; path = optional directory "
+        f"inside {BASE_PATH} to search from (defaults to the current "
+        "directory); file_glob = optional relative glob filter such as "
+        "**/*.py; is_regex and case_sensitive = optional booleans; "
+        "context_lines = optional integer up to 10; max_results = optional "
+        "integer up to 500; include_hidden = optional boolean."
+    ),
+    returns=(
+        "A JSON string with matches, total_matches, files_searched, skipped "
+        "binary and large file counts, truncated, pattern, and is_regex."
+    ),
+    notes=(
+        "Binary files and files larger than 1 MB are skipped and counted in the "
+        "response. If truncated is true, narrow the path, file_glob, or pattern "
+        "before retrying."
+    ),
+)

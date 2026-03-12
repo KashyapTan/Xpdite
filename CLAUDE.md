@@ -145,7 +145,7 @@ uv run <file_name>                            # run python files for testing
 
 **New DB column** → add an `ALTER TABLE … ADD COLUMN` migration block inside `_init_db()` in `source/database.py`. Never modify the original `CREATE TABLE` statement.
 
-**New MCP tool server** → see `mcp_servers/CLAUDE_mcp.md` → "How to Add a New MCP Server".
+**New MCP tool server** → see `mcp_servers/CLAUDE_mcp.md` → "How to Add a New MCP Server". If tool calls from that server should render nicely in chat, also update `src/ui/components/chat/toolCallUtils.ts` (and its summary helper usage in `ToolCallsDisplay.tsx`) with badge/text mappings for the new tools.
 
 **New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
 

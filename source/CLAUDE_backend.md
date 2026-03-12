@@ -244,7 +244,8 @@ Terminal tools are handled inline by `terminal_executor.py`, never via the MCP s
    ```
 3. **Optionally update** `mcp_servers/config/servers.json` with metadata (used by the Settings UI; not read by the backend).
 4. **Optionally add a skill** by creating a folder under `source/skills_seed/<your_name>/` with a `skill.json` and `SKILL.md` file. The skill will be auto-seeded to `user_data/skills/builtin/` on startup.
-5. Tools are auto-discovered, indexed by the retriever, and available immediately.
+5. If the new server's tool calls should render cleanly in the chat timeline, update `src/ui/components/chat/toolCallUtils.ts` (and the summary helper used by `ToolCallsDisplay.tsx`) with badge/text mappings for the new server and its tools.
+6. Tools are auto-discovered, indexed by the retriever, and available immediately.
 
 ---
 
@@ -291,7 +292,7 @@ All endpoints are in `source/api/http.py` unless noted.
 | Skill | `slash_command` | `trigger_servers` | Notes |
 |---|---|---|---|
 | `terminal` | `terminal` | `["terminal"]` | PTY + approval flow |
-| `filesystem` | `filesystem` | `["filesystem"]` | Read/write files |
+| `filesystem` | `filesystem` | `["filesystem"]` | Read/write/search files |
 | `websearch` | `websearch` | `["websearch"]` | Web search |
 | `gmail` | `gmail` | `["gmail"]` | Gmail MCP server |
 | `calendar` | `calendar` | `["calendar"]` | Google Calendar MCP server |

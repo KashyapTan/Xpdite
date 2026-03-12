@@ -8,7 +8,7 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 
 | Server | Status | Key Tools | Notes |
 |---|---|---|---|
-| `filesystem` | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file` | Sandboxed — paths are validated |
+| `filesystem` | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file`, `glob_files`, `grep_files` | Sandboxed — paths are validated |
 | `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
 | `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
 | `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
@@ -91,6 +91,9 @@ The skill is auto-seeded to `user_data/skills/builtin/` on every app startup. `t
 
 ### 5. That's it
 Tools are auto-discovered on startup, indexed by the semantic retriever, and routed automatically when the LLM calls them.
+
+### 6. UI follow-up for chat tool calls
+If the new server's tool calls should display nicely in the chat timeline, update `src/ui/components/chat/toolCallUtils.ts` and the related summary usage in `src/ui/components/chat/ToolCallsDisplay.tsx` so the server badge and per-tool descriptions stay human-friendly.
 
 ---
 

@@ -36,6 +36,7 @@ dependencies = [
     "litellm>=1.81.12",
     "ruff>=0.15.5",
     "rank-bm25>=0.2.2",
+    "regex>=2026.1.15",
 ]
 
 [dependency-groups]

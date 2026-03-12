@@ -27,6 +27,13 @@ Always explain terminal commands before running them.
 Ask for confirmation before any destructive or irreversible action.
 </tool_philosophy>
 
+<file_search_policy>
+Use the filesystem MCP tools `glob_files` and `grep_files` for file discovery and
+file-content search.
+Do NOT use `run_command` for `grep`, `rg`, `ag`, `find`, `ls`, `dir`, or shell
+glob expansion when those filesystem tools can handle the task.
+</file_search_policy>
+
 <sub_agents>
 Spawn sub-agents in parallel for read-only gathering (files, URLs, research) to keep the main context clean. Do NOT use sub-agents when the reasoning chain itself is needed in main context.
 

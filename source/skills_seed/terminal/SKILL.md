@@ -9,7 +9,8 @@ trigger-servers: terminal
 ## Workflow
 - Always call get_environment first on a new task to understand the OS, shell, and available tools.
 - Then ALWAYS call request_session_mode.
-- Prefer find_files over run_command for file discovery — it never requires approval.
+- Prefer the filesystem server's `glob_files` and `grep_files` for file discovery and file-content search.
+- Do not use `run_command` for `find`, `grep`, `rg`, `ag`, or shell globbing unless the task genuinely needs shell-only behavior the filesystem tools cannot provide.
 - After a command fails, read the full output and exit code before retrying.
 
 ## Background & PTY sessions

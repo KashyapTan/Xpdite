@@ -70,6 +70,14 @@ class TestSkillSeeds:
         assert "filesystem" in names
         assert "websearch" in names
 
+    def test_filesystem_skill_mentions_search_tools(self):
+        md_path = os.path.join(SKILLS_SEED_DIR, "filesystem", "SKILL.md")
+        with open(md_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "glob_files" in content
+        assert "grep_files" in content
+        assert "Do NOT use `run_command`" in content
+
     @pytest.mark.parametrize("name,data", SEED_SKILLS, ids=[s[0] for s in SEED_SKILLS])
     def test_trigger_servers_is_list(self, name, data):
         assert isinstance(data["trigger_servers"], list), f"trigger_servers must be list for '{name}'"

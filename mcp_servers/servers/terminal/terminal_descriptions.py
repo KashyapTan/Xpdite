@@ -39,18 +39,22 @@ RUN_COMMAND_DESCRIPTION = build_tool_description(
         "Use pty=True for interactive CLIs. background is useful with PTY "
         "sessions. Quote Windows paths that contain spaces. Security: commands "
         "touching OS system paths are always blocked, PATH overrides are "
-        "rejected, and user approval is required before execution."
+        "rejected, and user approval is required before execution. Do not use "
+        "run_command for grep, rg, ag, find, ls, or shell globbing when the "
+        "filesystem server's grep_files or glob_files tools can handle the task."
     ),
 )
 
 FIND_FILES_DESCRIPTION = build_tool_description(
-    purpose="Find files that match a glob pattern under the current working directory tree.",
+    purpose="Return a simple text list of files that match a glob pattern under the current working directory tree.",
     use_when=(
-        "You need to discover candidate files before opening, editing, or running commands on them."
+        "You are already in a terminal-centric workflow and need a quick fallback file list. "
+        "Prefer the filesystem server's glob_files tool for normal file discovery because "
+        "it returns structured JSON and stronger sandbox guidance."
     ),
     inputs="pattern (for example *.py or **/*.ts) and directory (optional, must stay inside the current working directory tree).",
     returns="A text list of matching file paths, capped at the first 200 matches.",
-    notes="Use this for file discovery only. It does not read file contents and does not require user approval.",
+    notes="Use this for file discovery only. It does not read file contents and does not require user approval. Use grep_files for content search and glob_files for the primary structured file-discovery workflow.",
 )
 
 REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(

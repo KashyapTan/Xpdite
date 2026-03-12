@@ -5,7 +5,7 @@ import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
-import { getHumanReadableDescription } from './toolCallUtils';
+import { getHumanReadableDescription, getServerSummaryFragment } from './toolCallUtils';
 import '../../CSS/InlineTerminal.css';
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -86,19 +86,7 @@ function getChainSummary(toolCalls: ToolCall[]): string {
 
   const parts: string[] = [];
   for (const [server, tcs] of byServer) {
-    if (server === 'filesystem') {
-      parts.push(`accessed ${tcs.length} file${tcs.length > 1 ? 's' : ''}`);
-    } else if (server === 'websearch') {
-      parts.push('searched the web');
-    } else if (server === 'terminal') {
-      parts.push(`ran ${tcs.length} command${tcs.length > 1 ? 's' : ''}`);
-    } else if (server === 'sub_agent') {
-      parts.push(`spawned ${tcs.length} sub-agent${tcs.length > 1 ? 's' : ''}`);
-    } else if (server === 'demo') {
-      parts.push(`performed ${tcs.length} calculation${tcs.length > 1 ? 's' : ''}`);
-    } else {
-      parts.push(`used ${server}`);
-    }
+    parts.push(getServerSummaryFragment(server, tcs.length));
   }
 
   if (parts.length === 0) return `Used ${toolCalls.length} tools`;
