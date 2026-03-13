@@ -1,5 +1,6 @@
 """Tests for source/services/sub_agent.py — tier resolution, tool filtering, local detection."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 
@@ -10,6 +11,7 @@ from source.services.sub_agent import (
     _uses_ollama_client,
     _get_sub_agent_tools,
     _EXCLUDED_TOOLS,
+    _run_cloud_sub_agent,
     execute_sub_agent,
 )
 
@@ -172,6 +174,39 @@ class TestExcludedTools:
 
     def test_contains_spawn_agent(self):
         assert "spawn_agent" in _EXCLUDED_TOOLS
+
+
+# ---------------------------------------------------------------------------
+# _run_cloud_sub_agent — direct cloud call behavior
+# ---------------------------------------------------------------------------
+
+
+class TestRunCloudSubAgent:
+    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.key_manager.key_manager.get_api_key", return_value="or-test-key")
+    async def test_openrouter_passes_api_key_directly(
+        self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
+    ):
+        mock_acompletion.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+            usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3),
+        )
+
+        result = await _run_cloud_sub_agent(
+            model_name="openrouter/anthropic/claude-3-5-sonnet",
+            instruction="Say hi",
+            tools=None,
+        )
+
+        assert result["response"] == "ok"
+        assert result["error"] is None
+        assert result["token_stats"] == {"prompt_tokens": 7, "completion_tokens": 3}
+
+        call_kwargs = mock_acompletion.call_args.kwargs
+        assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
+        assert call_kwargs["api_key"] == "or-test-key"
 
 
 # ---------------------------------------------------------------------------

@@ -247,7 +247,6 @@ async def _run_cloud_sub_agent(
     """
     from ..llm.router import parse_provider
     from ..llm.key_manager import key_manager
-    from ..llm.openrouter_env import scoped_openrouter_api_key
     from ..mcp_integration.manager import mcp_manager
 
     provider, model = parse_provider(model_name)
@@ -311,11 +310,7 @@ async def _run_cloud_sub_agent(
             create_kwargs["tools"] = openai_tools
 
         try:
-            if provider != "openrouter":
-                response = await litellm.acompletion(**create_kwargs)
-            else:
-                async with scoped_openrouter_api_key(api_key):
-                    response = await litellm.acompletion(**create_kwargs)
+            response = await litellm.acompletion(**create_kwargs)
         except Exception as e:
             logger.error("Sub-agent LiteLLM call failed: %s", e, exc_info=True)
             return {

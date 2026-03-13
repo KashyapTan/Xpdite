@@ -7,7 +7,6 @@ Covers:
 """
 
 import json
-import os
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -621,32 +620,22 @@ class TestStreamLitellm:
         assert call_kwargs["api_key"] == "sk-secret-123"
 
     @pytest.mark.asyncio
-    async def test_openrouter_key_injected_into_environment(self, _mock_broadcast, _mock_cancelled):
-        """OpenRouter calls should set OPENROUTER_API_KEY during the request and restore it after."""
-        observed_env: dict[str, str | None] = {}
-
-        async def _fake_stream(*_args, **_kwargs):
-            observed_env["during_call"] = os.environ.get("OPENROUTER_API_KEY")
-            return ("ok", {"prompt_eval_count": 0, "eval_count": 0}, [], None)
-
-        with patch("source.llm.cloud_provider._stream_litellm", new_callable=AsyncMock) as mock_stream, \
-             patch.dict(os.environ, {"OPENROUTER_API_KEY": "existing-key"}, clear=False):
+    async def test_openrouter_api_key_passed_directly(self, _mock_broadcast, _mock_cancelled):
+        """OpenRouter should use explicit api_key kwargs like other cloud providers."""
+        chunks = [_text_chunk("ok", finish_reason="stop")]
+        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
             from source.llm.cloud_provider import stream_cloud_chat
 
-            mock_stream.side_effect = _fake_stream
             await stream_cloud_chat(
                 provider="openrouter", model="anthropic/claude-3-5-sonnet",
                 api_key="or-secret-key", user_query="hi", image_paths=[],
                 chat_history=[],
             )
 
-            assert observed_env["during_call"] == "or-secret-key"
-            assert os.environ.get("OPENROUTER_API_KEY") == "existing-key"
-
-        call_args = mock_stream.call_args.args
-        assert call_args[0] == "openrouter"
-        assert call_args[2] == "anthropic/claude-3-5-sonnet"
-        assert call_args[1] == "or-secret-key"
+        call_kwargs = mock_acomp.call_args.kwargs
+        assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
+        assert call_kwargs["api_key"] == "or-secret-key"
 
     @pytest.mark.asyncio
     async def test_reasoning_params_forwarded(self, _mock_broadcast, _mock_cancelled):
