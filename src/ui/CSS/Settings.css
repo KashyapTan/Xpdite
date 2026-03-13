@@ -25,7 +25,7 @@
     margin-top: 10px;
 }
 .settings-models, .settings-mcp-connections, .settings-ollama-model,
-.settings-anthropic-api-key, .settings-gemini-api-key, .settings-openai-api-key,
+.settings-anthropic-api-key, .settings-gemini-api-key, .settings-openai-api-key, .settings-openrouter-api-key,
 .settings-tools, .settings-system-prompt-tab, .settings-skills-tab, .settings-meeting-tab,
 .settings-sub-agents-tab{
     width: 130px;
@@ -39,7 +39,7 @@
     gap: 5px;
 }
 .settings-models:hover, .settings-mcp-connections:hover, .settings-ollama-model:hover,
-.settings-anthropic-api-key:hover, .settings-gemini-api-key:hover, .settings-openai-api-key:hover,
+.settings-anthropic-api-key:hover, .settings-gemini-api-key:hover, .settings-openai-api-key:hover, .settings-openrouter-api-key:hover,
 .settings-tools:hover, .settings-system-prompt-tab:hover, .settings-skills-tab:hover, .settings-meeting-tab:hover,
 .settings-sub-agents-tab:hover{
     cursor: pointer;

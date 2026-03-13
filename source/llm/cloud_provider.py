@@ -1,8 +1,8 @@
 """
 Cloud LLM provider streaming integration with inline tool calling.
 
-Uses LiteLLM as a unified interface to Anthropic (Claude), OpenAI, and
-Google Gemini.  All providers share a single streaming implementation
+Uses LiteLLM as a unified interface to Anthropic (Claude), OpenAI,
+Google Gemini, and OpenRouter. All providers share a single streaming implementation
 (``_stream_litellm``).  When a model requests a tool call mid-stream,
 the tool is executed and the results are fed back — the user sees the
 entire process (text → tool → text → tool → text) as a continuous,
@@ -793,10 +793,19 @@ async def stream_cloud_chat(
     All providers use a single unified implementation via LiteLLM.
     Text and tool calls are interleaved and broadcast in real-time.
     """
-    return await _stream_litellm(
-        provider, api_key, model, user_query, image_paths,
-        chat_history, allowed_tool_names, system_prompt,
-    )
+    if provider != "openrouter":
+        return await _stream_litellm(
+            provider, api_key, model, user_query, image_paths,
+            chat_history, allowed_tool_names, system_prompt,
+        )
+
+    from .openrouter_env import scoped_openrouter_api_key
+
+    async with scoped_openrouter_api_key(api_key):
+        return await _stream_litellm(
+            provider, api_key, model, user_query, image_paths,
+            chat_history, allowed_tool_names, system_prompt,
+        )
 
 
 # Note: stream_cloud_chat returns a 4-tuple:

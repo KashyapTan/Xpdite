@@ -135,6 +135,7 @@ class TestValidProviders:
         assert "anthropic" in VALID_PROVIDERS
         assert "openai" in VALID_PROVIDERS
         assert "gemini" in VALID_PROVIDERS
+        assert "openrouter" in VALID_PROVIDERS
 
     def test_no_extras(self):
-        assert len(VALID_PROVIDERS) == 3
+        assert len(VALID_PROVIDERS) == 4

@@ -31,12 +31,15 @@
 .settings-models-ollama-header,
 .settings-models-anthropic-header,
 .settings-models-gemini-header,
-.settings-models-openai-header {
+.settings-models-openai-header,
+.settings-models-openrouter-header {
     width: 100%;
     height: 30px;
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding-left: 5px;
+    padding-right: 5px;
     font-size: 0.7rem;
     font-weight: 600;
     color: rgba(255, 255, 255, 0.3);
@@ -48,7 +51,8 @@
 .settings-models-ollama-content,
 .settings-models-anthropic-content,
 .settings-models-gemini-content,
-.settings-models-openai-content {
+.settings-models-openai-content,
+.settings-models-openrouter-content {
     width: calc(100% - 10px);
     height: fit-content;
     display: flex;
@@ -62,10 +66,15 @@
     margin-bottom: 20px;
 }
 
+.settings-models-openrouter-content {
+    margin-bottom: 20px;
+}
+
 .settings-models-ollama-model,
 .settings-models-anthropic-model,
 .settings-models-gemini-model,
-.settings-models-openai-model {
+.settings-models-openai-model,
+.settings-models-openrouter-model {
     min-height: 36px;
     padding: 4px 8px;
     display: flex;
@@ -76,14 +85,16 @@
 .settings-models-ollama-model:last-child,
 .settings-models-anthropic-model:last-child,
 .settings-models-gemini-model:last-child,
-.settings-models-openai-model:last-child {
+.settings-models-openai-model:last-child,
+.settings-models-openrouter-model:last-child {
     margin-bottom: 0px;
 }
 
 .settings-models-ollama-model:hover,
 .settings-models-anthropic-model:hover,
 .settings-models-gemini-model:hover,
-.settings-models-openai-model:hover {
+.settings-models-openai-model:hover,
+.settings-models-openrouter-model:hover {
     cursor: pointer;
     transition: background-color 0.2s ease-in-out;
     background-color: rgba(255, 255, 255, 0.05);
@@ -92,7 +103,8 @@
 .settings-models-ollama-model:first-child:hover,
 .settings-models-anthropic-model:first-child:hover,
 .settings-models-gemini-model:first-child:hover,
-.settings-models-openai-model:first-child:hover {
+.settings-models-openai-model:first-child:hover,
+.settings-models-openrouter-model:first-child:hover {
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
 }
@@ -100,7 +112,8 @@
 .settings-models-ollama-model:last-child:hover,
 .settings-models-anthropic-model:last-child:hover,
 .settings-models-gemini-model:last-child:hover,
-.settings-models-openai-model:last-child:hover {
+.settings-models-openai-model:last-child:hover,
+.settings-models-openrouter-model:last-child:hover {
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;
 }
@@ -162,6 +175,8 @@
     font-size: 0.65rem;
     color: rgba(255, 255, 255, 0.35);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ====== States ====== */
@@ -177,6 +192,41 @@
 
 .settings-models-error {
     color: #ef5350;
+}
+
+.settings-models-refresh-btn {
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.8);
+    height: 22px;
+    padding: 0 8px;
+    border-radius: 6px;
+    font-size: 0.65rem;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.settings-models-refresh-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.settings-models-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.settings-models-provider-group {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    margin-top: 2px;
+    padding-top: 4px;
+}
+
+.settings-models-provider-group-header {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: rgba(255, 255, 255, 0.35);
+    padding: 4px 8px 2px;
 }
 
 /* ====== Active sidebar tab ====== */

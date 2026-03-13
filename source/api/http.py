@@ -8,12 +8,15 @@ Use for:
 - Cloud provider model listing
 """
 
-from fastapi import APIRouter, HTTPException
 import logging
+import time
+
+import requests
+from fastapi import APIRouter, HTTPException
 
 from ollama import AsyncClient as OllamaAsyncClient
 from pydantic import BaseModel
-from typing import Any, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
 
@@ -21,6 +24,64 @@ logger = logging.getLogger(__name__)
 
 
 router = APIRouter(prefix="/api")
+
+MODEL_CACHE_TTL_SECONDS = 10 * 60
+_MODEL_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _invalidate_model_cache(provider: str) -> None:
+    """Drop a provider model cache entry (if present)."""
+    _MODEL_CACHE.pop(provider, None)
+
+
+def _extract_openrouter_error(response: requests.Response) -> str:
+    """Best-effort extraction of OpenRouter error details."""
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = None
+
+    if isinstance(payload, dict):
+        error_obj = payload.get("error")
+        if isinstance(error_obj, dict):
+            message = error_obj.get("message") or error_obj.get("code")
+            if message:
+                return str(message)
+        if isinstance(error_obj, str) and error_obj.strip():
+            return error_obj.strip()
+
+        for key in ("message", "detail"):
+            value = payload.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    body = response.text.strip()
+    if body:
+        return body[:200]
+
+    return f"HTTP {response.status_code}"
+
+
+async def _get_cached_or_fetch_models(
+    provider: str,
+    refresh: bool,
+    fetcher: Callable[[], Awaitable[Any]],
+) -> Any:
+    """Resolve models via in-memory cache with TTL and explicit refresh."""
+    if refresh:
+        _invalidate_model_cache(provider)
+
+    now = time.time()
+    cached = _MODEL_CACHE.get(provider)
+    if cached:
+        cached_at, cached_payload = cached
+        if now - cached_at < MODEL_CACHE_TTL_SECONDS:
+            return cached_payload
+        _MODEL_CACHE.pop(provider, None)
+
+    payload = await fetcher()
+    _MODEL_CACHE[provider] = (now, payload)
+    return payload
 
 
 # ============================================
@@ -49,38 +110,41 @@ class OllamaModel(BaseModel):
 
 
 @router.get("/models/ollama")
-async def get_ollama_models() -> List[dict]:
+async def get_ollama_models(refresh: bool = False) -> Any:
     """
     Get all Ollama models installed on the user's machine.
 
     Calls `ollama.list()` which talks to the local Ollama daemon
     and returns every model that has been pulled.
     """
-    try:
-        # Use async client — no thread needed
-        async_client = OllamaAsyncClient()
-        response = await async_client.list()
-        models = []
-        # The Ollama SDK returns objects with attributes, not dicts.
-        # e.g. Model(model='gemma3:12b', size=..., details=ModelDetails(...))
-        for m in response.models:
-            details = m.details
-            models.append(
-                {
-                    "name": m.model or "unknown",
-                    "size": m.size or 0,
-                    "parameter_size": getattr(details, "parameter_size", "")
-                    if details
-                    else "",
-                    "quantization": getattr(details, "quantization_level", "")
-                    if details
-                    else "",
-                }
-            )
-        return models
-    except Exception as e:
-        logger.error("Error fetching Ollama models: %s", e)
-        return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
+    async def _fetch() -> Any:
+        try:
+            # Use async client — no thread needed
+            async_client = OllamaAsyncClient()
+            response = await async_client.list()
+            models = []
+            # The Ollama SDK returns objects with attributes, not dicts.
+            # e.g. Model(model='gemma3:12b', size=..., details=ModelDetails(...))
+            for m in response.models:
+                details = m.details
+                models.append(
+                    {
+                        "name": m.model or "unknown",
+                        "size": m.size or 0,
+                        "parameter_size": getattr(details, "parameter_size", "")
+                        if details
+                        else "",
+                        "quantization": getattr(details, "quantization_level", "")
+                        if details
+                        else "",
+                    }
+                )
+            return models
+        except Exception as e:
+            logger.error("Error fetching Ollama models: %s", e)
+            return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
+
+    return await _get_cached_or_fetch_models("ollama", refresh, _fetch)
 
 
 # ============================================
@@ -204,6 +268,18 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
                 lambda: list(client.models.list(config={"page_size": 1}))
             )
 
+        elif provider == "openrouter":
+            def _validate_openrouter() -> requests.Response:
+                return requests.get(
+                    "https://openrouter.ai/api/v1/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=20,
+                )
+
+            response = await _run_in_thread(_validate_openrouter)
+            if response.status_code != 200:
+                raise ValueError(_extract_openrouter_error(response))
+
     except Exception as e:
         error_msg = str(e)
         logger.warning("API key validation failed for %s: %s", provider, error_msg)
@@ -213,6 +289,7 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
 
     # Key is valid — encrypt and store
     key_manager.save_api_key(provider, api_key)
+    _invalidate_model_cache(provider)
     return {
         "status": "saved",
         "provider": provider,
@@ -237,6 +314,8 @@ async def delete_api_key(provider: str):
     filtered = [m for m in enabled if not m.startswith(f"{provider}/")]
     if len(filtered) != len(enabled):
         db.set_enabled_models(filtered)
+
+    _invalidate_model_cache(provider)
 
     return {"status": "deleted", "provider": provider}
 
@@ -356,175 +435,284 @@ async def disconnect_google():
 # ============================================
 
 
+def _to_cloud_model(
+    model_id: str,
+    provider: str,
+    display_name: str,
+    *,
+    provider_group: Optional[str] = None,
+    context_length: Optional[int] = None,
+) -> dict:
+    """Normalize cloud model payload shape across providers."""
+    return {
+        "id": model_id,
+        "provider": provider,
+        "display_name": display_name,
+        "provider_group": provider_group or provider,
+        "context_length": context_length,
+    }
+
+
 @router.get("/models/anthropic")
-async def get_anthropic_models() -> List[dict]:
+async def get_anthropic_models(refresh: bool = False) -> List[dict]:
     """Get available Anthropic models. Requires a stored API key."""
     from ..llm.key_manager import key_manager
 
-    api_key = key_manager.get_api_key("anthropic")
-    if not api_key:
-        return []
+    async def _fetch() -> List[dict]:
+        api_key = key_manager.get_api_key("anthropic")
+        if not api_key:
+            return []
 
-    try:
-        import anthropic
+        try:
+            import anthropic
 
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+            client = anthropic.AsyncAnthropic(api_key=api_key)
 
-        models = []
-        async for m in client.models.list(limit=100):
-            # Use display_name if available, else ID
-            display = getattr(m, "display_name", m.id)
-            models.append(
-                {
-                    "name": f"anthropic/{m.id}",
-                    "provider": "anthropic",
-                    "description": display,
-                }
+            models: List[dict] = []
+            async for m in client.models.list(limit=100):
+                # Use display_name if available, else ID
+                display = getattr(m, "display_name", m.id)
+                models.append(
+                    _to_cloud_model(
+                        model_id=f"anthropic/{m.id}",
+                        provider="anthropic",
+                        display_name=display,
+                    )
+                )
+
+            if models:
+                models.sort(key=lambda x: x["id"], reverse=True)
+                return models
+
+        except Exception as e:
+            logger.error("Error fetching Anthropic models via API: %s", e)
+            # Fall through to fallback
+
+        return [
+            _to_cloud_model(
+                model_id=f"anthropic/{m['name']}",
+                provider="anthropic",
+                display_name=m["description"],
             )
+            for m in ANTHROPIC_FALLBACK
+        ]
 
-        # If we got models, return them
-        if models:
-            # Sort by creation date if available (descending), else name
-            models.sort(key=lambda x: x["name"], reverse=True)
-            return models
-
-    except Exception as e:
-        logger.error("Error fetching Anthropic models via API: %s", e)
-        # Fall through to fallback
-
-    # Fallback
-    return [
-        {
-            "name": f"anthropic/{m['name']}",
-            "provider": "anthropic",
-            "description": m["description"],
-        }
-        for m in ANTHROPIC_FALLBACK
-    ]
+    return await _get_cached_or_fetch_models("anthropic", refresh, _fetch)
 
 
 @router.get("/models/openai")
-async def get_openai_models() -> List[dict]:
+async def get_openai_models(refresh: bool = False) -> List[dict]:
     """Get available OpenAI models. Requires a stored API key."""
     from ..llm.key_manager import key_manager
 
-    api_key = key_manager.get_api_key("openai")
-    if not api_key:
-        return []
+    async def _fetch() -> List[dict]:
+        api_key = key_manager.get_api_key("openai")
+        if not api_key:
+            return []
 
-    try:
-        import openai
+        try:
+            import openai
 
-        client = openai.AsyncOpenAI(api_key=api_key)
-        response = await client.models.list()
+            client = openai.AsyncOpenAI(api_key=api_key)
+            response = await client.models.list()
 
-        # Filter to chat-capable models (gpt-*, o1*, o3*, o4*, chatgpt-*)
-        chat_prefixes = ("gpt-4", "o1", "o3", "o4", "chatgpt-", "gpt-5")
-        exclude_keywords = (
-            "instruct",
-            "realtime",
-            "audio",
-            "search",
-            "tts",
-            "whisper",
-            "dall-e",
-            "embedding",
-            "moderation",
-            "davinci",
-            "babbage",
-        )
+            # Filter to chat-capable models (gpt-*, o1*, o3*, o4*, chatgpt-*)
+            chat_prefixes = ("gpt-4", "o1", "o3", "o4", "chatgpt-", "gpt-5")
+            exclude_keywords = (
+                "instruct",
+                "realtime",
+                "audio",
+                "search",
+                "tts",
+                "whisper",
+                "dall-e",
+                "embedding",
+                "moderation",
+                "davinci",
+                "babbage",
+            )
 
-        models = []
-        for m in response.data:
-            model_id = m.id
-            # Simple check: starts with a known prefix AND doesn't contain excluded keywords
-            if any(model_id.startswith(p) for p in chat_prefixes):
-                if not any(kw in model_id for kw in exclude_keywords):
-                    models.append(
-                        {
-                            "name": f"openai/{model_id}",
-                            "provider": "openai",
-                            "description": model_id,
-                        }
-                    )
+            models: List[dict] = []
+            for m in response.data:
+                model_id = m.id
+                # Simple check: starts with a known prefix AND doesn't contain excluded keywords
+                if any(model_id.startswith(p) for p in chat_prefixes):
+                    if not any(kw in model_id for kw in exclude_keywords):
+                        models.append(
+                            _to_cloud_model(
+                                model_id=f"openai/{model_id}",
+                                provider="openai",
+                                display_name=model_id,
+                            )
+                        )
 
-        # Sort alphabetically
-        models.sort(key=lambda x: x["name"])
-        if models:
-            return models
+            models.sort(key=lambda x: x["id"])
+            if models:
+                return models
 
-    except Exception as e:
-        logger.error("Error fetching OpenAI models: %s", e)
-        # Fall through to fallback
+        except Exception as e:
+            logger.error("Error fetching OpenAI models: %s", e)
+            # Fall through to fallback
 
-    # Fallback
-    return [
-        {
-            "name": f"openai/{m['name']}",
-            "provider": "openai",
-            "description": m["description"],
-        }
-        for m in OPENAI_FALLBACK
-    ]
+        return [
+            _to_cloud_model(
+                model_id=f"openai/{m['name']}",
+                provider="openai",
+                display_name=m["description"],
+            )
+            for m in OPENAI_FALLBACK
+        ]
+
+    return await _get_cached_or_fetch_models("openai", refresh, _fetch)
 
 
 @router.get("/models/gemini")
-async def get_gemini_models() -> List[dict]:
+async def get_gemini_models(refresh: bool = False) -> List[dict]:
     """Get available Gemini models. Requires a stored API key."""
     from ..llm.key_manager import key_manager
 
-    api_key = key_manager.get_api_key("gemini")
-    if not api_key:
-        return []
+    async def _fetch() -> List[dict]:
+        api_key = key_manager.get_api_key("gemini")
+        if not api_key:
+            return []
 
-    try:
-        from google import genai
+        try:
+            from google import genai
 
-        client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key)
 
-        # Run sync list_models in thread
-        # Note: The Google GenAI SDK might return an iterator or list depending on version
-        response = await _run_in_thread(lambda: list(client.models.list()))
+            # Run sync list_models in thread
+            # Note: The Google GenAI SDK might return an iterator or list depending on version
+            response = await _run_in_thread(lambda: list(client.models.list()))
 
-        models = []
-        for m in response:
-            model_name = m.name or ""
-            # Only include generateContent-capable models
-            actions = m.supported_actions or []
-            if "generateContent" not in actions:
-                continue
-            # Strip "models/" prefix if present
-            if model_name.startswith("models/"):
-                model_name = model_name[7:]
-            # Skip embedding/vision-only/legacy models
-            if any(kw in model_name for kw in ("embedding", "aqa", "bison", "gecko")):
-                continue
-            display_name = m.display_name or model_name
-            models.append(
-                {
-                    "name": f"gemini/{model_name}",
-                    "provider": "gemini",
-                    "description": display_name,
-                }
+            models: List[dict] = []
+            for m in response:
+                model_name = m.name or ""
+                # Only include generateContent-capable models
+                actions = m.supported_actions or []
+                if "generateContent" not in actions:
+                    continue
+                # Strip "models/" prefix if present
+                if model_name.startswith("models/"):
+                    model_name = model_name[7:]
+                # Skip embedding/vision-only/legacy models
+                if any(kw in model_name for kw in ("embedding", "aqa", "bison", "gecko")):
+                    continue
+                display_name = m.display_name or model_name
+                models.append(
+                    _to_cloud_model(
+                        model_id=f"gemini/{model_name}",
+                        provider="gemini",
+                        display_name=display_name,
+                    )
+                )
+
+            models.sort(key=lambda x: x["id"])
+            if models:
+                return models
+
+        except Exception as e:
+            logger.error("Error fetching Gemini models: %s", e)
+            # Fall through to fallback
+
+        return [
+            _to_cloud_model(
+                model_id=f"gemini/{m['name']}",
+                provider="gemini",
+                display_name=m["description"],
+            )
+            for m in GEMINI_FALLBACK
+        ]
+
+    return await _get_cached_or_fetch_models("gemini", refresh, _fetch)
+
+
+@router.get("/models/openrouter")
+async def get_openrouter_models(refresh: bool = False) -> List[dict]:
+    """Get tool-capable OpenRouter models. Requires a stored OpenRouter API key."""
+    from ..llm.key_manager import key_manager
+
+    async def _fetch() -> List[dict]:
+        api_key = key_manager.get_api_key("openrouter")
+        if not api_key:
+            return []
+
+        def _request_models() -> requests.Response:
+            return requests.get(
+                "https://openrouter.ai/api/v1/models",
+                headers={"Authorization": f"Bearer {api_key}"},
+                timeout=30,
             )
 
-        models.sort(key=lambda x: x["name"])
-        if models:
-            return models
+        try:
+            response = await _run_in_thread(_request_models)
+        except Exception as e:
+            logger.warning("Error fetching OpenRouter models: %s", e)
+            raise HTTPException(
+                status_code=502,
+                detail=f"Could not connect to OpenRouter: {str(e)[:200]}",
+            ) from e
 
-    except Exception as e:
-        logger.error("Error fetching Gemini models: %s", e)
-        # Fall through to fallback
+        if response.status_code != 200:
+            status = 401 if response.status_code in (401, 403) else 502
+            detail = _extract_openrouter_error(response)
+            raise HTTPException(
+                status_code=status,
+                detail=f"Failed to fetch OpenRouter models: {detail[:200]}",
+            )
 
-    # Fallback
-    return [
-        {
-            "name": f"gemini/{m['name']}",
-            "provider": "gemini",
-            "description": m["description"],
-        }
-        for m in GEMINI_FALLBACK
-    ]
+        try:
+            payload = response.json()
+        except ValueError as e:
+            raise HTTPException(
+                status_code=502,
+                detail="OpenRouter returned invalid JSON for model list.",
+            ) from e
+
+        model_data = payload.get("data")
+        if not isinstance(model_data, list):
+            raise HTTPException(
+                status_code=502,
+                detail="OpenRouter returned an unexpected model list format.",
+            )
+
+        models: List[dict] = []
+        for model in model_data:
+            if not isinstance(model, dict):
+                continue
+
+            supported_parameters = model.get("supported_parameters")
+            if not isinstance(supported_parameters, list) or "tools" not in supported_parameters:
+                continue
+
+            model_id = str(model.get("id") or "").strip()
+            if not model_id:
+                continue
+
+            display_name = str(model.get("name") or model_id).strip()
+            provider_group = model_id.split("/", 1)[0] if "/" in model_id else "openrouter"
+            context_length_raw = model.get("context_length")
+            context_length = context_length_raw if isinstance(context_length_raw, int) else None
+
+            models.append(
+                _to_cloud_model(
+                    model_id=model_id,
+                    provider="openrouter",
+                    display_name=display_name,
+                    provider_group=provider_group,
+                    context_length=context_length,
+                )
+            )
+
+        models.sort(
+            key=lambda x: (
+                x.get("provider_group", ""),
+                str(x.get("display_name", "")).lower(),
+            )
+        )
+        return models
+
+    return await _get_cached_or_fetch_models("openrouter", refresh, _fetch)
 
 
 # ============================================
@@ -806,5 +994,4 @@ async def add_reference_file(name: str, body: ReferenceFileCreate):
         return {"status": "created", "filename": body.filename}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
 

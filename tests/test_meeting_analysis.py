@@ -1,6 +1,8 @@
 """Tests for MeetingAnalysisService — parsing, transcript extraction, and end-time calc."""
 
 import json
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
@@ -318,3 +320,34 @@ class TestMergeResultsSpeakerLabels:
         # Either whisperx is installed and labels get mapped, or they stay raw
         speakers = {seg.get("speaker") for seg in result}
         assert len(speakers) >= 1  # At least something is returned
+
+
+# ===========================================================================
+# _call_llm — provider routing
+# ===========================================================================
+
+
+class TestCallLlm:
+    @pytest.fixture()
+    def call_llm(self):
+        cls = _get_service_class()
+        return cls._call_llm
+
+    def test_openrouter_uses_litellm(self, call_llm):
+        fake_response = SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="OpenRouter summary"))]
+        )
+
+        with patch("source.llm.key_manager.key_manager") as mock_key_manager, \
+             patch("litellm.completion", return_value=fake_response) as mock_completion:
+            mock_key_manager.get_api_key.return_value = "or-test-key"
+
+            result = call_llm(
+                "Summarize this meeting",
+                model="openrouter/anthropic/claude-3-5-sonnet",
+            )
+
+        assert result == "OpenRouter summary"
+        kwargs = mock_completion.call_args.kwargs
+        assert kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
+        assert kwargs["api_key"] == "or-test-key"

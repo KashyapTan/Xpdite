@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 # Valid provider names
-VALID_PROVIDERS = ("anthropic", "openai", "gemini")
+VALID_PROVIDERS = ("anthropic", "openai", "gemini", "openrouter")
 
 
 class KeyManager:

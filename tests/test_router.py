@@ -27,6 +27,11 @@ class TestParseProvider:
         assert provider == "gemini"
         assert model == "gemini-2.5-pro"
 
+    def test_openrouter_prefix(self):
+        provider, model = parse_provider("openrouter/anthropic/claude-3-5-sonnet")
+        assert provider == "openrouter"
+        assert model == "anthropic/claude-3-5-sonnet"
+
     def test_ollama_fallback_no_prefix(self):
         provider, model = parse_provider("qwen3-vl:8b-instruct")
         assert provider == "ollama"

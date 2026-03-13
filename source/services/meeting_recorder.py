@@ -989,6 +989,18 @@ class MeetingAnalysisService:
             )
             return (resp.text or "").strip()
 
+        if provider == "openrouter":
+            import litellm
+
+            litellm_model = f"openrouter/{bare_model}"
+            resp = litellm.completion(
+                model=litellm_model,
+                messages=messages,
+                api_key=api_key,
+                timeout=120,
+            )
+            return (resp.choices[0].message.content or "").strip()
+
         raise ValueError(f"Unsupported provider: {provider}")
 
     def _extract_transcript_text(self, recording: dict) -> str:

@@ -3,7 +3,7 @@ import { api } from '../../services/api';
 import '../../CSS/SettingsApiKey.css';
 
 interface SettingsApiKeyProps {
-  provider: 'anthropic' | 'openai' | 'gemini';
+  provider: 'anthropic' | 'openai' | 'gemini' | 'openrouter';
 }
 
 /**
@@ -28,7 +28,9 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
       ? 'Anthropic'
       : provider === 'openai'
         ? 'OpenAI'
-        : 'Gemini';
+        : provider === 'gemini'
+          ? 'Gemini'
+          : 'OpenRouter';
 
   // Fetch key status on mount
   useEffect(() => {

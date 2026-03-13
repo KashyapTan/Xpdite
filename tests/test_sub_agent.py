@@ -35,6 +35,9 @@ class TestUsesOllamaClient:
     def test_gemini_model(self):
         assert _uses_ollama_client("gemini/gemini-2.5-flash") is False
 
+    def test_openrouter_model(self):
+        assert _uses_ollama_client("openrouter/anthropic/claude-3-5-sonnet") is False
+
     def test_unknown_provider_uses_ollama(self):
         assert _uses_ollama_client("custom/some-model") is True
 

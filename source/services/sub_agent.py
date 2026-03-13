@@ -175,13 +175,13 @@ def _uses_ollama_client(model_name: str) -> bool:
     """Whether the model should be called via the Ollama AsyncClient.
 
     Models with a known cloud provider prefix (``anthropic/``, ``openai/``,
-    ``gemini/``) go through LiteLLM.  Everything else — including cloud-
+    ``gemini/``, ``openrouter/``) go through LiteLLM.  Everything else — including cloud-
     hosted Ollama models like ``qwen3.5:397b-cloud`` — goes through the
     Ollama client.
     """
     if "/" in model_name:
         provider = model_name.split("/")[0]
-        if provider in ("anthropic", "openai", "gemini"):
+        if provider in ("anthropic", "openai", "gemini", "openrouter"):
             return False
     return True
 
@@ -247,6 +247,7 @@ async def _run_cloud_sub_agent(
     """
     from ..llm.router import parse_provider
     from ..llm.key_manager import key_manager
+    from ..llm.openrouter_env import scoped_openrouter_api_key
     from ..mcp_integration.manager import mcp_manager
 
     provider, model = parse_provider(model_name)
@@ -310,7 +311,11 @@ async def _run_cloud_sub_agent(
             create_kwargs["tools"] = openai_tools
 
         try:
-            response = await litellm.acompletion(**create_kwargs)
+            if provider != "openrouter":
+                response = await litellm.acompletion(**create_kwargs)
+            else:
+                async with scoped_openrouter_api_key(api_key):
+                    response = await litellm.acompletion(**create_kwargs)
         except Exception as e:
             logger.error("Sub-agent LiteLLM call failed: %s", e, exc_info=True)
             return {

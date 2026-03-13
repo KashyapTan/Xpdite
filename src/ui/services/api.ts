@@ -59,6 +59,63 @@ async function baseUrl(): Promise<string> {
   return getHttpBaseUrl();
 }
 
+export type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
+
+export interface ProviderModel {
+  id: string;
+  provider: string;
+  display_name: string;
+  provider_group?: string;
+  context_length?: number;
+}
+
+interface RawProviderModel {
+  id?: unknown;
+  name?: unknown;
+  provider?: unknown;
+  display_name?: unknown;
+  description?: unknown;
+  provider_group?: unknown;
+  context_length?: unknown;
+}
+
+function normalizeProviderModel(provider: string, rawModel: RawProviderModel): ProviderModel | null {
+  const id = typeof rawModel.id === 'string'
+    ? rawModel.id
+    : typeof rawModel.name === 'string'
+      ? rawModel.name
+      : '';
+
+  if (!id) {
+    return null;
+  }
+
+  const displayName = typeof rawModel.display_name === 'string'
+    ? rawModel.display_name
+    : typeof rawModel.description === 'string'
+      ? rawModel.description
+      : id;
+
+  return {
+    id,
+    provider: typeof rawModel.provider === 'string' ? rawModel.provider : provider,
+    display_name: displayName,
+    provider_group: typeof rawModel.provider_group === 'string' ? rawModel.provider_group : undefined,
+    context_length: typeof rawModel.context_length === 'number' ? rawModel.context_length : undefined,
+  };
+}
+
+async function readErrorDetail(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => ({ detail: fallback }));
+  if (typeof body?.detail === 'string' && body.detail.trim()) {
+    return body.detail;
+  }
+  if (typeof body?.message === 'string' && body.message.trim()) {
+    return body.message;
+  }
+  return fallback;
+}
+
 export interface ApiService {
   // WebSocket methods
   submitQuery: (query: string, captureMode: string) => void;
@@ -212,10 +269,14 @@ export const api = {
    * Returns { models, error? } — when Ollama is unreachable the backend
    * sends `{ models: [], error: "..." }` so we surface the message.
    */
-  async getOllamaModels(): Promise<{ models: { name: string; size: number; parameter_size: string; quantization: string }[]; error?: string }> {
+  async getOllamaModels(refresh = false): Promise<{ models: { name: string; size: number; parameter_size: string; quantization: string }[]; error?: string }> {
     try {
       const base = await baseUrl();
-      const response = await fetch(`${base}/api/models/ollama`);
+      const url = new URL(`${base}/api/models/ollama`);
+      if (refresh) {
+        url.searchParams.set('refresh', 'true');
+      }
+      const response = await fetch(url.toString());
       if (!response.ok) throw new Error('Failed to fetch Ollama models');
       const data = await response.json();
       // Backend may return { models: [...], error: "..." } or just an array
@@ -331,17 +392,31 @@ export const api = {
 
   /**
    * Fetch available models for a cloud provider.
-   * Returns models with provider prefix (e.g., "anthropic/claude-sonnet-4-20250514").
+   * Supports cache-busting fetches when refresh=true.
    */
-  async getProviderModels(provider: string): Promise<{ name: string; provider: string; description: string }[]> {
-    try {
-      const base = await baseUrl();
-      const response = await fetch(`${base}/api/models/${provider}`);
-      if (!response.ok) throw new Error(`Failed to fetch ${provider} models`);
-      return response.json();
-    } catch {
+  async getProviderModels(provider: CloudProvider, refresh = false): Promise<ProviderModel[]> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/models/${provider}`);
+    if (refresh) {
+      url.searchParams.set('refresh', 'true');
+    }
+    const response = await fetch(url.toString());
+
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, `Failed to fetch ${provider} models`);
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    if (!Array.isArray(payload)) {
       return [];
     }
+
+    const normalized = payload
+      .map((rawModel) => normalizeProviderModel(provider, rawModel as RawProviderModel))
+      .filter((model): model is ProviderModel => model !== null);
+
+    return normalized;
   },
 
   // ============================================

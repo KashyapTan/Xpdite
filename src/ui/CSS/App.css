@@ -321,8 +321,18 @@ textarea,
   /* background-color: violet; */
 }
 
+.model-select-wrapper {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .model-select {
   width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   background-color: transparent;
   border: none;
@@ -339,6 +349,24 @@ textarea,
 
 .model-select:focus {
   outline: none;
+}
+
+.model-provider-badge {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.95);
+  flex-shrink: 0;
+}
+
+.model-provider-badge-icon {
+  width: 11px;
+  height: 11px;
+  fill: currentColor;
 }
 
 .context-window-insights-icon {

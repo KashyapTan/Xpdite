@@ -15,7 +15,7 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 ## Key Features
 
 - **Screenshot + Vision AI** -- Capture any region of your screen (Alt+.) and ask questions about it
-- **Multi-Model Support** -- Local Ollama models + cloud (Claude, GPT, Gemini) from one UI
+- **Multi-Model Support** -- Local Ollama models + cloud (Claude, GPT, Gemini, OpenRouter) from one UI
 - **Streaming Responses** -- Real-time token-by-token display with thinking/reasoning visibility
 - **Multi-Tab** -- Multiple independent AI conversations running in parallel
 - **MCP Tool Integration** -- File ops, web search, Gmail, Calendar, and terminal via Model Context Protocol
@@ -23,7 +23,7 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 - **Skills / Slash Commands** -- Type `/terminal`, `/fs`, `/websearch` etc. to force-inject expert instruction sets
 - **Meeting Recorder** -- System audio capture + AI transcription (WhisperX + diarization) + action extraction
 - **Response Retry / Edit** -- Re-generate any response or edit past messages; browse alternate versions with arrows
-- **Cloud Models** -- Anthropic (Claude), OpenAI (GPT / o-series), Google Gemini via LiteLLM
+- **Cloud Models** -- Anthropic (Claude), OpenAI (GPT / o-series), Google Gemini, and OpenRouter via LiteLLM
 - **Gmail & Calendar** -- Read, send emails and manage calendar events via your Google account
 - **Web Search** -- DuckDuckGo-powered search and web page reading through MCP tools
 - **Voice Input** -- Voice-to-text transcription via faster-whisper
@@ -123,6 +123,7 @@ Every feature that exists in Xpdite today:
 - Anthropic Claude (all tiers, including latest Sonnet and Opus)
 - OpenAI GPT-4o, GPT-4.1, and o-series reasoning models
 - Google Gemini (all tiers)
+- OpenRouter models (tool-compatible models from multiple upstream providers)
 - Switch models per-message; each conversation tracks which model generated each response
 
 **Tools & Skills**

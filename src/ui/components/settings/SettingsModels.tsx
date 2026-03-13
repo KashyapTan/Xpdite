@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api } from '../../services/api';
+import { api, type ProviderModel } from '../../services/api';
+import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import '../../CSS/SettingsModels.css';
 
 interface OllamaModel {
@@ -9,10 +10,39 @@ interface OllamaModel {
   quantization: string;
 }
 
-interface CloudModel {
-  name: string;       // e.g., "anthropic/claude-sonnet-4-20250514"
-  provider: string;   // e.g., "anthropic"
-  description: string;
+type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
+type ProviderKey = CloudProvider | 'ollama';
+
+const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'openai', 'gemini', 'openrouter'];
+
+const EMPTY_CLOUD_MODELS: Record<CloudProvider, ProviderModel[]> = {
+  anthropic: [],
+  openai: [],
+  gemini: [],
+  openrouter: [],
+};
+
+const EMPTY_PROVIDER_ERRORS: Record<ProviderKey, string> = {
+  ollama: '',
+  anthropic: '',
+  openai: '',
+  gemini: '',
+  openrouter: '',
+};
+
+const EMPTY_REFRESHING_STATE: Record<ProviderKey, boolean> = {
+  ollama: false,
+  anthropic: false,
+  openai: false,
+  gemini: false,
+  openrouter: false,
+};
+
+function toEnabledModelId(provider: CloudProvider, modelId: string): string {
+  if (provider === 'openrouter' && !modelId.startsWith('openrouter/')) {
+    return `openrouter/${modelId}`;
+  }
+  return modelId;
 }
 
 /**
@@ -24,78 +54,93 @@ interface CloudModel {
  * 3. Fetch which models the user has enabled (GET /api/models/enabled).
  * 4. Let the user toggle models on/off.
  * 5. Persist changes (PUT /api/models/enabled).
- *
- * The enabled models list is consumed by App.tsx's model-selector dropdown
- * so only toggled models appear there.
+ * 6. Allow cache-busting refresh for each provider section.
  */
 const SettingsModels: React.FC = () => {
-  // All Ollama models on the machine
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-  // Cloud models per provider
-  const [anthropicModels, setAnthropicModels] = useState<CloudModel[]>([]);
-  const [openaiModels, setOpenaiModels] = useState<CloudModel[]>([]);
-  const [geminiModels, setGeminiModels] = useState<CloudModel[]>([]);
-  // API key status
+  const [cloudModels, setCloudModels] = useState<Record<CloudProvider, ProviderModel[]>>(EMPTY_CLOUD_MODELS);
   const [keyStatus, setKeyStatus] = useState<Record<string, { has_key: boolean; masked: string | null }>>({});
-  // Names of models the user has toggled on
   const [enabledModels, setEnabledModels] = useState<string[]>([]);
-  // Loading / error states
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  // Ollama-specific warning (e.g. "Ollama is not running")
-  const [ollamaWarning, setOllamaWarning] = useState('');
+  const [providerErrors, setProviderErrors] = useState<Record<ProviderKey, string>>(EMPTY_PROVIDER_ERRORS);
+  const [refreshingProviders, setRefreshingProviders] = useState<Record<ProviderKey, boolean>>(EMPTY_REFRESHING_STATE);
 
-  // --------------------------------------------------
-  // Fetch data on mount
-  // --------------------------------------------------
+  const setProviderError = useCallback((provider: ProviderKey, message: string) => {
+    setProviderErrors((prev) => ({ ...prev, [provider]: message }));
+  }, []);
+
+  const loadOllamaModels = useCallback(async (refresh = false) => {
+    const result = await api.getOllamaModels(refresh);
+    setOllamaModels(result.models);
+    setProviderError('ollama', result.error ?? '');
+  }, [setProviderError]);
+
+  const loadCloudProviderModels = useCallback(async (provider: CloudProvider, refresh = false) => {
+    try {
+      const models = await api.getProviderModels(provider, refresh);
+      setCloudModels((prev) => ({ ...prev, [provider]: models }));
+      setProviderError(provider, '');
+    } catch (e: unknown) {
+      const message =
+        e instanceof Error
+          ? e.message
+          : `Failed to fetch ${getProviderLabel(provider)} models`;
+      setCloudModels((prev) => ({ ...prev, [provider]: [] }));
+      setProviderError(provider, message);
+    }
+  }, [setProviderError]);
+
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
       setError('');
       try {
-        // Fire all requests in parallel
-        const [ollamaResult, enabled, keys] = await Promise.all([
-          api.getOllamaModels(),
+        const [enabled, keys] = await Promise.all([
           api.getEnabledModels(),
           api.getApiKeyStatus(),
         ]);
-        setOllamaModels(ollamaResult.models);
-        setOllamaWarning(ollamaResult.error ?? '');
+
         setEnabledModels(enabled);
         setKeyStatus(keys);
 
-        // Fetch cloud models for providers with keys
-        const cloudFetches: Promise<void>[] = [];
+        await loadOllamaModels(false);
 
-        if (keys.anthropic?.has_key) {
-          cloudFetches.push(
-            api.getProviderModels('anthropic').then(setAnthropicModels)
-          );
-        }
-        if (keys.openai?.has_key) {
-          cloudFetches.push(
-            api.getProviderModels('openai').then(setOpenaiModels)
-          );
-        }
-        if (keys.gemini?.has_key) {
-          cloudFetches.push(
-            api.getProviderModels('gemini').then(setGeminiModels)
-          );
-        }
+        await Promise.all(
+          CLOUD_PROVIDERS.map(async (provider) => {
+            if (keys[provider]?.has_key) {
+              await loadCloudProviderModels(provider, false);
+              return;
+            }
 
-        await Promise.all(cloudFetches);
+            setCloudModels((prev) => ({ ...prev, [provider]: [] }));
+            setProviderError(provider, '');
+          }),
+        );
       } catch {
         setError('Could not reach the backend. Is the server running?');
       } finally {
         setLoading(false);
       }
     };
-    fetchData();
-  }, []);
 
-  // --------------------------------------------------
-  // Toggle a model on/off and persist
-  // --------------------------------------------------
+    void fetchData();
+  }, [loadCloudProviderModels, loadOllamaModels, setProviderError]);
+
+  const refreshProviderModels = useCallback(async (provider: ProviderKey) => {
+    setRefreshingProviders((prev) => ({ ...prev, [provider]: true }));
+    try {
+      if (provider === 'ollama') {
+        await loadOllamaModels(true);
+        return;
+      }
+
+      await loadCloudProviderModels(provider, true);
+    } finally {
+      setRefreshingProviders((prev) => ({ ...prev, [provider]: false }));
+    }
+  }, [loadCloudProviderModels, loadOllamaModels]);
+
   const toggleModel = useCallback(
     async (modelName: string) => {
       setEnabledModels((prev) => {
@@ -105,7 +150,7 @@ const SettingsModels: React.FC = () => {
           : [...prev, modelName];
 
         // Persist to backend (SQLite) — fire-and-forget
-        api.setEnabledModels(updated);
+        void api.setEnabledModels(updated);
 
         return updated;
       });
@@ -113,9 +158,6 @@ const SettingsModels: React.FC = () => {
     [],
   );
 
-  // --------------------------------------------------
-  // Helper: human-readable file size
-  // --------------------------------------------------
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '';
     const gb = bytes / (1024 * 1024 * 1024);
@@ -124,69 +166,183 @@ const SettingsModels: React.FC = () => {
     return `${mb.toFixed(0)} MB`;
   };
 
-  // --------------------------------------------------
-  // Helper: strip provider prefix for display
-  // --------------------------------------------------
-  const displayName = (fullName: string) => {
-    const slashIdx = fullName.indexOf('/');
-    return slashIdx >= 0 ? fullName.substring(slashIdx + 1) : fullName;
+  const formatContextLength = (contextLength?: number) => {
+    if (typeof contextLength !== 'number') {
+      return '';
+    }
+
+    return `${new Intl.NumberFormat().format(contextLength)} ctx`;
   };
 
-  // --------------------------------------------------
-  // Render a cloud model list
-  // --------------------------------------------------
-  const renderCloudModels = (
-    provider: string,
-    models: CloudModel[],
-    cssPrefix: string,
+  const renderSectionHeader = (
+    provider: ProviderKey,
+    label: string,
+    classPrefix: string,
+  ) => (
+    <div className={`settings-models-${classPrefix}-header settings-models-provider-header`}>
+      <span>{label}</span>
+      <button
+        className="settings-models-refresh-btn"
+        onClick={() => {
+          void refreshProviderModels(provider);
+        }}
+        disabled={refreshingProviders[provider] || loading}
+      >
+        {refreshingProviders[provider] ? 'Refreshing...' : 'Refresh'}
+      </button>
+    </div>
+  );
+
+  const renderCloudModelRow = (
+    provider: CloudProvider,
+    model: ProviderModel,
+    classPrefix: string,
   ) => {
+    const enabledModelId = toEnabledModelId(provider, model.id);
+    const isEnabled = enabledModels.includes(enabledModelId);
+    const modelLabel = provider === 'openrouter'
+      ? model.display_name || formatModelLabel(model.id)
+      : formatModelLabel(model.id);
+    const metaParts: string[] = [];
+
+    if (provider === 'openrouter') {
+      const contextLabel = formatContextLength(model.context_length);
+      if (contextLabel) {
+        metaParts.push(contextLabel);
+      }
+      metaParts.push(model.id);
+    } else if (model.display_name && model.display_name !== modelLabel) {
+      metaParts.push(model.display_name);
+    }
+
+    return (
+      <div
+        key={`${provider}-${model.id}`}
+        className={`settings-models-${classPrefix}-model ${isEnabled ? 'settings-models-enabled' : ''}`}
+        onClick={() => {
+          void toggleModel(enabledModelId);
+        }}
+      >
+        <div className="settings-model-toggle">
+          <div className={`settings-model-toggle-track ${isEnabled ? 'active' : ''}`}>
+            <div className="settings-model-toggle-thumb" />
+          </div>
+        </div>
+        <div className="settings-model-info">
+          <span className="settings-model-name">{modelLabel}</span>
+          <span className="settings-model-meta">{metaParts.join(' · ')}</span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderCloudModels = (
+    provider: Exclude<CloudProvider, 'openrouter'>,
+    classPrefix: string,
+  ) => {
+    const models = cloudModels[provider];
     const hasKey = keyStatus[provider]?.has_key;
+    const providerError = providerErrors[provider];
 
     return (
       <>
-        <div className={`settings-models-${cssPrefix}-header`}>
-          {provider.charAt(0).toUpperCase() + provider.slice(1)}
-        </div>
-        <div className={`settings-models-${cssPrefix}-content`}>
+        {renderSectionHeader(provider, getProviderLabel(provider), classPrefix)}
+        <div className={`settings-models-${classPrefix}-content`}>
           {!hasKey && (
-            <div className={`settings-models-${cssPrefix}-model settings-models-placeholder`}>
-              No API key configured. Add one in the {provider.charAt(0).toUpperCase() + provider.slice(1)} tab.
+            <div className={`settings-models-${classPrefix}-model settings-models-placeholder`}>
+              No API key configured. Add one in the {getProviderLabel(provider)} tab.
             </div>
           )}
-          {hasKey && models.length === 0 && !loading && (
-            <div className={`settings-models-${cssPrefix}-model settings-models-placeholder`}>
-              Loading models...
+
+          {hasKey && providerError && (
+            <div className={`settings-models-${classPrefix}-model settings-models-error`}>
+              {providerError}
             </div>
           )}
-          {hasKey &&
-            models.map((model) => {
-              const isEnabled = enabledModels.includes(model.name);
-              return (
-                <div
-                  key={model.name}
-                  className={`settings-models-${cssPrefix}-model ${isEnabled ? 'settings-models-enabled' : ''}`}
-                  onClick={() => toggleModel(model.name)}
-                >
-                  <div className="settings-model-toggle">
-                    <div className={`settings-model-toggle-track ${isEnabled ? 'active' : ''}`}>
-                      <div className="settings-model-toggle-thumb" />
-                    </div>
-                  </div>
-                  <div className="settings-model-info">
-                    <span className="settings-model-name">{displayName(model.name)}</span>
-                    <span className="settings-model-meta">{model.description}</span>
-                  </div>
-                </div>
-              );
-            })}
+
+          {hasKey && !providerError && models.length === 0 && !loading && (
+            <div className={`settings-models-${classPrefix}-model settings-models-placeholder`}>
+              No models available.
+            </div>
+          )}
+
+          {hasKey && !providerError && models.map((model) => renderCloudModelRow(provider, model, classPrefix))}
         </div>
       </>
     );
   };
 
-  // --------------------------------------------------
-  // Render
-  // --------------------------------------------------
+  const renderOpenRouterModels = () => {
+    const provider: CloudProvider = 'openrouter';
+    const classPrefix = 'openrouter';
+    const models = cloudModels.openrouter;
+    const hasKey = keyStatus.openrouter?.has_key;
+    const providerError = providerErrors.openrouter;
+
+    const groups = new Map<string, ProviderModel[]>();
+    models.forEach((model) => {
+      const group = (model.provider_group || 'openrouter').toLowerCase();
+      const existing = groups.get(group) ?? [];
+      existing.push(model);
+      groups.set(group, existing);
+    });
+
+    const groupedSections: Array<{ group: string; models: ProviderModel[] }> = [];
+    const ungrouped: ProviderModel[] = [];
+
+    Array.from(groups.entries())
+      .sort(([groupA], [groupB]) => groupA.localeCompare(groupB))
+      .forEach(([group, groupedModels]) => {
+        if (groupedModels.length > 1) {
+          groupedSections.push({
+            group,
+            models: [...groupedModels].sort((a, b) => (
+              (a.display_name || a.id).localeCompare(b.display_name || b.id)
+            )),
+          });
+          return;
+        }
+
+        ungrouped.push(groupedModels[0]);
+      });
+
+    ungrouped.sort((a, b) => (a.display_name || a.id).localeCompare(b.display_name || b.id));
+
+    return (
+      <>
+        {renderSectionHeader(provider, 'OpenRouter', classPrefix)}
+        <div className={`settings-models-${classPrefix}-content`}>
+          {!hasKey && (
+            <div className="settings-models-openrouter-model settings-models-placeholder">
+              Add your OpenRouter API key in the API Keys tab to browse models.
+            </div>
+          )}
+
+          {hasKey && providerError && (
+            <div className="settings-models-openrouter-model settings-models-error">
+              {providerError}
+            </div>
+          )}
+
+          {hasKey && !providerError && models.length === 0 && !loading && (
+            <div className="settings-models-openrouter-model settings-models-placeholder">
+              No tool-compatible OpenRouter models were returned.
+            </div>
+          )}
+
+          {hasKey && !providerError && ungrouped.map((model) => renderCloudModelRow(provider, model, classPrefix))}
+
+          {hasKey && !providerError && groupedSections.map(({ group, models: groupedModels }) => (
+            <div key={`group-${group}`} className="settings-models-provider-group">
+              <div className="settings-models-provider-group-header">{getProviderLabel(group)}</div>
+              {groupedModels.map((model) => renderCloudModelRow(provider, model, classPrefix))}
+            </div>
+          ))}
+        </div>
+      </>
+    );
+  };
+
   return (
     <div className="settings-models-section">
       <div className="settings-models-header">
@@ -194,8 +350,7 @@ const SettingsModels: React.FC = () => {
         <p>Enable or disable models for your workspace.</p>
       </div>
       <div className="settings-models-ollama-section">
-        {/* ====== OLLAMA SECTION ====== */}
-        <div className="settings-models-ollama-header">Ollama</div>
+        {renderSectionHeader('ollama', 'Ollama', 'ollama')}
 
         <div className="settings-models-ollama-content">
           {loading && (
@@ -208,12 +363,12 @@ const SettingsModels: React.FC = () => {
               {error}
             </div>
           )}
-          {!loading && !error && ollamaWarning && (
+          {!loading && !error && providerErrors.ollama && (
             <div className="settings-models-ollama-model settings-models-error">
-              {ollamaWarning}
+              {providerErrors.ollama}
             </div>
           )}
-          {!loading && !error && !ollamaWarning && ollamaModels.length === 0 && (
+          {!loading && !error && !providerErrors.ollama && ollamaModels.length === 0 && (
             <div className="settings-models-ollama-model settings-models-empty">
               No Ollama models found. Pull one with <code>ollama pull model-name</code>
             </div>
@@ -225,7 +380,9 @@ const SettingsModels: React.FC = () => {
                 <div
                   key={model.name}
                   className={`settings-models-ollama-model ${isEnabled ? 'settings-models-enabled' : ''}`}
-                  onClick={() => toggleModel(model.name)}
+                  onClick={() => {
+                    void toggleModel(model.name);
+                  }}
                 >
                   <div className="settings-model-toggle">
                     <div className={`settings-model-toggle-track ${isEnabled ? 'active' : ''}`}>
@@ -245,14 +402,10 @@ const SettingsModels: React.FC = () => {
             })}
         </div>
 
-        {/* ====== ANTHROPIC SECTION ====== */}
-        {renderCloudModels('anthropic', anthropicModels, 'anthropic')}
-
-        {/* ====== OPENAI SECTION ====== */}
-        {renderCloudModels('openai', openaiModels, 'openai')}
-
-        {/* ====== GEMINI SECTION ====== */}
-        {renderCloudModels('gemini', geminiModels, 'gemini')}
+        {renderCloudModels('anthropic', 'anthropic')}
+        {renderCloudModels('openai', 'openai')}
+        {renderCloudModels('gemini', 'gemini')}
+        {renderOpenRouterModels()}
       </div>
     </div>
   );

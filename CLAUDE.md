@@ -1,6 +1,6 @@
 # Xpdite — CLAUDE.md
 
-Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a Python FastAPI backend to deliver an AI chat assistant with screenshot OCR, MCP tool calling, and multi-provider LLM support (Ollama, Anthropic, OpenAI, Gemini). Python dependencies are managed with **UV**; frontend with **Bun**.
+Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a Python FastAPI backend to deliver an AI chat assistant with screenshot OCR, MCP tool calling, and multi-provider LLM support (Ollama, Anthropic, OpenAI, Gemini, OpenRouter). Python dependencies are managed with **UV**; frontend with **Bun**.
 
 ---
 

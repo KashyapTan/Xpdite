@@ -20,11 +20,12 @@ def parse_provider(model_name: str) -> Tuple[str, str]:
         "anthropic/claude-sonnet-4-20250514" -> ("anthropic", "claude-sonnet-4-20250514")
         "openai/gpt-4o" -> ("openai", "gpt-4o")
         "gemini/gemini-2.5-pro" -> ("gemini", "gemini-2.5-pro")
+        "openrouter/anthropic/claude-3-5-sonnet" -> ("openrouter", "anthropic/claude-3-5-sonnet")
         "qwen3-vl:8b-instruct" -> ("ollama", "qwen3-vl:8b-instruct")
     """
     if "/" in model_name:
         provider, _, model = model_name.partition("/")
-        if provider in ("anthropic", "openai", "gemini"):
+        if provider in ("anthropic", "openai", "gemini", "openrouter"):
             return provider, model
     return "ollama", model_name
 

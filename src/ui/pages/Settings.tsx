@@ -17,6 +17,7 @@ import ollamaIcon from '../assets/ollama.svg';
 import anthropicIcon from '../assets/anthropic.svg';
 import geminiIcon from '../assets/gemini.svg';
 import openaiIcon from '../assets/openai.svg';
+import openrouterIcon from '../assets/openrouter.svg';
 import settingsIcon from '../assets/settings-icon.svg';
 
 // ============================================
@@ -60,6 +61,7 @@ const Settings: React.FC = () => {
     { id: 'anthropic', label: 'Anthropic', icon: anthropicIcon, className: 'settings-anthropic-api-key', component: <SettingsApiKey provider="anthropic" /> },
     { id: 'gemini', label: 'Gemini', icon: geminiIcon, className: 'settings-gemini-api-key', component: <SettingsApiKey provider="gemini" /> },
     { id: 'openai', label: 'OpenAI', icon: openaiIcon, className: 'settings-openai-api-key', component: <SettingsApiKey provider="openai" /> },
+    { id: 'openrouter', label: 'OpenRouter', icon: openrouterIcon, className: 'settings-openrouter-api-key', component: <SettingsApiKey provider="openrouter" /> },
   ];
 
   // "models" is selected by default
