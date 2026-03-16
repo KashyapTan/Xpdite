@@ -1603,6 +1603,17 @@ function App() {
             <div className="additional-inputs-section">
               <div className="model-selection-section">
                 <div className="model-select-wrapper">
+                  {showProviderLogo && (
+                    <span
+                      className="model-provider-badge"
+                      title={`${getProviderLabel(selectedModelProvider)} model`}
+                    >
+                      <ProviderLogo
+                        provider={selectedModelProvider}
+                        className="model-provider-badge-icon"
+                      />
+                    </span>
+                  )}
                   <select
                     name="model-selector"
                     className="model-select"
@@ -1626,17 +1637,6 @@ function App() {
                       );
                     })}
                   </select>
-                  {showProviderLogo && (
-                    <span
-                      className="model-provider-badge"
-                      title={`${getProviderLabel(selectedModelProvider)} model`}
-                    >
-                      <ProviderLogo
-                        provider={selectedModelProvider}
-                        className="model-provider-badge-icon"
-                      />
-                    </span>
-                  )}
                 </div>
               </div>
 
