@@ -114,7 +114,7 @@ const SettingsSubAgents: React.FC = () => {
               </div>
             </div>
           </div>
-          <div className="sub-agent-self-note">Always matches the active model</div>
+          {/* <div className="sub-agent-self-note">Always matches the active model</div> */}
         </div>
       </div>
 
@@ -125,7 +125,7 @@ const SettingsSubAgents: React.FC = () => {
         </div>
       )}
 
-      <div className="sub-agent-info-section">
+      {/* <div className="sub-agent-info-section">
         <h3>How Sub-Agents Work</h3>
         <ul>
           <li>Sub-agents are independent LLM calls with no access to conversation history.</li>
@@ -133,7 +133,7 @@ const SettingsSubAgents: React.FC = () => {
           <li>Sub-agents can use file and web tools but cannot run terminal commands or spawn further sub-agents.</li>
           <li>Results are returned as tool results to the main model.</li>
         </ul>
-      </div>
+      </div> */}
     </div>
   );
 };

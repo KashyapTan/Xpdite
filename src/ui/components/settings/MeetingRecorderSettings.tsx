@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { BoltIcon, MonitorIcon } from '../icons/AppIcons';
-import '../../CSS/MeetingRecorderSettings.css';
+import '../../CSS/SettingsMeetingRecorder.css';
 
 interface ComputeInfo {
     backend: string;
