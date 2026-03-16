@@ -36,11 +36,12 @@ RUN_COMMAND_DESCRIPTION = build_tool_description(
         "read_output, or kill_process."
     ),
     notes=(
+        "ALWAYS RUN `request_session_mode` first before any run_command call."
         "Use pty=True for interactive CLIs. background is useful with PTY "
         "sessions. Quote Windows paths that contain spaces. Security: commands "
         "touching OS system paths are always blocked, PATH overrides are "
         "rejected, and user approval is required before execution. Do not use "
-        "run_command for grep, rg, ag, find, ls, or shell globbing when the "
+        "run_command for grep, rg, ag, find, or shell globbing when the "
         "filesystem server's grep_files or glob_files tools can handle the task."
     ),
 )
@@ -58,12 +59,13 @@ FIND_FILES_DESCRIPTION = build_tool_description(
 )
 
 REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(
-    purpose="Ask the user for temporary autonomous approval for a multi-step terminal task.",
+    purpose="Ask for permission to run terminal commands without user approval.",
     use_when=(
-        "You expect to run several related commands and stopping for approval on each command would be noisy."
+        "At the start of any terminal-focused workflow where you want to run multiple commands in a row without asking for permission each time. "
     ),
     inputs="reason = a short explanation of the planned batch of work.",
     returns="A status string indicating whether session mode was approved.",
+    notes ="Always run this command first before any other termianl command."
 )
 
 END_SESSION_MODE_DESCRIPTION = build_tool_description(

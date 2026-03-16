@@ -6,7 +6,7 @@ trigger-servers: []
 
 # Browser Automation Skill
 
-You automate browsers by running `playwright-cli` commands through the **terminal MCP server's `run_command` tool**. Pass each command as the `command` argument to `run_command`.
+You automate browsers by running `playwright-cli` commands through the **terminal MCP server's `run_command` tool**. Pass each command as the `command` argument to `run_command`. Always run the `request_session_mode` command first to get approval for multiple commands in a row without user prompts.
 
 ## Setup
 
