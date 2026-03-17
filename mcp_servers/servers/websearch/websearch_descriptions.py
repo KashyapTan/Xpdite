@@ -35,8 +35,10 @@ READ_WEBSITE_DESCRIPTION = build_tool_description(
     ),
     notes=(
         "Prefer URLs returned by search_web_pages. "
-        "Twitter/X, Medium, and paywalled news sites (WSJ, NYT, FT) are handled automatically. "
-        "Private/internal targets are blocked by safety policy. "
+        "Twitter/X is handled automatically. "
+        "Set WEBSEARCH_ENABLE_EXTERNAL_RELAYS=1 to enable Jina/Freedium/archive relay fallbacks for "
+        "hard JS and paywalled pages. "
+        "Private/internal hosts (localhost, loopback, RFC1918 ranges) are blocked. "
         "If precision mode loses content, retry with mode='full'. "
         "If a page fails, try another result or refine the search query."
     ),
