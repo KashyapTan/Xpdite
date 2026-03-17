@@ -37,6 +37,14 @@ dependencies = [
     "ruff>=0.15.5",
     "rank-bm25>=0.2.2",
     "regex>=2026.1.15",
+    "curl-cffi>=0.14.0",
+    "httpx>=0.28.1",
+    "beautifulsoup4>=4.14.3",
+    "markdownify>=1.2.2",
+    "camoufox>=0.4.11",
+    "browserforge>=1.2.4",
+    "nodriver>=0.48.1",
+    "twikit>=2.3.3",
 ]
 
 [dependency-groups]
