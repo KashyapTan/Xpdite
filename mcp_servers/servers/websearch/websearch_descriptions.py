@@ -26,7 +26,8 @@ READ_WEBSITE_DESCRIPTION = build_tool_description(
         "mode: 'precision' (default) extracts main content only — best for articles, blogs, and docs; "
         "'full' converts the entire DOM to Markdown — best for product pages, tables, and e-commerce. "
         "force_tier: optional int 1, 2, or 3 to bypass auto-escalation and use a specific fetch method "
-        "(1=curl_cffi fast HTTP, 2=Camoufox patched Firefox, 3=Nodriver Chrome CDP)."
+        "(1=curl_cffi fast HTTP, 2=Camoufox patched Firefox, 3=Nodriver Chrome CDP; "
+        "tier 3 requires WEBSEARCH_ENABLE_UNSAFE_TIER3_BROWSER=1)."
     ),
     returns=(
         "The extracted page content prefixed with SOURCE/METHOD/MODE/CHARS metadata "

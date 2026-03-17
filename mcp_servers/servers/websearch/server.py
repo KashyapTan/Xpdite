@@ -22,6 +22,7 @@ _DEVNULL = open(os.devnull, "w")
 _MAX_RETURN_CHARS = 95_000
 _TRUTHY_ENV_VALUES = {"1", "true", "yes", "on"}
 _EXTERNAL_RELAY_ENV = "WEBSEARCH_ENABLE_EXTERNAL_RELAYS"
+_UNSAFE_TIER3_ENV = "WEBSEARCH_ENABLE_UNSAFE_TIER3_BROWSER"
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _MAX_REDIRECT_HOPS = 8
 
@@ -117,14 +118,7 @@ def _host(url: str) -> str:
 
 
 def _is_public_ip_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return not (
-        address.is_private
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_reserved
-        or address.is_unspecified
-    )
+    return address.is_global
 
 
 def _validate_read_website_url(url: str) -> str | None:
@@ -174,6 +168,10 @@ def _validate_read_website_url(url: str) -> str | None:
 
 def _external_relays_enabled() -> bool:
     return os.environ.get(_EXTERNAL_RELAY_ENV, "").strip().lower() in _TRUTHY_ENV_VALUES
+
+
+def _unsafe_tier3_enabled() -> bool:
+    return os.environ.get(_UNSAFE_TIER3_ENV, "").strip().lower() in _TRUTHY_ENV_VALUES
 
 
 async def _resolve_safe_redirect_chain(
@@ -419,30 +417,20 @@ async def tier2_camoufox(url: str, mode: str) -> str | None:
         ) as browser:
             page = await browser.new_page()
 
-            async def _enforce_safe_document_requests(route):
+            async def _enforce_safe_requests(route):
                 request = route.request
                 request_url = getattr(request, "url", "")
-                resource_type = getattr(request, "resource_type", "")
-                is_navigation_request = False
-                if hasattr(request, "is_navigation_request"):
-                    try:
-                        is_navigation_request = bool(request.is_navigation_request())
-                    except Exception:
-                        is_navigation_request = False
-
-                if resource_type and resource_type != "document" and not is_navigation_request:
-                    await route.continue_()
-                    return
-                if not resource_type and not is_navigation_request:
-                    await route.continue_()
-                    return
                 parsed = urlparse(request_url)
-                if parsed.scheme in {"http", "https"} and _validate_read_website_url(request_url):
+                if parsed.scheme not in {"http", "https"}:
+                    await route.continue_()
+                    return
+
+                if _validate_read_website_url(request_url):
                     await route.abort()
                     return
                 await route.continue_()
 
-            await page.route("**/*", _enforce_safe_document_requests)
+            await page.route("**/*", _enforce_safe_requests)
             await page.goto(safe_url, wait_until="load", timeout=30_000)
             html = await page.content()
             final_url = getattr(page, "url", safe_url)
@@ -590,6 +578,7 @@ async def scrape(
     force_tier: int | None = None,
     skip_twitter: bool = False,
     allow_external_relays: bool = False,
+    allow_unsafe_tier3: bool = False,
 ) -> tuple[str, str] | None:
     if force_tier is None:
         if is_twitter(url):
@@ -627,7 +616,7 @@ async def scrape(
         if force_tier == 2:
             return None
 
-    if force_tier in (None, 3):
+    if force_tier in (None, 3) and allow_unsafe_tier3:
         tier3_result = await tier3_nodriver(url, mode)
         if tier3_result:
             return "tier3_nodriver", tier3_result
@@ -691,6 +680,13 @@ async def read_website(url: str, mode: str = "precision", force_tier: int | str 
 
     is_twitter_url = is_twitter(normalized_url)
     allow_external_relays = _external_relays_enabled()
+    allow_unsafe_tier3 = _unsafe_tier3_enabled()
+
+    if resolved_force_tier == 3 and not allow_unsafe_tier3:
+        return (
+            f"ERROR: force_tier=3 is disabled by default. Set {_UNSAFE_TIER3_ENV}=1 to enable "
+            "the Tier 3 Nodriver fallback."
+        )
 
     if resolved_force_tier is None and is_twitter_url:
         try:
@@ -709,6 +705,7 @@ async def read_website(url: str, mode: str = "precision", force_tier: int | str 
                 force_tier=resolved_force_tier,
                 skip_twitter=resolved_force_tier is None and is_twitter_url,
                 allow_external_relays=allow_external_relays,
+                allow_unsafe_tier3=allow_unsafe_tier3,
             )
     except Exception as exc:
         return f"ERROR: An unexpected error occurred while scraping {normalized_url}: {str(exc)}"
@@ -720,9 +717,14 @@ async def read_website(url: str, mode: str = "precision", force_tier: int | str 
                 f" External relay fallbacks are disabled; set {_EXTERNAL_RELAY_ENV}=1 to enable "
                 "Jina/Freedium/archive fallbacks."
             )
+        tier3_note = ""
+        if not allow_unsafe_tier3:
+            tier3_note = (
+                f" Tier 3 Nodriver fallback is disabled; set {_UNSAFE_TIER3_ENV}=1 to enable it."
+            )
         return (
             f"ERROR: Failed to read website content for {normalized_url}. "
-            f"All tiers exhausted (Twitter handler, curl_cffi, Camoufox, Nodriver).{relay_note}"
+            f"All tiers exhausted (Twitter handler, curl_cffi, Camoufox).{relay_note}{tier3_note}"
         )
 
     method, content = result

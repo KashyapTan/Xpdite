@@ -50,6 +50,11 @@ def test_validate_read_website_url_rejects_localhost_name():
     assert "not allowed" in result
 
 
+def test_validate_read_website_url_rejects_cgnat_range():
+    result = websearch_server._validate_read_website_url("https://100.64.0.1/path")
+    assert "not allowed" in result
+
+
 async def test_read_website_rejects_invalid_mode(bypass_url_validation):
     result = await websearch_server.read_website("https://example.com", mode="detailed")
     assert "ERROR: Invalid mode" in result
@@ -60,8 +65,23 @@ async def test_read_website_rejects_invalid_force_tier(bypass_url_validation):
     assert "ERROR: Invalid force_tier" in result
 
 
+async def test_read_website_rejects_force_tier3_when_disabled(monkeypatch, bypass_url_validation):
+    monkeypatch.delenv(websearch_server._UNSAFE_TIER3_ENV, raising=False)
+
+    result = await websearch_server.read_website("https://example.com", force_tier=3)
+
+    assert "force_tier=3 is disabled by default" in result
+
+
 async def test_read_website_formats_success_metadata(monkeypatch, bypass_url_validation):
-    async def _scrape_success(_url: str, _mode: str, force_tier=None, skip_twitter=False, allow_external_relays=False):
+    async def _scrape_success(
+        _url: str,
+        _mode: str,
+        force_tier=None,
+        skip_twitter=False,
+        allow_external_relays=False,
+        allow_unsafe_tier3=False,
+    ):
         return "tier1_curl_cffi", "Example content " * 20
 
     monkeypatch.setattr(websearch_server, "scrape", _scrape_success)
@@ -75,7 +95,14 @@ async def test_read_website_formats_success_metadata(monkeypatch, bypass_url_val
 
 
 async def test_read_website_warns_on_minimal_content(monkeypatch, bypass_url_validation):
-    async def _scrape_tiny(_url: str, _mode: str, force_tier=None, skip_twitter=False, allow_external_relays=False):
+    async def _scrape_tiny(
+        _url: str,
+        _mode: str,
+        force_tier=None,
+        skip_twitter=False,
+        allow_external_relays=False,
+        allow_unsafe_tier3=False,
+    ):
         return "tier1_curl_cffi", "tiny"
 
     monkeypatch.setattr(websearch_server, "scrape", _scrape_tiny)
@@ -86,7 +113,14 @@ async def test_read_website_warns_on_minimal_content(monkeypatch, bypass_url_val
 
 
 async def test_read_website_errors_when_all_tiers_fail(monkeypatch, bypass_url_validation):
-    async def _scrape_none(_url: str, _mode: str, force_tier=None, skip_twitter=False, allow_external_relays=False):
+    async def _scrape_none(
+        _url: str,
+        _mode: str,
+        force_tier=None,
+        skip_twitter=False,
+        allow_external_relays=False,
+        allow_unsafe_tier3=False,
+    ):
         return None
 
     monkeypatch.setattr(websearch_server, "scrape", _scrape_none)
@@ -238,7 +272,14 @@ async def test_scrape_force_tier2_skips_tier1_and_jina(monkeypatch):
 
 
 async def test_read_website_accepts_force_tier_string(monkeypatch, bypass_url_validation):
-    async def _scrape_success(_url: str, _mode: str, force_tier=None, skip_twitter=False, allow_external_relays=False):
+    async def _scrape_success(
+        _url: str,
+        _mode: str,
+        force_tier=None,
+        skip_twitter=False,
+        allow_external_relays=False,
+        allow_unsafe_tier3=False,
+    ):
         assert force_tier == 2
         return "tier2_camoufox", "tier2 content " * 20
 
@@ -263,6 +304,7 @@ async def test_read_website_relays_disabled_by_default(monkeypatch, bypass_url_v
         force_tier=None,
         skip_twitter=False,
         allow_external_relays=False,
+        allow_unsafe_tier3=False,
     ):
         assert allow_external_relays is False
         return "tier1_curl_cffi", "content " * 20
@@ -282,6 +324,7 @@ async def test_read_website_relays_enabled_with_env(monkeypatch, bypass_url_vali
         force_tier=None,
         skip_twitter=False,
         allow_external_relays=False,
+        allow_unsafe_tier3=False,
     ):
         assert allow_external_relays is True
         return "tier1_5_jina", "content " * 20
@@ -299,6 +342,7 @@ async def test_read_website_mode_isolation_across_concurrent_calls(monkeypatch, 
         force_tier=None,
         skip_twitter=False,
         allow_external_relays=False,
+        allow_unsafe_tier3=False,
     ):
         await websearch_server.asyncio.sleep(0)
         return "tier1_curl_cffi", f"mode={mode} " * 20
