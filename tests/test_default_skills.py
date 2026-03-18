@@ -69,6 +69,7 @@ class TestSkillSeeds:
         assert "terminal" in names
         assert "filesystem" in names
         assert "websearch" in names
+        assert "youtube" in names
 
     def test_filesystem_skill_mentions_search_tools(self):
         md_path = os.path.join(SKILLS_SEED_DIR, "filesystem", "SKILL.md")

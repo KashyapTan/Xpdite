@@ -51,7 +51,7 @@ class TestInitMcpServers:
             await manager_module.init_mcp_servers()
 
         assert connect_server.await_count == 2
-        assert register_inline_tools.call_count == 2
+        assert register_inline_tools.call_count == 3
         embed_tools.assert_called_once_with([])
         assert manager._initialized is True
 

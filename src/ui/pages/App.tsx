@@ -52,6 +52,7 @@ import type {
   TerminalSessionRequest,
   TerminalOutput,
   TerminalCommandComplete,
+  YouTubeTranscriptionApprovalRequest,
 } from '../types';
 import {
   applyResponseVariant,
@@ -122,6 +123,27 @@ function buildPendingTurnLocalPatch(
           }
         : localUserMessage,
     assistant: assistantMessage,
+  };
+}
+
+function mapYouTubeApprovalToBlock(approvalData: YouTubeTranscriptionApprovalRequest) {
+  return {
+    requestId: approvalData.request_id,
+    title: approvalData.title,
+    channel: approvalData.channel,
+    duration: approvalData.duration,
+    durationSeconds: approvalData.duration_seconds,
+    url: approvalData.url,
+    noCaptionsReason: approvalData.no_captions_reason,
+    audioSizeEstimate: approvalData.audio_size_estimate,
+    audioSizeBytes: approvalData.audio_size_bytes,
+    downloadTimeEstimate: approvalData.download_time_estimate,
+    transcriptionTimeEstimate: approvalData.transcription_time_estimate,
+    totalTimeEstimate: approvalData.total_time_estimate,
+    whisperModel: approvalData.whisper_model,
+    computeBackend: approvalData.compute_backend,
+    playlistNote: approvalData.playlist_note,
+    status: 'pending' as const,
   };
 }
 
@@ -650,6 +672,20 @@ function App() {
         break;
       }
 
+      case 'youtube_transcription_approval': {
+        const approvalData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as YouTubeTranscriptionApprovalRequest;
+        chat.contentBlocks = [
+          ...chat.contentBlocks,
+          {
+            type: 'youtube_transcription_approval',
+            approval: mapYouTubeApprovalToBlock(approvalData),
+          },
+        ];
+        break;
+      }
+
       case 'token_usage': {
         const stats = (typeof data.content === 'string'
           ? JSON.parse(data.content)
@@ -1065,6 +1101,14 @@ function App() {
         break;
       }
 
+      case 'youtube_transcription_approval': {
+        const approvalData = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as YouTubeTranscriptionApprovalRequest;
+        chatState.addYouTubeApprovalBlock(mapYouTubeApprovalToBlock(approvalData));
+        break;
+      }
+
       case 'terminal_session_request': {
         const sessionData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
@@ -1462,6 +1506,17 @@ function App() {
     handleTerminalApprovalResponse(requestId, true, true);
   }, [handleTerminalApprovalResponse]);
 
+  const handleYouTubeApprovalResponse = useCallback((requestId: string, approved: boolean) => {
+    wsSend({
+      type: 'youtube_transcription_approval_response',
+      request_id: requestId,
+      approved,
+    });
+    chatState.updateYouTubeApprovalBlock(requestId, {
+      status: approved ? 'approved' : 'denied',
+    });
+  }, [chatState, wsSend]);
+
   const handleTerminalSessionResponse = (approved: boolean) => {
     wsSend({
       type: 'terminal_session_response',
@@ -1540,6 +1595,7 @@ function App() {
         onTerminalApproveRemember={handleTerminalApproveRemember}
         onTerminalKill={handleKillCommand}
         onTerminalResize={handleTerminalResize}
+        onYouTubeApprovalResponse={handleYouTubeApprovalResponse}
         hasTabBar={hasTabBar}
         topInset={responseAreaTopInset}
         bottomInset={responseAreaBottomInset}

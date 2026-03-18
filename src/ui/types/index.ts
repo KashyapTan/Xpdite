@@ -24,7 +24,8 @@ export type ContentBlock =
   | { type: 'text'; content: string }
   | { type: 'thinking'; content: string }
   | { type: 'tool_call'; toolCall: ToolCall }
-  | { type: 'terminal_command'; terminal: TerminalCommandBlock };
+  | { type: 'terminal_command'; terminal: TerminalCommandBlock }
+  | { type: 'youtube_transcription_approval'; approval: YouTubeTranscriptionApprovalBlock };
 
 /**
  * Inline terminal command block — one per run_command invocation.
@@ -51,6 +52,25 @@ export interface TerminalCommandBlock {
   durationMs?: number;
   /** Whether the command timed out */
   timedOut?: boolean;
+}
+
+export interface YouTubeTranscriptionApprovalBlock {
+  requestId: string;
+  title: string;
+  channel: string;
+  duration: string;
+  durationSeconds?: number;
+  url: string;
+  noCaptionsReason: string;
+  audioSizeEstimate: string;
+  audioSizeBytes?: number;
+  downloadTimeEstimate: string;
+  transcriptionTimeEstimate: string;
+  totalTimeEstimate: string;
+  whisperModel: string;
+  computeBackend: string;
+  playlistNote?: string;
+  status: 'pending' | 'approved' | 'denied';
 }
 
 export interface MessageImage {
@@ -168,6 +188,24 @@ export interface TerminalRunningNotice {
   elapsed_ms: number;
 }
 
+export interface YouTubeTranscriptionApprovalRequest {
+  request_id: string;
+  title: string;
+  channel: string;
+  duration: string;
+  duration_seconds?: number;
+  url: string;
+  no_captions_reason: string;
+  audio_size_estimate: string;
+  audio_size_bytes?: number;
+  download_time_estimate: string;
+  transcription_time_estimate: string;
+  total_time_estimate: string;
+  whisper_model: string;
+  compute_backend: string;
+  playlist_note?: string;
+}
+
 export interface TerminalEvent {
   id: string;
   message_index: number;
@@ -223,6 +261,19 @@ export interface ConversationContentBlockPayload {
   durationMs?: number;
   timed_out?: boolean;
   timedOut?: boolean;
+  title?: string;
+  channel?: string;
+  duration?: string;
+  duration_seconds?: number;
+  no_captions_reason?: string;
+  audio_size_estimate?: string;
+  audio_size_bytes?: number;
+  download_time_estimate?: string;
+  transcription_time_estimate?: string;
+  total_time_estimate?: string;
+  whisper_model?: string;
+  compute_backend?: string;
+  playlist_note?: string;
 }
 
 export type ConversationImagePayload = { name: string; thumbnail: string | null } | string;

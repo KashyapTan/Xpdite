@@ -45,6 +45,8 @@ dependencies = [
     "browserforge>=1.2.4",
     "nodriver>=0.48.1",
     "twikit>=2.3.3",
+    "youtube-transcript-api>=1.2.4",
+    "yt-dlp>=2026.3.17",
 ]
 
 [dependency-groups]

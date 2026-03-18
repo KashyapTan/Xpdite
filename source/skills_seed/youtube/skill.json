@@ -1,0 +1,8 @@
+{
+  "name": "youtube",
+  "description": "Watches YouTube videos via transcript/caption tools so you can summarize, quote, and reason over video content.",
+  "slash_command": "youtube",
+  "trigger_servers": [],
+  "version": "1.0.0"
+}
+

@@ -120,6 +120,26 @@ class TestGetSkillsToInject:
             result = get_skills_to_inject(tools, [], mcp_manager=None)
         assert result == []
 
+    def test_youtube_skill_auto_injected_from_url(self):
+        youtube = _make_skill("youtube", trigger_servers=[])
+        query = "Can you summarize this? https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        with patch(
+            "source.mcp_integration.skill_injector._get_manager",
+            return_value=_mock_manager([youtube]),
+        ):
+            result = get_skills_to_inject([], [], user_query=query)
+        assert len(result) == 1
+        assert result[0].name == "youtube"
+
+    def test_youtube_skill_not_auto_injected_without_url(self):
+        youtube = _make_skill("youtube", trigger_servers=[])
+        with patch(
+            "source.mcp_integration.skill_injector._get_manager",
+            return_value=_mock_manager([youtube]),
+        ):
+            result = get_skills_to_inject([], [], user_query="Summarize that video")
+        assert result == []
+
     def test_forced_skips_auto_detect(self):
         """When the user uses a slash command, only forced skills are returned.
         Auto-detect is skipped — the user declared their intent explicitly."""

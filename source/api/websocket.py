@@ -43,6 +43,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - tab_closed: Notify backend a tab was closed
       - tab_activated: Notify backend the user switched to a tab
       - terminal_approval_response: User response to terminal approval
+      - youtube_transcription_approval_response: User response to YouTube transcription approval
       - terminal_session_response: User response to session mode request
       - terminal_stop_session: Stop active terminal session
       - terminal_kill_command: Kill running terminal command
@@ -89,6 +90,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - queue_updated: Queue state snapshot changed
       - ollama_queue_status: Ollama global serialization status
       - terminal_approval_request: Request user approval for command
+      - youtube_transcription_approval: Request user approval for fallback YouTube transcription
       - terminal_session_request: Request user approval for session mode
       - terminal_session_started: Terminal session started
       - terminal_session_ended: Terminal session ended

@@ -558,6 +558,20 @@ async def init_mcp_servers():
         skip_embed=True,
     )
 
+    # ── Video watcher tool (inline — no subprocess) ────────────────
+    # The watch_youtube_video tool is intercepted at the handler layer and
+    # executed by source/services/video_watcher.py. Registration makes it
+    # visible to LLMs; execution never reaches an MCP subprocess session.
+    from mcp_servers.servers.video_watcher.inline_tools import (
+        VIDEO_WATCHER_INLINE_TOOLS,
+    )
+
+    mcp_manager.register_inline_tools(
+        "video_watcher",
+        VIDEO_WATCHER_INLINE_TOOLS,
+        skip_embed=True,
+    )
+
     # ── Add more servers here as you implement them ────────────────
     # Example:
     # await mcp_manager.connect_server(

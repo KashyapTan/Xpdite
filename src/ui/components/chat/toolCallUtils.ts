@@ -60,6 +60,9 @@ export function getServerSummaryFragment(server: string, count: number): string 
   if (server === 'calendar') {
     return `used ${pluralize(count, 'calendar action')}`;
   }
+  if (server === 'video_watcher') {
+    return count === 1 ? 'watched a YouTube video' : `watched ${pluralize(count, 'YouTube video')}`;
+  }
 
   return `used ${server}`;
 }
@@ -164,6 +167,11 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
     if (name === 'list_calendars') text = 'Listing calendars';
     if (name === 'get_free_busy') {
       text = `Checking calendar availability from ${quote(getStringArg(args, 'time_min'), 'start')} to ${quote(getStringArg(args, 'time_max'), 'end')}`;
+    }
+  } else if (server === 'video_watcher') {
+    badge = 'YOUTUBE';
+    if (name === 'watch_youtube_video') {
+      text = `Watching YouTube video ${quote(getStringArg(args, 'url'), 'link')}`;
     }
   }
 

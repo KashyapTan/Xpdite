@@ -15,10 +15,15 @@ and CRUD live in ``source.services.skills.SkillManager``.
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from typing import TYPE_CHECKING, Any, Dict, List
 
 logger = logging.getLogger(__name__)
+_YOUTUBE_URL_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?(?:youtube\.com|youtu\.be)/\S+",
+    re.IGNORECASE,
+)
 
 if TYPE_CHECKING:
     from ..services.skills import Skill, SkillManager
@@ -84,6 +89,7 @@ def get_skills_to_inject(
     retrieved_tools: List[Dict],
     forced_skills: List["Skill"],
     mcp_manager: Any = None,
+    user_query: str = "",
 ) -> List["Skill"]:
     """Return ordered list of Skill objects to fully inject.
 
@@ -104,6 +110,13 @@ def get_skills_to_inject(
 
     manager = _get_manager()
     enabled_by_name = {s.name: s for s in manager.get_enabled_skills()}
+
+    # Explicit URL detection path for YouTube: this skill has no trigger_servers
+    # by design (inline tool), so we activate it when the user includes a
+    # YouTube link in the query.
+    youtube_skill = enabled_by_name.get("youtube")
+    if youtube_skill is not None and user_query and _YOUTUBE_URL_RE.search(user_query):
+        return [youtube_skill]
 
     # Build a reverse map: server name → skills that trigger on it
     server_to_skills: Dict[str, "Skill"] = {}

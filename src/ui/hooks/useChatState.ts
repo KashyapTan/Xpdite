@@ -4,7 +4,14 @@
  * Manages chat history, current query/response, and conversation state.
  */
 import { useState, useRef, useCallback } from 'react';
-import type { ChatMessage, ToolCall, ContentBlock, TerminalCommandBlock, ChatStateSnapshot } from '../types';
+import type {
+  ChatMessage,
+  ToolCall,
+  ContentBlock,
+  TerminalCommandBlock,
+  YouTubeTranscriptionApprovalBlock,
+  ChatStateSnapshot,
+} from '../types';
 
 interface UseChatStateReturn {
   // State
@@ -44,6 +51,11 @@ interface UseChatStateReturn {
   addTerminalBlock: (terminal: TerminalCommandBlock) => void;
   updateTerminalBlock: (requestId: string, updates: Partial<TerminalCommandBlock>) => void;
   appendTerminalOutput: (requestId: string, text: string, raw?: boolean) => void;
+  addYouTubeApprovalBlock: (approval: YouTubeTranscriptionApprovalBlock) => void;
+  updateYouTubeApprovalBlock: (
+    requestId: string,
+    updates: Partial<YouTubeTranscriptionApprovalBlock>,
+  ) => void;
   startQuery: (query: string) => void;
   completeResponse: (attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => void;
   clearStreamingState: (status?: string) => void;
@@ -196,6 +208,37 @@ export function useChatState(): UseChatStateReturn {
             isPty,
           },
         };
+      }
+      return block;
+    });
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
+  }, []);
+
+  const addYouTubeApprovalBlock = useCallback((approval: YouTubeTranscriptionApprovalBlock) => {
+    const newBlock: YouTubeTranscriptionApprovalBlock = {
+      ...approval,
+      status: approval.status ?? 'pending',
+    };
+
+    const newBlocks: ContentBlock[] = [
+      ...contentBlocksRef.current,
+      { type: 'youtube_transcription_approval', approval: newBlock },
+    ];
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
+  }, []);
+
+  const updateYouTubeApprovalBlock = useCallback((
+    requestId: string,
+    updates: Partial<YouTubeTranscriptionApprovalBlock>,
+  ) => {
+    const newBlocks = contentBlocksRef.current.map((block) => {
+      if (
+        block.type === 'youtube_transcription_approval'
+        && block.approval.requestId === requestId
+      ) {
+        return { ...block, approval: { ...block.approval, ...updates } };
       }
       return block;
     });
@@ -402,6 +445,8 @@ export function useChatState(): UseChatStateReturn {
     addTerminalBlock,
     updateTerminalBlock,
     appendTerminalOutput,
+    addYouTubeApprovalBlock,
+    updateYouTubeApprovalBlock,
     startQuery,
     completeResponse,
     clearStreamingState,

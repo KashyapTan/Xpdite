@@ -374,6 +374,158 @@
   50% { opacity: 0.5; }
 }
 
+/* ── YouTube transcription approval card ───────────────────── */
+
+.youtube-inline-approval {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(100, 140, 255, 0.05);
+}
+
+.youtube-inline-approval.status-approved {
+  border-color: rgba(80, 200, 80, 0.35);
+  background: rgba(80, 200, 80, 0.06);
+}
+
+.youtube-inline-approval.status-denied {
+  border-color: rgba(255, 80, 80, 0.35);
+  background: rgba(255, 80, 80, 0.06);
+}
+
+.youtube-inline-approval-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.youtube-inline-approval-badge {
+  background-color: rgba(255, 255, 255, 0.05);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.youtube-inline-approval-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d7d7eb;
+}
+
+.youtube-inline-approval-total-label {
+  font-size: 11px;
+  color: #9ea7d6;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.youtube-inline-approval-total-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #f2f5ff;
+  margin: 4px 0 10px;
+}
+
+.youtube-inline-approval-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #d2d7f2;
+}
+
+.youtube-inline-approval-grid span {
+  color: #97a2d5;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.youtube-inline-approval-note {
+  margin: 8px 0;
+  font-size: 12px;
+  color: #b8c2ec;
+}
+
+.youtube-inline-approval-reason {
+  margin: 8px 0;
+  font-size: 12px;
+  color: #c6cdef;
+}
+
+.youtube-inline-approval-link {
+  display: block;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: #81a6ff;
+  word-break: break-all;
+}
+
+.youtube-inline-approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.youtube-inline-approval-actions .btn-deny {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  background: rgba(255, 80, 80, 0.1);
+  color: #ff6060;
+  transition: all 0.15s ease;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.youtube-inline-approval-actions .btn-deny:hover {
+  background: rgba(255, 80, 80, 0.2);
+  border-color: rgba(255, 80, 80, 0.5);
+}
+
+.youtube-inline-approval-actions .btn-allow {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid rgba(80, 200, 80, 0.3);
+  background: rgba(80, 200, 80, 0.1);
+  color: #50c850;
+  transition: all 0.15s ease;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.youtube-inline-approval-actions .btn-allow:hover {
+  background: rgba(80, 200, 80, 0.2);
+  border-color: rgba(80, 200, 80, 0.5);
+}
+
+.youtube-inline-approval-status {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.youtube-inline-approval-status.approved {
+  color: #7ee787;
+}
+
+.youtube-inline-approval-status.denied {
+  color: #ff6060;
+}
+
 /* ── Session mode chip (rendered in input area or chat) ──── */
 
 .terminal-session-chip {

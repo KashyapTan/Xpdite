@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
+import { InlineYouTubeApprovalBlock } from './InlineYouTubeApprovalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
 import { getHumanReadableDescription, getServerSummaryFragment } from './toolCallUtils';
 import '../../CSS/InlineTerminal.css';
@@ -181,6 +182,7 @@ interface ToolChainTimelineProps {
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
   onTerminalResize?: (cols: number, rows: number) => void;
+  onYouTubeApprovalResponse?: (requestId: string, approved: boolean) => void;
 }
 
 function ToolChainTimeline({
@@ -193,13 +195,19 @@ function ToolChainTimeline({
   onTerminalApproveRemember,
   onTerminalKill,
   onTerminalResize,
+  onYouTubeApprovalResponse,
 }: ToolChainTimelineProps) {
   // Find last "chain" block: tool_call, thinking, or terminal_command.
   // Everything up to it stays in the chain; trailing text blocks are the response.
   let lastChainIndex = -1;
   for (let i = blocks.length - 1; i >= 0; i--) {
     const b = blocks[i];
-    if (b.type === 'tool_call' || b.type === 'thinking' || b.type === 'terminal_command') {
+    if (
+      b.type === 'tool_call'
+      || b.type === 'thinking'
+      || b.type === 'terminal_command'
+      || b.type === 'youtube_transcription_approval'
+    ) {
       lastChainIndex = i;
       break;
     }
@@ -214,15 +222,25 @@ function ToolChainTimeline({
   const terminalBlocks = chainBlocks.filter(
     (b): b is ContentBlock & { type: 'terminal_command' } => b.type === 'terminal_command',
   );
+  const youtubeApprovalBlocks = chainBlocks.filter(
+    (b): b is ContentBlock & { type: 'youtube_transcription_approval' } =>
+      b.type === 'youtube_transcription_approval',
+  );
   const hasThinkingBlocks = chainBlocks.some((b) => b.type === 'thinking');
 
   const isAnyRunning = toolCalls.some(tc => tc.status === 'calling' || tc.status === 'progress');
   const isTerminalRunning = terminalBlocks.some(
     (block) => block.terminal.status === 'pending_approval' || block.terminal.status === 'running',
   );
-  const isChainActive = isThinking || isAnyRunning || isTerminalRunning;
+  const isYouTubeApprovalPending = youtubeApprovalBlocks.some(
+    (block) => block.approval.status === 'pending',
+  );
+  const isChainActive = isThinking || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
   const allDone = toolCalls.length > 0 && !isAnyRunning;
-  const isThinkingOnlyChain = hasThinkingBlocks && toolCalls.length === 0 && terminalBlocks.length === 0;
+  const isThinkingOnlyChain = hasThinkingBlocks
+    && toolCalls.length === 0
+    && terminalBlocks.length === 0
+    && youtubeApprovalBlocks.length === 0;
   const [internalExpanded, setInternalExpanded] = useState(isChainActive || isThinkingOnlyChain);
 
   // Auto-expand while tools are running
@@ -241,6 +259,10 @@ function ToolChainTimeline({
     | { kind: 'thinking'; content: string }
     | { kind: 'tool'; toolCall: ToolCall }
     | { kind: 'terminal'; terminal: ContentBlock & { type: 'terminal_command' } }
+    | {
+      kind: 'youtube_approval';
+      approval: ContentBlock & { type: 'youtube_transcription_approval' };
+    }
     | { kind: 'done' }
   > = [];
 
@@ -255,6 +277,11 @@ function ToolChainTimeline({
       timelineItems.push({ kind: 'tool', toolCall: block.toolCall });
     } else if (block.type === 'terminal_command') {
       timelineItems.push({ kind: 'terminal', terminal: block as ContentBlock & { type: 'terminal_command' } });
+    } else if (block.type === 'youtube_transcription_approval') {
+      timelineItems.push({
+        kind: 'youtube_approval',
+        approval: block as ContentBlock & { type: 'youtube_transcription_approval' },
+      });
     }
   }
   if (allDone) {
@@ -269,6 +296,12 @@ function ToolChainTimeline({
     if (terminalBlocks.length > 0) {
       const noun = terminalBlocks.length === 1 ? 'terminal command' : 'terminal commands';
       return isChainActive ? `Running ${noun}` : `Ran ${terminalBlocks.length === 1 ? 'a' : terminalBlocks.length} ${noun}`;
+    }
+
+    if (youtubeApprovalBlocks.length > 0) {
+      return isYouTubeApprovalPending
+        ? 'Waiting for YouTube transcription approval'
+        : 'Handled YouTube transcription approval';
     }
 
     if (hasThinkingBlocks) {
@@ -360,6 +393,25 @@ function ToolChainTimeline({
                   );
                 }
 
+                if (item.kind === 'youtube_approval') {
+                  return (
+                    <div key={idx} className="chain-item chain-item-terminal">
+                      <div className="chain-item-marker">
+                        <div className="chain-item-dot">
+                          <WrenchIcon />
+                        </div>
+                        {!isLast && <div className="chain-item-line" />}
+                      </div>
+                      <div className="chain-item-body">
+                        <InlineYouTubeApprovalBlock
+                          approval={item.approval.approval}
+                          onRespond={onYouTubeApprovalResponse}
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+
                 if (item.kind === 'done') {
                   return (
                     <div key={idx} className="chain-item">
@@ -405,6 +457,15 @@ function ToolChainTimeline({
             />
           );
         }
+        if (block.type === 'youtube_transcription_approval') {
+          return (
+            <InlineYouTubeApprovalBlock
+              key={`resp-${idx}`}
+              approval={block.approval}
+              onRespond={onYouTubeApprovalResponse}
+            />
+          );
+        }
         return null;
       })}
     </>
@@ -423,6 +484,7 @@ interface InlineContentBlocksProps {
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
   onTerminalResize?: (cols: number, rows: number) => void;
+  onYouTubeApprovalResponse?: (requestId: string, approved: boolean) => void;
 }
 
 export function InlineContentBlocks({
@@ -435,9 +497,14 @@ export function InlineContentBlocks({
   onTerminalApproveRemember,
   onTerminalKill,
   onTerminalResize,
+  onYouTubeApprovalResponse,
 }: InlineContentBlocksProps) {
   const hasTimelineBlocks = blocks.some(
-    (block) => block.type === 'thinking' || block.type === 'tool_call' || block.type === 'terminal_command',
+    (block) =>
+      block.type === 'thinking'
+      || block.type === 'tool_call'
+      || block.type === 'terminal_command'
+      || block.type === 'youtube_transcription_approval',
   );
 
   if (hasTimelineBlocks) {
@@ -452,6 +519,7 @@ export function InlineContentBlocks({
         onTerminalApproveRemember={onTerminalApproveRemember}
         onTerminalKill={onTerminalKill}
         onTerminalResize={onTerminalResize}
+        onYouTubeApprovalResponse={onYouTubeApprovalResponse}
       />
     );
   }
@@ -480,6 +548,15 @@ export function InlineContentBlocks({
               onApproveRemember={onTerminalApproveRemember}
               onKill={onTerminalKill}
               onTerminalResize={onTerminalResize}
+            />
+          );
+        }
+        if (block.type === 'youtube_transcription_approval') {
+          return (
+            <InlineYouTubeApprovalBlock
+              key={idx}
+              approval={block.approval}
+              onRespond={onYouTubeApprovalResponse}
             />
           );
         }

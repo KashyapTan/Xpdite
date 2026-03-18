@@ -21,6 +21,10 @@ from ..core.state import app_state
 from .manager import mcp_manager
 from .retriever import retriever
 from .terminal_executor import execute_terminal_tool, is_terminal_tool
+from .video_watcher_executor import (
+    execute_video_watcher_tool,
+    is_video_watcher_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +256,10 @@ async def handle_mcp_tool_calls(
                 # Execute (terminal interception or standard MCP)
                 if is_terminal_tool(fn_name, server_name):
                     result = await execute_terminal_tool(fn_name, fn_args, server_name)
+                elif is_video_watcher_tool(fn_name, server_name):
+                    result = await execute_video_watcher_tool(
+                        fn_name, fn_args, server_name
+                    )
                 else:
                     try:
                         result = await mcp_manager.call_tool(fn_name, dict(fn_args))

@@ -22,6 +22,7 @@ from ..database import db
 from ..services.conversations import ConversationService
 from ..services.screenshots import ScreenshotHandler
 from ..services.terminal import terminal_service
+from ..services.video_watcher import video_watcher_service
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,8 @@ class MessageHandler:
 
         # Cancel any pending terminal approvals/sessions so tool loop unblocks
         terminal_service.cancel_all_pending()
+        # Cancel any pending YouTube transcription approvals as well
+        video_watcher_service.cancel_all_pending()
 
     async def _handle_cancel_queued_item(self, data: Dict[str, Any]):
         """Handle cancellation of a specific queued (not yet running) item."""
@@ -728,6 +731,14 @@ class MessageHandler:
         """Handle user's response to a session mode request."""
         approved = data.get("approved", False)
         terminal_service.resolve_session(approved)
+
+    async def _handle_youtube_transcription_approval_response(
+        self, data: Dict[str, Any]
+    ):
+        """Handle user's response to a YouTube transcription approval request."""
+        request_id = data.get("request_id", "")
+        approved = data.get("approved", False)
+        video_watcher_service.resolve_transcription_approval(request_id, approved)
 
     async def _handle_terminal_stop_session(self, data: Dict[str, Any]):
         """Handle user clicking the Stop button on an active session."""

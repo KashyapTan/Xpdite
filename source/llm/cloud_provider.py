@@ -232,6 +232,10 @@ async def _execute_and_broadcast_tool(
     """
     from ..mcp_integration.manager import mcp_manager
     from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
+    from ..mcp_integration.video_watcher_executor import (
+        is_video_watcher_tool,
+        execute_video_watcher_tool,
+    )
 
     try:
         server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
@@ -265,6 +269,8 @@ async def _execute_and_broadcast_tool(
     try:
         if is_terminal_tool(fn_name, server_name):
             result = await execute_terminal_tool(fn_name, fn_args, server_name)
+        elif is_video_watcher_tool(fn_name, server_name):
+            result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
         else:
             result = await mcp_manager.call_tool(fn_name, dict(fn_args))
     except Exception as e:

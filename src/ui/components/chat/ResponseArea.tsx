@@ -35,6 +35,7 @@ interface ResponseAreaProps {
   onTerminalApproveRemember?: (requestId: string) => void;
   onTerminalKill?: (requestId: string) => void;
   onTerminalResize?: (cols: number, rows: number) => void;
+  onYouTubeApprovalResponse?: (requestId: string, approved: boolean) => void;
   hasTabBar: boolean;
   topInset: number;
   bottomInset: number;
@@ -65,6 +66,7 @@ export function ResponseArea({
   onTerminalApproveRemember,
   onTerminalKill,
   onTerminalResize,
+  onYouTubeApprovalResponse,
   hasTabBar,
   topInset,
   bottomInset,
@@ -135,6 +137,7 @@ export function ResponseArea({
               onTerminalApproveRemember={onTerminalApproveRemember}
               onTerminalKill={onTerminalKill}
               onTerminalResize={onTerminalResize}
+              onYouTubeApprovalResponse={onYouTubeApprovalResponse}
             />
           </div>
         )}

@@ -84,6 +84,7 @@ async def route_chat(
         retrieved_tools=retrieved_tools,
         forced_skills=forced_skills or [],
         mcp_manager=mcp_manager,
+        user_query=user_query,
     )
     skills_block = build_skills_prompt_block(skills_to_inject, manifest=manifest)
 

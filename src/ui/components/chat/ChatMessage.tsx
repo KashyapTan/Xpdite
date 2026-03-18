@@ -117,7 +117,10 @@ export function ChatMessage({
   const canControlThoughtTimeline = !!renderableBlocks
     && renderableBlocks.some((block) => block.type === 'thinking')
     && !renderableBlocks.some(
-      (block) => block.type === 'tool_call' || block.type === 'terminal_command',
+      (block) =>
+        block.type === 'tool_call'
+        || block.type === 'terminal_command'
+        || block.type === 'youtube_transcription_approval',
     );
   const footerClassName =
     message.role === 'user'

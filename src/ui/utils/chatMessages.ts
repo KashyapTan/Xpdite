@@ -7,6 +7,7 @@ import type {
   ConversationTurnPayload,
   ResponseVariant,
   TerminalCommandBlock,
+  YouTubeTranscriptionApprovalBlock,
   ToolCall,
 } from '../types';
 
@@ -50,6 +51,25 @@ function serializeTerminalBlock(terminal: TerminalCommandBlock): string {
   return parts.join('\n');
 }
 
+function serializeYouTubeApprovalBlock(approval: YouTubeTranscriptionApprovalBlock): string {
+  const status =
+    approval.status === 'approved'
+      ? 'Approved'
+      : approval.status === 'denied'
+        ? 'Denied'
+        : 'Pending';
+
+  return [
+    `[YouTube transcription approval: ${status}]`,
+    `Title: ${approval.title}`,
+    `Channel: ${approval.channel}`,
+    `Duration: ${approval.duration}`,
+    `Estimated total: ${approval.totalTimeEstimate}`,
+    `Model: ${approval.whisperModel}`,
+    `URL: ${approval.url}`,
+  ].join('\n');
+}
+
 export function serializeMessageForCopy(message: ChatMessage): string {
   if (message.contentBlocks && message.contentBlocks.length > 0) {
     return message.contentBlocks
@@ -62,6 +82,9 @@ export function serializeMessageForCopy(message: ChatMessage): string {
         }
         if (block.type === 'terminal_command') {
           return serializeTerminalBlock(block.terminal);
+        }
+        if (block.type === 'youtube_transcription_approval') {
+          return serializeYouTubeApprovalBlock(block.approval);
         }
         return '';
       })
@@ -109,6 +132,30 @@ export function mapConversationContentBlock(
         exitCode: block.exit_code ?? block.exitCode,
         durationMs: block.duration_ms ?? block.durationMs,
         timedOut: block.timed_out ?? block.timedOut,
+      },
+    };
+  }
+
+  if (block.type === 'youtube_transcription_approval') {
+    return {
+      type: 'youtube_transcription_approval',
+      approval: {
+        requestId: block.request_id ?? block.requestId ?? '',
+        title: block.title ?? '',
+        channel: block.channel ?? '',
+        duration: block.duration ?? '',
+        durationSeconds: block.duration_seconds,
+        url: block.url ?? '',
+        noCaptionsReason: block.no_captions_reason ?? '',
+        audioSizeEstimate: block.audio_size_estimate ?? 'Unknown',
+        audioSizeBytes: block.audio_size_bytes,
+        downloadTimeEstimate: block.download_time_estimate ?? 'Unknown',
+        transcriptionTimeEstimate: block.transcription_time_estimate ?? 'Unknown',
+        totalTimeEstimate: block.total_time_estimate ?? 'Unknown',
+        whisperModel: block.whisper_model ?? '',
+        computeBackend: block.compute_backend ?? '',
+        playlistNote: block.playlist_note,
+        status: (block.status as YouTubeTranscriptionApprovalBlock['status']) ?? 'pending',
       },
     };
   }
