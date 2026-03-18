@@ -33,6 +33,10 @@ Use the filesystem MCP tools `glob_files` and `grep_files` for file discovery an
 file-content search.
 Do NOT use `run_command` for `grep`, `rg`, `ag`, `find`, `ls`, `dir`, or shell
 glob expansion when those filesystem tools can handle the task.
+Prefer these tools because they provide structured output, avoid approval friction,
+and stay constrained to sandboxed paths.
+Only fall back to `run_command` for shell-only capabilities that MCP tools cannot
+do yet (for example, searching inside archives), and explain the reason first.
 </file_search_policy>
 
 <sub_agents>
