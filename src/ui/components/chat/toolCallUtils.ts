@@ -63,6 +63,9 @@ export function getServerSummaryFragment(server: string, count: number): string 
   if (server === 'video_watcher') {
     return count === 1 ? 'watched a YouTube video' : `watched ${pluralize(count, 'YouTube video')}`;
   }
+  if (server === 'skills') {
+    return count === 1 ? 'checked skills' : `used ${pluralize(count, 'skill action')}`;
+  }
 
   return `used ${server}`;
 }
@@ -173,6 +176,10 @@ export function getHumanReadableDescription(tc: ToolCall): { badge: string; text
     if (name === 'watch_youtube_video') {
       text = `Watching YouTube video ${quote(getStringArg(args, 'url'), 'link')}`;
     }
+  } else if (server === 'skills') {
+    badge = 'SKILLS';
+    if (name === 'list_skills') text = 'Listing available skills';
+    if (name === 'use_skill') text = `Loading skill '${getStringArg(args, 'skill_name') || 'unknown'}'`;
   }
 
   return { badge, text };

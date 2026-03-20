@@ -572,6 +572,19 @@ async def init_mcp_servers():
         skip_embed=True,
     )
 
+    # ── Skills tools (inline — no subprocess) ─────────────────────
+    # list_skills and use_skill allow LLMs to discover and load skill
+    # content on-demand rather than always injecting into system prompt.
+    # These are embedded for retrieval so they surface when the query
+    # might benefit from skill guidance.
+    from mcp_servers.servers.skills.inline_tools import SKILLS_INLINE_TOOLS
+
+    mcp_manager.register_inline_tools(
+        "skills",
+        SKILLS_INLINE_TOOLS,
+        skip_embed=False,  # Include in semantic retrieval
+    )
+
     # ── Add more servers here as you implement them ────────────────
     # Example:
     # await mcp_manager.connect_server(

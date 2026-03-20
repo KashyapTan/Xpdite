@@ -236,6 +236,7 @@ async def _execute_and_broadcast_tool(
         is_video_watcher_tool,
         execute_video_watcher_tool,
     )
+    from ..mcp_integration.skills_executor import execute_skill_tool
 
     try:
         server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
@@ -271,6 +272,8 @@ async def _execute_and_broadcast_tool(
             result = await execute_terminal_tool(fn_name, fn_args, server_name)
         elif is_video_watcher_tool(fn_name, server_name):
             result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
+        elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
+            result = execute_skill_tool(fn_name, dict(fn_args))
         else:
             result = await mcp_manager.call_tool(fn_name, dict(fn_args))
     except Exception as e:

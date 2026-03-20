@@ -53,14 +53,12 @@ async def route_chat(
     from .prompt import build_system_prompt
     from ..mcp_integration.skill_injector import (
         get_skills_to_inject,
-        build_skill_manifest,
         build_skills_prompt_block,
     )
     from ..mcp_integration.manager import mcp_manager
     from ..core.request_context import is_current_request_cancelled
 
-    # Retrieve tools FIRST so the skill injector can auto-detect the
-    # dominant tool category and inject the matching skill.
+    # Retrieve relevant MCP tools for this query
     retrieved_tools: list = []
     if mcp_manager.has_tools():
         from ..mcp_integration.handlers import retrieve_relevant_tools
@@ -76,17 +74,13 @@ async def route_chat(
     else:
         logger.info("No tools retrieved for query '%s...'", user_query[:40])
 
-    # Phase 1: compact manifest (always present)
-    manifest = build_skill_manifest()
-
-    # Phase 2: full skill injection (slash commands + auto-detect)
+    # Skill injection: only inject when forced via slash commands or YouTube URL
+    # For on-demand discovery, the LLM uses list_skills/use_skill tools
     skills_to_inject = get_skills_to_inject(
-        retrieved_tools=retrieved_tools,
         forced_skills=forced_skills or [],
-        mcp_manager=mcp_manager,
         user_query=user_query,
     )
-    skills_block = build_skills_prompt_block(skills_to_inject, manifest=manifest)
+    skills_block = build_skills_prompt_block(skills_to_inject)
 
     if skills_to_inject:
         logger.debug("Injecting %d skill(s): %s", len(skills_to_inject), [s.name for s in skills_to_inject])

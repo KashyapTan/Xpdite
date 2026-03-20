@@ -25,6 +25,7 @@ from .video_watcher_executor import (
     execute_video_watcher_tool,
     is_video_watcher_tool,
 )
+from .skills_executor import execute_skill_tool
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +261,12 @@ async def handle_mcp_tool_calls(
                     result = await execute_video_watcher_tool(
                         fn_name, fn_args, server_name
                     )
+                elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
+                    try:
+                        result = execute_skill_tool(fn_name, dict(fn_args))
+                    except Exception as e:
+                        logger.warning("Skills tool error for %s: %s", fn_name, e)
+                        result = f"Error executing skill tool: {e}"
                 else:
                     try:
                         result = await mcp_manager.call_tool(fn_name, dict(fn_args))
