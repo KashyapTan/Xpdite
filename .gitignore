@@ -38,3 +38,5 @@ code_review/
 # Playwright CLI
 .playwright-cli/
 .playwright/
+
+coverage/

@@ -332,6 +332,13 @@ describe('InlineTerminalBlock', () => {
       })
       const { container } = render(<InlineTerminalBlock terminal={terminal} />)
 
+      // PT-based terminal blocks start collapsed UNLESS expanded is true or status is pending approval.
+      // InlineTerminalBlock.tsx line 74: const [isExpanded, setIsExpanded] = useState(() => !terminal.isPty);
+      // Wait, if it is PTY, isExpanded is FALSE by default.
+      
+      const header = screen.getByText(terminal.command).closest('.terminal-inline-header')
+      if (header) fireEvent.click(header)
+
       const xtermWrapper = container.querySelector('.terminal-inline-xterm-wrapper')
       expect(xtermWrapper).toBeInTheDocument()
     })
@@ -345,6 +352,9 @@ describe('InlineTerminalBlock', () => {
       })
       const { container } = render(<InlineTerminalBlock terminal={terminal} />)
 
+      const header = screen.getByText(terminal.command).closest('.terminal-inline-header')
+      if (header) fireEvent.click(header)
+
       const xtermWrapper = container.querySelector('.terminal-inline-xterm-wrapper')
       expect(xtermWrapper).toBeInTheDocument()
     })
@@ -354,8 +364,11 @@ describe('InlineTerminalBlock', () => {
         status: 'pending_approval',
         isPty: true,
       })
+      // pending_approval triggers auto-expand in useEffect
       const { container } = render(<InlineTerminalBlock terminal={terminal} />)
 
+      // But PTY content is only rendered if status is running or completed
+      // isPty && (status === 'running' || status === 'completed')
       const xtermWrapper = container.querySelector('.terminal-inline-xterm-wrapper')
       expect(xtermWrapper).not.toBeInTheDocument()
     })
@@ -368,6 +381,9 @@ describe('InlineTerminalBlock', () => {
         durationMs: 500,
       })
       const { container } = render(<InlineTerminalBlock terminal={terminal} />)
+
+      const header = screen.getByText(terminal.command).closest('.terminal-inline-header')
+      if (header) fireEvent.click(header)
 
       const xtermWrapper = container.querySelector('.terminal-inline-xterm-wrapper.pty-completed')
       expect(xtermWrapper).toBeInTheDocument()
