@@ -20,7 +20,7 @@ export function normalizeTimestamp(timestamp?: number): number | undefined {
   if (timestamp === undefined || Number.isNaN(timestamp)) {
     return undefined;
   }
-  return timestamp > 1_000_000_000_000 ? timestamp : timestamp * 1000;
+  return timestamp >= 1_000_000_000_000 ? timestamp : timestamp * 1000;
 }
 
 export function formatMessageTimestamp(timestamp?: number): string {

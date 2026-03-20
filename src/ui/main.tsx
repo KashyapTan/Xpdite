@@ -13,6 +13,7 @@ const MeetingAlbum = lazy(() => import('./pages/MeetingAlbum.tsx'))
 const MeetingRecorder = lazy(() => import('./pages/MeetingRecorder.tsx'))
 const MeetingRecordingDetail = lazy(() => import('./pages/MeetingRecordingDetail.tsx'))
 
+// eslint-disable-next-line react-refresh/only-export-components
 const LazyFallback = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.5)', fontFamily: 'Montserrat, sans-serif', fontSize: '13px' }}>
     Loading...

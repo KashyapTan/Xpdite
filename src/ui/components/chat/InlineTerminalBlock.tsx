@@ -19,6 +19,9 @@ import '@xterm/xterm/css/xterm.css';
 import AnsiToHtml from 'ansi-to-html';
 import type { TerminalCommandBlock } from '../../types';
 
+const INIT_PTY_FLUSH_BATCH_SIZE = 250;
+const MAX_RENDERABLE_OUTPUT_CHUNKS = 5000;
+
 // Shared ANSI converter instance (for non-PTY commands only)
 const ansiConverter = new AnsiToHtml({
   fg: '#d4d4d4',
@@ -62,7 +65,7 @@ export function InlineTerminalBlock({
   onKill,
   onTerminalResize,
 }: InlineTerminalBlockProps) {
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(() => !terminal.isPty);
 
   // Refs for non-PTY (ansi-to-html) output
   const outputEndRef = useRef<HTMLDivElement>(null);
@@ -73,14 +76,34 @@ export function InlineTerminalBlock({
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const writtenChunksRef = useRef<number>(0);
+  const isInitialFlushPendingRef = useRef(false);
+  const { requestId, command, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
+  const boundedOutputChunks = useMemo(
+    () => (
+      outputChunks.length > MAX_RENDERABLE_OUTPUT_CHUNKS
+        ? outputChunks.slice(outputChunks.length - MAX_RENDERABLE_OUTPUT_CHUNKS)
+        : outputChunks
+    ),
+    [outputChunks],
+  );
   // Always-current ref so the RAF flush inside the init effect reads live chunks,
   // not the stale closure value captured when the effect ran.
-  const outputChunksRef = useRef(terminal.outputChunks);
-
-  const { requestId, command, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
+  const outputChunksRef = useRef(boundedOutputChunks);
+  // Stable refs for props/state used inside effects that shouldn't trigger re-init
+  const onTerminalResizeRef = useRef(onTerminalResize);
+  const statusRef = useRef(status);
 
   // Keep the ref in sync on every render
-  outputChunksRef.current = outputChunks;
+  outputChunksRef.current = boundedOutputChunks;
+  onTerminalResizeRef.current = onTerminalResize;
+  statusRef.current = status;
+
+  // Ensure approval prompts are always expanded when they arrive.
+  useEffect(() => {
+    if (status === 'pending_approval') {
+      setIsExpanded(true);
+    }
+  }, [status]);
 
   // ── xterm.js lifecycle for PTY commands ──────────────────────────
 
@@ -88,6 +111,7 @@ export function InlineTerminalBlock({
   useEffect(() => {
     if (!isPty || !isExpanded || !xtermContainerRef.current || xtermRef.current) return;
 
+    let disposed = false;
     const term = new Terminal({
       theme: {
         background: '#1a1a2e',
@@ -97,7 +121,7 @@ export function InlineTerminalBlock({
       },
       fontSize: 12,
       fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
-      cursorBlink: status === 'running',
+      cursorBlink: statusRef.current === 'running',
       cursorStyle: 'bar',
       disableStdin: true,
       scrollback: 10000,
@@ -111,31 +135,52 @@ export function InlineTerminalBlock({
 
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
+    isInitialFlushPendingRef.current = true;
+    const initialChunks = [...outputChunksRef.current];
 
     // Fit after browser paint and send size to backend
     requestAnimationFrame(() => {
+      if (disposed) return;
       try {
         fitAddon.fit();
         // Send the actual xterm dimensions to the backend so PTY matches
-        if (onTerminalResize && term.cols && term.rows) {
-          onTerminalResize(term.cols, term.rows);
+        const resizeFn = onTerminalResizeRef.current;
+        if (resizeFn && term.cols && term.rows) {
+          resizeFn(term.cols, term.rows);
         }
       } catch { /* ignore */ }
 
-      // Flush all chunks buffered before xterm was ready.
-      // Use outputChunksRef so we read the *live* array, not the stale
-      // closure value captured when this effect ran.
-      const chunks = outputChunksRef.current;
-      if (chunks && chunks.length > 0) {
-        for (const chunk of chunks) {
+      // Flush all chunks buffered before xterm was ready in batches.
+      const flushInitialChunks = (startIdx: number) => {
+        if (disposed) {
+          isInitialFlushPendingRef.current = false;
+          return;
+        }
+
+        const endIdx = Math.min(startIdx + INIT_PTY_FLUSH_BATCH_SIZE, initialChunks.length);
+        for (let i = startIdx; i < endIdx; i += 1) {
+          const chunk = initialChunks[i];
           if (chunk.raw) {
             term.write(chunk.text);
           } else {
             term.writeln(chunk.text);
           }
         }
-        writtenChunksRef.current = chunks.length;
+        writtenChunksRef.current = endIdx;
+
+        if (endIdx < initialChunks.length) {
+          requestAnimationFrame(() => flushInitialChunks(endIdx));
+          return;
+        }
+
+        isInitialFlushPendingRef.current = false;
         term.scrollToBottom();
+      };
+
+      if (initialChunks.length > 0) {
+        flushInitialChunks(0);
+      } else {
+        isInitialFlushPendingRef.current = false;
       }
     });
 
@@ -146,8 +191,9 @@ export function InlineTerminalBlock({
         try {
           fitAddon.fit();
           // Sync new dimensions to backend PTY
-          if (onTerminalResize && term.cols && term.rows) {
-            onTerminalResize(term.cols, term.rows);
+          const resizeFn = onTerminalResizeRef.current;
+          if (resizeFn && term.cols && term.rows) {
+            resizeFn(term.cols, term.rows);
           }
         } catch { /* ignore */ }
       }
@@ -155,37 +201,39 @@ export function InlineTerminalBlock({
     resizeObserver.observe(container);
 
     return () => {
+      disposed = true;
+      isInitialFlushPendingRef.current = false;
       resizeObserver.disconnect();
       term.dispose();
       xtermRef.current = null;
       fitAddonRef.current = null;
       writtenChunksRef.current = 0;
     };
-  }, [isPty, isExpanded]); // Re-init when expanded or isPty changes
+  }, [isPty, isExpanded, requestId]); // Re-init when command identity changes
 
   // Write new chunks to xterm as they arrive (only runs once xterm is ready)
   useEffect(() => {
-    if (!isPty || !xtermRef.current || !outputChunks) return;
+    if (!isPty || !xtermRef.current || !boundedOutputChunks || isInitialFlushPendingRef.current) return;
 
     const term = xtermRef.current;
     const startIdx = writtenChunksRef.current;
-    if (startIdx >= outputChunks.length) return;
+    if (startIdx >= boundedOutputChunks.length) return;
 
-    for (let i = startIdx; i < outputChunks.length; i++) {
-      const chunk = outputChunks[i];
+    for (let i = startIdx; i < boundedOutputChunks.length; i++) {
+      const chunk = boundedOutputChunks[i];
       if (chunk.raw) {
         term.write(chunk.text);
       } else {
         term.writeln(chunk.text);
       }
     }
-    writtenChunksRef.current = outputChunks.length;
+    writtenChunksRef.current = boundedOutputChunks.length;
 
     // Auto-scroll for non-TUI output
     if (status === 'running') {
       term.scrollToBottom();
     }
-  }, [isPty, outputChunks, status]);
+  }, [isPty, boundedOutputChunks, status]);
 
   // Update cursor blink based on status
   useEffect(() => {
@@ -216,7 +264,7 @@ export function InlineTerminalBlock({
     if (!container || !isExpanded) return;
     const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
     if (isNearBottom) {
-      outputEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
+      outputEndRef.current?.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   }, [output, isExpanded, isPty]);
 

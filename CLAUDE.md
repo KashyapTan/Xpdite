@@ -159,16 +159,16 @@ uv run <file_name>                            # run python files for testing
 
 ### Frontend (React + Electron)
 ```bash
-bun run lint                      # ESLint (frontend + electron TS/JS)
-bunx vitest run                   # run Vitest once
-bunx vitest                       # watch mode
-bunx vitest run --coverage        # run Vitest with coverage
-bun run build:react               # production build sanity-check
+bun run test:frontend                       # run frontend Vitest suite
+bun run test:frontend:watch                 # run frontend Vitest in watch mode
+bun run test:frontend:coverage              # run frontend tests with coverage
+bun run lint                                # ESLint (frontend + electron TS/JS)
+bun run build:react                         # production build sanity-check
 ```
 
 **Vitest vs coverage runs**
-- `vitest run` tells you pass/fail quickly (best for local iteration).
-- `vitest run --coverage` runs the same tests but also instruments code and outputs coverage metrics (lines/branches/functions), so it is slower and used before merge or when validating test completeness.
+- `bun run test:frontend` gives fast pass/fail feedback for local iteration.
+- `bun run test:frontend:coverage` runs the same tests with instrumentation and emits coverage metrics (lines/branches/functions), so it is slower but better for pre-merge confidence.
 
 ### Backend (FastAPI + Python)
 ```bash
@@ -176,6 +176,8 @@ uv run python -m pytest tests/ -v          # run all backend tests
 uv run python -m pytest tests/test_foo.py  # run a single test file
 uv run ruff check .                        # backend lint/static checks
 ```
+
+Frontend test files are organized under `src/ui/test/**` (components, contexts, hooks, services, utils) and run in a `jsdom` environment via `vitest.config.ts`.
 
 **`asyncio_mode = "auto"`** is set in `pyproject.toml` — all `async def test_*` functions are automatically treated as asyncio tests. No `@pytest.mark.asyncio` decorator is needed (though some legacy tests retain it; both styles work).
 

@@ -25,6 +25,7 @@ const BootContext = createContext<BootContextValue>({
   retry: () => {},
 });
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useBootContext = () => useContext(BootContext);
 
 export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -61,12 +62,18 @@ export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   useEffect(() => {
+    let isMounted = true;
+
     // If running inside Electron, listen for IPC boot state updates
     if (window.electronAPI?.onBootState) {
       const unsubscribe = window.electronAPI.onBootState(handleBootState);
       // Get initial state
       if (window.electronAPI.getBootState) {
-        window.electronAPI.getBootState().then(handleBootState).catch(() => {
+        window.electronAPI.getBootState().then((state) => {
+          if (!isMounted) return;
+          handleBootState(state);
+        }).catch(() => {
+          if (!isMounted) return;
           setBootState({
             phase: 'error',
             message: 'Boot state unavailable',
@@ -75,12 +82,16 @@ export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         });
       }
-      return unsubscribe;
+      return () => {
+        isMounted = false;
+        unsubscribe();
+      };
     }
 
     // Fallback for dev mode (no Electron) or browser: poll health endpoint
     let cancelled = false;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const activeControllers = new Set<AbortController>();
 
     const pollHealth = async () => {
       if (cancelled || hasReceivedReady.current) return;
@@ -88,19 +99,22 @@ export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // In dev mode, try ports 8000-8009
       const ports = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
       for (const port of ports) {
+        const controller = new AbortController();
+        activeControllers.add(controller);
+        const tid = setTimeout(() => controller.abort(), 1000);
         try {
-          const controller = new AbortController();
-          const tid = setTimeout(() => controller.abort(), 1000);
           const res = await fetch(`http://localhost:${port}/api/health`, {
             signal: controller.signal,
           });
-          clearTimeout(tid);
           if (res.ok) {
             handleBootState({ phase: 'ready', message: 'Ready', progress: 100 });
             return;
           }
         } catch {
           // continue to next port
+        } finally {
+          clearTimeout(tid);
+          activeControllers.delete(controller);
         }
       }
 
@@ -120,7 +134,12 @@ export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children
     pollHealth();
     return () => {
       cancelled = true;
-      clearTimeout(timeoutId);
+      isMounted = false;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      activeControllers.forEach((controller) => controller.abort());
+      activeControllers.clear();
     };
   }, [handleBootState]);
 

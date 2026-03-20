@@ -281,6 +281,26 @@ Add a method to the `api` singleton at the bottom of `src/ui/services/api.ts`. U
 
 ---
 
+## Frontend Testing (Vitest)
+
+- **Runner:** Vitest + Testing Library in `jsdom` mode (`vitest.config.ts`).
+- **Test location:** `src/ui/test/**` (grouped by `components`, `contexts`, `hooks`, `services`, `utils`).
+- **Global setup:** `src/ui/test/setup.ts` for browser API shims (`matchMedia`, `ResizeObserver`, `IntersectionObserver`, `scrollIntoView`).
+
+### Commands
+```bash
+bun run test:frontend
+bun run test:frontend:watch
+bun run test:frontend:coverage
+```
+
+### Conventions
+- Prefer behavior-level tests for user-visible UI and state transitions.
+- Keep mocks constructor-compatible for classes instantiated with `new` (for example `WebSocket`, `Terminal`, `FitAddon`, `AnsiToHtml`).
+- For modules with import-time singleton state (for example `portDiscovery.ts`), use `vi.resetModules()` and dynamic imports per test to isolate state.
+
+---
+
 ## Key `chatMessages.ts` Utilities
 
 These are the primary reconciliation utilities used by `App.tsx` to keep local state consistent with server-persisted data:
@@ -293,7 +313,7 @@ These are the primary reconciliation utilities used by `App.tsx` to keep local s
 | `applyResponseVariant(message, index)` | Switches active response variant; clears thinking/toolCalls for variants with contentBlocks |
 | `applySavedTurnToHistory(history, turn, operation, localPatch?)` | Applies a server-saved turn to local history for submit/retry/edit operations |
 | `serializeMessageForCopy(msg)` | Serializes full message to plain text for clipboard, using contentBlocks when present |
-| `normalizeTimestamp(ts)` | Converts Unix seconds to milliseconds if `ts < 1_000_000_000_000` |
+| `normalizeTimestamp(ts)` | Converts Unix seconds to milliseconds if `ts < 1_000_000_000_000`; keeps values at/above threshold as milliseconds |
 | `formatMessageTimestamp(ts)` | Returns locale time string (HH:MM AM/PM) |
 
 ```ts

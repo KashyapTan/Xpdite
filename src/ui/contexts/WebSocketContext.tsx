@@ -16,8 +16,7 @@
 import React, { createContext, useContext, useRef, useState, useCallback, useEffect } from 'react';
 import { discoverServerPort, getWsBaseUrl, resetDiscovery } from '../services/portDiscovery';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type MessageHandler = (data: Record<string, any>) => void;
+type MessageHandler = (data: Record<string, unknown>) => void;
 
 interface WebSocketContextValue {
     /** Send a JSON-serialisable message over the WebSocket. */
@@ -41,6 +40,16 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
     const [isConnected, setIsConnected] = useState(false);
     const subscribersRef = useRef<Set<MessageHandler>>(new Set());
 
+    const notifySubscribers = useCallback((data: Record<string, unknown>) => {
+        for (const handler of [...subscribersRef.current]) {
+            try {
+                handler(data);
+            } catch (error) {
+                console.error('WebSocket subscriber error:', error);
+            }
+        }
+    }, []);
+
     const send = useCallback((msg: Record<string, unknown>) => {
         if (wsRef.current?.readyState === WebSocket.OPEN) {
             wsRef.current.send(JSON.stringify(msg));
@@ -55,71 +64,103 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
     useEffect(() => {
         let ws: WebSocket | null = null;
         let cancelled = false;
+        let reconnectTimeoutId: ReturnType<typeof setTimeout> | null = null;
         /** Reconnect delay with exponential back-off (2 s → 4 s → 8 s … capped at 30 s). */
         let reconnectDelay = 2000;
         const MAX_RECONNECT_DELAY = 30_000;
 
-        const connect = async () => {
-            // Discover which port the Python server is actually on.
-            await discoverServerPort();
-            if (cancelled) return;
-            ws = new WebSocket(`${getWsBaseUrl()}/ws`);
-            wsRef.current = ws;
+        const scheduleReconnect = () => {
+            if (cancelled || reconnectTimeoutId !== null) {
+                return;
+            }
 
-            ws.onopen = () => {
-                // Reset back-off on successful connection.
-                reconnectDelay = 2000;
-                setIsConnected(true);
-                // Notify subscribers so they can run connect-time logic
-                // (e.g. App.tsx sends set_capture_mode).
-                // Snapshot the set to guard against subscribe/unsubscribe during iteration.
-                for (const handler of [...subscribersRef.current]) {
-                    handler({ type: '__ws_connected' });
-                }
-            };
-
-            ws.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    for (const handler of [...subscribersRef.current]) {
-                        handler(data);
-                    }
-                } catch (e) {
-                    console.error('Failed to parse WebSocket message:', e);
-                }
-            };
-
-            ws.onclose = () => {
-                setIsConnected(false);
-                // Notify subscribers of disconnection
-                for (const handler of [...subscribersRef.current]) {
-                    handler({ type: '__ws_disconnected' });
-                }
-                // Re-discover port on reconnect in case the server restarted
-                // on a different port.
-                resetDiscovery();
-                if (!cancelled) {
-                    setTimeout(connect, reconnectDelay);
-                    reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
-                }
-            };
-
-            // onerror is always followed by onclose, which handles state reset.
-            ws.onerror = (err) => {
-                console.error('WebSocket error:', err);
-            };
+            const delay = reconnectDelay;
+            reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY);
+            reconnectTimeoutId = setTimeout(() => {
+                reconnectTimeoutId = null;
+                void connect();
+            }, delay);
         };
 
-        connect();
+        const connect = async () => {
+            if (cancelled) return;
+
+            try {
+                // Discover which port the Python server is actually on.
+                await discoverServerPort();
+                if (cancelled) return;
+
+                const nextWs = new WebSocket(`${getWsBaseUrl()}/ws`);
+                ws = nextWs;
+                wsRef.current = nextWs;
+
+                nextWs.onopen = () => {
+                    if (cancelled || wsRef.current !== nextWs) return;
+                    // Reset back-off on successful connection.
+                    reconnectDelay = 2000;
+                    setIsConnected(true);
+                    // Notify subscribers so they can run connect-time logic
+                    // (e.g. App.tsx sends set_capture_mode).
+                    notifySubscribers({ type: '__ws_connected' });
+                };
+
+                nextWs.onmessage = (event) => {
+                    if (cancelled || wsRef.current !== nextWs) return;
+                    try {
+                        const data = JSON.parse(event.data);
+                        notifySubscribers(data);
+                    } catch (e) {
+                        console.error('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                nextWs.onclose = () => {
+                    if (cancelled || wsRef.current !== nextWs) return;
+                    wsRef.current = null;
+                    setIsConnected(false);
+                    notifySubscribers({ type: '__ws_disconnected' });
+                    // Re-discover port on reconnect in case the server restarted
+                    // on a different port.
+                    resetDiscovery();
+                    scheduleReconnect();
+                };
+
+                // onerror is usually followed by onclose, which handles state reset.
+                nextWs.onerror = (err) => {
+                    if (cancelled || wsRef.current !== nextWs) return;
+                    console.error('WebSocket error:', err);
+                };
+            } catch (error) {
+                if (cancelled) return;
+                wsRef.current = null;
+                setIsConnected(false);
+                console.error('WebSocket connect failed:', error);
+                resetDiscovery();
+                notifySubscribers({ type: '__ws_disconnected' });
+                scheduleReconnect();
+            }
+        };
+
+        void connect();
 
         return () => {
             cancelled = true;
-            if (ws) {
-                ws.onclose = null;
-                ws.close();
+            if (reconnectTimeoutId !== null) {
+                clearTimeout(reconnectTimeoutId);
+                reconnectTimeoutId = null;
+            }
+
+            const activeWs = wsRef.current ?? ws;
+            wsRef.current = null;
+            if (activeWs) {
+                activeWs.onopen = null;
+                activeWs.onmessage = null;
+                activeWs.onerror = null;
+                activeWs.onclose = null;
+                activeWs.close();
             }
         };
-    }, []);
+    }, [notifySubscribers]);
 
     return (
         <WebSocketContext.Provider value={{ send, subscribe, isConnected }}>
@@ -130,6 +171,7 @@ export const WebSocketProvider: React.FC<ProviderProps> = ({ children }) => {
 
 // ---- Hook ----
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function useWebSocket(): WebSocketContextValue {
     const ctx = useContext(WebSocketContext);
     if (!ctx) {
