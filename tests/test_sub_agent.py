@@ -208,6 +208,36 @@ class TestRunCloudSubAgent:
         assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert call_kwargs["api_key"] == "or-test-key"
 
+    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.key_manager.key_manager.get_api_key", return_value="sk-test")
+    async def test_cloud_sub_agent_invalid_tool_args_do_not_crash(
+        self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
+    ):
+        message = SimpleNamespace(
+            content="",
+            tool_calls=[
+                SimpleNamespace(
+                    id="call1",
+                    function=SimpleNamespace(name="read_file", arguments="{bad json"),
+                )
+            ],
+        )
+        mock_acompletion.return_value = SimpleNamespace(
+            choices=[SimpleNamespace(message=message)],
+            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
+        )
+
+        result = await _run_cloud_sub_agent(
+            model_name="openai/gpt-4o",
+            instruction="Read file",
+            tools=[{"type": "function", "function": {"name": "read_file", "description": "", "parameters": {}}}],
+        )
+
+        assert result["error"] is None
+        assert "response" in result
+
 
 # ---------------------------------------------------------------------------
 # execute_sub_agent — integration-level with mocked LLM

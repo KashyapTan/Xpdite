@@ -21,6 +21,7 @@ from ..core.request_context import get_current_model, get_current_request, is_cu
 from ..core.state import app_state
 from ..mcp_integration.handlers import handle_mcp_tool_calls
 from ..mcp_integration.manager import mcp_manager
+from ..mcp_integration.tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +181,9 @@ async def stream_ollama_chat(
                 if msg and hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         fn = tool_call.function.name
-                        args = tool_call.function.arguments
+                        args, arg_error = normalize_tool_args(tool_call.function.arguments)
+                        if arg_error:
+                            args = {"_arg_error": arg_error}
                         tool_text = f"\n\n[Model requested tool: {fn}({args})]"
 
                         if thinking_tokens and not accumulated:
@@ -193,7 +196,10 @@ async def stream_ollama_chat(
                 if isinstance(msg, dict) and msg.get("tool_calls"):
                     for tool_call in msg["tool_calls"]:
                         fn = tool_call.get("function", {}).get("name", "unknown")
-                        args = tool_call.get("function", {}).get("arguments", {})
+                        raw_args = tool_call.get("function", {}).get("arguments", {})
+                        args, arg_error = normalize_tool_args(raw_args)
+                        if arg_error:
+                            args = {"_arg_error": arg_error}
                         tool_text = f"\n\n[Model requested tool: {fn}({args})]"
 
                         if thinking_tokens and not accumulated:
@@ -255,15 +261,14 @@ async def stream_ollama_chat(
                     accumulated.append(content_str)
                     await broadcast_message("response_chunk", content_str)
                 else:
-                    await broadcast_message(
-                        "error",
-                        "No content tokens extracted from stream (and fallback failed).",
-                    )
+                    no_content_msg = "[Model returned no content after tool loop]"
+                    accumulated.append(no_content_msg)
+                    await broadcast_message("response_chunk", no_content_msg)
             except Exception as e:
-                await broadcast_message(
-                    "error",
-                    f"No content tokens extracted from stream. Fallback error: {e}",
-                )
+                logger.warning("Non-streamed fallback failed after empty stream: %s", e)
+                no_content_msg = "[Model returned no content after tool loop]"
+                accumulated.append(no_content_msg)
+                await broadcast_message("response_chunk", no_content_msg)
 
         if not is_current_request_cancelled():
             await broadcast_message("response_complete", "")

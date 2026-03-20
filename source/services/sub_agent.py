@@ -29,6 +29,7 @@ from ..core.request_context import (
 )
 from ..core.thread_pool import run_in_thread
 from ..database import db
+from ..mcp_integration.tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -368,10 +369,9 @@ async def _run_cloud_sub_agent(
             # Execute each tool
             for tc in message.tool_calls:
                 fn_name = tc.function.name
-                try:
-                    fn_args = json.loads(tc.function.arguments) if tc.function.arguments else {}
-                except json.JSONDecodeError:
-                    result_str = f"Error: Invalid JSON arguments for {fn_name}"
+                fn_args, arg_error = normalize_tool_args(tc.function.arguments)
+                if arg_error:
+                    result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
                     transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
                     continue
@@ -544,16 +544,12 @@ async def _run_ollama_sub_agent(
                     fn_args = tc.function.arguments
 
                 # Decode args: may be dict already or a JSON string
-                if isinstance(fn_args, str):
-                    try:
-                        fn_args = json.loads(fn_args) if fn_args else {}
-                    except json.JSONDecodeError:
-                        result_str = f"Error: Invalid JSON arguments for {fn_name}"
-                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
-                        continue
-                elif not isinstance(fn_args, dict):
-                    fn_args = {}
+                fn_args, arg_error = normalize_tool_args(fn_args)
+                if arg_error:
+                    result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
+                    continue
 
                 if fn_name in _EXCLUDED_TOOLS:
                     result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."

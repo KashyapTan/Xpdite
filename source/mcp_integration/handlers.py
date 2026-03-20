@@ -26,6 +26,7 @@ from .video_watcher_executor import (
     is_video_watcher_tool,
 )
 from .skills_executor import execute_skill_tool
+from .tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -168,10 +169,18 @@ async def handle_mcp_tool_calls(
 
     # Normalize initial tool calls from the detection response
     current_content = response.message.content or ""
-    current_tool_calls = [
-        {"name": tc.function.name, "args": tc.function.arguments}
-        for tc in (response.message.tool_calls or [])
-    ]
+    current_tool_calls = []
+    for tc in (response.message.tool_calls or []):
+        raw_args = tc.function.arguments
+        parsed_args, arg_error = normalize_tool_args(raw_args)
+        current_tool_calls.append(
+            {
+                "name": tc.function.name,
+                "args": parsed_args,
+                "arg_error": arg_error,
+                "raw_args": raw_args,
+            }
+        )
 
     while current_tool_calls and rounds < MAX_MCP_TOOL_ROUNDS:
         rounds += 1
@@ -199,7 +208,7 @@ async def handle_mcp_tool_calls(
             "content": current_content,
         }
         assistant_msg["tool_calls"] = [
-            {"function": {"name": tc["name"], "arguments": tc["args"]}}
+            {"function": {"name": tc["name"], "arguments": tc.get("raw_args", tc["args"])}}
             for tc in current_tool_calls
         ]
         messages.append(assistant_msg)
@@ -211,7 +220,15 @@ async def handle_mcp_tool_calls(
         for idx, tc in enumerate(current_tool_calls):
             fn_name = tc["name"]
             fn_args = tc["args"]
+            arg_error = tc.get("arg_error")
             sn = mcp_manager.get_tool_server_name(fn_name)
+            if arg_error:
+                logger.warning(
+                    "Skipping spawn_agent pre-batch for malformed args on %s: %s",
+                    fn_name,
+                    arg_error,
+                )
+                continue
             if fn_name == "spawn_agent" and sn == "sub_agent":
                 spawn_agent_indices.append(idx)
                 spawn_agent_calls.append({
@@ -231,6 +248,7 @@ async def handle_mcp_tool_calls(
         for idx, tc in enumerate(current_tool_calls):
             fn_name = tc["name"]
             fn_args = tc["args"]
+            arg_error = tc.get("arg_error")
             server_name = mcp_manager.get_tool_server_name(fn_name)
 
             logger.info("Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name)
@@ -241,6 +259,33 @@ async def handle_mcp_tool_calls(
             # spawn_agent results already computed in parallel — skip outer broadcast
             if idx in spawn_results:
                 result_str = _truncate_result(spawn_results[idx])
+            elif arg_error:
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps(
+                        {
+                            "name": fn_name,
+                            "args": fn_args,
+                            "server": server_name,
+                            "status": "calling",
+                        }
+                    ),
+                )
+                result_str = _truncate_result(
+                    f"System error: invalid arguments for tool '{fn_name}': {arg_error}"
+                )
+                await broadcast_message(
+                    "tool_call",
+                    json.dumps(
+                        {
+                            "name": fn_name,
+                            "args": fn_args,
+                            "result": result_str,
+                            "server": server_name,
+                            "status": "complete",
+                        }
+                    ),
+                )
             else:
                 await broadcast_message(
                     "tool_call",
@@ -263,13 +308,13 @@ async def handle_mcp_tool_calls(
                     )
                 elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
                     try:
-                        result = execute_skill_tool(fn_name, dict(fn_args))
+                        result = execute_skill_tool(fn_name, fn_args)
                     except Exception as e:
                         logger.warning("Skills tool error for %s: %s", fn_name, e)
                         result = f"Error executing skill tool: {e}"
                 else:
                     try:
-                        result = await mcp_manager.call_tool(fn_name, dict(fn_args))
+                        result = await mcp_manager.call_tool(fn_name, fn_args)
                     except Exception as e:
                         result = f"Error executing tool: {e}"
 
@@ -389,10 +434,13 @@ async def _stream_tool_follow_up(
                 # Collect tool calls (typically arrive in/near the final chunk)
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
+                        parsed_args, arg_error = normalize_tool_args(tc.function.arguments)
                         tool_calls_found.append(
                             {
                                 "name": tc.function.name,
-                                "args": tc.function.arguments,
+                                "args": parsed_args,
+                                "arg_error": arg_error,
+                                "raw_args": tc.function.arguments,
                             }
                         )
 

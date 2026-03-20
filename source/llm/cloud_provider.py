@@ -22,6 +22,7 @@ import litellm
 from ..core.connection import broadcast_message
 from ..config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ..core.request_context import is_current_request_cancelled
+from ..mcp_integration.tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -273,9 +274,9 @@ async def _execute_and_broadcast_tool(
         elif is_video_watcher_tool(fn_name, server_name):
             result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
         elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
-            result = execute_skill_tool(fn_name, dict(fn_args))
+            result = execute_skill_tool(fn_name, fn_args)
         else:
-            result = await mcp_manager.call_tool(fn_name, dict(fn_args))
+            result = await mcp_manager.call_tool(fn_name, fn_args)
     except Exception as e:
         logger.warning(
             "%s tool execution failed for %s on '%s' (%s)",
@@ -626,9 +627,13 @@ async def _stream_litellm(
                 for idx, tc_info in enumerate(assistant_tool_calls):
                     fn_name = tc_info["function"]["name"]
                     raw_args = tc_info["function"]["arguments"]
-                    try:
-                        fn_args = json.loads(raw_args) if raw_args else {}
-                    except json.JSONDecodeError:
+                    fn_args, arg_error = normalize_tool_args(raw_args)
+                    if arg_error:
+                        logger.warning(
+                            "Skipping spawn_agent pre-batch for malformed args on %s: %s",
+                            fn_name,
+                            arg_error,
+                        )
                         continue
                     parsed_args_by_index[idx] = fn_args
 
@@ -659,17 +664,18 @@ async def _stream_litellm(
                     fn_name = tc_info["function"]["name"]
                     raw_args = tc_info["function"]["arguments"]
 
-                    try:
-                        fn_args = parsed_args_by_index.get(idx)
-                        if fn_args is None:
-                            fn_args = json.loads(raw_args) if raw_args else {}
-                    except json.JSONDecodeError:
+                    fn_args = parsed_args_by_index.get(idx)
+                    if fn_args is None:
+                        fn_args, arg_error = normalize_tool_args(raw_args)
+                    else:
+                        arg_error = None
+                    if arg_error:
                         error_result = (
-                            f"System error: you provided invalid JSON arguments "
-                            f"for tool '{fn_name}': {raw_args}"
+                            f"System error: invalid arguments for tool "
+                            f"'{fn_name}': {arg_error}"
                         )
                         logger.warning(
-                            "Malformed tool call JSON for %s (%d chars)",
+                            "Malformed tool call args for %s (%d chars)",
                             fn_name,
                             len(raw_args or ""),
                         )

@@ -485,6 +485,41 @@ class TestStreamLitellm:
         _mock_mcp.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_tool_call_with_json_array_args_reports_error(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp
+    ):
+        """Non-object JSON arguments should be rejected without crashing the loop."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_bad_type", name="read_file"),
+            _tool_call_chunk(0, arguments='["not","an","object"]'),
+            _tool_call_chunk(0, finish_reason="tool_calls"),
+        ]
+        text_stream = [
+            _text_chunk("Recovered"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="do it", image_paths=[], chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "Recovered"
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["args"] == {}
+        assert "JSON object" in tool_calls[0]["result"]
+        _mock_mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_thinking_tokens_broadcast(self, _mock_broadcast, _mock_cancelled):
         """Thinking tokens should be broadcast and thinking_complete sent once before text."""
         chunks = [
