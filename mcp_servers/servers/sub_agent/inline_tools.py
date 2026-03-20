@@ -1,22 +1,13 @@
 from typing import Any
 
+from mcp_servers.servers.description_format import build_inline_tool_definition
 from mcp_servers.servers.sub_agent.sub_agent_descriptions import (
     SPAWN_AGENT_DESCRIPTION,
 )
 
 
-def _build_tool_definition(
-    name: str, description: str, parameters: dict[str, Any]
-) -> dict[str, Any]:
-    return {
-        "name": name,
-        "description": description.strip(),
-        "parameters": parameters,
-    }
-
-
 SUB_AGENT_INLINE_TOOLS: list[dict[str, Any]] = [
-    _build_tool_definition(
+    build_inline_tool_definition(
         "spawn_agent",
         SPAWN_AGENT_DESCRIPTION,
         {

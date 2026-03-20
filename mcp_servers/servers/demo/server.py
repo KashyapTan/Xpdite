@@ -22,13 +22,18 @@ Or from the mcp_servers directory:
 
 from mcp.server.fastmcp import FastMCP
 
+from mcp_servers.servers.demo.demo_descriptions import (
+    ADD_DESCRIPTION,
+    DIVIDE_DESCRIPTION,
+)
+
 # ── Create the MCP server ──────────────────────────────────────────────
 # The name is what clients see when they connect.
 mcp = FastMCP("Demo Calculator")
 
 
 # ── Register tools ─────────────────────────────────────────────────────
-@mcp.tool()
+@mcp.tool(description=DIVIDE_DESCRIPTION)
 def divide(a: float, b: float) -> str:
     """
     Divide two numbers and return the result rounded to up to 50 decimal places.
@@ -42,7 +47,7 @@ def divide(a: float, b: float) -> str:
     """
     return f"{a / b:.50f}"
 
-@mcp.tool()
+@mcp.tool(description=ADD_DESCRIPTION)
 def add(a: float, b: float) -> str:
     """
     Add two numbers and return the result.

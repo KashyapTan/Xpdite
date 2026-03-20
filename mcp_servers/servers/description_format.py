@@ -1,3 +1,6 @@
+from typing import Any
+
+
 def build_tool_description(
     *,
     purpose: str,
@@ -19,3 +22,13 @@ def build_tool_description(
     if notes is not None:
         sections.append(f"Notes: {notes}")
     return "\n".join(sections)
+
+
+def build_inline_tool_definition(
+    name: str, description: str, parameters: dict[str, Any]
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": description.strip(),
+        "parameters": parameters,
+    }

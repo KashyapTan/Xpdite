@@ -1,5 +1,6 @@
 from typing import Any
 
+from mcp_servers.servers.description_format import build_inline_tool_definition
 from mcp_servers.servers.terminal.terminal_descriptions import (
     END_SESSION_MODE_DESCRIPTION,
     FIND_FILES_DESCRIPTION,
@@ -12,23 +13,13 @@ from mcp_servers.servers.terminal.terminal_descriptions import (
 )
 
 
-def _build_tool_definition(
-    name: str, description: str, parameters: dict[str, Any]
-) -> dict[str, Any]:
-    return {
-        "name": name,
-        "description": description.strip(),
-        "parameters": parameters,
-    }
-
-
 TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
-    _build_tool_definition(
+    build_inline_tool_definition(
         "get_environment",
         GET_ENVIRONMENT_DESCRIPTION,
         {"type": "object", "properties": {}},
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "run_command",
         RUN_COMMAND_DESCRIPTION,
         {
@@ -66,7 +57,7 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
             "required": ["command"],
         },
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "find_files",
         FIND_FILES_DESCRIPTION,
         {
@@ -84,7 +75,7 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
             "required": ["pattern"],
         },
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "request_session_mode",
         REQUEST_SESSION_MODE_DESCRIPTION,
         {
@@ -98,12 +89,12 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
             "required": ["reason"],
         },
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "end_session_mode",
         END_SESSION_MODE_DESCRIPTION,
         {"type": "object", "properties": {}},
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "send_input",
         SEND_INPUT_DESCRIPTION,
         {
@@ -131,7 +122,7 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
             "required": ["session_id", "input_text"],
         },
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "read_output",
         READ_OUTPUT_DESCRIPTION,
         {
@@ -150,7 +141,7 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
             "required": ["session_id"],
         },
     ),
-    _build_tool_definition(
+    build_inline_tool_definition(
         "kill_process",
         KILL_PROCESS_DESCRIPTION,
         {
