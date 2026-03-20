@@ -26,6 +26,9 @@ import type {
   TerminalRunningNotice,
 } from '../../types';
 
+const MAX_PENDING_WRITES = 5_000;
+const PENDING_FLUSH_BATCH_SIZE = 250;
+
 interface TerminalPanelProps {
   approvalRequest: TerminalApprovalRequest | null;
   sessionRequest: TerminalSessionRequest | null;
@@ -59,8 +62,28 @@ export function TerminalPanel({
   const xtermRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const pendingWrites = useRef<Array<{ type: 'line' | 'raw'; text: string }>>([]);
+  const hasWarnedPendingOverflowRef = useRef(false);
   const [hasOutput, setHasOutput] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  // Stable ref for callback props used inside effects that shouldn't trigger re-init
+  const onTerminalResizeRef = useRef(onTerminalResize);
+
+  // Keep the ref in sync on every render
+  onTerminalResizeRef.current = onTerminalResize;
+
+  const enqueuePendingWrite = useCallback((entry: { type: 'line' | 'raw'; text: string }) => {
+    pendingWrites.current.push(entry);
+    if (pendingWrites.current.length > MAX_PENDING_WRITES) {
+      const overflowCount = pendingWrites.current.length - MAX_PENDING_WRITES;
+      pendingWrites.current.splice(0, overflowCount);
+      if (!hasWarnedPendingOverflowRef.current) {
+        console.warn(
+          `[TerminalPanel] Pending write buffer exceeded ${MAX_PENDING_WRITES}; dropping oldest chunks.`,
+        );
+        hasWarnedPendingOverflowRef.current = true;
+      }
+    }
+  }, []);
 
   // Determine if panel should be visible at all
   const hasInteraction = !!(approvalRequest || sessionRequest || sessionActive || runningNotice || commandRunning);
@@ -96,29 +119,45 @@ export function TerminalPanel({
     xtermRef.current = term;
     fitAddonRef.current = fitAddon;
 
+    let disposed = false;
+
     // Fit after the browser has painted the container
     requestAnimationFrame(() => {
+      if (disposed) return;
       try {
         fitAddon.fit();
         // Report terminal dimensions to backend for PTY sizing
-        if (onTerminalResize && term.cols && term.rows) {
-          onTerminalResize(term.cols, term.rows);
+        const resizeFn = onTerminalResizeRef.current;
+        if (resizeFn && term.cols && term.rows) {
+          resizeFn(term.cols, term.rows);
         }
       } catch { /* ignore */ }
 
-      // Flush any writes that were buffered while xterm was not ready
-      if (pendingWrites.current.length > 0) {
-        for (const entry of pendingWrites.current) {
+      // Flush any writes that were buffered while xterm was not ready.
+      // Chunk writes across frames so a huge backlog does not block rendering.
+      const flushPendingWrites = () => {
+        if (disposed) return;
+        const batch = pendingWrites.current.splice(0, PENDING_FLUSH_BATCH_SIZE);
+        if (batch.length === 0) {
+          term.scrollToBottom();
+          return;
+        }
+
+        for (const entry of batch) {
           if (entry.type === 'raw') {
             term.write(entry.text);
           } else {
             term.writeln(entry.text);
           }
         }
-        // Force scroll to bottom after flushing pending writes
-        term.scrollToBottom();
-      }
-      pendingWrites.current = [];
+        if (pendingWrites.current.length > 0) {
+          requestAnimationFrame(flushPendingWrites);
+        } else {
+          term.scrollToBottom();
+        }
+      };
+
+      flushPendingWrites();
     });
 
     const container = terminalRef.current;
@@ -129,8 +168,9 @@ export function TerminalPanel({
             fitAddon.fit();
             term.scrollToBottom(); // Ensure we stay at bottom on resize if already there
             // Report updated dimensions after resize
-            if (onTerminalResize && term.cols && term.rows) {
-              onTerminalResize(term.cols, term.rows);
+            const resizeFn = onTerminalResizeRef.current;
+            if (resizeFn && term.cols && term.rows) {
+              resizeFn(term.cols, term.rows);
             }
           } catch { /* ignore */ }
       }
@@ -138,6 +178,7 @@ export function TerminalPanel({
     resizeObserver.observe(container);
 
     return () => {
+      disposed = true;
       resizeObserver.disconnect();
       term.dispose();
       xtermRef.current = null;
@@ -155,14 +196,15 @@ export function TerminalPanel({
             fitAddonRef.current?.fit();
             xtermRef.current?.scrollToBottom();
             // Report dimensions after fit
-            if (onTerminalResize && xtermRef.current?.cols && xtermRef.current?.rows) {
-              onTerminalResize(xtermRef.current.cols, xtermRef.current.rows);
+            const resizeFn = onTerminalResizeRef.current;
+            if (resizeFn && xtermRef.current?.cols && xtermRef.current?.rows) {
+              resizeFn(xtermRef.current.cols, xtermRef.current.rows);
             }
           } catch { /* ignore */ }
         });
       });
     }
-  }, [isExpanded, onTerminalResize]);
+  }, [isExpanded]);
 
 
   // Auto-expand when there's an approval request or session request
@@ -181,9 +223,9 @@ export function TerminalPanel({
       xtermRef.current.writeln(text);
       xtermRef.current.scrollToBottom();
     } else {
-      pendingWrites.current.push({ type: 'line', text });
+      enqueuePendingWrite({ type: 'line', text });
     }
-  }, []);
+  }, [enqueuePendingWrite]);
 
   /** Write raw data (no added newline) — for PTY/TUI ANSI output. */
   const writeRaw = useCallback((text: string) => {
@@ -191,9 +233,9 @@ export function TerminalPanel({
       xtermRef.current.write(text);
       // Don't auto-scroll raw writes as they might be cursor movements/TUI updates
     } else {
-      pendingWrites.current.push({ type: 'raw', text });
+      enqueuePendingWrite({ type: 'raw', text });
     }
-  }, []);
+  }, [enqueuePendingWrite]);
 
   const writeOutput = useCallback((text: string) => {
     setHasOutput(true);
@@ -214,16 +256,20 @@ export function TerminalPanel({
     writeLine(`\x1b[36m$ ${command}\x1b[0m`);
   }, [writeLine]);
 
-  // Expose write functions to the global scope for WebSocket handlers
+  // Legacy debug bridge for local development only.
+  // Terminal output now renders inline via InlineTerminalBlock.
   useEffect(() => {
+    if (!import.meta.env.DEV) {
+      return;
+    }
     const w = window as unknown as Record<string, unknown>;
-    w.__terminalWriteOutput = writeOutput;
-    w.__terminalWriteOutputRaw = writeOutputRaw;
-    w.__terminalWriteCommand = writeCommand;
+    w.__terminalWriteOutputDevOnly = writeOutput;
+    w.__terminalWriteOutputRawDevOnly = writeOutputRaw;
+    w.__terminalWriteCommandDevOnly = writeCommand;
     return () => {
-      delete w.__terminalWriteOutput;
-      delete w.__terminalWriteOutputRaw;
-      delete w.__terminalWriteCommand;
+      delete w.__terminalWriteOutputDevOnly;
+      delete w.__terminalWriteOutputRawDevOnly;
+      delete w.__terminalWriteCommandDevOnly;
     };
   }, [writeOutput, writeOutputRaw, writeCommand]);
 

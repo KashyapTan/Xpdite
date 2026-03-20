@@ -169,7 +169,11 @@ Skip tests for thin glue code (WS handlers that just call a service, REST endpoi
 ```bash
 uv run python -m pytest tests/ -v          # run all tests
 uv run python -m pytest tests/test_foo.py  # run a single file
+bun run test:frontend                       # run frontend Vitest suite
+bun run test:frontend:coverage              # run frontend tests with coverage
 ```
+
+Frontend test files are organized under `src/ui/test/**` (components, contexts, hooks, services, utils) and run in a `jsdom` environment via `vitest.config.ts`.
 
 **`asyncio_mode = "auto"`** is set in `pyproject.toml` — all `async def test_*` functions are automatically treated as asyncio tests. No `@pytest.mark.asyncio` decorator is needed (though some legacy tests retain it; both styles work).
 
