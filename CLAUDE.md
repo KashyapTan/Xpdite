@@ -155,30 +155,45 @@ uv run <file_name>                            # run python files for testing
 
 ---
 
-## Testing
+## Testing & Linting
 
-### When to add tests
-Always add tests when:
-- Adding a new public method or utility function to `source/` (pure logic, algorithms, data transforms)
-- Adding a new DB method to `DatabaseManager`
-- Fixing a bug — add a test that would have caught it before writing the fix
-
-Skip tests for thin glue code (WS handlers that just call a service, REST endpoints that just delegate, UI components).
-
-### How to run tests
+### Frontend (React + Electron)
 ```bash
-uv run python -m pytest tests/ -v          # run all tests
-uv run python -m pytest tests/test_foo.py  # run a single file
+bun run lint                      # ESLint (frontend + electron TS/JS)
+bunx vitest run                   # run Vitest once
+bunx vitest                       # watch mode
+bunx vitest run --coverage        # run Vitest with coverage
+bun run build:react               # production build sanity-check
+```
+
+**Vitest vs coverage runs**
+- `vitest run` tells you pass/fail quickly (best for local iteration).
+- `vitest run --coverage` runs the same tests but also instruments code and outputs coverage metrics (lines/branches/functions), so it is slower and used before merge or when validating test completeness.
+
+### Backend (FastAPI + Python)
+```bash
+uv run python -m pytest tests/ -v          # run all backend tests
+uv run python -m pytest tests/test_foo.py  # run a single test file
+uv run ruff check .                        # backend lint/static checks
 ```
 
 **`asyncio_mode = "auto"`** is set in `pyproject.toml` — all `async def test_*` functions are automatically treated as asyncio tests. No `@pytest.mark.asyncio` decorator is needed (though some legacy tests retain it; both styles work).
 
-### Test file conventions
+### When to add tests
+Always add tests when:
+- Adding or changing frontend logic (hooks, utilities, state transforms, non-trivial component behavior)
+- Adding a new public method or utility function to `source/` (pure logic, algorithms, data transforms)
+- Adding a new DB method to `DatabaseManager`
+- Fixing a bug — add a test that would have caught it before writing the fix
+
+You can skip tests for very thin glue code (simple delegating WS/HTTP handlers or presentational-only UI), unless behavior changed.
+
+### Backend test file conventions
 - One file per source module: `source/services/terminal.py` → `tests/test_terminal.py`
 - Class-per-concern inside the file: `class TestMyFeature:`
 - Fixtures live in `tests/conftest.py`; keep them minimal — one `db_manager` fixture backed by `tmp_path` covers all DB tests
 
-### The circular-import problem
+### The circular-import problem (backend pytest)
 `source/` has a circular import involving `mcp_integration.handlers` → `services` → `llm` → `mcp_integration.handlers`. This would crash pytest collection.
 
 **`tests/conftest.py` breaks the cycle** by pre-stubbing `source.mcp_integration.handlers` in `sys.modules` before any test file is collected. The stub is a `MagicMock` with `handle_mcp_tool_calls` set. The real package (`source.mcp_integration`) and all other real submodules (`retriever`, `manager`, etc.) remain importable normally.
