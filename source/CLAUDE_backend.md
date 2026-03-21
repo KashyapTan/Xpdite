@@ -35,7 +35,10 @@ source/
 │   ├── handlers.py      # handle_mcp_tool_calls (Ollama path) + retrieve_relevant_tools
 │   ├── retriever.py     # ToolRetriever: semantic search over tool descriptions
 │   ├── skill_injector.py   # Two-phase skill injection (manifest + contextual)
-│   └── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
+│   ├── skills_executor.py    # INLINE skills tools (list_skills/use_skill)
+│   ├── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
+│   ├── tool_args.py          # Tool argument normalization + malformed JSON handling
+│   └── video_watcher_executor.py  # INLINE video watcher tool execution
 │
 ├── skills_seed/             # Builtin skill folders shipped with the app
 │   ├── terminal/            # Each folder: skill.json + SKILL.md
@@ -84,6 +87,10 @@ source/
 - **`services/gpu_detector.py`** — `detect_compute_backend()` returns `'cuda'` or `'cpu'`. `get_compute_info()` returns `{backend, device_name, vram_gb, compute_type}` — `float16` if VRAM ≥ 4 GB, else `int8`. `get_estimated_processing_time(audio_duration_seconds)` returns `0.15×` for CUDA, `1.5×` for CPU. Results are cached in a module-level `_cached_backend` singleton.
 - **`services/google_auth.py`** — `GoogleAuthService` manages Google OAuth 2.0 lifecycle. `start_oauth_flow()` runs `InstalledAppFlow.run_local_server(port=0)`, saves `token.json` to `user_data/google/`. `disconnect()` attempts token revocation then deletes the file. `get_status()` returns `{connected, email, auth_in_progress}`. The OAuth client credentials are embedded in `config.py` — this is the Google-recommended pattern for native desktop apps (client_secret is not confidential for installed apps).
 - **`services/skills.py`** — `SkillManager` caches skill content lazily on `Skill` instances; `invalidate_content_cache()` clears it. `_validate_safe_name(value, label)` enforces `^[a-zA-Z0-9_-]+$` pattern to prevent path traversal. `add_reference_file(name, filename, content)` writes a `.md` file to `skill_folder/references/` (enforces `.md` extension). Skills with `references/` subdirectories have their reference files available to inject as additional context. `get_all_skills_with_overrides()` returns overridden builtins first (greyed out) followed by all active skills.
+- **`services/video_watcher.py`** — `VideoWatcherService` handles `watch_youtube_video`: normalize URL, extract metadata, prefer native YouTube captions, and fallback to Whisper transcription when captions are unavailable. Fallback path emits a `youtube_transcription_approval` request, waits up to 180s for user approval (`resolve_transcription_approval`), then runs download/transcription in thread pool. Output is bounded to `MAX_TOOL_RESULT_LENGTH` with truncation metadata.
+- **`mcp_integration/skills_executor.py`** — inline executor for `list_skills` and `use_skill` tools. `list_skills` returns active skill catalog and usage guidance; `use_skill` resolves one skill and returns full prompt content without spawning MCP subprocesses.
+- **`mcp_integration/video_watcher_executor.py`** — inline executor for `video_watcher/watch_youtube_video`, routing args to `VideoWatcherService` and returning user-facing errors (`VideoWatcherError`) as tool results.
+- **`mcp_integration/tool_args.py`** — `normalize_tool_args(raw_args)` centralizes tool-argument parsing for dict/string/invalid payloads so cloud and Ollama tool loops share the same validation path and error text.
 
 ---
 
@@ -155,6 +162,7 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `meeting_get_analysis` | `recording_id` | `_handle_meeting_get_analysis` |
 | `meeting_audio_chunk` | `recording_id`, `data` (base64 PCM) | `_handle_meeting_audio_chunk` |
 | `meeting_execute_action` | `recording_id`, `action_type` (`create_event`/`create_draft`), `action_data` | `_handle_meeting_execute_action` |
+| `youtube_transcription_approval_response` | `request_id`, `approved` | `_handle_youtube_transcription_approval_response` |
 
 ### Server → Client
 
@@ -197,6 +205,7 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `meeting_analysis_result` | AI summary + actions after `meeting_analyze_recording` |
 | `meeting_action_executed` | Calendar event or email draft created via `meeting_execute_action` |
 | `meeting_error` | Meeting-specific error (not generic `error`) |
+| `youtube_transcription_approval` | User confirmation request for fallback YouTube audio transcription (includes metadata and estimates) |
 
 **Note:** All server→client messages include a `tab_id` field stamped automatically by `broadcast_message()` via the `_current_tab_id` contextvar.
 
@@ -230,6 +239,10 @@ Skills are managed by `SkillManager` in `source/services/skills.py`. Builtin ski
 
 ### Terminal Tools (Inline)
 Terminal tools are handled inline by `terminal_executor.py`, never via the MCP subprocess. Full set: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts `background=True` and `yield_ms` params.
+
+### Additional Inline Tool Executors
+- **Video watcher (`video_watcher`)**: `watch_youtube_video` is registered as inline and intercepted before MCP subprocess routing. Execution is delegated to `video_watcher_executor.py` / `services/video_watcher.py`, including the user-approval fallback path (`youtube_transcription_approval` → `youtube_transcription_approval_response`) when no captions are available.
+- **Skills (`skills`)**: `list_skills` and `use_skill` are inline tools executed by `skills_executor.py`. Unlike terminal/sub_agent/video_watcher registrations, these are indexed for semantic retrieval (`skip_embed=False`) so models can discover skill-loading tools contextually.
 
 ### Adding a New MCP Server (end-to-end)
 

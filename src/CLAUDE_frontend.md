@@ -32,9 +32,11 @@ src/
     │   │   ├── ChatMessage.tsx          # User + assistant message; inline edit, retry, response version nav
     │   │   ├── CodeBlock.tsx            # Syntax-highlighted code block with copy button
     │   │   ├── InlineTerminalBlock.tsx  # Inline terminal (xterm.js PTY or ansi-to-html); approval buttons
+    │   │   ├── InlineYouTubeApprovalBlock.tsx  # Inline approval UI for fallback YouTube transcription
     │   │   ├── LoadingDots.tsx          # Three-dot loading animation
     │   │   ├── ResponseArea.tsx         # Scrollable message list; computes topInset/bottomInset offsets
     │   │   ├── SlashCommandMenu.tsx     # Autocomplete skill menu (used by QueryInput)
+    │   │   ├── SubAgentTranscript.tsx   # Structured sub-agent transcript renderer
     │   │   ├── ThinkingSection.tsx      # Collapsible thinking/reasoning block
     │   │   ├── ToolCallsDisplay.tsx     # ToolChainTimeline (primary) + legacy flat ToolCallsDisplay
     │   │   ├── toolCallUtils.ts         # getHumanReadableDescription() for tool calls
@@ -53,6 +55,7 @@ src/
     │   │   ├── SettingsConnections.tsx      # Google OAuth (Gmail + Calendar)
     │   │   ├── SettingsModels.tsx           # Ollama + cloud model enable/disable toggles
     │   │   ├── SettingsSkills.tsx           # Full CRUD for user skills and builtin overrides
+    │   │   ├── SettingsSubAgents.tsx        # Tier model mapping for sub-agent fast/smart modes
     │   │   ├── SettingsSystemPrompt.tsx     # Editable system prompt template
     │   │   └── SettingsTools.tsx            # Always-on tools, topK slider, per-tool toggles
     │   └── terminal/
@@ -120,7 +123,7 @@ Retry/edit flows are different from brand-new submits: `response_complete` still
 This is intentional: mutating React state inside a streaming callback causes stale-closure bugs. The refs guarantee you always read the latest accumulated text regardless of how many renders have fired.
 
 ### Content blocks — interleaved rendering
-The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, and `{ type: 'terminal_command' }` entries to render tool calls inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
+The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, `{ type: 'terminal_command' }`, `{ type: 'thinking' }`, and `{ type: 'youtube_transcription_approval' }` entries to render tool calls and approval UI inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
 
 ### Shared inline icons
 Reuse `src/ui/components/icons/AppIcons.tsx` for UI iconography instead of pasted Unicode glyphs or ad-hoc SVG duplication. If a non-React DOM builder needs the same icon (for example `QueryInput.tsx` chip rendering), reuse `src/ui/components/icons/iconPaths.ts` so the SVG path data stays centralized.
@@ -179,13 +182,24 @@ Replaces `TerminalPanel` for in-flow terminal I/O. Two rendering paths:
 
 Status: `pending_approval` (yellow + Allow/Deny/Allow&Remember buttons) → `running` (spinner) → `completed` (green/red) / `denied` (red). `ResizeObserver` keeps xterm fitted and calls `onTerminalResize(cols, rows)` to sync the PTY.
 
+### `InlineYouTubeApprovalBlock` — approval block in chat
+Filepath: `src/ui/components/chat/InlineYouTubeApprovalBlock.tsx`
+
+Renders `youtube_transcription_approval` content blocks inline with metadata returned from backend fallback planning (title/channel/duration, no-captions reason, download/transcription/total estimate, whisper model, compute backend). Sends approval/deny through `onRespond(requestId, approved)` and the app forwards it as `youtube_transcription_approval_response`.
+
+### `SubAgentTranscript` — structured nested transcript renderer
+Filepath: `src/ui/components/chat/SubAgentTranscript.tsx`
+
+Renders serialized sub-agent step JSON (text/tool steps) into an in-message transcript view. Tool steps support collapsible result panes and running states, so nested sub-agent work stays readable inside a single assistant response.
+
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → skills → meeting → system-prompt → ollama (placeholder) → anthropic → gemini → openai`
+`models → connections → tools → skills → meeting → system-prompt → sub-agents → ollama (placeholder) → anthropic → gemini → openai`
 
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`.
+- **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 
 ### `createApiService` vs `api` singleton
 - `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.
@@ -213,6 +227,10 @@ api.disconnectGoogle()           → POST /api/google/disconnect
 api.getMcpServers()              → GET /api/mcp/servers
 api.getToolsSettings()           → GET /api/settings/tools
 api.setToolsSettings(alwaysOn, topK) → PUT /api/settings/tools
+
+// Sub-Agents
+api.getSubAgentSettings()        → GET /api/settings/sub-agents
+api.setSubAgentSettings(settings)→ PUT /api/settings/sub-agents
 
 // System Prompt
 api.getSystemPrompt()            → GET /api/settings/system-prompt
