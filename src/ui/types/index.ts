@@ -341,7 +341,7 @@ export interface SubAgentStreamContent {
 }
 
 export interface SubAgentTranscriptStep {
-  type: 'thinking' | 'tool_call';
+  type: 'instruction' | 'text' | 'thinking' | 'tool_call';
   content?: string;
   name?: string;
   args?: Record<string, unknown>;

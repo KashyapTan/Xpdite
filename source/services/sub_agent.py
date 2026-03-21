@@ -333,6 +333,20 @@ async def _run_cloud_sub_agent(
             round_text_chunks: list[str] = []
             tool_calls_accum: Dict[int, Dict[str, Any]] = {}
             finish_reason = None
+            round_text_step_index: int | None = None
+
+            def _append_stream_text(chunk_text: str) -> None:
+                """Append streamed text and keep transcript text block in sync."""
+                nonlocal round_text_step_index
+                if not chunk_text:
+                    return
+                round_text_chunks.append(chunk_text)
+                if round_text_step_index is None:
+                    transcript_steps.append({"type": "text", "content": chunk_text})
+                    round_text_step_index = len(transcript_steps) - 1
+                    return
+                existing = str(transcript_steps[round_text_step_index].get("content", ""))
+                transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
 
             async for chunk in await litellm.acompletion(**create_kwargs):
                 if is_current_request_cancelled():
@@ -349,9 +363,34 @@ async def _run_cloud_sub_agent(
                 delta = chunk.choices[0].delta
                 finish_reason = chunk.choices[0].finish_reason
 
+                # Stream reasoning/thinking content if provider exposes it
+                reasoning_content = getattr(delta, "reasoning_content", None) if delta else None
+                if reasoning_content:
+                    if isinstance(reasoning_content, str):
+                        thinking_text = reasoning_content
+                    else:
+                        try:
+                            thinking_text = json.dumps(reasoning_content, ensure_ascii=False)
+                        except TypeError:
+                            thinking_text = str(reasoning_content)
+                    _append_stream_text(thinking_text)
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "thinking",
+                                "content": thinking_text,
+                                "accumulated": "".join(round_text_chunks),
+                                "transcript": transcript_steps,
+                            }),
+                        )
+
                 # Stream text content
                 if delta and delta.content:
-                    round_text_chunks.append(delta.content)
+                    _append_stream_text(delta.content)
                     # Broadcast streaming text
                     if agent_id:
                         await broadcast_message(
@@ -363,6 +402,7 @@ async def _run_cloud_sub_agent(
                                 "stream_type": "thinking",
                                 "content": delta.content,
                                 "accumulated": "".join(round_text_chunks),
+                                "transcript": transcript_steps,
                             }),
                         )
 
@@ -388,7 +428,6 @@ async def _run_cloud_sub_agent(
             round_text = "".join(round_text_chunks)
             if round_text:
                 accumulated_text.append(round_text)
-                transcript_steps.append({"type": "text", "content": round_text})
                 if agent_id:
                     await broadcast_message(
                         "sub_agent_stream",
@@ -619,6 +658,20 @@ async def _run_ollama_sub_agent(
             # Stream the response
             round_text_chunks: list[str] = []
             tool_calls_list: list = []
+            round_text_step_index: int | None = None
+
+            def _append_stream_text(chunk_text: str) -> None:
+                """Append streamed text and keep transcript text block in sync."""
+                nonlocal round_text_step_index
+                if not chunk_text:
+                    return
+                round_text_chunks.append(chunk_text)
+                if round_text_step_index is None:
+                    transcript_steps.append({"type": "text", "content": chunk_text})
+                    round_text_step_index = len(transcript_steps) - 1
+                    return
+                existing = str(transcript_steps[round_text_step_index].get("content", ""))
+                transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
 
             async for chunk in await client.chat(**chat_kwargs):
                 if is_current_request_cancelled():
@@ -634,10 +687,28 @@ async def _run_ollama_sub_agent(
                         total_tokens["prompt_tokens"] += chunk.get("prompt_eval_count", 0) or 0
                         total_tokens["completion_tokens"] += chunk.get("eval_count", 0) or 0
 
+                    # Stream model thinking/reasoning when available
+                    thinking = msg.get("thinking", "") or msg.get("reasoning_content", "")
+                    if thinking:
+                        _append_stream_text(thinking)
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "thinking",
+                                    "content": thinking,
+                                    "accumulated": "".join(round_text_chunks),
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+
                     # Stream text content
                     content = msg.get("content", "")
                     if content:
-                        round_text_chunks.append(content)
+                        _append_stream_text(content)
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
@@ -648,6 +719,7 @@ async def _run_ollama_sub_agent(
                                     "stream_type": "thinking",
                                     "content": content,
                                     "accumulated": "".join(round_text_chunks),
+                                    "transcript": transcript_steps,
                                 }),
                             )
 
@@ -664,9 +736,29 @@ async def _run_ollama_sub_agent(
                         total_tokens["completion_tokens"] += getattr(chunk, "eval_count", 0) or 0
 
                     if msg:
+                        thinking = (
+                            getattr(msg, "thinking", "") or
+                            getattr(msg, "reasoning_content", "")
+                        ) or ""
+                        if thinking:
+                            _append_stream_text(thinking)
+                            if agent_id:
+                                await broadcast_message(
+                                    "sub_agent_stream",
+                                    json.dumps({
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": thinking,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }),
+                                )
+
                         content = getattr(msg, "content", "") or ""
                         if content:
-                            round_text_chunks.append(content)
+                            _append_stream_text(content)
                             if agent_id:
                                 await broadcast_message(
                                     "sub_agent_stream",
@@ -677,6 +769,7 @@ async def _run_ollama_sub_agent(
                                         "stream_type": "thinking",
                                         "content": content,
                                         "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
                                     }),
                                 )
 
@@ -687,7 +780,6 @@ async def _run_ollama_sub_agent(
             round_text = "".join(round_text_chunks)
             if round_text:
                 accumulated_text.append(round_text)
-                transcript_steps.append({"type": "text", "content": round_text})
                 if agent_id:
                     await broadcast_message(
                         "sub_agent_stream",

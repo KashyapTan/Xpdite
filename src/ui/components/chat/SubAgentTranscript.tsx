@@ -6,7 +6,7 @@ import { CodeBlock } from './CodeBlock';
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface TranscriptTextStep {
-  type: 'text';
+  type: 'instruction' | 'text' | 'thinking';
   content: string;
 }
 
@@ -126,7 +126,7 @@ export function SubAgentTranscript({ stepsJson, isRunning }: SubAgentTranscriptP
     <div className="sa-transcript">
       {steps.map((step, idx) => {
         const key = step.type === 'tool_call' ? `tc-${idx}-${step.name}` : `txt-${idx}`;
-        if (step.type === 'text') {
+        if (step.type === 'instruction' || step.type === 'text' || step.type === 'thinking') {
           return (
             <div key={key} className="sa-transcript-text">
               <ReactMarkdown
