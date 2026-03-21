@@ -531,6 +531,12 @@ async def init_mcp_servers():
             sys.executable,
             [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
         ),
+        _connect_with_timeout(
+            "windows_mcp",
+            "uvx",
+            ["windows-mcp"],
+            timeout_s=60.0,  # Windows MCP can take a while to start on first run due to antivirus scans
+        )
     )
 
     # ── Terminal tools (inline — no subprocess) ─────────────────────
