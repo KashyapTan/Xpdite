@@ -12,14 +12,100 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 | `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
 | `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
 | `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
+| `windows_mcp` | ✅ Active | `list_windows`, `focus_window`, `minimize_window`, `maximize_window`, `close_window`, `take_screenshot` | Windows automation via uvx |
 | `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Schemas live in `terminal/inline_tools.py`; execution is inline via `terminal_executor.py` with approval UI. |
 | `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Schema lives in `sub_agent/inline_tools.py`; registration remains in `manager.py`, interception in `cloud_provider.py` and `handlers.py`, execution is in `services/sub_agent.py`. |
 | `video_watcher` | ✅ Active (inline) | `watch_youtube_video` | **Never runs as subprocess.** Schema lives in `video_watcher/inline_tools.py`; execution is inline via `source/services/video_watcher.py` with YouTube-caption fallback approval + Whisper transcription. |
 | `skills` | ✅ Active (inline) | `list_skills`, `use_skill` | **Never runs as subprocess.** Schema lives in `skills/inline_tools.py`; execution is inline via `source/mcp_integration/skills_executor.py` for on-demand skill discovery/loading. |
+| `figma` | 🔌 External | Design tools via mcp-remote | User-enabled via Settings → Connections. Uses `npx mcp-remote` to bridge Figma's remote MCP server. |
 | `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
 | `discord` | 📝 Placeholder | — | Needs `DISCORD_BOT_TOKEN` in `config/servers.json` |
 | `canvas` | 📝 Placeholder | — | Needs `CANVAS_URL` + `CANVAS_TOKEN` |
 | `github`, `jira`, `notion`, `obsidian`, `outlook`, `slack`, `teams`, `whatsapp`, `yahoo` | 📝 Placeholder | — | Stub directories only |
+
+---
+
+## External Connectors
+
+External connectors are MCP servers that are **not bundled** with Xpdite. They include third-party services like Figma, GitHub, etc. that:
+
+1. May require authentication (OAuth, API keys)
+2. Use stdio transport via bridge tools like `npx mcp-remote` or `uvx`
+3. Are enabled/disabled by users in Settings → Connections
+4. Auto-reconnect on app startup if previously enabled
+
+### How External Connectors Work
+
+1. **Registry**: Connectors are defined in `source/services/external_connectors.py` in the `EXTERNAL_CONNECTORS` dict
+2. **UI**: They appear automatically in Settings → Connections with Connect/Disconnect buttons
+3. **State**: Enabled/disabled state is persisted in the settings DB
+4. **Connection**: On connect, the subprocess is spawned; on app restart, enabled connectors auto-reconnect
+
+### Currently Available External Connectors
+
+| Connector | Transport | Auth | Notes |
+|-----------|-----------|------|-------|
+| **Figma** | `npx mcp-remote` → HTTP | OAuth (browser) | Design file access. Rate limits: Starter 6/month, Pro 200/day, Enterprise 600/day |
+
+### How to Add a New External Connector
+
+1. **Add to the registry** in `source/services/external_connectors.py`:
+
+```python
+EXTERNAL_CONNECTORS["my_connector"] = {
+    "name": "my_connector",
+    "display_name": "My Connector",
+    "description": "What it provides",
+    "command": "npx",  # or "uvx" for Python-based servers
+    "args": ["-y", "package-name", "additional", "args"],
+    "services": ["Service1", "Service2"],  # Badges shown in UI
+    "icon_type": "my_connector",  # Icon identifier for frontend
+    "auth_type": "browser",  # "browser", "api_key", or None
+    "env": None,  # Optional env vars dict
+}
+```
+
+2. **Add the icon** (optional) in `SettingsConnections.tsx`:
+
+```tsx
+// In the ConnectorIcon component's switch statement:
+case 'my_connector':
+  return (
+    <svg viewBox="0 0 24 24" width="28" height="28">
+      {/* Your SVG paths */}
+    </svg>
+  );
+```
+
+3. **Add tool display config** (optional) in `src/ui/components/chat/toolCallUtils.ts`:
+
+```typescript
+// In TOOL_DISPLAY_CONFIG:
+my_connector: {
+  badge: 'MY-CONNECTOR',
+  summaryNoun: 'connector action',
+  tools: {
+    some_tool: (args) => `Doing something with ${args.param}`,
+  },
+},
+```
+
+4. **That's it!** The connector will:
+   - Appear in Settings → Connections automatically
+   - Be connectable/disconnectable by users
+   - Auto-reconnect on app restart if enabled
+   - Have its tools appear in chat with reasonable fallback display
+
+### External Connector Types
+
+**Browser Auth (`auth_type: "browser"`)**: 
+Uses `mcp-remote` or similar bridge that handles OAuth internally. When the user clicks Connect, the subprocess starts and may open a browser window for authentication.
+
+**API Key Auth (`auth_type: "api_key"`)** *(planned)*:
+Requires an API key stored in settings. The key is passed as an environment variable to the subprocess.
+
+**No Auth (`auth_type: null`)**:
+Public MCP servers that don't require authentication.
 
 ---
 

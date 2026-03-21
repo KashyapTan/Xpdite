@@ -117,6 +117,7 @@ async def get_ollama_models(refresh: bool = False) -> Any:
     Calls `ollama.list()` which talks to the local Ollama daemon
     and returns every model that has been pulled.
     """
+
     async def _fetch() -> Any:
         try:
             # Use async client — no thread needed
@@ -269,6 +270,7 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
             )
 
         elif provider == "openrouter":
+
             def _validate_openrouter() -> requests.Response:
                 return requests.get(
                     "https://openrouter.ai/api/v1/models",
@@ -596,7 +598,9 @@ async def get_gemini_models(refresh: bool = False) -> List[dict]:
                 if model_name.startswith("models/"):
                     model_name = model_name[7:]
                 # Skip embedding/vision-only/legacy models
-                if any(kw in model_name for kw in ("embedding", "aqa", "bison", "gecko")):
+                if any(
+                    kw in model_name for kw in ("embedding", "aqa", "bison", "gecko")
+                ):
                     continue
                 display_name = m.display_name or model_name
                 models.append(
@@ -682,7 +686,10 @@ async def get_openrouter_models(refresh: bool = False) -> List[dict]:
                 continue
 
             supported_parameters = model.get("supported_parameters")
-            if not isinstance(supported_parameters, list) or "tools" not in supported_parameters:
+            if (
+                not isinstance(supported_parameters, list)
+                or "tools" not in supported_parameters
+            ):
                 continue
 
             model_id = str(model.get("id") or "").strip()
@@ -690,9 +697,13 @@ async def get_openrouter_models(refresh: bool = False) -> List[dict]:
                 continue
 
             display_name = str(model.get("name") or model_id).strip()
-            provider_group = model_id.split("/", 1)[0] if "/" in model_id else "openrouter"
+            provider_group = (
+                model_id.split("/", 1)[0] if "/" in model_id else "openrouter"
+            )
             context_length_raw = model.get("context_length")
-            context_length = context_length_raw if isinstance(context_length_raw, int) else None
+            context_length = (
+                context_length_raw if isinstance(context_length_raw, int) else None
+            )
 
             models.append(
                 _to_cloud_model(
@@ -734,7 +745,9 @@ async def get_mcp_servers():
 
     servers = mcp_manager.get_server_tools()
 
-    result = [{"server": name, "tools": sorted(tools)} for name, tools in servers.items()]
+    result = [
+        {"server": name, "tools": sorted(tools)} for name, tools in servers.items()
+    ]
     return sorted(result, key=lambda x: x["server"])
 
 
@@ -777,6 +790,7 @@ async def set_tools_settings(body: ToolsSettingsUpdate):
 
 class SubAgentSettingsUpdate(BaseModel):
     """Request body for updating sub-agent tier settings."""
+
     fast_model: Optional[str] = None
     smart_model: Optional[str] = None
 
@@ -990,8 +1004,99 @@ async def add_reference_file(name: str, body: ReferenceFileCreate):
 
     manager = get_skill_manager()
     try:
-        await _run_in_thread(manager.add_reference_file, name, body.filename, body.content)
+        await _run_in_thread(
+            manager.add_reference_file, name, body.filename, body.content
+        )
         return {"status": "created", "filename": body.filename}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+# ============================================
+# External MCP Connectors API
+# ============================================
+
+
+@router.get("/external-connectors")
+async def get_external_connectors():
+    """
+    Get all available external connectors with their status.
+
+    Returns a list of connector info including:
+    - name, display_name, description, services, icon_type
+    - auth_type: "browser" (OAuth via browser popup) or null
+    - enabled: whether user has enabled this connector
+    - connected: whether currently connected to MCP server
+    - last_error: last connection error if any
+    """
+    from ..services.external_connectors import external_connectors
+
+    return external_connectors.get_all_connectors()
+
+
+@router.post("/external-connectors/{name}/connect")
+async def connect_external_connector_endpoint(name: str):
+    """
+    Connect an external MCP server.
+
+    For browser auth connectors (like Figma, Slack), this launches
+    an OAuth flow via mcp-remote that opens the user's browser.
+
+    Returns: {success: true} or {success: false, error: "..."}
+    """
+    from ..services.external_connectors import (
+        connect_external_connector,
+        external_connectors,
+    )
+
+    connector = external_connectors.get_connector(name)
+    if not connector:
+        raise HTTPException(status_code=404, detail=f"Unknown connector: {name}")
+
+    try:
+        result = await connect_external_connector(name)
+        if not result.get("success"):
+            return result
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("External connector connect error: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Connection failed: {str(e)[:300]}",
+        )
+
+
+@router.post("/external-connectors/{name}/disconnect")
+async def disconnect_external_connector_endpoint(name: str):
+    """
+    Disconnect an external MCP server.
+
+    Stops the subprocess, marks as disabled, and clears errors.
+    """
+    from ..services.external_connectors import (
+        disconnect_external_connector,
+        external_connectors,
+    )
+
+    connector = external_connectors.get_connector(name)
+    if not connector:
+        raise HTTPException(status_code=404, detail=f"Unknown connector: {name}")
+
+    try:
+        result = await disconnect_external_connector(name)
+        if not result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail=result.get("error", "Disconnect failed"),
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("External connector disconnect error: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Disconnect failed: {str(e)[:300]}",
+        )

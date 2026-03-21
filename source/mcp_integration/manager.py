@@ -115,7 +115,8 @@ class McpToolManager:
                 try:
                     async with stdio_client(server_params) as (read, write):
                         async with ClientSession(
-                            read, write,
+                            read,
+                            write,
                             read_timeout_seconds=timedelta(seconds=120),
                         ) as session:
                             await session.initialize()
@@ -185,6 +186,7 @@ class McpToolManager:
             # Preserve cached embeddings for optional or temporarily unavailable
             # tools so reconnects can reuse them without re-embedding.
             from ..core.thread_pool import run_in_thread
+
             try:
                 await run_in_thread(self.refresh_tool_embeddings)
             except Exception as e:
@@ -275,11 +277,15 @@ class McpToolManager:
             return f"Error: Tool '{tool_name}' (server '{server}') timed out after 90s"
         except (ConnectionError, BrokenPipeError, OSError) as e:
             server = entry.get("server_name", "unknown")
-            logger.error("Tool '%s' (server '%s') transport error: %s", tool_name, server, e)
+            logger.error(
+                "Tool '%s' (server '%s') transport error: %s", tool_name, server, e
+            )
             return f"Error: Tool '{tool_name}' (server '{server}') connection lost: {type(e).__name__}"
         except Exception as e:
             server = entry.get("server_name", "unknown")
-            logger.error("Tool '%s' (server '%s') unexpected error: %s", tool_name, server, e)
+            logger.error(
+                "Tool '%s' (server '%s') unexpected error: %s", tool_name, server, e
+            )
             return f"Error: Tool '{tool_name}' (server '{server}') failed: {type(e).__name__}"
 
         output_parts = []
@@ -362,7 +368,9 @@ class McpToolManager:
         try:
             await asyncio.wait_for(task, timeout=10.0)
         except asyncio.TimeoutError:
-            logger.warning("Server '%s' did not shut down in time, cancelling", server_name)
+            logger.warning(
+                "Server '%s' did not shut down in time, cancelling", server_name
+            )
             task.cancel()
             try:
                 await task
@@ -427,7 +435,15 @@ class McpToolManager:
                 self.connect_server(
                     "gmail",
                     sys.executable,
-                    [str(PROJECT_ROOT / "mcp_servers" / "servers" / "gmail" / "server.py")],
+                    [
+                        str(
+                            PROJECT_ROOT
+                            / "mcp_servers"
+                            / "servers"
+                            / "gmail"
+                            / "server.py"
+                        )
+                    ],
                     env=env,
                 )
             )
@@ -458,7 +474,8 @@ class McpToolManager:
 
         self.refresh_tool_embeddings()
         logger.info(
-            "Google servers connected — %d total tool(s) available", len(self._ollama_tools)
+            "Google servers connected — %d total tool(s) available",
+            len(self._ollama_tools),
         )
 
     async def disconnect_google_servers(self):
@@ -508,7 +525,9 @@ async def init_mcp_servers():
     # )
 
     # ── Subprocess servers (connected in parallel) ──────────────────
-    async def _connect_with_timeout(name: str, cmd: str, args: list, timeout_s: float = 30.0):
+    async def _connect_with_timeout(
+        name: str, cmd: str, args: list, timeout_s: float = 30.0
+    ):
         """Connect a single MCP server with a timeout."""
         try:
             await asyncio.wait_for(
@@ -524,7 +543,15 @@ async def init_mcp_servers():
         _connect_with_timeout(
             "filesystem",
             sys.executable,
-            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "filesystem" / "server.py")],
+            [
+                str(
+                    PROJECT_ROOT
+                    / "mcp_servers"
+                    / "servers"
+                    / "filesystem"
+                    / "server.py"
+                )
+            ],
         ),
         _connect_with_timeout(
             "websearch",
@@ -536,7 +563,7 @@ async def init_mcp_servers():
             "uvx",
             ["windows-mcp"],
             timeout_s=60.0,  # Windows MCP can take a while to start on first run due to antivirus scans
-        )
+        ),
     )
 
     # ── Terminal tools (inline — no subprocess) ─────────────────────
@@ -598,6 +625,16 @@ async def init_mcp_servers():
     #     sys.executable,
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "my_server" / "server.py")],
     # )
+
+    # ── External connectors (Figma, GitHub, etc.) ──────────────────
+    # These are user-enabled external MCP servers that persist across
+    # restarts. They're connected here if previously enabled.
+    from ..services.external_connectors import init_external_connectors
+
+    try:
+        await init_external_connectors()
+    except Exception as e:
+        logger.warning("External connector initialization failed (non-fatal): %s", e)
 
     # Final startup pass for the active tool set. Cache entries for inactive
     # tools are intentionally retained so later reconnects can reuse them when

@@ -79,6 +79,29 @@ interface RawProviderModel {
   context_length?: unknown;
 }
 
+/**
+ * External MCP connector status from backend.
+ */
+export interface ExternalConnector {
+  name: string;
+  display_name: string;
+  description: string;
+  services: string[];
+  icon_type: string;
+  auth_type: 'browser' | null;
+  enabled: boolean;
+  connected: boolean;
+  last_error: string | null;
+}
+
+/**
+ * Response from connect external connector endpoint.
+ */
+export interface ConnectExternalConnectorResponse {
+  success: boolean;
+  error?: string;
+}
+
 function normalizeProviderModel(provider: string, rawModel: RawProviderModel): ProviderModel | null {
   const id = typeof rawModel.id === 'string'
     ? rawModel.id
@@ -633,5 +656,50 @@ export const api = {
       });
       if (!res.ok) throw new Error('Failed to delete skill');
     },
-  }
+  },
+
+  // ============================================
+  // External Connectors API
+  // ============================================
+
+  /**
+   * Get all available external connectors with their status.
+   */
+  async getExternalConnectors(): Promise<ExternalConnector[]> {
+    try {
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/external-connectors`);
+      if (!response.ok) throw new Error('Failed to fetch external connectors');
+      return response.json();
+    } catch {
+      return [];
+    }
+  },
+
+  /**
+   * Connect an external MCP connector.
+   * For browser-auth connectors, this may open a browser window.
+   */
+  async connectExternalConnector(name: string): Promise<{ success: boolean; error?: string }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/external-connectors/${name}/connect`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({ detail: 'Connection failed' }));
+      return { success: false, error: body.detail || 'Connection failed' };
+    }
+    return response.json();
+  },
+
+  /**
+   * Disconnect an external MCP connector.
+   */
+  async disconnectExternalConnector(name: string): Promise<{ success: boolean; error?: string }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/external-connectors/${name}/disconnect`, {
+      method: 'POST',
+    });
+    return response.json();
+  },
 };

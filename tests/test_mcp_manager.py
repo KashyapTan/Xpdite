@@ -43,14 +43,21 @@ class TestInitMcpServers:
     ):
         manager = reset_mcp_manager_state
 
-        with patch.object(manager, "connect_server", new_callable=AsyncMock) as connect_server, patch.object(
-            manager, "register_inline_tools"
-        ) as register_inline_tools, patch.object(
-            manager_module.retriever, "embed_tools"
-        ) as embed_tools:
+        with (
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
+            patch.object(manager, "register_inline_tools") as register_inline_tools,
+            patch.object(manager_module.retriever, "embed_tools") as embed_tools,
+            patch(
+                "source.services.external_connectors.init_external_connectors",
+                new_callable=AsyncMock,
+            ),
+        ):
             await manager_module.init_mcp_servers()
 
-        assert connect_server.await_count == 2
+        # 3 servers: filesystem, websearch, windows_mcp
+        assert connect_server.await_count == 3
         # 4 inline tool registrations: terminal, sub_agent, video_watcher, skills
         assert register_inline_tools.call_count == 4
         embed_tools.assert_called_once_with([])
@@ -64,15 +71,18 @@ class TestConnectGoogleServers:
     ):
         manager = reset_mcp_manager_state
 
-        with patch("source.mcp_integration.manager.os.path.exists", return_value=True), patch.object(
-            manager,
-            "is_server_connected",
-            side_effect=[False, False],
-        ), patch.object(
-            manager, "connect_server", new_callable=AsyncMock
-        ) as connect_server, patch.object(
-            manager_module.retriever, "embed_tools"
-        ) as embed_tools:
+        with (
+            patch("source.mcp_integration.manager.os.path.exists", return_value=True),
+            patch.object(
+                manager,
+                "is_server_connected",
+                side_effect=[False, False],
+            ),
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
+            patch.object(manager_module.retriever, "embed_tools") as embed_tools,
+        ):
             await manager.connect_google_servers()
 
         assert connect_server.await_count == 2
@@ -112,7 +122,9 @@ class TestManagerLifecycleRefresh:
 
         assert "demo" not in manager._connections
         assert "demo_tool" not in manager._tool_registry
-        assert [tool["function"]["name"] for tool in manager._ollama_tools] == ["keep_tool"]
+        assert [tool["function"]["name"] for tool in manager._ollama_tools] == [
+            "keep_tool"
+        ]
         assert [tool["name"] for tool in manager._raw_tools] == ["keep_tool"]
         embed_tools.assert_called_once_with(manager._ollama_tools)
 
@@ -124,7 +136,11 @@ class TestManagerLifecycleRefresh:
             {"function": {"name": "existing_tool", "description": "Existing tool"}},
         ]
         manager._raw_tools = [
-            {"name": "existing_tool", "description": "Existing tool", "input_schema": {}},
+            {
+                "name": "existing_tool",
+                "description": "Existing tool",
+                "input_schema": {},
+            },
         ]
 
         inline_tools = [

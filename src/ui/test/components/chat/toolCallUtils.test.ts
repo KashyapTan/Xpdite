@@ -27,7 +27,10 @@ describe('toolCallUtils', () => {
     });
 
     test('falls back for unknown servers', () => {
-      expect(getServerSummaryFragment('custom_server', 4)).toBe('used custom_server');
+      // Note: server names ending with _server are cleaned (suffix removed) for display
+      expect(getServerSummaryFragment('custom_mcp', 4)).toBe('used custom');
+      // Servers without the suffix show the full name
+      expect(getServerSummaryFragment('myserver', 4)).toBe('used myserver');
     });
   });
 
@@ -95,7 +98,7 @@ describe('toolCallUtils', () => {
         getHumanReadableDescription(
           toolCall({
             server: 'sub_agent',
-            name: 'spawn',
+            name: 'spawn_agent',
             args: { agent_name: 'Researcher', model_tier: 'standard' },
             description: 'Reading docs and comparing options',
           }),
@@ -117,7 +120,7 @@ describe('toolCallUtils', () => {
         ),
       ).toEqual({
         badge: 'MYSTERY',
-        text: 'do_stuff({"alpha":1,"beta":true})',
+        text: 'Do stuff: {"alpha":1,"beta":true}',
       });
     });
   });
