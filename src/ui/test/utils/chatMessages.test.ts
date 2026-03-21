@@ -713,6 +713,19 @@ describe('serializeMessageForCopy', () => {
     ).toBe('Valid content');
   });
 
+  test('ignores unknown content block types during serialization', () => {
+    const result = serializeMessageForCopy({
+      role: 'assistant',
+      content: '',
+      contentBlocks: [
+        { type: 'text', content: 'Visible' },
+        { type: 'unknown' as never },
+      ] as unknown as ContentBlock[],
+    });
+
+    expect(result).toBe('Visible');
+  });
+
   test('falls back to content when no contentBlocks', () => {
     expect(
       serializeMessageForCopy({
@@ -802,6 +815,19 @@ describe('mapConversationMessagePayload', () => {
     expect(result.images).toEqual([{ name: 'screenshot.png', thumbnail: 'data:image/png;base64,abc123' }]);
   });
 
+  test('maps message with object image missing thumbnail to empty string', () => {
+    const result = mapConversationMessagePayload({
+      message_id: 'msg-4b',
+      turn_id: 'turn-2',
+      role: 'user',
+      content: 'Look at this image',
+      timestamp: 1700000002000,
+      images: [{ name: 'screenshot.png', thumbnail: null }],
+    });
+
+    expect(result.images).toEqual([{ name: 'screenshot.png', thumbnail: '' }]);
+  });
+
   test('maps message with content_blocks', () => {
     const result = mapConversationMessagePayload({
       message_id: 'msg-5',
@@ -818,6 +844,18 @@ describe('mapConversationMessagePayload', () => {
     expect(result.contentBlocks).toHaveLength(2);
     expect(result.contentBlocks?.[0]).toEqual({ type: 'thinking', content: 'Planning...' });
     expect(result.contentBlocks?.[1]).toEqual({ type: 'text', content: 'Response' });
+  });
+
+  test('maps message timestamp fallback when normalizeTimestamp returns undefined', () => {
+    const result = mapConversationMessagePayload({
+      message_id: 'msg-ts',
+      turn_id: 'turn-ts',
+      role: 'assistant',
+      content: 'NaN timestamp',
+      timestamp: Number.NaN,
+    });
+
+    expect(Number.isNaN(result.timestamp)).toBe(true);
   });
 
   test('maps message with response_variants', () => {
