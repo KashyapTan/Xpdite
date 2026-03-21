@@ -174,6 +174,7 @@ bun run build:react                         # production build sanity-check
 ```bash
 uv run python -m pytest tests/ -v          # run all backend tests
 uv run python -m pytest tests/test_foo.py  # run a single test file
+uv run --with pytest-cov python -m pytest tests/ -q --cov=source --cov-report=term --cov-report=json:backend-coverage.json  # backend coverage report
 uv run ruff check .                        # backend lint/static checks
 ```
 

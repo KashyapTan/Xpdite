@@ -42,9 +42,17 @@ describe('modelDisplay utilities', () => {
     test('falls back to title case for unknown providers', () => {
       expect(getProviderLabel('custom-provider')).toBe('Custom-provider');
     });
+
+    test('returns empty string for empty provider key', () => {
+      expect(getProviderLabel('')).toBe('');
+    });
   });
 
   describe('stripModelProviderPrefix', () => {
+    test('returns empty string for empty model id', () => {
+      expect(stripModelProviderPrefix('')).toBe('');
+    });
+
     test('strips normal provider prefix', () => {
       expect(stripModelProviderPrefix('anthropic/claude-3-5-sonnet')).toBe('claude-3-5-sonnet');
     });
@@ -53,6 +61,10 @@ describe('modelDisplay utilities', () => {
       expect(stripModelProviderPrefix('openrouter/anthropic/claude-3.5-sonnet')).toBe(
         'claude-3.5-sonnet',
       );
+    });
+
+    test('keeps openrouter id when no provider segment exists', () => {
+      expect(stripModelProviderPrefix('openrouter/model-only')).toBe('model-only');
     });
 
     test('returns unchanged value for models without slash', () => {
@@ -71,6 +83,10 @@ describe('modelDisplay utilities', () => {
 
     test('keeps alphanumeric tokens intact', () => {
       expect(formatModelLabel('anthropic/claude-3-5-sonnet')).toBe('Claude 3.5 Sonnet');
+    });
+
+    test('returns empty label when stripped model id is empty', () => {
+      expect(formatModelLabel('openai/')).toBe('');
     });
   });
 });

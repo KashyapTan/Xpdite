@@ -734,6 +734,65 @@ describe('TabContext', () => {
 
       expect(callback2).toHaveBeenCalled()
     })
+
+    test('unsubscribing old afterSwitch callback should not clear replacement callback', () => {
+      const { result } = renderHook(() => useTabs(), { wrapper })
+
+      const callback1 = vi.fn()
+      const callback2 = vi.fn()
+      let unsubscribe1: (() => void) | undefined
+
+      act(() => {
+        unsubscribe1 = result.current.registerAfterSwitch(callback1)
+      })
+
+      act(() => {
+        result.current.registerAfterSwitch(callback2)
+      })
+
+      act(() => {
+        unsubscribe1?.()
+      })
+
+      act(() => {
+        result.current.createTab()
+      })
+
+      expect(callback1).not.toHaveBeenCalled()
+      expect(callback2).toHaveBeenCalled()
+    })
+
+    test('unsubscribing old onTabClosed callback should not clear replacement callback', () => {
+      const { result } = renderHook(() => useTabs(), { wrapper })
+
+      const callback1 = vi.fn()
+      const callback2 = vi.fn()
+      let unsubscribe1: (() => void) | undefined
+
+      act(() => {
+        unsubscribe1 = result.current.registerOnTabClosed(callback1)
+      })
+
+      act(() => {
+        result.current.registerOnTabClosed(callback2)
+      })
+
+      let tabId: string | null = null
+      act(() => {
+        tabId = result.current.createTab()
+      })
+
+      act(() => {
+        unsubscribe1?.()
+      })
+
+      act(() => {
+        result.current.closeTab(tabId!)
+      })
+
+      expect(callback1).not.toHaveBeenCalled()
+      expect(callback2).toHaveBeenCalledWith(tabId)
+    })
   })
 
   describe('Active Tab Tracking', () => {
