@@ -40,3 +40,5 @@ code_review/
 .playwright/
 
 coverage/
+.coverage
+backend-coverage.json
