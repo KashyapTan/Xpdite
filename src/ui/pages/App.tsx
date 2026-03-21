@@ -980,11 +980,14 @@ function App() {
         const safeDescription = safeModelTier
           ? `${safeAgentName} (${safeModelTier})`
           : safeAgentName;
+        const safeTranscript = Array.isArray(stream.transcript) ? stream.transcript : undefined;
         const safeAccumulated = typeof stream.accumulated === 'string' ? stream.accumulated : undefined;
         const safeContent = typeof stream.content === 'string' ? stream.content : undefined;
 
         let partialResult = 'Sub-agent is working...';
-        if (safeAccumulated && safeAccumulated.trim().length > 0) {
+        if (safeTranscript && safeTranscript.length > 0) {
+          partialResult = JSON.stringify(safeTranscript);
+        } else if (safeAccumulated && safeAccumulated.trim().length > 0) {
           partialResult = safeAccumulated;
         } else if (safeContent && safeContent.trim().length > 0) {
           partialResult = safeContent;
@@ -1004,9 +1007,6 @@ function App() {
           });
         }
 
-        // User asked for simplified sub-agent visibility: stream only response text/progress.
-        // We ignore detailed transcript/tool-step payloads and keep the card updated with
-        // a concise running state + partial/final response text.
         switch (stream.stream_type) {
           case 'thinking':
           case 'thinking_complete':
