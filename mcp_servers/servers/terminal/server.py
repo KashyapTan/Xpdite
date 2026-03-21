@@ -22,6 +22,9 @@ import glob
 import shutil
 import platform
 import subprocess
+import time
+import threading
+import concurrent.futures
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -62,6 +65,13 @@ if platform.system() == "Windows":
     _SUBPROCESS_SAFE["creationflags"] = subprocess.CREATE_NO_WINDOW
 
 
+# ── Tool version caching ──────────────────────────────────────────────
+_TOOL_VERSION_CACHE: dict[str, str] = {}
+_TOOL_VERSION_CACHE_TIME: float = 0.0
+_TOOL_VERSION_CACHE_TTL: float = 300.0  # 5 minutes
+_TOOL_VERSION_CACHE_LOCK = threading.Lock()
+
+
 def _get_shell() -> str:
     """Get the current shell."""
     if platform.system() == "Windows":
@@ -69,42 +79,81 @@ def _get_shell() -> str:
     return os.environ.get("SHELL", "/bin/bash")
 
 
+def _check_single_tool_version(name: str, cmd: str) -> tuple[str, str | None]:
+    """Check version of a single tool. Returns (name, version) or (name, None)."""
+    if not shutil.which(name):
+        return name, None
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+            env=_ORIGINAL_ENV,
+            **_SUBPROCESS_SAFE,
+        )
+        version = (result.stdout.strip() or result.stderr.strip()).split("\n")[0]
+        if version and result.returncode == 0:
+            return name, version
+    except (subprocess.TimeoutExpired, Exception):
+        pass
+    return name, None
+
+
 def _get_tool_versions() -> dict[str, str]:
-    """Detect versions of common tools on PATH."""
-    tools = {
-        "python": "python --version",
-        "node": "node --version",
-        "npm": "npm --version",
-        "git": "git --version",
-        "pip": "pip --version",
-        "uv": "uv --version",
-        "cargo": "cargo --version",
-        "docker": "docker --version",
-        "java": "java -version",
-    }
+    """Detect versions of common tools on PATH with caching and parallel execution.
 
-    results = {}
-    for name, cmd in tools.items():
-        # Fast existence check — avoids slow subprocess timeout for missing tools
-        if not shutil.which(name):
-            continue
-        try:
-            result = subprocess.run(
-                cmd,
-                shell=True,
-                capture_output=True,
-                text=True,
-                timeout=3,
-                env=_ORIGINAL_ENV,
-                **_SUBPROCESS_SAFE,
-            )
-            version = (result.stdout.strip() or result.stderr.strip()).split("\n")[0]
-            if version and result.returncode == 0:
-                results[name] = version
-        except (subprocess.TimeoutExpired, Exception):
-            pass
+    Uses threading lock to prevent race conditions during cache refresh.
+    """
+    global _TOOL_VERSION_CACHE, _TOOL_VERSION_CACHE_TIME
 
-    return results
+    # Quick check without lock (common path)
+    current_time = time.time()
+    if _TOOL_VERSION_CACHE and (current_time - _TOOL_VERSION_CACHE_TIME) < _TOOL_VERSION_CACHE_TTL:
+        return _TOOL_VERSION_CACHE
+
+    # Acquire lock for cache miss
+    with _TOOL_VERSION_CACHE_LOCK:
+        # Double-check pattern: re-verify after acquiring lock
+        current_time = time.time()
+        if _TOOL_VERSION_CACHE and (current_time - _TOOL_VERSION_CACHE_TIME) < _TOOL_VERSION_CACHE_TTL:
+            return _TOOL_VERSION_CACHE
+
+        tools = {
+            "python": "python --version",
+            "node": "node --version",
+            "npm": "npm --version",
+            "git": "git --version",
+            "pip": "pip --version",
+            "uv": "uv --version",
+            "cargo": "cargo --version",
+            "docker": "docker --version",
+            "java": "java -version",
+        }
+
+        results: dict[str, str] = {}
+
+        # Execute all version checks in parallel using ThreadPoolExecutor
+        with concurrent.futures.ThreadPoolExecutor(max_workers=len(tools)) as executor:
+            futures = {
+                executor.submit(_check_single_tool_version, name, cmd): name
+                for name, cmd in tools.items()
+            }
+            # Wait for all futures with a global timeout
+            done, _ = concurrent.futures.wait(futures, timeout=5.0)
+            for future in done:
+                try:
+                    name, version = future.result(timeout=0)
+                    if version:
+                        results[name] = version
+                except Exception:
+                    pass
+
+        # Update cache
+        _TOOL_VERSION_CACHE = results
+        _TOOL_VERSION_CACHE_TIME = current_time
+        return results
 
 
 @mcp.tool(description=GET_ENVIRONMENT_DESCRIPTION)

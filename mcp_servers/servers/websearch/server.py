@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import redirect_stderr, redirect_stdout
+from functools import lru_cache
 import ipaddress
 import os
 import random
@@ -25,6 +26,86 @@ _EXTERNAL_RELAY_ENV = "WEBSEARCH_ENABLE_EXTERNAL_RELAYS"
 _UNSAFE_TIER3_ENV = "WEBSEARCH_ENABLE_UNSAFE_TIER3_BROWSER"
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 _MAX_REDIRECT_HOPS = 8
+
+# ── Connection pooling ──────────────────────────────────────────────
+# Reuse HTTP sessions across multiple requests to avoid connection setup overhead
+_curl_session_instance: Any = None
+_httpx_client_instance: Any = None
+_httpx_noredirect_client_instance: Any = None
+
+# Locks to prevent race conditions during initialization
+_curl_session_lock = asyncio.Lock()
+_httpx_client_lock = asyncio.Lock()
+_httpx_noredirect_client_lock = asyncio.Lock()
+
+
+async def _get_curl_session():
+    """Get or create a reusable curl_cffi AsyncSession with thread-safe initialization."""
+    global _curl_session_instance
+    if _curl_session_instance is None:
+        async with _curl_session_lock:
+            if _curl_session_instance is None:  # Double-check pattern
+                try:
+                    from curl_cffi.requests import AsyncSession
+                    _curl_session_instance = AsyncSession(timeout=20)
+                except ImportError:
+                    return None
+    return _curl_session_instance
+
+
+async def _get_httpx_client():
+    """Get or create a reusable httpx AsyncClient with redirect following."""
+    global _httpx_client_instance
+    if _httpx_client_instance is None:
+        async with _httpx_client_lock:
+            if _httpx_client_instance is None:  # Double-check pattern
+                try:
+                    import httpx
+                    _httpx_client_instance = httpx.AsyncClient(timeout=20, follow_redirects=True)
+                except ImportError:
+                    return None
+    return _httpx_client_instance
+
+
+async def _get_httpx_noredirect_client():
+    """Get or create a reusable httpx AsyncClient WITHOUT redirect following."""
+    global _httpx_noredirect_client_instance
+    if _httpx_noredirect_client_instance is None:
+        async with _httpx_noredirect_client_lock:
+            if _httpx_noredirect_client_instance is None:  # Double-check pattern
+                try:
+                    import httpx
+                    _httpx_noredirect_client_instance = httpx.AsyncClient(timeout=10, follow_redirects=False)
+                except ImportError:
+                    return None
+    return _httpx_noredirect_client_instance
+
+
+async def cleanup_http_clients():
+    """Clean up HTTP client resources. Call on server shutdown."""
+    global _curl_session_instance, _httpx_client_instance, _httpx_noredirect_client_instance
+
+    if _curl_session_instance is not None:
+        try:
+            await _curl_session_instance.close()
+        except Exception:
+            pass
+        _curl_session_instance = None
+
+    if _httpx_client_instance is not None:
+        try:
+            await _httpx_client_instance.aclose()
+        except Exception:
+            pass
+        _httpx_client_instance = None
+
+    if _httpx_noredirect_client_instance is not None:
+        try:
+            await _httpx_noredirect_client_instance.aclose()
+        except Exception:
+            pass
+        _httpx_noredirect_client_instance = None
+
 
 TWITTER_DOMAINS = {"twitter.com", "x.com", "www.twitter.com", "www.x.com"}
 
@@ -85,6 +166,7 @@ SPA_SIGNATURES = [
 ]
 
 
+@lru_cache(maxsize=4)
 def _normalize_mode(mode: str) -> str | None:
     normalized_mode = (mode or "").strip().lower()
     if normalized_mode in {"precision", "full"}:
@@ -113,6 +195,7 @@ def _coerce_force_tier(force_tier: int | str | None) -> tuple[int | None, str | 
     return int(parsed_force_tier), None
 
 
+@lru_cache(maxsize=128)
 def _host(url: str) -> str:
     return urlparse(url).hostname or ""
 
@@ -180,43 +263,41 @@ async def _resolve_safe_redirect_chain(
     *,
     fail_open: bool = False,
 ) -> str | None:
-    try:
-        import httpx
-    except ImportError:
+    client = await _get_httpx_noredirect_client()
+    if client is None:
         return None
 
     current_url = url
     seen_urls: set[str] = set()
 
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-            for _ in range(max_hops):
-                if current_url in seen_urls:
-                    return None
-                seen_urls.add(current_url)
+        for _ in range(max_hops):
+            if current_url in seen_urls:
+                return None
+            seen_urls.add(current_url)
 
-                if _validate_read_website_url(current_url):
-                    return None
+            if _validate_read_website_url(current_url):
+                return None
 
-                response = await client.get(
-                    current_url,
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                    },
-                )
+            response = await client.get(
+                current_url,
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                },
+            )
 
-                if response.status_code not in _REDIRECT_STATUSES:
-                    return str(response.request.url)
+            if response.status_code not in _REDIRECT_STATUSES:
+                return str(response.request.url)
 
-                location = response.headers.get("location")
-                if not location:
-                    return str(response.request.url)
+            location = response.headers.get("location")
+            if not location:
+                return str(response.request.url)
 
-                next_url = urljoin(str(response.request.url), location)
-                if _validate_read_website_url(next_url):
-                    return None
-                current_url = next_url
+            next_url = urljoin(str(response.request.url), location)
+            if _validate_read_website_url(next_url):
+                return None
+            current_url = next_url
     except Exception:
         return url if fail_open else None
 
@@ -304,9 +385,8 @@ def extract(html: str, mode: str, url: str = "") -> str:
 
 
 async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
-    try:
-        from curl_cffi.requests import AsyncSession
-    except ImportError:
+    session = await _get_curl_session()
+    if session is None:
         return None
 
     targets = ["chrome124", "chrome120", "chrome110", "edge101", "edge99"]
@@ -315,40 +395,39 @@ async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
         response = None
         seen_urls: set[str] = set()
 
-        async with AsyncSession() as session:
-            for _ in range(_MAX_REDIRECT_HOPS):
-                if current_url in seen_urls:
-                    return None
-                seen_urls.add(current_url)
-
-                if _validate_read_website_url(current_url):
-                    return None
-
-                response = await session.get(
-                    current_url,
-                    impersonate=random.choice(targets),
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Referer": "https://www.google.com/",
-                    },
-                    timeout=15,
-                    allow_redirects=False,
-                )
-
-                if response.status_code not in _REDIRECT_STATUSES:
-                    break
-
-                location = response.headers.get("location")
-                if not location:
-                    break
-
-                next_url = urljoin(str(getattr(response, "url", current_url)), location)
-                if _validate_read_website_url(next_url):
-                    return None
-                current_url = next_url
-            else:
+        for _ in range(_MAX_REDIRECT_HOPS):
+            if current_url in seen_urls:
                 return None
+            seen_urls.add(current_url)
+
+            if _validate_read_website_url(current_url):
+                return None
+
+            response = await session.get(
+                current_url,
+                impersonate=random.choice(targets),
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": "https://www.google.com/",
+                },
+                timeout=15,
+                allow_redirects=False,
+            )
+
+            if response.status_code not in _REDIRECT_STATUSES:
+                break
+
+            location = response.headers.get("location")
+            if not location:
+                break
+
+            next_url = urljoin(str(getattr(response, "url", current_url)), location)
+            if _validate_read_website_url(next_url):
+                return None
+            current_url = next_url
+        else:
+            return None
 
         if response is None:
             return None
@@ -367,9 +446,8 @@ async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
 
 
 async def tier1_5_jina(url: str) -> str | None:
-    try:
-        import httpx
-    except ImportError:
+    client = await _get_httpx_client()
+    if client is None:
         return None
 
     jina_url = f"https://r.jina.ai/{url}"
@@ -379,9 +457,8 @@ async def tier1_5_jina(url: str) -> str | None:
         headers["Authorization"] = f"Bearer {api_key}"
 
     try:
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
-            response = await client.get(jina_url, headers=headers)
-            response.raise_for_status()
+        response = await client.get(jina_url, headers=headers)
+        response.raise_for_status()
         content = response.text.strip()
         return content if content and len(content) > 200 else None
     except Exception:

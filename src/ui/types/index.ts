@@ -326,6 +326,29 @@ export interface ToolCallContent {
   partial_result?: string;
 }
 
+export interface SubAgentStreamContent {
+  agent_id: string;
+  agent_name: string;
+  model_tier: string;
+  stream_type: 'instruction' | 'thinking' | 'thinking_complete' | 'tool_call' | 'tool_result' | 'tool_error' | 'tool_blocked' | 'final';
+  content?: string;
+  tool_name?: string;
+  tool_args?: Record<string, unknown>;
+  tool_result?: string;
+  error?: string;
+  final_response?: string;
+  transcript?: SubAgentTranscriptStep[];
+}
+
+export interface SubAgentTranscriptStep {
+  type: 'thinking' | 'tool_call';
+  content?: string;
+  name?: string;
+  args?: Record<string, unknown>;
+  status?: string;
+  result?: string;
+}
+
 export interface TokenUsageContent {
   prompt_eval_count?: number;
   eval_count?: number;

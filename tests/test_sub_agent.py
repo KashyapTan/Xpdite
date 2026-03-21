@@ -181,6 +181,55 @@ class TestExcludedTools:
 # ---------------------------------------------------------------------------
 
 
+def _make_streaming_chunks(content: str, tool_calls=None, prompt_tokens=0, completion_tokens=0):
+    """Create a list of streaming chunks that mimic LiteLLM's streaming response.
+
+    Returns an async generator that yields streaming chunks.
+    """
+    async def generator():
+        # First chunk: content delta
+        if content:
+            yield SimpleNamespace(
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=content, tool_calls=None),
+                    finish_reason=None
+                )],
+                usage=None
+            )
+
+        # Tool calls chunks (if any)
+        if tool_calls:
+            for i, tc in enumerate(tool_calls):
+                yield SimpleNamespace(
+                    choices=[SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            tool_calls=[SimpleNamespace(
+                                index=i,
+                                id=tc.id,
+                                function=SimpleNamespace(
+                                    name=tc.function.name,
+                                    arguments=tc.function.arguments
+                                )
+                            )]
+                        ),
+                        finish_reason=None
+                    )],
+                    usage=None
+                )
+
+        # Final chunk with usage and finish_reason
+        yield SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=None, tool_calls=None),
+                finish_reason="stop" if not tool_calls else "tool_calls"
+            )],
+            usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+        )
+
+    return generator()
+
+
 class TestRunCloudSubAgent:
     @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
@@ -189,9 +238,8 @@ class TestRunCloudSubAgent:
     async def test_openrouter_passes_api_key_directly(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
     ):
-        mock_acompletion.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
-            usage=SimpleNamespace(prompt_tokens=7, completion_tokens=3),
+        mock_acompletion.return_value = _make_streaming_chunks(
+            content="ok", prompt_tokens=7, completion_tokens=3
         )
 
         result = await _run_cloud_sub_agent(
@@ -215,18 +263,16 @@ class TestRunCloudSubAgent:
     async def test_cloud_sub_agent_invalid_tool_args_do_not_crash(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
     ):
-        message = SimpleNamespace(
-            content="",
-            tool_calls=[
-                SimpleNamespace(
-                    id="call1",
-                    function=SimpleNamespace(name="read_file", arguments="{bad json"),
-                )
-            ],
+        # Create tool call with invalid JSON arguments
+        bad_tool_call = SimpleNamespace(
+            id="call1",
+            function=SimpleNamespace(name="read_file", arguments="{bad json"),
         )
-        mock_acompletion.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=message)],
-            usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2),
+        mock_acompletion.return_value = _make_streaming_chunks(
+            content="",
+            tool_calls=[bad_tool_call],
+            prompt_tokens=3,
+            completion_tokens=2,
         )
 
         result = await _run_cloud_sub_agent(

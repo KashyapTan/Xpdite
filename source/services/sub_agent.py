@@ -242,8 +242,9 @@ async def _run_cloud_sub_agent(
     agent_name: str = "Sub-Agent",
     model_tier: str = "fast",
 ) -> Dict[str, Any]:
-    """Execute a sub-agent call via LiteLLM (cloud providers).
+    """Execute a sub-agent call via LiteLLM (cloud providers) with streaming.
 
+    Streams thinking tokens and tool execution in real-time to the UI.
     Returns {"response": str, "token_stats": dict, "error": str | None}.
     """
     from ..llm.router import parse_provider
@@ -265,18 +266,35 @@ async def _run_cloud_sub_agent(
         {"role": "user", "content": instruction},
     ]
 
+    # Cache the tool lookup once at the start (avoid re-fetching per round)
+    all_openai_tools = mcp_manager.get_tools() or []
+
     # Resolve tools to OpenAI format
     openai_tools: Optional[List[Dict]] = None
     if tools:
-        all_openai = mcp_manager.get_tools() or []
         tool_names = {t["function"]["name"] for t in tools}
-        openai_tools = [t for t in all_openai if t["function"]["name"] in tool_names]
+        openai_tools = [t for t in all_openai_tools if t["function"]["name"] in tool_names]
         if not openai_tools:
             openai_tools = None
 
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
-    transcript_steps: list[dict[str, Any]] = []  # Structured transcript for live UI display
+    transcript_steps: list[dict[str, Any]] = []
+
+    # Broadcast the instruction as the first transcript step
+    transcript_steps.append({"type": "instruction", "content": instruction})
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "instruction",
+                "content": instruction,
+                "transcript": transcript_steps,
+            }),
+        )
 
     try:
         model_info = litellm.get_model_info(litellm_model)
@@ -301,7 +319,7 @@ async def _run_cloud_sub_agent(
         create_kwargs: Dict[str, Any] = {
             "model": litellm_model,
             "messages": messages,
-            "stream": False,
+            "stream": True,  # Enable streaming
             "api_key": api_key,
             "timeout": _SUB_AGENT_TIMEOUT,
         }
@@ -311,115 +329,216 @@ async def _run_cloud_sub_agent(
             create_kwargs["tools"] = openai_tools
 
         try:
-            response = await litellm.acompletion(**create_kwargs)
+            # Stream the response
+            round_text_chunks: list[str] = []
+            tool_calls_accum: Dict[int, Dict[str, Any]] = {}
+            finish_reason = None
+
+            async for chunk in await litellm.acompletion(**create_kwargs):
+                if is_current_request_cancelled():
+                    break
+
+                # Extract usage from final chunk if available
+                if hasattr(chunk, "usage") and chunk.usage:
+                    total_tokens["prompt_tokens"] += getattr(chunk.usage, "prompt_tokens", 0) or 0
+                    total_tokens["completion_tokens"] += getattr(chunk.usage, "completion_tokens", 0) or 0
+
+                if not chunk.choices:
+                    continue
+
+                delta = chunk.choices[0].delta
+                finish_reason = chunk.choices[0].finish_reason
+
+                # Stream text content
+                if delta and delta.content:
+                    round_text_chunks.append(delta.content)
+                    # Broadcast streaming text
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "thinking",
+                                "content": delta.content,
+                                "accumulated": "".join(round_text_chunks),
+                            }),
+                        )
+
+                # Accumulate tool calls from deltas
+                if delta and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_calls_accum:
+                            tool_calls_accum[idx] = {
+                                "id": tc_delta.id or "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+                        if tc_delta.id:
+                            tool_calls_accum[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_calls_accum[idx]["function"]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_calls_accum[idx]["function"]["arguments"] += tc_delta.function.arguments
+
+            # After streaming, add collected text to accumulated
+            round_text = "".join(round_text_chunks)
+            if round_text:
+                accumulated_text.append(round_text)
+                transcript_steps.append({"type": "text", "content": round_text})
+                if agent_id:
+                    await broadcast_message(
+                        "sub_agent_stream",
+                        json.dumps({
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "model_tier": model_tier,
+                            "stream_type": "thinking_complete",
+                            "content": round_text,
+                            "transcript": transcript_steps,
+                        }),
+                    )
+
+            # Process tool calls if any
+            if tool_calls_accum:
+                sorted_tool_calls = [tool_calls_accum[i] for i in sorted(tool_calls_accum.keys())]
+
+                # Append assistant message with tool calls
+                assistant_msg: Dict[str, Any] = {
+                    "role": "assistant",
+                    "content": round_text or None,
+                    "tool_calls": sorted_tool_calls,
+                }
+                messages.append(assistant_msg)
+
+                # Execute each tool
+                for tc in sorted_tool_calls:
+                    fn_name = tc["function"]["name"]
+                    fn_args, arg_error = normalize_tool_args(tc["function"]["arguments"])
+                    tc_id = tc.get("id", "")
+
+                    if arg_error:
+                        result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
+                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "error", "result": result_str})
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_error",
+                                    "tool_name": fn_name,
+                                    "error": result_str,
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                        continue
+
+                    if fn_name in _EXCLUDED_TOOLS:
+                        result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
+                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
+                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "blocked", "result": result_str})
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_blocked",
+                                    "tool_name": fn_name,
+                                    "error": result_str,
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                        continue
+
+                    if is_current_request_cancelled():
+                        break
+
+                    # Broadcast tool call start
+                    step_index = len(transcript_steps)
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "tool_call",
+                                "tool_name": fn_name,
+                                "tool_args": fn_args,
+                                "transcript": transcript_steps,
+                            }),
+                        )
+
+                    try:
+                        result = await mcp_manager.call_tool(fn_name, fn_args)
+                        result_str = str(result)
+                        if len(result_str) > MAX_TOOL_RESULT_LENGTH:
+                            result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
+                    except Exception as e:
+                        logger.warning("Cloud sub-agent tool %s failed: %s", fn_name, e)
+                        result_str = f"Tool execution error: {type(e).__name__}"
+
+                    messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
+                    result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
+                    transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
+
+                    # Broadcast tool result
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "tool_result",
+                                "tool_name": fn_name,
+                                "tool_result": result_preview,
+                                "transcript": transcript_steps,
+                            }),
+                        )
+
+                # Check cancellation after tool execution loop
+                if is_current_request_cancelled():
+                    break
+            elif finish_reason == "stop" or not tool_calls_accum:
+                # No tool calls — response is complete
+                break
+
         except Exception as e:
-            logger.error("Sub-agent LiteLLM call failed: %s", e, exc_info=True)
+            logger.error("Sub-agent LiteLLM streaming failed: %s", e, exc_info=True)
             return {
                 "response": f"Sub-agent error: {type(e).__name__}",
                 "token_stats": total_tokens,
                 "error": type(e).__name__,
             }
 
-        # Accumulate tokens
-        if hasattr(response, "usage") and response.usage:
-            total_tokens["prompt_tokens"] += getattr(response.usage, "prompt_tokens", 0) or 0
-            total_tokens["completion_tokens"] += getattr(response.usage, "completion_tokens", 0) or 0
-
-        choice = response.choices[0]
-        message = choice.message
-
-        # Collect text
-        if message.content:
-            accumulated_text.append(message.content)
-            transcript_steps.append({"type": "text", "content": message.content})
-            if agent_id:
-                await broadcast_message(
-                    "tool_call",
-                    json.dumps({
-                        "name": "spawn_agent",
-                        "args": {"agent_name": agent_name, "model_tier": model_tier},
-                        "server": "sub_agent",
-                        "status": "progress",
-                        "agent_id": agent_id,
-                        "description": _tool_progress_description("thinking", {}),
-                        "partial_result": json.dumps(transcript_steps),
-                    }),
-                )
-
-        # Check for tool calls
-        if message.tool_calls:
-            # Append assistant message with tool calls
-            assistant_msg: Dict[str, Any] = {
-                "role": "assistant",
-                "content": message.content,
-                "tool_calls": [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in message.tool_calls
-                ],
-            }
-            messages.append(assistant_msg)
-
-            # Execute each tool
-            for tc in message.tool_calls:
-                fn_name = tc.function.name
-                fn_args, arg_error = normalize_tool_args(tc.function.arguments)
-                if arg_error:
-                    result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
-                    continue
-
-                if fn_name in _EXCLUDED_TOOLS:
-                    result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_str})
-                    continue
-
-                if is_current_request_cancelled():
-                    break
-
-                # Add tool call to transcript and broadcast before execution
-                step_index = len(transcript_steps)
-                transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
-                if agent_id:
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": "spawn_agent",
-                            "args": {"agent_name": agent_name, "model_tier": model_tier},
-                            "server": "sub_agent",
-                            "status": "progress",
-                            "agent_id": agent_id,
-                            "description": _tool_progress_description(fn_name, fn_args),
-                            "partial_result": json.dumps(transcript_steps),
-                        }),
-                    )
-
-                try:
-                    result = await mcp_manager.call_tool(fn_name, fn_args)
-                    result_str = str(result)
-                    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                        result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
-                except Exception as e:
-                    logger.warning("Cloud sub-agent tool %s failed: %s", fn_name, e)
-                    result_str = f"Tool execution error: {type(e).__name__}"
-
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result_str})
-                result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
-                transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
-        else:
-            # No tool calls — response is complete
-            break
+    # Broadcast final complete state
+    final_response = "".join(accumulated_text)
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "final",
+                "content": final_response,
+                "transcript": transcript_steps,
+                "token_stats": total_tokens,
+            }),
+        )
 
     return {
-        "response": "".join(accumulated_text),
+        "response": final_response,
         "token_stats": total_tokens,
         "error": None,
     }
@@ -438,8 +557,9 @@ async def _run_ollama_sub_agent(
     agent_name: str = "Sub-Agent",
     model_tier: str = "fast",
 ) -> Dict[str, Any]:
-    """Execute a sub-agent call via Ollama AsyncClient.
+    """Execute a sub-agent call via Ollama AsyncClient with streaming.
 
+    Streams thinking tokens and tool execution in real-time to the UI.
     Returns {"response": str, "token_stats": dict, "error": str | None}.
     """
     from ollama import AsyncClient as OllamaAsyncClient
@@ -453,11 +573,26 @@ async def _run_ollama_sub_agent(
 
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
-    transcript_steps: list[dict[str, Any]] = []  # Structured transcript for live UI display
+    transcript_steps: list[dict[str, Any]] = []
 
     # Strip provider prefix if present (e.g., "ollama/model" → "model")
     if "/" in model_name:
         _, _, model_name = model_name.partition("/")
+
+    # Broadcast the instruction as the first transcript step
+    transcript_steps.append({"type": "instruction", "content": instruction})
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "instruction",
+                "content": instruction,
+                "transcript": transcript_steps,
+            }),
+        )
 
     rounds = 0
     while True:
@@ -473,7 +608,7 @@ async def _run_ollama_sub_agent(
         chat_kwargs: Dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "stream": False,
+            "stream": True,  # Enable streaming
             "options": {"num_ctx": OLLAMA_CTX_SIZE},
         }
         if allow_tools:
@@ -481,119 +616,232 @@ async def _run_ollama_sub_agent(
             chat_kwargs["think"] = False  # Ollama bug #10976 workaround
 
         try:
-            response = await client.chat(**chat_kwargs)
+            # Stream the response
+            round_text_chunks: list[str] = []
+            tool_calls_list: list = []
+
+            async for chunk in await client.chat(**chat_kwargs):
+                if is_current_request_cancelled():
+                    break
+
+                # Handle dict response (streaming chunks)
+                if isinstance(chunk, dict):
+                    msg = chunk.get("message", {})
+                    done = chunk.get("done", False)
+
+                    # Accumulate token counts from final chunk
+                    if done:
+                        total_tokens["prompt_tokens"] += chunk.get("prompt_eval_count", 0) or 0
+                        total_tokens["completion_tokens"] += chunk.get("eval_count", 0) or 0
+
+                    # Stream text content
+                    content = msg.get("content", "")
+                    if content:
+                        round_text_chunks.append(content)
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "thinking",
+                                    "content": content,
+                                    "accumulated": "".join(round_text_chunks),
+                                }),
+                            )
+
+                    # Collect tool calls from the message
+                    if msg.get("tool_calls"):
+                        tool_calls_list = msg["tool_calls"]
+                else:
+                    # Handle object response
+                    msg = getattr(chunk, "message", None)
+                    done = getattr(chunk, "done", False)
+
+                    if done:
+                        total_tokens["prompt_tokens"] += getattr(chunk, "prompt_eval_count", 0) or 0
+                        total_tokens["completion_tokens"] += getattr(chunk, "eval_count", 0) or 0
+
+                    if msg:
+                        content = getattr(msg, "content", "") or ""
+                        if content:
+                            round_text_chunks.append(content)
+                            if agent_id:
+                                await broadcast_message(
+                                    "sub_agent_stream",
+                                    json.dumps({
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": content,
+                                        "accumulated": "".join(round_text_chunks),
+                                    }),
+                                )
+
+                        if getattr(msg, "tool_calls", None):
+                            tool_calls_list = msg.tool_calls
+
+            # After streaming, add collected text to accumulated
+            round_text = "".join(round_text_chunks)
+            if round_text:
+                accumulated_text.append(round_text)
+                transcript_steps.append({"type": "text", "content": round_text})
+                if agent_id:
+                    await broadcast_message(
+                        "sub_agent_stream",
+                        json.dumps({
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "model_tier": model_tier,
+                            "stream_type": "thinking_complete",
+                            "content": round_text,
+                            "transcript": transcript_steps,
+                        }),
+                    )
+
+            # Process tool calls if any
+            if tool_calls_list:
+                # Append assistant message
+                messages.append({"role": "assistant", "content": round_text, "tool_calls": tool_calls_list})
+
+                for tc in tool_calls_list:
+                    if isinstance(tc, dict):
+                        fn = tc.get("function", {})
+                        if not fn or not fn.get("name"):
+                            logger.warning("Skipping malformed Ollama tool call: %s", tc)
+                            continue
+                        fn_name = fn["name"]
+                        fn_args = fn.get("arguments", {})
+                    else:
+                        if not getattr(tc, "function", None) or not getattr(tc.function, "name", None):
+                            logger.warning("Skipping malformed Ollama tool call object: %s", tc)
+                            continue
+                        fn_name = tc.function.name
+                        fn_args = tc.function.arguments
+
+                    # Decode args: may be dict already or a JSON string
+                    fn_args, arg_error = normalize_tool_args(fn_args)
+                    if arg_error:
+                        result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "error", "result": result_str})
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_error",
+                                    "tool_name": fn_name,
+                                    "error": result_str,
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                        continue
+
+                    if fn_name in _EXCLUDED_TOOLS:
+                        result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
+                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "blocked", "result": result_str})
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_blocked",
+                                    "tool_name": fn_name,
+                                    "error": result_str,
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                        continue
+
+                    if is_current_request_cancelled():
+                        break
+
+                    # Broadcast tool call start
+                    step_index = len(transcript_steps)
+                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "tool_call",
+                                "tool_name": fn_name,
+                                "tool_args": fn_args,
+                                "transcript": transcript_steps,
+                            }),
+                        )
+
+                    try:
+                        result = await mcp_manager.call_tool(fn_name, fn_args)
+                        result_str = str(result)
+                        if len(result_str) > MAX_TOOL_RESULT_LENGTH:
+                            result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
+                    except Exception as e:
+                        logger.warning("Ollama sub-agent tool %s failed: %s", fn_name, e)
+                        result_str = f"Tool execution error: {type(e).__name__}"
+
+                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
+                    result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
+                    transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
+
+                    # Broadcast tool result
+                    if agent_id:
+                        await broadcast_message(
+                            "sub_agent_stream",
+                            json.dumps({
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "tool_result",
+                                "tool_name": fn_name,
+                                "tool_result": result_preview,
+                                "transcript": transcript_steps,
+                            }),
+                        )
+
+                # Check cancellation after tool execution loop
+                if is_current_request_cancelled():
+                    break
+            else:
+                # No tool calls — response is complete
+                break
+
         except Exception as e:
-            logger.error("Sub-agent Ollama call failed: %s", e, exc_info=True)
+            logger.error("Sub-agent Ollama streaming failed: %s", e, exc_info=True)
             return {
                 "response": f"Sub-agent error: {type(e).__name__}",
                 "token_stats": total_tokens,
                 "error": type(e).__name__,
             }
 
-        # Token stats
-        msg = response.get("message", response) if isinstance(response, dict) else response
-        if isinstance(response, dict):
-            total_tokens["prompt_tokens"] += response.get("prompt_eval_count", 0)
-            total_tokens["completion_tokens"] += response.get("eval_count", 0)
-        else:
-            total_tokens["prompt_tokens"] += getattr(response, "prompt_eval_count", 0) or 0
-            total_tokens["completion_tokens"] += getattr(response, "eval_count", 0) or 0
-
-        # Extract message
-        if isinstance(msg, dict):
-            content = msg.get("content", "")
-            tool_calls = msg.get("tool_calls")
-        else:
-            content = getattr(msg, "content", "") or (getattr(msg, "message", None) and getattr(msg.message, "content", "")) or ""
-            tool_calls = getattr(msg, "tool_calls", None) or (getattr(msg, "message", None) and getattr(msg.message, "tool_calls", None))
-
-        if content:
-            accumulated_text.append(content)
-            transcript_steps.append({"type": "text", "content": content})
-            if agent_id:
-                await broadcast_message(
-                    "tool_call",
-                    json.dumps({
-                        "name": "spawn_agent",
-                        "args": {"agent_name": agent_name, "model_tier": model_tier},
-                        "server": "sub_agent",
-                        "status": "progress",
-                        "agent_id": agent_id,
-                        "description": _tool_progress_description("thinking", {}),
-                        "partial_result": json.dumps(transcript_steps),
-                    }),
-                )
-
-        if tool_calls:
-            # Append assistant message
-            messages.append({"role": "assistant", "content": content, "tool_calls": tool_calls})
-
-            for tc in tool_calls:
-                if isinstance(tc, dict):
-                    fn = tc.get("function", {})
-                    if not fn or not fn.get("name"):
-                        logger.warning("Skipping malformed Ollama tool call: %s", tc)
-                        continue
-                    fn_name = fn["name"]
-                    fn_args = fn.get("arguments", {})
-                else:
-                    if not getattr(tc, "function", None) or not getattr(tc.function, "name", None):
-                        logger.warning("Skipping malformed Ollama tool call object: %s", tc)
-                        continue
-                    fn_name = tc.function.name
-                    fn_args = tc.function.arguments
-
-                # Decode args: may be dict already or a JSON string
-                fn_args, arg_error = normalize_tool_args(fn_args)
-                if arg_error:
-                    result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "complete", "result": result_str})
-                    continue
-
-                if fn_name in _EXCLUDED_TOOLS:
-                    result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_str})
-                    continue
-
-                if is_current_request_cancelled():
-                    break
-
-                # Add tool call to transcript and broadcast before execution
-                step_index = len(transcript_steps)
-                transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
-                if agent_id:
-                    await broadcast_message(
-                        "tool_call",
-                        json.dumps({
-                            "name": "spawn_agent",
-                            "args": {"agent_name": agent_name, "model_tier": model_tier},
-                            "server": "sub_agent",
-                            "status": "progress",
-                            "agent_id": agent_id,
-                            "description": _tool_progress_description(fn_name, fn_args),
-                            "partial_result": json.dumps(transcript_steps),
-                        }),
-                    )
-
-                try:
-                    result = await mcp_manager.call_tool(fn_name, fn_args)
-                    result_str = str(result)
-                    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                        result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
-                except Exception as e:
-                    logger.warning("Ollama sub-agent tool %s failed: %s", fn_name, e)
-                    result_str = f"Tool execution error: {type(e).__name__}"
-
-                messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
-                transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
-        else:
-            break
+    # Broadcast final complete state
+    final_response = "".join(accumulated_text)
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "final",
+                "content": final_response,
+                "transcript": transcript_steps,
+                "token_stats": total_tokens,
+            }),
+        )
 
     return {
-        "response": "".join(accumulated_text),
+        "response": final_response,
         "token_stats": total_tokens,
         "error": None,
     }

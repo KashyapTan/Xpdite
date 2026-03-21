@@ -46,6 +46,7 @@ import type {
   ConversationTurnPayload,
   ToolCall,
   ToolCallContent,
+  SubAgentStreamContent,
   TokenUsageContent,
   ChatMessage,
   TerminalApprovalRequest,
@@ -932,10 +933,21 @@ function App() {
         const safePartial2 = typeof tc.partial_result === 'string' ? tc.partial_result : undefined;
         if (tc.status === 'calling') {
           chatState.setStatus(`Calling tool: ${tc.name}...`);
-          chatState.addToolCall({
-            name: tc.name, args: tc.args, server: tc.server,
-            status: 'calling', agentId: safeAgentId2, description: safeDesc2,
-          });
+          const existingSubAgent =
+            tc.server === 'sub_agent'
+            && !!safeAgentId2
+            && chatState.toolCallsRef.current.some((toolCall) => toolCall.agentId === safeAgentId2);
+          if (existingSubAgent) {
+            chatState.updateToolCall({
+              name: tc.name, args: tc.args, server: tc.server,
+              status: 'calling', agentId: safeAgentId2, description: safeDesc2,
+            });
+          } else {
+            chatState.addToolCall({
+              name: tc.name, args: tc.args, server: tc.server,
+              status: 'calling', agentId: safeAgentId2, description: safeDesc2,
+            });
+          }
         } else if (tc.status === 'progress' && safeAgentId2) {
           chatState.updateToolCall({
             name: tc.name, args: tc.args, server: tc.server,
@@ -947,6 +959,75 @@ function App() {
             status: 'complete', agentId: safeAgentId2, description: safeDesc2, partialResult: undefined,
           });
           chatState.setStatus('Tool call complete.');
+        }
+        break;
+      }
+
+      case 'sub_agent_stream': {
+        const stream = (typeof data.content === 'string'
+          ? JSON.parse(data.content)
+          : data.content) as unknown as SubAgentStreamContent & { accumulated?: string };
+
+        const safeAgentId = typeof stream.agent_id === 'string' && stream.agent_id ? stream.agent_id : undefined;
+        if (!safeAgentId) {
+          break;
+        }
+
+        const safeAgentName = typeof stream.agent_name === 'string' && stream.agent_name
+          ? stream.agent_name
+          : 'Sub-agent';
+        const safeModelTier = typeof stream.model_tier === 'string' ? stream.model_tier : '';
+        const safeDescription = safeModelTier
+          ? `${safeAgentName} (${safeModelTier})`
+          : safeAgentName;
+        const safeAccumulated = typeof stream.accumulated === 'string' ? stream.accumulated : undefined;
+        const safeContent = typeof stream.content === 'string' ? stream.content : undefined;
+
+        let partialResult = 'Sub-agent is working...';
+        if (safeAccumulated && safeAccumulated.trim().length > 0) {
+          partialResult = safeAccumulated;
+        } else if (safeContent && safeContent.trim().length > 0) {
+          partialResult = safeContent;
+        }
+
+        const isKnownToolCall = chatState.toolCallsRef.current.some(
+          (toolCall) => toolCall.agentId === safeAgentId,
+        );
+        if (!isKnownToolCall) {
+          chatState.addToolCall({
+            name: 'spawn_agent',
+            args: { agent_name: safeAgentName, model_tier: safeModelTier },
+            server: 'sub_agent',
+            status: 'calling',
+            agentId: safeAgentId,
+            description: safeDescription,
+          });
+        }
+
+        // User asked for simplified sub-agent visibility: stream only response text/progress.
+        // We ignore detailed transcript/tool-step payloads and keep the card updated with
+        // a concise running state + partial/final response text.
+        switch (stream.stream_type) {
+          case 'thinking':
+          case 'thinking_complete':
+          case 'final':
+          case 'instruction':
+          case 'tool_call':
+          case 'tool_result':
+          case 'tool_error':
+          case 'tool_blocked':
+            chatState.updateToolCall({
+              name: 'spawn_agent',
+              args: { agent_name: safeAgentName, model_tier: safeModelTier },
+              server: 'sub_agent',
+              status: 'calling',
+              agentId: safeAgentId,
+              description: safeDescription,
+              partialResult,
+            });
+            break;
+          default:
+            break;
         }
         break;
       }

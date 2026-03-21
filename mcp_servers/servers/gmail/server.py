@@ -11,8 +11,10 @@ the stored token from GOOGLE_TOKEN_FILE environment variable.
 import os
 import json
 import base64
+import time
+import threading
 from email.mime.text import MIMEText
-from typing import Optional
+from typing import Optional, Any
 
 from mcp.server.fastmcp import FastMCP
 from google.oauth2.credentials import Credentials
@@ -43,28 +45,65 @@ SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
+# ── Service singleton caching ──────────────────────────────────────────────
+_gmail_service_cache: Any = None
+_gmail_service_cache_time: float = 0.0
+_gmail_service_cache_ttl: float = 1800.0  # 30 minutes
+_gmail_service_lock = threading.Lock()
+
 
 def _get_gmail_service():
-    """Build and return an authenticated Gmail API service."""
-    if not os.path.exists(TOKEN_FILE):
-        raise RuntimeError(
-            "Google account not connected. Please connect your Google account in Settings > Connections."
-        )
+    """Build and return an authenticated Gmail API service with caching.
 
-    creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    Reuses the service object for 30 minutes to avoid rebuilding on every call.
+    Token refresh is checked and performed only when actually expired.
+    Uses threading lock to prevent race conditions during initialization.
+    """
+    global _gmail_service_cache, _gmail_service_cache_time
 
-    # Refresh if expired
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+    current_time = time.time()
 
-    if not creds or not creds.valid:
-        raise RuntimeError(
-            "Google authentication expired. Please reconnect your Google account in Settings > Connections."
-        )
+    # Quick check without lock (common path)
+    if _gmail_service_cache is not None and (current_time - _gmail_service_cache_time) < _gmail_service_cache_ttl:
+        return _gmail_service_cache
 
-    return build("gmail", "v1", credentials=creds)
+    # Acquire lock for cache miss
+    with _gmail_service_lock:
+        # Double-check pattern: re-verify after acquiring lock
+        current_time = time.time()
+        if _gmail_service_cache is not None and (current_time - _gmail_service_cache_time) < _gmail_service_cache_ttl:
+            return _gmail_service_cache
+
+        if not os.path.exists(TOKEN_FILE):
+            raise RuntimeError(
+                "Google account not connected. Please connect your Google account in Settings > Connections."
+            )
+
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+
+        # Refresh only if actually expired
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(TOKEN_FILE, "w") as f:
+                    f.write(creds.to_json())
+            except Exception:
+                # Invalidate cache on refresh failure
+                _gmail_service_cache = None
+                raise RuntimeError(
+                    "Google authentication expired. Please reconnect your Google account in Settings > Connections."
+                )
+
+        if not creds or not creds.valid:
+            _gmail_service_cache = None
+            raise RuntimeError(
+                "Google authentication expired. Please reconnect your Google account in Settings > Connections."
+            )
+
+        # Build and cache the service
+        _gmail_service_cache = build("gmail", "v1", credentials=creds)
+        _gmail_service_cache_time = current_time
+        return _gmail_service_cache
 
 
 def _parse_email_headers(headers: list) -> dict:

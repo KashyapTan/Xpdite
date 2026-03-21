@@ -10,7 +10,10 @@ the stored token from GOOGLE_TOKEN_FILE environment variable.
 
 import os
 import json
+import time
+import threading
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 from google.oauth2.credentials import Credentials
@@ -39,28 +42,65 @@ SCOPES = [
     "https://www.googleapis.com/auth/calendar.events",
 ]
 
+# ── Service singleton caching ──────────────────────────────────────────────
+_calendar_service_cache: Any = None
+_calendar_service_cache_time: float = 0.0
+_calendar_service_cache_ttl: float = 1800.0  # 30 minutes
+_calendar_service_lock = threading.Lock()
+
 
 def _get_calendar_service():
-    """Build and return an authenticated Google Calendar API service."""
-    if not os.path.exists(TOKEN_FILE):
-        raise RuntimeError(
-            "Google account not connected. Please connect your Google account in Settings > Connections."
-        )
+    """Build and return an authenticated Google Calendar API service with caching.
 
-    creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    Reuses the service object for 30 minutes to avoid rebuilding on every call.
+    Token refresh is checked and performed only when actually expired.
+    Uses threading lock to prevent race conditions during initialization.
+    """
+    global _calendar_service_cache, _calendar_service_cache_time
 
-    # Refresh if expired
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        with open(TOKEN_FILE, "w") as f:
-            f.write(creds.to_json())
+    current_time = time.time()
 
-    if not creds or not creds.valid:
-        raise RuntimeError(
-            "Google authentication expired. Please reconnect your Google account in Settings > Connections."
-        )
+    # Quick check without lock (common path)
+    if _calendar_service_cache is not None and (current_time - _calendar_service_cache_time) < _calendar_service_cache_ttl:
+        return _calendar_service_cache
 
-    return build("calendar", "v3", credentials=creds)
+    # Acquire lock for cache miss
+    with _calendar_service_lock:
+        # Double-check pattern: re-verify after acquiring lock
+        current_time = time.time()
+        if _calendar_service_cache is not None and (current_time - _calendar_service_cache_time) < _calendar_service_cache_ttl:
+            return _calendar_service_cache
+
+        if not os.path.exists(TOKEN_FILE):
+            raise RuntimeError(
+                "Google account not connected. Please connect your Google account in Settings > Connections."
+            )
+
+        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+
+        # Refresh only if actually expired
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                with open(TOKEN_FILE, "w") as f:
+                    f.write(creds.to_json())
+            except Exception:
+                # Invalidate cache on refresh failure
+                _calendar_service_cache = None
+                raise RuntimeError(
+                    "Google authentication expired. Please reconnect your Google account in Settings > Connections."
+                )
+
+        if not creds or not creds.valid:
+            _calendar_service_cache = None
+            raise RuntimeError(
+                "Google authentication expired. Please reconnect your Google account in Settings > Connections."
+            )
+
+        # Build and cache the service
+        _calendar_service_cache = build("calendar", "v3", credentials=creds)
+        _calendar_service_cache_time = current_time
+        return _calendar_service_cache
 
 
 def _format_event(event: dict) -> dict:

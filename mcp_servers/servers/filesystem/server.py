@@ -156,14 +156,20 @@ def _grep_payload(
 def list_directory(path: str) -> list[str]:
     try:
         clean_path = _get_safe_path(path)
-        entries = os.listdir(clean_path)
-        full_paths = [
-            os.path.join(clean_path, entry)
-            for entry in entries
-            if os.path.exists(os.path.join(clean_path, entry))
-        ]
-        full_paths.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-        return [os.path.basename(p) for p in full_paths][0:50]
+        # Use os.scandir for efficiency (avoids repeated stat calls)
+        entries_with_mtime: list[tuple[str, float]] = []
+        with os.scandir(clean_path) as it:
+            for entry in it:
+                try:
+                    # DirEntry.stat() caches stat info, much faster than os.stat()
+                    mtime = entry.stat().st_mtime
+                    entries_with_mtime.append((entry.name, mtime))
+                except (OSError, PermissionError):
+                    # Skip entries we can't stat
+                    continue
+        # Sort by mtime descending (most recent first)
+        entries_with_mtime.sort(key=lambda x: x[1], reverse=True)
+        return [name for name, _ in entries_with_mtime][:50]
 
     except FileNotFoundError:
         return [f"Error: The directory '{path}' does not exist."]
