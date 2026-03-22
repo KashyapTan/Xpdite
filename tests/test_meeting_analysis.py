@@ -1,6 +1,9 @@
 """Tests for MeetingAnalysisService — parsing, transcript extraction, and end-time calc."""
 
 import json
+import importlib
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -11,17 +14,18 @@ import pytest
 # Import helpers — these static methods don't need any external services
 # ---------------------------------------------------------------------------
 
+
 def _get_service_class():
-    """Import MeetingAnalysisService without triggering module-level singletons."""
-    # The module creates singletons at import time which require DB / config.
-    # We only need the class methods, so we import carefully.
-    from source.services.meeting_recorder import MeetingAnalysisService
-    return MeetingAnalysisService
+    """Import MeetingAnalysisService with startup recovery side effects neutralized."""
+    with patch("source.database.db.get_meeting_recordings", return_value=[]):
+        module = importlib.import_module("source.services.meeting_recorder")
+    return module.MeetingAnalysisService
 
 
 # ===========================================================================
 # _parse_analysis_response
 # ===========================================================================
+
 
 class TestParseAnalysisResponse:
     """Test the LLM JSON parsing logic."""
@@ -32,13 +36,19 @@ class TestParseAnalysisResponse:
         return cls._parse_analysis_response
 
     def test_valid_json(self, parse):
-        raw = json.dumps({
-            "summary": "They discussed the quarterly goals.",
-            "actions": [
-                {"type": "calendar_event", "title": "Follow-up", "date": "2025-04-01"},
-                {"type": "email", "to": "alice@example.com", "subject": "Notes"},
-            ],
-        })
+        raw = json.dumps(
+            {
+                "summary": "They discussed the quarterly goals.",
+                "actions": [
+                    {
+                        "type": "calendar_event",
+                        "title": "Follow-up",
+                        "date": "2025-04-01",
+                    },
+                    {"type": "email", "to": "alice@example.com", "subject": "Notes"},
+                ],
+            }
+        )
         result = parse(raw)
         assert result["summary"] == "They discussed the quarterly goals."
         assert len(result["actions"]) == 2
@@ -57,12 +67,12 @@ class TestParseAnalysisResponse:
         assert result["actions"] == []
 
     def test_json_in_bare_code_fence(self, parse):
-        raw = "```\n" '{"summary": "Bare fence.", "actions": []}\n' "```"
+        raw = '```\n{"summary": "Bare fence.", "actions": []}\n```'
         result = parse(raw)
         assert result["summary"] == "Bare fence."
 
     def test_unclosed_code_fence(self, parse):
-        raw = "```json\n" '{"summary": "No closing fence.", "actions": []}'
+        raw = '```json\n{"summary": "No closing fence.", "actions": []}'
         result = parse(raw)
         assert result["summary"] == "No closing fence."
 
@@ -79,24 +89,28 @@ class TestParseAnalysisResponse:
         assert len(result["summary"]) == 1000
 
     def test_filters_unknown_action_types(self, parse):
-        raw = json.dumps({
-            "summary": "Test",
-            "actions": [
-                {"type": "calendar_event", "title": "OK"},
-                {"type": "invalid_type", "title": "Bad"},
-                {"type": "task", "description": "Also OK"},
-            ],
-        })
+        raw = json.dumps(
+            {
+                "summary": "Test",
+                "actions": [
+                    {"type": "calendar_event", "title": "OK"},
+                    {"type": "invalid_type", "title": "Bad"},
+                    {"type": "task", "description": "Also OK"},
+                ],
+            }
+        )
         result = parse(raw)
         assert len(result["actions"]) == 2
         types = [a["type"] for a in result["actions"]]
         assert "invalid_type" not in types
 
     def test_filters_non_dict_actions(self, parse):
-        raw = json.dumps({
-            "summary": "Test",
-            "actions": ["not a dict", 42, {"type": "email", "to": "x@y.com"}],
-        })
+        raw = json.dumps(
+            {
+                "summary": "Test",
+                "actions": ["not a dict", 42, {"type": "email", "to": "x@y.com"}],
+            }
+        )
         result = parse(raw)
         assert len(result["actions"]) == 1
         assert result["actions"][0]["type"] == "email"
@@ -118,10 +132,24 @@ class TestParseAnalysisResponse:
         result = parse(raw)
         assert result["actions"] == []
 
+    def test_non_list_actions_is_tolerated(self, parse):
+        raw = json.dumps({"summary": "Test", "actions": "not-a-list"})
+        result = parse(raw)
+        assert result["summary"] == "Test"
+        assert result["actions"] == []
+
+    def test_json_code_fence_with_invalid_payload_falls_back(self, parse):
+        raw = "```json\n{not valid json}\n```"
+        result = parse(raw)
+        assert result["summary"] == raw
+        assert result["actions"] == []
+        assert result.get("parse_error") is True
+
 
 # ===========================================================================
 # _extract_transcript_text
 # ===========================================================================
+
 
 class TestExtractTranscriptText:
     """Test transcript extraction from recording dicts."""
@@ -135,10 +163,12 @@ class TestExtractTranscriptText:
 
     def test_tier2_json_string(self, extract):
         recording = {
-            "tier2_transcript_json": json.dumps([
-                {"speaker": "Alice", "text": "Hello."},
-                {"speaker": "Bob", "text": "Hi there."},
-            ]),
+            "tier2_transcript_json": json.dumps(
+                [
+                    {"speaker": "Alice", "text": "Hello."},
+                    {"speaker": "Bob", "text": "Hi there."},
+                ]
+            ),
             "tier1_transcript": "hello hi there",
         }
         result = extract(recording)
@@ -157,9 +187,11 @@ class TestExtractTranscriptText:
 
     def test_tier2_without_speaker(self, extract):
         recording = {
-            "tier2_transcript_json": json.dumps([
-                {"text": "No speaker label."},
-            ]),
+            "tier2_transcript_json": json.dumps(
+                [
+                    {"text": "No speaker label."},
+                ]
+            ),
             "tier1_transcript": "",
         }
         result = extract(recording)
@@ -207,12 +239,14 @@ class TestExtractTranscriptText:
 # _calc_end_time (from handlers)
 # ===========================================================================
 
+
 class TestCalcEndTime:
     """Test the end-time calculation helper on the handler."""
 
     @pytest.fixture()
     def calc(self):
         from source.api.handlers import MessageHandler
+
         return MessageHandler._calc_end_time
 
     def test_30_min_duration(self, calc):
@@ -233,16 +267,17 @@ class TestCalcEndTime:
 
     def test_invalid_date_returns_fallback(self, calc):
         result = calc("not-a-date", "09:00", 30)
-        assert result == "not-a-date T09:00:00" or "not-a-date" in result
+        assert result == "not-a-dateT09:00:00"
 
     def test_invalid_time_returns_fallback(self, calc):
         result = calc("2025-04-01", "xx:yy", 30)
-        assert "2025-04-01" in result
+        assert result == "2025-04-01Txx:yy:00"
 
 
 # ===========================================================================
 # _build_analysis_prompt
 # ===========================================================================
+
 
 class TestBuildAnalysisPrompt:
     """Test the prompt builder."""
@@ -279,10 +314,12 @@ class TestBuildAnalysisPrompt:
 # _merge_results — speaker label mapping
 # ===========================================================================
 
+
 def _get_pipeline_class():
-    """Import PostProcessingPipeline without triggering module-level singletons."""
-    from source.services.meeting_recorder import PostProcessingPipeline
-    return PostProcessingPipeline
+    """Import PostProcessingPipeline with startup recovery side effects neutralized."""
+    with patch("source.database.db.get_meeting_recordings", return_value=[]):
+        module = importlib.import_module("source.services.meeting_recorder")
+    return module.PostProcessingPipeline
 
 
 class TestMergeResultsSpeakerLabels:
@@ -294,6 +331,7 @@ class TestMergeResultsSpeakerLabels:
         # _merge_results is called on an instance but only uses self for the
         # logger; we can create one with a mock recorder.
         from unittest.mock import MagicMock
+
         return cls(MagicMock())
 
     def test_no_diarization_returns_base(self, pipeline):
@@ -307,19 +345,45 @@ class TestMergeResultsSpeakerLabels:
         result = pipeline._merge_results(transcript, aligned, None)
         assert result == aligned
 
-    def test_speaker_labels_mapped_without_whisperx(self, pipeline):
-        """When diarization result is present but whisperx.assign_word_speakers
-        fails (import error), segments are returned as-is."""
+    def test_speaker_labels_are_mapped_when_assignment_succeeds(
+        self, pipeline, monkeypatch
+    ):
         segments = [
             {"text": "hi", "start": 0, "end": 1, "speaker": "SPEAKER_00"},
             {"text": "hey", "start": 1, "end": 2, "speaker": "SPEAKER_01"},
         ]
-        # Pass a non-None diarization result; if whisperx isn't installed the
-        # except branch returns base_segments unchanged.
+
+        def _assign_word_speakers(_diarization, payload):
+            return {"segments": payload["segments"]}
+
+        monkeypatch.setitem(
+            sys.modules,
+            "whisperx",
+            types.SimpleNamespace(assign_word_speakers=_assign_word_speakers),
+        )
+
         result = pipeline._merge_results(segments, None, {"mock": True})
-        # Either whisperx is installed and labels get mapped, or they stay raw
-        speakers = {seg.get("speaker") for seg in result}
-        assert len(speakers) >= 1  # At least something is returned
+        assert [seg.get("speaker") for seg in result] == ["Speaker 1", "Speaker 2"]
+
+    def test_speaker_labels_fall_back_when_assignment_fails(
+        self, pipeline, monkeypatch
+    ):
+        segments = [
+            {"text": "hi", "start": 0, "end": 1, "speaker": "SPEAKER_00"},
+            {"text": "hey", "start": 1, "end": 2, "speaker": "SPEAKER_01"},
+        ]
+
+        def _assign_word_speakers(_diarization, _payload):
+            raise RuntimeError("assignment failed")
+
+        monkeypatch.setitem(
+            sys.modules,
+            "whisperx",
+            types.SimpleNamespace(assign_word_speakers=_assign_word_speakers),
+        )
+
+        result = pipeline._merge_results(segments, None, {"mock": True})
+        assert [seg.get("speaker") for seg in result] == ["SPEAKER_00", "SPEAKER_01"]
 
 
 # ===========================================================================
@@ -335,11 +399,15 @@ class TestCallLlm:
 
     def test_openrouter_uses_litellm(self, call_llm):
         fake_response = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="OpenRouter summary"))]
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="OpenRouter summary"))
+            ]
         )
 
-        with patch("source.llm.key_manager.key_manager") as mock_key_manager, \
-             patch("litellm.completion", return_value=fake_response) as mock_completion:
+        with (
+            patch("source.llm.key_manager.key_manager") as mock_key_manager,
+            patch("litellm.completion", return_value=fake_response) as mock_completion,
+        ):
             mock_key_manager.get_api_key.return_value = "or-test-key"
 
             result = call_llm(
@@ -351,3 +419,4 @@ class TestCallLlm:
         kwargs = mock_completion.call_args.kwargs
         assert kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert kwargs["api_key"] == "or-test-key"
+        assert kwargs["timeout"] == 120
