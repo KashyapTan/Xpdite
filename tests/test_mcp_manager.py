@@ -1,7 +1,9 @@
 """Tests for MCP manager embedding refresh behaviour."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -43,11 +45,13 @@ class TestInitMcpServers:
     ):
         manager = reset_mcp_manager_state
 
-        with patch.object(manager, "connect_server", new_callable=AsyncMock) as connect_server, patch.object(
-            manager, "register_inline_tools"
-        ) as register_inline_tools, patch.object(
-            manager_module.retriever, "embed_tools"
-        ) as embed_tools:
+        with (
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
+            patch.object(manager, "register_inline_tools") as register_inline_tools,
+            patch.object(manager_module.retriever, "embed_tools") as embed_tools,
+        ):
             await manager_module.init_mcp_servers()
 
         assert connect_server.await_count == 2
@@ -64,15 +68,18 @@ class TestConnectGoogleServers:
     ):
         manager = reset_mcp_manager_state
 
-        with patch("source.mcp_integration.manager.os.path.exists", return_value=True), patch.object(
-            manager,
-            "is_server_connected",
-            side_effect=[False, False],
-        ), patch.object(
-            manager, "connect_server", new_callable=AsyncMock
-        ) as connect_server, patch.object(
-            manager_module.retriever, "embed_tools"
-        ) as embed_tools:
+        with (
+            patch("source.mcp_integration.manager.os.path.exists", return_value=True),
+            patch.object(
+                manager,
+                "is_server_connected",
+                side_effect=[False, False],
+            ),
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
+            patch.object(manager_module.retriever, "embed_tools") as embed_tools,
+        ):
             await manager.connect_google_servers()
 
         assert connect_server.await_count == 2
@@ -112,7 +119,9 @@ class TestManagerLifecycleRefresh:
 
         assert "demo" not in manager._connections
         assert "demo_tool" not in manager._tool_registry
-        assert [tool["function"]["name"] for tool in manager._ollama_tools] == ["keep_tool"]
+        assert [tool["function"]["name"] for tool in manager._ollama_tools] == [
+            "keep_tool"
+        ]
         assert [tool["name"] for tool in manager._raw_tools] == ["keep_tool"]
         embed_tools.assert_called_once_with(manager._ollama_tools)
 
@@ -124,7 +133,11 @@ class TestManagerLifecycleRefresh:
             {"function": {"name": "existing_tool", "description": "Existing tool"}},
         ]
         manager._raw_tools = [
-            {"name": "existing_tool", "description": "Existing tool", "input_schema": {}},
+            {
+                "name": "existing_tool",
+                "description": "Existing tool",
+                "input_schema": {},
+            },
         ]
 
         inline_tools = [
@@ -144,3 +157,155 @@ class TestManagerLifecycleRefresh:
             "new_inline_tool",
         ]
         embed_tools.assert_called_once_with(manager._ollama_tools)
+
+
+class TestCallTool:
+    @pytest.mark.asyncio
+    async def test_call_tool_unknown_tool_returns_error(self):
+        manager = manager_module.McpToolManager()
+
+        result = await manager.call_tool("missing_tool", {"q": "x"})
+
+        assert result == "Error: Unknown tool 'missing_tool'"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_inline_tool_session_none_guard(self):
+        manager = manager_module.McpToolManager()
+        manager._tool_registry["inline_tool"] = {
+            "session": None,
+            "server_name": "terminal",
+        }
+
+        result = await manager.call_tool("inline_tool", {"cmd": "ls"})
+
+        assert "inline tool" in result
+        assert "cannot be called via MCP session" in result
+        assert "server 'terminal'" in result
+
+    @pytest.mark.asyncio
+    async def test_call_tool_timeout_branch(self):
+        manager = manager_module.McpToolManager()
+
+        async def _timeout_wait_for(*_args, **_kwargs):
+            raise asyncio.TimeoutError
+
+        session = SimpleNamespace(call_tool=Mock(return_value="ignored-by-timeout"))
+        manager._tool_registry["slow_tool"] = {
+            "session": session,
+            "server_name": "filesystem",
+        }
+
+        with patch.object(
+            manager_module.asyncio,
+            "wait_for",
+            new=_timeout_wait_for,
+        ):
+            result = await manager.call_tool("slow_tool", {"path": "/tmp"})
+
+        assert (
+            result
+            == "Error: Tool 'slow_tool' (server 'filesystem') timed out after 90s"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_transport_error_branch(self):
+        manager = manager_module.McpToolManager()
+
+        async def _raise_transport(*_args, **_kwargs):
+            raise BrokenPipeError("pipe closed")
+
+        session = SimpleNamespace(call_tool=_raise_transport)
+        manager._tool_registry["network_tool"] = {
+            "session": session,
+            "server_name": "websearch",
+        }
+
+        result = await manager.call_tool("network_tool", {"query": "x"})
+
+        assert (
+            result
+            == "Error: Tool 'network_tool' (server 'websearch') connection lost: BrokenPipeError"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_unexpected_error_branch(self):
+        manager = manager_module.McpToolManager()
+
+        async def _raise_unexpected(*_args, **_kwargs):
+            raise ValueError("bad args")
+
+        session = SimpleNamespace(call_tool=_raise_unexpected)
+        manager._tool_registry["fragile_tool"] = {
+            "session": session,
+            "server_name": "demo",
+        }
+
+        result = await manager.call_tool("fragile_tool", {"x": 1})
+
+        assert result == "Error: Tool 'fragile_tool' (server 'demo') failed: ValueError"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_assembles_output_from_mixed_content_blocks(self):
+        manager = manager_module.McpToolManager()
+
+        class StringableBlock:
+            def __str__(self):
+                return "[non-text-block]"
+
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    content=[
+                        SimpleNamespace(text="alpha"),
+                        StringableBlock(),
+                        SimpleNamespace(text="omega"),
+                    ]
+                )
+            )
+        )
+        manager._tool_registry["mix_tool"] = {
+            "session": session,
+            "server_name": "filesystem",
+        }
+
+        result = await manager.call_tool("mix_tool", {"id": 7})
+
+        assert result == "alpha\n[non-text-block]\nomega"
+        session.call_tool.assert_awaited_once_with(
+            "mix_tool",
+            arguments={"id": 7},
+            read_timeout_seconds=timedelta(seconds=90),
+        )
+
+
+class TestGetTools:
+    def test_get_tools_strips_additional_properties_without_mutating_source_schema(
+        self,
+    ):
+        manager = manager_module.McpToolManager()
+        manager._raw_tools = [
+            {
+                "name": "schema_tool",
+                "description": "schema test",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "q": {"type": "string"},
+                        "nested": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "properties": {"k": {"type": "string"}},
+                        },
+                    },
+                    "additionalProperties": False,
+                },
+            }
+        ]
+
+        tools = manager.get_tools()
+
+        assert tools is not None
+        params = tools[0]["function"]["parameters"]
+        assert "additionalProperties" not in params
+        assert params["properties"]["nested"]["additionalProperties"] is False
+        assert manager._raw_tools[0]["input_schema"]["additionalProperties"] is False

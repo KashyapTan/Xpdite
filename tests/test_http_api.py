@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import sys
 
 import pytest
 from fastapi import HTTPException
@@ -70,7 +71,9 @@ class TestHttpApiEndpoints:
 
     @pytest.mark.asyncio
     async def test_get_enabled_models_reads_from_db(self):
-        with patch("source.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])):
+        with patch(
+            "source.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])
+        ):
             result = await http_api.get_enabled_models()
         assert result == ["a", "b"]
 
@@ -129,7 +132,9 @@ class TestHttpApiEndpoints:
             body = http_api.ApiKeyUpdate(key="  sk-openrouter-test  ")
             result = await http_api.save_api_key("openrouter", body)
 
-        key_manager.save_api_key.assert_called_once_with("openrouter", "sk-openrouter-test")
+        key_manager.save_api_key.assert_called_once_with(
+            "openrouter", "sk-openrouter-test"
+        )
         invalidate_mock.assert_called_once_with("openrouter")
         assert result == {
             "status": "saved",
@@ -182,16 +187,276 @@ class TestHttpApiEndpoints:
 
         with (
             patch("source.llm.key_manager.key_manager", key_manager),
-            patch("source.llm.key_manager.VALID_PROVIDERS", ("openrouter", "openai", "anthropic")),
+            patch(
+                "source.llm.key_manager.VALID_PROVIDERS",
+                ("openrouter", "openai", "anthropic"),
+            ),
             patch("source.database.db", db_mock),
             patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
         ):
             result = await http_api.delete_api_key("openrouter")
 
         key_manager.delete_api_key.assert_called_once_with("openrouter")
-        db_mock.set_enabled_models.assert_called_once_with(["openai/gpt-4", "anthropic/claude"])
+        db_mock.set_enabled_models.assert_called_once_with(
+            ["openai/gpt-4", "anthropic/claude"]
+        )
         invalidate_mock.assert_called_once_with("openrouter")
         assert result == {"status": "deleted", "provider": "openrouter"}
+
+    @pytest.mark.asyncio
+    async def test_get_openrouter_models_maps_403_to_401(self):
+        key_manager = MagicMock()
+        key_manager.get_api_key.return_value = "sk-openrouter"
+        response = SimpleNamespace(
+            status_code=403,
+            json=lambda: {"error": {"message": "forbidden"}},
+            text="",
+        )
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return response
+
+        with (
+            patch("source.llm.key_manager.key_manager", key_manager),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_openrouter_models(refresh=True)
+
+        assert exc.value.status_code == 401
+        assert "Failed to fetch OpenRouter models: forbidden" in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_get_openrouter_models_maps_500_to_502(self):
+        key_manager = MagicMock()
+        key_manager.get_api_key.return_value = "sk-openrouter"
+        response = SimpleNamespace(
+            status_code=500,
+            json=lambda: {"error": {"message": "upstream error"}},
+            text="",
+        )
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return response
+
+        with (
+            patch("source.llm.key_manager.key_manager", key_manager),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_openrouter_models(refresh=True)
+
+        assert exc.value.status_code == 502
+        assert "Failed to fetch OpenRouter models: upstream error" in str(
+            exc.value.detail
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_openrouter_models_rejects_invalid_data_payload(self):
+        key_manager = MagicMock()
+        key_manager.get_api_key.return_value = "sk-openrouter"
+        response = SimpleNamespace(
+            status_code=200, json=lambda: {"data": {"id": "x"}}, text=""
+        )
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return response
+
+        with (
+            patch("source.llm.key_manager.key_manager", key_manager),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_openrouter_models(refresh=True)
+
+        assert exc.value.status_code == 502
+        assert "unexpected model list format" in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_get_openai_models_filters_to_chat_capable_models(self):
+        key_manager = MagicMock()
+        key_manager.get_api_key.return_value = "sk-openai"
+
+        fake_response = SimpleNamespace(
+            data=[
+                SimpleNamespace(id="gpt-4o"),
+                SimpleNamespace(id="text-embedding-3-small"),
+                SimpleNamespace(id="o3-mini"),
+                SimpleNamespace(id="gpt-4o-realtime-preview"),
+                SimpleNamespace(id="chatgpt-4o-latest"),
+                SimpleNamespace(id="o1-mini"),
+                SimpleNamespace(id="gpt-5"),
+                SimpleNamespace(id="gpt-4o-mini-tts"),
+            ]
+        )
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(list=AsyncMock(return_value=fake_response))
+        )
+        fake_openai = SimpleNamespace(AsyncOpenAI=MagicMock(return_value=fake_client))
+
+        with (
+            patch("source.llm.key_manager.key_manager", key_manager),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+            patch.dict(sys.modules, {"openai": fake_openai}),
+        ):
+            models = await http_api.get_openai_models(refresh=True)
+
+        assert [m["id"] for m in models] == [
+            "openai/chatgpt-4o-latest",
+            "openai/gpt-4o",
+            "openai/gpt-5",
+            "openai/o1-mini",
+            "openai/o3-mini",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_gemini_models_filters_by_supported_actions(self):
+        key_manager = MagicMock()
+        key_manager.get_api_key.return_value = "sk-gemini"
+
+        fake_models = [
+            SimpleNamespace(
+                name="models/gemini-2.0-flash",
+                supported_actions=["generateContent"],
+                display_name="Gemini Flash",
+            ),
+            SimpleNamespace(
+                name="models/gemini-1.5-pro",
+                supported_actions=["generateContent", "countTokens"],
+                display_name="Gemini Pro",
+            ),
+            SimpleNamespace(
+                name="models/gemini-embedding-001",
+                supported_actions=["generateContent"],
+                display_name="Embedding",
+            ),
+            SimpleNamespace(
+                name="models/gemini-2.0-image",
+                supported_actions=["embedContent"],
+                display_name="Image",
+            ),
+        ]
+
+        fake_client = SimpleNamespace(
+            models=SimpleNamespace(list=MagicMock(return_value=fake_models))
+        )
+        fake_genai = SimpleNamespace(Client=MagicMock(return_value=fake_client))
+        fake_google = SimpleNamespace(genai=fake_genai)
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.llm.key_manager.key_manager", key_manager),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.dict(sys.modules, {"google": fake_google}),
+        ):
+            models = await http_api.get_gemini_models(refresh=True)
+
+        assert [m["id"] for m in models] == [
+            "gemini/gemini-1.5-pro",
+            "gemini/gemini-2.0-flash",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_connect_google_success_starts_mcp_servers(self):
+        google_auth = MagicMock()
+        google_auth.start_oauth_flow.return_value = {
+            "success": True,
+            "account_email": "user@example.com",
+        }
+        mcp_manager = SimpleNamespace(connect_google_servers=AsyncMock())
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.connect_google()
+
+        assert result == {"success": True, "account_email": "user@example.com"}
+        mcp_manager.connect_google_servers.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_connect_google_returns_400_when_oauth_reports_failure(self):
+        google_auth = MagicMock()
+        google_auth.start_oauth_flow.return_value = {
+            "success": False,
+            "error": "access_denied",
+        }
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.google_auth.google_auth", google_auth),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.connect_google()
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "access_denied"
+
+    @pytest.mark.asyncio
+    async def test_connect_google_returns_500_when_oauth_raises(self):
+        google_auth = MagicMock()
+        google_auth.start_oauth_flow.side_effect = RuntimeError("callback timeout")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.google_auth.google_auth", google_auth),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.connect_google()
+
+        assert exc.value.status_code == 500
+        assert "OAuth flow failed" in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_disconnect_google_returns_result_on_success(self):
+        google_auth = MagicMock()
+        google_auth.disconnect.return_value = {"success": True}
+        mcp_manager = SimpleNamespace(disconnect_google_servers=AsyncMock())
+
+        with (
+            patch("source.services.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+        ):
+            result = await http_api.disconnect_google()
+
+        assert result == {"success": True}
+        mcp_manager.disconnect_google_servers.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_google_ignores_mcp_disconnect_failures(self):
+        google_auth = MagicMock()
+        google_auth.disconnect.return_value = {"success": True, "disconnected": True}
+        mcp_manager = SimpleNamespace(
+            disconnect_google_servers=AsyncMock(
+                side_effect=RuntimeError("shutdown failure")
+            )
+        )
+
+        with (
+            patch("source.services.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+        ):
+            result = await http_api.disconnect_google()
+
+        assert result == {"success": True, "disconnected": True}
+        mcp_manager.disconnect_google_servers.assert_awaited_once_with()
 
     @pytest.mark.asyncio
     async def test_get_tools_settings_parses_json_and_defaults_top_k(self):

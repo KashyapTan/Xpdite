@@ -26,6 +26,14 @@ describe('toolCallUtils', () => {
       expect(getServerSummaryFragment('skills', 3)).toBe('used 3 skill actions');
     });
 
+    test('summarizes gmail, calendar, and video watchers', () => {
+      expect(getServerSummaryFragment('gmail', 1)).toBe('used 1 gmail action');
+      expect(getServerSummaryFragment('calendar', 2)).toBe('used 2 calendar actions');
+      expect(getServerSummaryFragment('video_watcher', 1)).toBe('watched a YouTube video');
+      expect(getServerSummaryFragment('video_watcher', 2)).toBe('watched 2 YouTube videos');
+      expect(getServerSummaryFragment('skills', 1)).toBe('checked skills');
+    });
+
     test('falls back for unknown servers', () => {
       expect(getServerSummaryFragment('custom_server', 4)).toBe('used custom_server');
     });
@@ -57,6 +65,34 @@ describe('toolCallUtils', () => {
       ).toEqual({
         badge: 'FILE',
         text: "Searching files for 'boot' in 'src' matching '*.ts'",
+      });
+    });
+
+    test('covers filesystem branch fallbacks for glob and grep', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'filesystem',
+            name: 'glob_files',
+            args: { pattern: '   ', base_path: '.' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'FILE',
+        text: 'Finding files matching this pattern',
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'filesystem',
+            name: 'grep_files',
+            args: { pattern: 'err.*', is_regex: true, file_glob: '**/*', path: '.' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'FILE',
+        text: "Searching files for regex 'err.*'",
       });
     });
 
@@ -103,6 +139,135 @@ describe('toolCallUtils', () => {
       ).toEqual({
         badge: 'SUB-AGENT',
         text: 'Reading docs and comparing options',
+      });
+    });
+
+    test('formats gmail actions and label modifications', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'gmail',
+            name: 'send_email',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'GMAIL',
+        text: "Sending email to recipient about a subject",
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'gmail',
+            name: 'modify_labels',
+            args: {
+              message_id: 'abc123',
+              add_labels: 'IMPORTANT',
+              remove_labels: 'UNREAD',
+            },
+          }),
+        ),
+      ).toEqual({
+        badge: 'GMAIL',
+        text: "Updating Gmail labels on 'abc123' to add 'IMPORTANT' and remove 'UNREAD'",
+      });
+    });
+
+    test('formats calendar actions with default fallback values', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'calendar',
+            name: 'get_events',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'CALENDAR',
+        text: 'Checking upcoming events for the next 7 day(s)',
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'calendar',
+            name: 'search_events',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'CALENDAR',
+        text: 'Searching calendar for events in the next 30 day(s)',
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'calendar',
+            name: 'get_free_busy',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'CALENDAR',
+        text: 'Checking calendar availability from start to end',
+      });
+    });
+
+    test('formats video watcher and skills actions', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'video_watcher',
+            name: 'watch_youtube_video',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'YOUTUBE',
+        text: 'Watching YouTube video link',
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'skills',
+            name: 'list_skills',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'SKILLS',
+        text: 'Listing available skills',
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'skills',
+            name: 'use_skill',
+            args: {},
+          }),
+        ),
+      ).toEqual({
+        badge: 'SKILLS',
+        text: "Loading skill 'unknown'",
+      });
+    });
+
+    test('keeps server badge but falls back to generic text for unknown server tools', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'filesystem',
+            name: 'unsupported_fs_tool',
+            args: { depth: 2 },
+          }),
+        ),
+      ).toEqual({
+        badge: 'FILE',
+        text: 'unsupported_fs_tool({"depth":2})',
       });
     });
 
