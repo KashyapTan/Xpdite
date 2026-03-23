@@ -30,6 +30,25 @@ def parse_provider(model_name: str) -> Tuple[str, str]:
     return "ollama", model_name
 
 
+def is_local_ollama_model(model_name: str) -> bool:
+    """Whether a model resolves to a local Ollama runtime.
+
+    Rules:
+    - Non-Ollama providers (anthropic/openai/gemini/openrouter) return False.
+    - Ollama models ending in ``-cloud`` are treated as cloud-hosted and return False.
+    - All other Ollama models are treated as local and return True.
+    """
+    normalized = model_name.strip()
+    provider, _ = parse_provider(normalized)
+    if provider != "ollama":
+        return False
+
+    if normalized.lower().startswith("ollama/"):
+        normalized = normalized.partition("/")[2]
+
+    return not normalized.lower().endswith("-cloud")
+
+
 async def route_chat(
     model_name: str,
     user_query: str,
@@ -69,7 +88,9 @@ async def route_chat(
         tool_names = [t["function"]["name"] for t in retrieved_tools]
         logger.info(
             "Retrieved %d tool(s) for query '%s...': %s",
-            len(tool_names), user_query[:40], tool_names,
+            len(tool_names),
+            user_query[:40],
+            tool_names,
         )
     else:
         logger.info("No tools retrieved for query '%s...'", user_query[:40])
@@ -83,10 +104,16 @@ async def route_chat(
     skills_block = build_skills_prompt_block(skills_to_inject)
 
     if skills_to_inject:
-        logger.debug("Injecting %d skill(s): %s", len(skills_to_inject), [s.name for s in skills_to_inject])
+        logger.debug(
+            "Injecting %d skill(s): %s",
+            len(skills_to_inject),
+            [s.name for s in skills_to_inject],
+        )
 
     custom_template = db.get_setting("system_prompt_template")
-    system_prompt = build_system_prompt(skills_block=skills_block, template=custom_template)
+    system_prompt = build_system_prompt(
+        skills_block=skills_block, template=custom_template
+    )
 
     if provider == "ollama":
         if is_current_request_cancelled():
@@ -94,7 +121,9 @@ async def route_chat(
 
         from .ollama_provider import stream_ollama_chat
 
-        return await stream_ollama_chat(user_query, image_paths, chat_history, system_prompt)
+        return await stream_ollama_chat(
+            user_query, image_paths, chat_history, system_prompt
+        )
 
     # ── Cloud provider path ──────────────────────────────────────────
     # Tools are handled inline during streaming — no separate detection phase.
@@ -119,19 +148,27 @@ async def route_chat(
         return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
 
     # Reuse tools already retrieved above for skill injection
-    allowed_tool_names: set[str] = {
-        t["function"]["name"] for t in retrieved_tools
-    } if retrieved_tools else set()
+    allowed_tool_names: set[str] = (
+        {t["function"]["name"] for t in retrieved_tools} if retrieved_tools else set()
+    )
 
     if allowed_tool_names:
         logger.info(
             "Submitting %d tool(s) to %s/%s: %s",
-            len(allowed_tool_names), provider, model, sorted(allowed_tool_names),
+            len(allowed_tool_names),
+            provider,
+            model,
+            sorted(allowed_tool_names),
         )
 
     # Stream with inline tool calling — text and tool results are
     # interleaved and broadcast to the user in real-time
-    response_text, token_stats, tool_calls_list, interleaved_blocks = await stream_cloud_chat(
+    (
+        response_text,
+        token_stats,
+        tool_calls_list,
+        interleaved_blocks,
+    ) = await stream_cloud_chat(
         provider,
         model,
         api_key,

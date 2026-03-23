@@ -40,11 +40,15 @@ def init_tab_manager() -> TabManager:
     if tab_manager is not None:
         return tab_manager
 
-    from ..core.connection import broadcast_to_tab, reset_current_tab_id, set_current_tab_id
+    from ..core.connection import (
+        broadcast_to_tab,
+        reset_current_tab_id,
+        set_current_tab_id,
+    )
     from ..core.state import app_state
     from ..services.conversations import ConversationService
     from .query_queue import QueuedQuery
-    from ..llm.router import parse_provider
+    from ..llm.router import is_local_ollama_model
 
     async def _process_fn(query: QueuedQuery) -> Optional[str]:
         """Bridge between the queue and ConversationService.submit_query.
@@ -52,8 +56,8 @@ def init_tab_manager() -> TabManager:
         Sets the contextvar so all broadcasts emitted during processing
         are stamped with the correct ``tab_id``.
 
-        Ollama queries are routed through the global Ollama queue so that
-        only one Ollama request runs at a time (the GPU can only serve one).
+        Local Ollama queries are routed through the global Ollama queue so that
+        only one local-GPU request runs at a time.
         """
         from .ollama_global_queue import ollama_global_queue
 
@@ -61,7 +65,6 @@ def init_tab_manager() -> TabManager:
         session = tm.get_or_create(query.tab_id)
 
         model_name = query.model or app_state.selected_model
-        provider, _ = parse_provider(model_name)
 
         async def _do_submit() -> Optional[str]:
             token = set_current_tab_id(query.tab_id)
@@ -80,11 +83,12 @@ def init_tab_manager() -> TabManager:
             finally:
                 reset_current_tab_id(token)
 
-        if provider == "ollama":
-            # Serialize all Ollama requests globally
+        if is_local_ollama_model(model_name):
+            # Serialize local Ollama requests globally (single local GPU).
+            # Ollama cloud models ("-cloud") bypass this and run concurrently.
             return await ollama_global_queue.run(query.tab_id, _do_submit)
         else:
-            # Cloud providers can run concurrently
+            # Cloud providers and Ollama cloud models can run concurrently.
             return await _do_submit()
 
     tab_manager = TabManager(
@@ -105,7 +109,9 @@ def init_tab_manager() -> TabManager:
     default_session = tab_manager.ensure_default_tab()
     adopted_count = _adopt_global_screenshots(default_session)
     if adopted_count:
-        logger.info("Adopted %d legacy screenshot(s) into the default tab", adopted_count)
+        logger.info(
+            "Adopted %d legacy screenshot(s) into the default tab", adopted_count
+        )
 
     logger.info("TabManager initialised with default tab")
     return tab_manager

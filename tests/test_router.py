@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from source.llm.router import parse_provider
+from source.llm.router import is_local_ollama_model, parse_provider
 
 
 # ------------------------------------------------------------------
@@ -50,6 +50,26 @@ class TestParseProvider:
         assert model == "ft:gpt-4o:my-org:custom"
 
 
+class TestIsLocalOllamaModel:
+    def test_local_ollama_model_is_local(self):
+        assert is_local_ollama_model("qwen3-vl:8b-instruct") is True
+
+    def test_cloud_ollama_model_is_not_local(self):
+        assert is_local_ollama_model("qwen3.5:397b-cloud") is False
+
+    def test_cloud_ollama_model_with_explicit_prefix_is_not_local(self):
+        assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is False
+
+    def test_cloud_ollama_suffix_check_is_case_insensitive(self):
+        assert is_local_ollama_model("qwen3.5:397b-CLOUD") is False
+
+    def test_openai_model_is_not_local_ollama(self):
+        assert is_local_ollama_model("openai/gpt-4o") is False
+
+    def test_whitespace_around_provider_model_is_not_local_ollama(self):
+        assert is_local_ollama_model("  openai/gpt-4o  ") is False
+
+
 # ------------------------------------------------------------------
 # route_chat — ensure correct provider dispatch
 # ------------------------------------------------------------------
@@ -61,9 +81,15 @@ _ROUTE_PATCHES = {
         get_setting=MagicMock(return_value=None),
     ),
     "source.llm.prompt.build_system_prompt": MagicMock(return_value="system"),
-    "source.mcp_integration.skill_injector.get_skills_to_inject": MagicMock(return_value=[]),
-    "source.mcp_integration.skill_injector.build_skills_prompt_block": MagicMock(return_value=""),
-    "source.core.state.app_state": MagicMock(stop_streaming=False, current_request=None),
+    "source.mcp_integration.skill_injector.get_skills_to_inject": MagicMock(
+        return_value=[]
+    ),
+    "source.mcp_integration.skill_injector.build_skills_prompt_block": MagicMock(
+        return_value=""
+    ),
+    "source.core.state.app_state": MagicMock(
+        stop_streaming=False, current_request=None
+    ),
 }
 
 
@@ -96,7 +122,12 @@ class TestRouteChat:
     async def test_route_chat_calls_cloud_for_anthropic(self):
         """Anthropic-prefixed models should be dispatched to stream_cloud_chat."""
         mock_stream = AsyncMock(
-            return_value=("cloud reply", {"prompt_eval_count": 10, "eval_count": 20}, [], None)
+            return_value=(
+                "cloud reply",
+                {"prompt_eval_count": 10, "eval_count": 20},
+                [],
+                None,
+            )
         )
         mock_km = MagicMock()
         mock_km.get_api_key.return_value = "sk-test-key"
@@ -115,7 +146,9 @@ class TestRouteChat:
         try:
             from source.llm.router import route_chat
 
-            result = await route_chat("anthropic/claude-sonnet-4-20250514", "Hello", [], [])
+            result = await route_chat(
+                "anthropic/claude-sonnet-4-20250514", "Hello", [], []
+            )
             mock_stream.assert_awaited_once()
             assert result[0] == "cloud reply"
         finally:

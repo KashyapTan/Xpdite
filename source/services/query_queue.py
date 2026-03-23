@@ -2,7 +2,7 @@
 Per-tab async message queue.
 
 Each tab gets its own ConversationQueue backed by an asyncio.Queue.
-Items are processed sequentially within a tab. Ollama models are
+Items are processed sequentially within a tab. Local Ollama models are
 additionally serialized across all tabs via the OllamaGlobalQueue.
 """
 
@@ -93,7 +93,9 @@ class ConversationQueue:
         self._queue.put_nowait(query)
         self._queued_order.append(query)
         position = self._queue.qsize()
-        consumer_running = self._consumer_task is not None and not self._consumer_task.done()
+        consumer_running = (
+            self._consumer_task is not None and not self._consumer_task.done()
+        )
 
         if position == 1 and not self.is_processing and not consumer_running:
             self._pending_active_item_id = query.item_id

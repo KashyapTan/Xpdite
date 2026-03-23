@@ -1,9 +1,9 @@
 """
-Global Ollama serialization queue.
+Global local-Ollama serialization queue.
 
-Ollama can only serve one request at a time (single GPU).  This singleton
-ensures that all tabs using Ollama models are serialized globally, while
-cloud-provider tabs run independently in parallel.
+Local Ollama can only serve one request at a time (single GPU).  This
+singleton ensures that tabs using local Ollama models are serialized globally,
+while cloud-provider and Ollama cloud-model tabs run independently in parallel.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class _OllamaEntry:
 
 
 class OllamaGlobalQueue:
-    """Serializes Ollama requests across all tabs.
+    """Serializes local Ollama requests across all tabs.
 
     Cloud tabs bypass this entirely and run in parallel via their
     tab-local ``ConversationQueue``.
@@ -57,7 +57,7 @@ class OllamaGlobalQueue:
         tab_id: str,
         process_fn: Callable[[], Coroutine[Any, Any, T]],
     ) -> T:
-        """Enqueue an Ollama request and wait for it to complete.
+        """Enqueue a local-Ollama request and wait for it to complete.
 
         The caller suspends here until the global queue reaches this entry
         and ``process_fn`` finishes.  Returns whatever ``process_fn`` returns.
@@ -143,7 +143,7 @@ class OllamaGlobalQueue:
     # ── Internal ──────────────────────────────────────────────────
 
     async def _consumer(self) -> None:
-        """Process Ollama requests one at a time, globally."""
+        """Process local-Ollama requests one at a time, globally."""
         try:
             while True:
                 try:

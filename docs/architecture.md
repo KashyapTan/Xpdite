@@ -199,7 +199,7 @@ source/
 - `find_available_port()` probes ports 8000-8009 to avoid conflicts.
 - Thread-safe SQLite with `check_same_thread=False`, WAL mode, `busy_timeout=5000`.
 - **Skill System**: Skills are filesystem-backed folders under `user_data/skills/`. Builtin skills live under `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). `skill_injector.py` uses two-phase injection: a compact manifest always in the system prompt, and full `SKILL.md` content when the skill is triggered.
-- **Ollama Global Queue**: `OllamaGlobalQueue` serializes all Ollama requests across tabs (GPU serves one at a time). Cloud requests bypass this and run concurrently.
+- **Ollama Global Queue**: `OllamaGlobalQueue` serializes local Ollama requests across tabs (single local GPU). Cloud requests and Ollama cloud models (`-cloud`) bypass this and run concurrently.
 - **Inline LLM routing via LiteLLM**: All cloud providers (Anthropic, OpenAI, Gemini) use `litellm.acompletion()` with `litellm.modify_params=True`. Tool definitions use OpenAI format; LiteLLM translates to native formats.
 
 ## Data Flow
