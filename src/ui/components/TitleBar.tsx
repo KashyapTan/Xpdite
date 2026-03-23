@@ -1,5 +1,5 @@
 import React from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useTabs } from '../contexts/TabContext';
 import '../CSS/TitleBar.css';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
@@ -11,9 +11,17 @@ interface TitleBarProps {
 
 const TitleBar: React.FC<TitleBarProps> = ({ setMini }) => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { createTab } = useTabs();
 
   const handleNewChat = () => {
+    // If not on main chat page, just navigate to it
+    if (location.pathname !== '/') {
+      navigate('/');
+      return;
+    }
+
+    // On main chat page, create a new tab
     const tabId = createTab();
     if (!tabId) {
       return;
