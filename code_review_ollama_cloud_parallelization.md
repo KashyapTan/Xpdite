@@ -3,7 +3,9 @@
 ## Scope
 
 - Updated request routing so only local Ollama models are serialized through `OllamaGlobalQueue`.
-- Added routing/classification tests for Ollama cloud models (`-cloud`) and selected-model fallback behavior.
+- Extended cloud-tag detection to support both Ollama cloud forms: `-cloud` and `:cloud`.
+- Applied the same local/cloud detection to sub-agent parallel spawning logic.
+- Added routing/classification tests for Ollama cloud models and selected-model fallback behavior.
 - Updated backend/architecture docs to reflect local-vs-cloud Ollama queue behavior.
 
 Changed files:
@@ -12,8 +14,10 @@ Changed files:
 - `source/services/tab_manager_instance.py`
 - `source/services/ollama_global_queue.py`
 - `source/services/query_queue.py`
+- `source/services/sub_agent.py`
 - `tests/test_router.py`
 - `tests/test_tab_manager_instance.py`
+- `tests/test_sub_agent.py`
 - `source/CLAUDE_backend.md`
 - `docs/architecture.md`
 
@@ -72,22 +76,36 @@ Changed files:
 - Added `is_local_ollama_model(model_name)` to centralize local/cloud Ollama classification.
 - Switched queue gate in `tab_manager_instance._process_fn` from provider check to locality check.
 - Ensured classification supports:
+  - case-insensitive `:cloud` tag suffix
   - case-insensitive `-cloud` suffix
   - optional `ollama/` prefix
   - whitespace-trimmed model names
+- Switched sub-agent local/remote detection to use the same shared helper (`_is_local_ollama -> is_local_ollama_model`) so parallel spawning behavior matches tab queue routing.
 - Expanded tests:
-  - router classification tests, including whitespace regression
-  - direct cloud Ollama bypass test
-  - parallel execution overlap test for two cloud Ollama requests
+  - router classification tests, including whitespace regression and `:cloud`
+  - direct cloud Ollama bypass tests for both `-cloud` and `:cloud`
+  - parallel execution overlap tests for cloud Ollama requests
   - `model=""` fallback routing tests using `app_state.selected_model` (local and cloud)
+  - sub-agent locality tests for both `-cloud` and `:cloud`
+  - sub-agent parallel vs sequential execution tests based on resolved model locality
 - Updated docs/comments in queue and architecture files to clarify that only local Ollama is serialized globally.
 
 ### Verification Performed
 
-- `uv run python -m pytest tests/test_router.py tests/test_tab_manager_instance.py -v` → **27 passed**
-- `uv run python -m pytest tests/test_ollama_global_queue.py tests/test_query_queue.py tests/test_sub_agent.py -v` → **53 passed**
-- `uv run python -m pytest tests/ -v` → **939 passed, 4 warnings**
-- `uv run ruff check source/llm/router.py source/services/tab_manager_instance.py source/services/query_queue.py tests/test_router.py tests/test_tab_manager_instance.py` → **passed**
+- `uv run python -m pytest tests/test_router.py tests/test_tab_manager_instance.py -v` → **31 passed**
+- `uv run python -m pytest tests/test_sub_agent.py -v` → **32 passed**
+- `uv run python -m pytest tests/test_router.py tests/test_tab_manager_instance.py tests/test_sub_agent.py -v` → **63 passed**
+- `uv run ruff check source/llm/router.py source/services/sub_agent.py tests/test_router.py tests/test_tab_manager_instance.py tests/test_sub_agent.py` → **passed**
+
+Reviewer follow-up fixes (second pass):
+
+- Normalized `model_tier` in `execute_sub_agents_parallel()` before tier-resolution and locality checks, so invalid tiers are treated consistently with `execute_sub_agent()`.
+- Added regression coverage for invalid-tier normalization and explicit `ollama/...:cloud` classification.
+
+Follow-up validation:
+
+- `uv run python -m pytest tests/test_sub_agent.py tests/test_router.py tests/test_tab_manager_instance.py -v` → **65 passed**
+- `uv run ruff check source/services/sub_agent.py tests/test_sub_agent.py source/llm/router.py tests/test_router.py tests/test_tab_manager_instance.py` → **passed**
 
 Notes:
 
@@ -100,4 +118,4 @@ Notes:
 
 **READY WITH CAVEATS**
 
-The Ollama cloud parallelization fix is complete, tested, and verified for local-vs-cloud routing correctness. Remaining caveats are unrelated pre-existing repo lint/frontend-test issues outside this change scope.
+The Ollama cloud parallelization fix is complete, tested, and verified for local-vs-cloud routing correctness in both main tab queue routing and sub-agent parallel spawning. Remaining caveats are unrelated pre-existing repo lint/frontend-test issues outside this change scope.

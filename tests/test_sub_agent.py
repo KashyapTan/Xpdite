@@ -1,6 +1,7 @@
 """Tests for source/services/sub_agent.py — tier resolution, tool filtering, local detection."""
 
 from types import SimpleNamespace
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 
@@ -13,6 +14,7 @@ from source.services.sub_agent import (
     _EXCLUDED_TOOLS,
     _run_cloud_sub_agent,
     execute_sub_agent,
+    execute_sub_agents_parallel,
 )
 
 
@@ -70,8 +72,109 @@ class TestIsLocalOllama:
         # provider not in known cloud set → treated as Ollama-like, no -cloud suffix
         assert _is_local_ollama("custom/some-model") is True
 
+    def test_ollama_cloud_colon_tag_is_not_local(self):
+        assert _is_local_ollama("qwen3-coder-next:cloud") is False
+
+    def test_ollama_cloud_colon_tag_case_insensitive(self):
+        assert _is_local_ollama("qwen3-coder-next:CLOUD") is False
+
     def test_no_slash_no_cloud_is_local(self):
         assert _is_local_ollama("llama3.2") is True
+
+class TestExecuteSubAgentsParallel:
+    async def test_cloud_tagged_ollama_models_run_in_parallel(self):
+        in_flight = 0
+        max_in_flight = 0
+        lock = asyncio.Lock()
+
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
+            nonlocal in_flight, max_in_flight
+            async with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.03)
+            async with lock:
+                in_flight -= 1
+            return f"ok:{agent_name}:{model_tier}:{instruction}"
+
+        with patch("source.services.sub_agent._resolve_tier_model") as mock_resolve, patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
+        ):
+            mock_resolve.side_effect = lambda tier: {
+                "fast": "qwen3-coder-next:cloud",
+                "smart": "gpt-oss:20b-cloud",
+            }[tier]
+
+            calls = [
+                {"instruction": "task one", "model_tier": "fast", "agent_name": "A"},
+                {"instruction": "task two", "model_tier": "smart", "agent_name": "B"},
+            ]
+
+            results = await execute_sub_agents_parallel(calls)
+
+        assert max_in_flight == 2
+        assert len(results) == 2
+        assert results[0].startswith("ok:A")
+        assert results[1].startswith("ok:B")
+
+    async def test_local_ollama_forces_sequential_execution(self):
+        in_flight = 0
+        max_in_flight = 0
+        lock = asyncio.Lock()
+
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
+            nonlocal in_flight, max_in_flight
+            async with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.03)
+            async with lock:
+                in_flight -= 1
+            return f"ok:{agent_name}:{model_tier}:{instruction}"
+
+        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
+        ):
+            calls = [
+                {"instruction": "task one", "model_tier": "fast", "agent_name": "A"},
+                {"instruction": "task two", "model_tier": "fast", "agent_name": "B"},
+            ]
+
+            results = await execute_sub_agents_parallel(calls)
+
+        assert max_in_flight == 1
+        assert len(results) == 2
+
+    async def test_invalid_model_tier_normalizes_before_locality_decision(self):
+        in_flight = 0
+        max_in_flight = 0
+        lock = asyncio.Lock()
+
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
+            nonlocal in_flight, max_in_flight
+            async with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            await asyncio.sleep(0.03)
+            async with lock:
+                in_flight -= 1
+            return f"ok:{agent_name}:{model_tier}:{instruction}"
+
+        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
+        ):
+            calls = [
+                {"instruction": "task one", "model_tier": "unknown", "agent_name": "A"},
+                {"instruction": "task two", "model_tier": "unknown", "agent_name": "B"},
+            ]
+
+            results = await execute_sub_agents_parallel(calls)
+
+        assert max_in_flight == 1
+        assert len(results) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +244,7 @@ class TestGetSubAgentTools:
             {"function": {"name": "search_web_pages"}},
         ]
         result = _get_sub_agent_tools("test instruction")
+        assert result is not None
         names = [t["function"]["name"] for t in result]
         assert "read_file" in names
         assert "search_web_pages" in names

@@ -35,7 +35,7 @@ def is_local_ollama_model(model_name: str) -> bool:
 
     Rules:
     - Non-Ollama providers (anthropic/openai/gemini/openrouter) return False.
-    - Ollama models ending in ``-cloud`` are treated as cloud-hosted and return False.
+    - Ollama models tagged as cloud (``:cloud`` or ``-cloud``) return False.
     - All other Ollama models are treated as local and return True.
     """
     normalized = model_name.strip()
@@ -46,7 +46,13 @@ def is_local_ollama_model(model_name: str) -> bool:
     if normalized.lower().startswith("ollama/"):
         normalized = normalized.partition("/")[2]
 
-    return not normalized.lower().endswith("-cloud")
+    lower_name = normalized.lower()
+    if lower_name.endswith(":cloud"):
+        return False
+    if lower_name.endswith("-cloud"):
+        return False
+
+    return True
 
 
 async def route_chat(

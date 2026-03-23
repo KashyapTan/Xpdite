@@ -190,14 +190,22 @@ def _uses_ollama_client(model_name: str) -> bool:
 def _is_local_ollama(model_name: str) -> bool:
     """Whether the model runs on a **local** GPU via Ollama.
 
-    Cloud-hosted Ollama models use the ``-cloud`` tag suffix (e.g.
-    ``qwen3.5:397b-cloud``) and can safely be parallelised.  True-local
-    models share a single GPU — multiple concurrent calls would compete
-    for VRAM and degrade performance, so they run sequentially.
+    Cloud-hosted Ollama models tagged as ``:cloud`` or ``-cloud`` can be
+    parallelised.  True-local models share a single GPU — multiple concurrent
+    calls would compete for VRAM and degrade performance, so they run
+    sequentially.
     """
-    if not _uses_ollama_client(model_name):
-        return False  # not Ollama at all
-    return not model_name.endswith("-cloud")
+    from ..llm.router import is_local_ollama_model
+
+    return is_local_ollama_model(model_name)
+
+
+def _normalize_model_tier(model_tier: str) -> str:
+    """Normalize model tier values to the supported set."""
+    if model_tier not in ("fast", "smart", "self"):
+        logger.warning("Invalid model_tier '%s', defaulting to 'fast'", model_tier)
+        return "fast"
+    return model_tier
 
 
 # ---------------------------------------------------------------------------
@@ -957,10 +965,7 @@ async def execute_sub_agent(
 
     Returns the sub-agent's response text, or an error message.
     """
-    # Validate tier
-    if model_tier not in ("fast", "smart", "self"):
-        logger.warning("Invalid model_tier '%s', defaulting to 'fast'", model_tier)
-        model_tier = "fast"
+    model_tier = _normalize_model_tier(model_tier)
 
     agent_id = uuid.uuid4().hex[:12]
 
@@ -1093,27 +1098,28 @@ async def execute_sub_agents_parallel(
     if not calls:
         return []
 
+    normalized_tiers = [
+        _normalize_model_tier(c.get("model_tier", "fast"))
+        for c in calls
+    ]
+
     # Pre-resolve tiers once to avoid repeated DB queries (H5 fix)
     tier_cache: Dict[str, str] = {}
-    for c in calls:
-        tier = c.get("model_tier", "fast")
+    for tier in normalized_tiers:
         if tier not in tier_cache:
             tier_cache[tier] = _resolve_tier_model(tier)
 
     # Check if ANY call resolves to local Ollama — if so, run all sequentially
     # to avoid overwhelming the local GPU
-    any_local = any(
-        _is_local_ollama(tier_cache[c.get("model_tier", "fast")])
-        for c in calls
-    )
+    any_local = any(_is_local_ollama(tier_cache[tier]) for tier in normalized_tiers)
 
     if any_local or len(calls) == 1:
         # Sequential execution
         results = []
-        for call in calls:
+        for call, model_tier in zip(calls, normalized_tiers):
             result = await execute_sub_agent(
                 instruction=call["instruction"],
-                model_tier=call.get("model_tier", "fast"),
+                model_tier=model_tier,
                 agent_name=call.get("agent_name", "Sub-Agent"),
             )
             results.append(result)
@@ -1124,10 +1130,10 @@ async def execute_sub_agents_parallel(
         *[
             execute_sub_agent(
                 instruction=c["instruction"],
-                model_tier=c.get("model_tier", "fast"),
+                model_tier=model_tier,
                 agent_name=c.get("agent_name", "Sub-Agent"),
             )
-            for c in calls
+            for c, model_tier in zip(calls, normalized_tiers)
         ],
         return_exceptions=True,
     )

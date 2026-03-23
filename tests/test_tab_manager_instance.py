@@ -231,6 +231,29 @@ class TestProcessFnRouting:
         submit_query_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_ollama_cloud_colon_tag_submits_directly_without_global_queue(
+        self, monkeypatch
+    ):
+        manager = init_tab_manager()
+        submit_query_mock = AsyncMock(return_value="conv-ollama-cloud-colon")
+        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
+        monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
+
+        query = QueuedQuery(
+            tab_id="tab-ollama-cloud-colon",
+            content="hello ollama cloud colon",
+            model="qwen3-coder-next:cloud",
+            capture_mode="none",
+        )
+
+        conversation_id = await manager._process_fn(query)
+
+        assert conversation_id == "conv-ollama-cloud-colon"
+        ollama_run_mock.assert_not_awaited()
+        submit_query_mock.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_ollama_cloud_models_can_run_in_parallel(self, monkeypatch):
         manager = init_tab_manager()
         in_flight = 0
@@ -263,7 +286,7 @@ class TestProcessFnRouting:
         query_b = QueuedQuery(
             tab_id="tab-cloud-b",
             content="hello cloud B",
-            model="llama3.3:70b-cloud",
+            model="qwen3-coder-next:cloud",
             capture_mode="none",
         )
 
@@ -331,6 +354,34 @@ class TestProcessFnRouting:
             conversation_id = await manager._process_fn(query)
 
             assert conversation_id == "conv-selected-cloud"
+            ollama_run_mock.assert_not_awaited()
+            submit_query_mock.assert_awaited_once()
+        finally:
+            app_state.selected_model = saved_model
+
+    @pytest.mark.asyncio
+    async def test_empty_model_uses_selected_model_cloud_colon_tag_bypasses_queue(
+        self, monkeypatch
+    ):
+        manager = init_tab_manager()
+        submit_query_mock = AsyncMock(return_value="conv-selected-cloud-colon")
+        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
+        monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
+
+        saved_model = app_state.selected_model
+        app_state.selected_model = "qwen3-coder-next:cloud"
+        try:
+            query = QueuedQuery(
+                tab_id="tab-selected-cloud-colon",
+                content="hello selected cloud colon",
+                model="",
+                capture_mode="none",
+            )
+
+            conversation_id = await manager._process_fn(query)
+
+            assert conversation_id == "conv-selected-cloud-colon"
             ollama_run_mock.assert_not_awaited()
             submit_query_mock.assert_awaited_once()
         finally:
