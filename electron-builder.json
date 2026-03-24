@@ -13,6 +13,13 @@
             "filter": [
                 "**/*"
             ]
+        },
+        {
+            "from": "dist-channel-bridge",
+            "to": "channel-bridge",
+            "filter": [
+                "**/*"
+            ]
         }
     ],
     "icon": "./assets/xpdite-logo.jpg",

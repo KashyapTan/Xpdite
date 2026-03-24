@@ -27,4 +27,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
     retryBoot: () => {
         return ipcRenderer.invoke('retry-boot');
     },
+    // Channel Bridge IPC methods
+    getChannelBridgePort: () => {
+        return ipcRenderer.invoke('get-channel-bridge-port');
+    },
+    getChannelBridgeStatus: () => {
+        return ipcRenderer.invoke('get-channel-bridge-status');
+    },
+    onChannelBridgeStatus: (callback: (platforms: unknown) => void) => {
+        const handler = (_event: unknown, platforms: unknown) => callback(platforms);
+        ipcRenderer.on('channel-bridge-status', handler);
+        return () => {
+            ipcRenderer.removeListener('channel-bridge-status', handler);
+        };
+    },
+    // WhatsApp pairing code listener
+    onWhatsAppPairingCode: (callback: (code: string) => void) => {
+        const handler = (_event: unknown, code: string) => callback(code);
+        ipcRenderer.on('whatsapp-pairing-code', handler);
+        return () => {
+            ipcRenderer.removeListener('whatsapp-pairing-code', handler);
+        };
+    },
 });

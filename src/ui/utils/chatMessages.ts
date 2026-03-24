@@ -235,6 +235,14 @@ export function mapConversationMessagePayload(
     ? message.images.map(mapConversationImagePayload)
     : undefined;
 
+  // Map mobile_origin from snake_case to camelCase
+  const mobileOrigin = message.mobile_origin
+    ? {
+        platform: message.mobile_origin.platform,
+        displayName: message.mobile_origin.display_name,
+      }
+    : undefined;
+
   return {
     role: message.role as 'user' | 'assistant',
     content: message.content,
@@ -246,6 +254,7 @@ export function mapConversationMessagePayload(
     contentBlocks: message.content_blocks?.map(mapConversationContentBlock),
     activeResponseIndex: message.active_response_index ?? 0,
     responseVersions: message.response_variants?.map(mapResponseVariantPayload),
+    mobileOrigin,
   };
 }
 

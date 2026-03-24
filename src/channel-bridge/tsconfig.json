@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "strict": true,
+        "target": "esnext",
+        "module": "nodenext",
+        "moduleResolution": "nodenext",
+        "outDir": "../../dist-channel-bridge",
+        "rootDir": ".",
+        "skipLibCheck": true,
+        "esModuleInterop": true,
+        "declaration": true,
+        "declarationMap": true,
+        "sourceMap": true
+    },
+    "include": ["./**/*.ts"],
+    "exclude": ["node_modules"]
+}

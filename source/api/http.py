@@ -8,6 +8,7 @@ Use for:
 - Cloud provider model listing
 """
 
+import json
 import logging
 import time
 
@@ -755,7 +756,6 @@ async def get_mcp_servers():
 async def get_tools_settings():
     """Get current tool retrieval settings."""
     from ..database import db
-    import json
 
     always_on_json = db.get_setting("tool_always_on")
     always_on = []
@@ -775,7 +775,6 @@ async def get_tools_settings():
 async def set_tools_settings(body: ToolsSettingsUpdate):
     """Update tool retrieval settings."""
     from ..database import db
-    import json
 
     db.set_setting("tool_always_on", json.dumps(body.always_on))
     db.set_setting("tool_retriever_top_k", str(body.top_k))
@@ -1100,3 +1099,173 @@ async def disconnect_external_connector_endpoint(name: str):
             status_code=500,
             detail=f"Disconnect failed: {str(e)[:300]}",
         )
+
+
+# ============================================
+# Mobile Channels Config Endpoints
+# ============================================
+
+
+class MobilePlatformConfig(BaseModel):
+    """Request body for setting a platform config."""
+
+    token: Optional[str] = None
+    enabled: Optional[bool] = None
+    phoneNumber: Optional[str] = None  # For WhatsApp pairing code auth
+    authMethod: Optional[str] = None  # pairing_code only
+    forcePairing: Optional[bool] = None  # Force clearing existing auth state
+
+
+@router.get("/mobile-channels/config")
+async def get_mobile_channels_config():
+    """
+    Get mobile channels configuration.
+
+    Returns config for all platforms with their enabled status and connection state.
+    """
+    from ..database import db
+
+    # Read configs from database settings
+    platforms = {}
+    for platform_id in ["telegram", "discord", "whatsapp"]:
+        config_raw = db.get_setting(f"mobile_channel_{platform_id}")
+        default_config = {
+            "enabled": False,
+            "status": "disconnected",
+        }
+
+        if not config_raw:
+            platforms[platform_id] = default_config
+            continue
+
+        try:
+            parsed = json.loads(config_raw)
+            parsed_dict = parsed if isinstance(parsed, dict) else default_config
+            if platform_id == "whatsapp" and isinstance(parsed_dict, dict):
+                parsed_dict["authMethod"] = "pairing_code"
+            platforms[platform_id] = parsed_dict
+        except (json.JSONDecodeError, TypeError, ValueError):
+            platforms[platform_id] = default_config
+
+    return {"platforms": platforms}
+
+
+def _write_mobile_channels_config_file() -> None:
+    """
+    Write the mobile channels config to a JSON file for the Channel Bridge to read.
+    This bridges the gap between the Python backend and the TypeScript service.
+    """
+    from ..database import db
+    from ..config import USER_DATA_DIR, DEFAULT_PORT
+    from ..core.state import app_state
+    import json
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    api_port = app_state.server_loop_holder.get("port", DEFAULT_PORT)
+
+    config_data: dict[str, Any] = {
+        "version": 1,
+        "pythonServerPort": api_port,
+        "platforms": {},
+    }
+
+    # Telegram
+    telegram_raw = db.get_setting("mobile_channel_telegram")
+    if telegram_raw:
+        try:
+            telegram = json.loads(telegram_raw)
+            config_data["platforms"]["telegram"] = {
+                "enabled": telegram.get("enabled", False),
+                "botToken": telegram.get("token", ""),
+                "botUsername": telegram.get("username", "xpdite-bot"),
+            }
+        except Exception as e:
+            logger.debug(f"Error parsing telegram settings: {e}")
+
+    # Discord
+    discord_raw = db.get_setting("mobile_channel_discord")
+    if discord_raw:
+        try:
+            discord = json.loads(discord_raw)
+            config_data["platforms"]["discord"] = {
+                "enabled": discord.get("enabled", False),
+                "botToken": discord.get("token", ""),
+                "publicKey": discord.get("publicKey", ""),
+                "applicationId": discord.get("applicationId", ""),
+            }
+        except Exception as e:
+            logger.debug(f"Error parsing discord settings: {e}")
+
+    # WhatsApp
+    whatsapp_raw = db.get_setting("mobile_channel_whatsapp")
+    if whatsapp_raw:
+        try:
+            whatsapp = json.loads(whatsapp_raw)
+            config_data["platforms"]["whatsapp"] = {
+                "enabled": whatsapp.get("enabled", False),
+                # Pairing-code authentication only
+                "authMethod": "pairing_code",
+                "phoneNumber": whatsapp.get("phoneNumber", ""),
+                # Pass through forcePairing flag to clear auth state
+                "forcePairing": whatsapp.get("forcePairing", False),
+            }
+        except Exception as e:
+            logger.debug(f"Error parsing whatsapp settings: {e}")
+
+    config_path = USER_DATA_DIR / "mobile_channels_config.json"
+    with open(config_path, "w", encoding="utf-8") as f:
+        json.dump(config_data, f, indent=2)
+
+
+@router.put("/mobile-channels/config/{platform_id}")
+async def set_mobile_platform_config(platform_id: str, config: MobilePlatformConfig):
+    """
+    Set configuration for a mobile platform.
+
+    Saves the token (encrypted) and enabled status.
+    """
+    from ..database import db
+
+    if platform_id not in ["telegram", "discord", "whatsapp"]:
+        raise HTTPException(status_code=400, detail=f"Unknown platform: {platform_id}")
+
+    # Get existing config (stored as JSON string in SQLite)
+    existing_raw = db.get_setting(f"mobile_channel_{platform_id}")
+    existing: dict[str, Any] = {}
+    if existing_raw:
+        try:
+            parsed = json.loads(existing_raw)
+            if isinstance(parsed, dict):
+                existing = parsed
+        except (json.JSONDecodeError, TypeError, ValueError):
+            existing = {}
+
+    # Update with new values
+    if config.token is not None:
+        existing["token"] = config.token  # TODO: encrypt
+    if config.enabled is not None:
+        existing["enabled"] = config.enabled
+    if config.phoneNumber is not None:
+        existing["phoneNumber"] = config.phoneNumber
+    if config.forcePairing is not None:
+        existing["forcePairing"] = config.forcePairing
+    if platform_id == "whatsapp":
+        # WhatsApp always uses pairing-code auth in this app.
+        existing["authMethod"] = "pairing_code"
+
+    # Set initial status
+    if "status" not in existing:
+        existing["status"] = "disconnected"
+
+    # Save back (serialize dict to JSON string for SQLite storage)
+    db.set_setting(f"mobile_channel_{platform_id}", json.dumps(existing))
+
+    # Notify Channel Bridge to reconnect by writing the config file
+    try:
+        _write_mobile_channels_config_file()
+    except Exception as e:
+        logger.error(f"Failed to write mobile channels config file: {e}")
+
+    return {"success": True}

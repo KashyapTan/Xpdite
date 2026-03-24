@@ -8,6 +8,7 @@ import type { ComponentPropsWithRef, ComponentType, KeyboardEvent as ReactKeyboa
 import ReactMarkdown from 'react-markdown';
 import { CodeBlock } from './CodeBlock';
 import { InlineContentBlocks } from './ToolCallsDisplay';
+import { MobilePlatformBadge } from '../MobilePlatformBadge';
 import { copyToClipboard } from '../../utils/clipboard';
 import {
   buildRenderableContentBlocks,
@@ -234,6 +235,14 @@ export function ChatMessage({
           <div className="message-content">
             {message.role === 'user' ? renderUserContent() : renderAssistantContent()}
           </div>
+          {/* Mobile origin indicator for messages from Telegram/Discord/WhatsApp */}
+          {message.role === 'user' && message.mobileOrigin && (
+            <MobilePlatformBadge 
+              platform={message.mobileOrigin.platform} 
+              size="pill"
+              displayName={message.mobileOrigin.displayName}
+            />
+          )}
           {message.images && message.images.length > 0 && (
             <MessageImages images={message.images} />
           )}

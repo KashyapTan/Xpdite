@@ -3,6 +3,13 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
 import { startPythonServer, stopPythonServer, getServerPort, onBootMarker } from './pythonApi.js';
+import { 
+    startChannelBridge, 
+    stopChannelBridge, 
+    getChannelBridgePort, 
+    getChannelBridgeStatus,
+    onBridgeMessage 
+} from './channelBridgeApi.js';
 import { createBootShellDataUrl } from './bootShellHtml.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -59,6 +66,29 @@ async function bootBackend(): Promise<boolean> {
 
     try {
         await startPythonServer();
+        
+        // Start Channel Bridge after Python is ready
+        publishBootState({ phase: 'connecting_tools', message: 'Starting mobile channels...', progress: 75 });
+        
+        // Listen for Channel Bridge status updates
+        onBridgeMessage((message) => {
+            if (message.type === 'status') {
+                mainWindow?.webContents?.send('channel-bridge-status', message.platforms);
+            } else if (message.type === 'whatsapp_pairing_code') {
+                // Forward WhatsApp pairing code to renderer
+                mainWindow?.webContents?.send('whatsapp-pairing-code', message.code);
+            } else if (message.type === 'error') {
+                console.error('Channel Bridge error:', message.error);
+            }
+        });
+        
+        try {
+            await startChannelBridge(getServerPort());
+        } catch (error) {
+            // Channel Bridge failure is non-fatal - log but continue
+            console.warn('Channel Bridge failed to start (non-fatal):', error);
+        }
+        
         return true;
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -242,6 +272,15 @@ app.on('ready', async () => {
         return getServerPort();
     });
 
+    // Channel Bridge IPC handlers
+    ipcMain.handle('get-channel-bridge-port', () => {
+        return getChannelBridgePort();
+    });
+
+    ipcMain.handle('get-channel-bridge-status', async () => {
+        return getChannelBridgeStatus();
+    });
+
     mainWindow.on('closed', () => {
         mainWindow = null;
     });
@@ -262,5 +301,6 @@ app.on('window-all-closed', () => {
 // before the window closes and before `will-quit`, so one handler is enough.
 app.on('before-quit', async () => {
     console.log('App is quitting, cleaning up processes...');
+    await stopChannelBridge();
     await stopPythonServer();
 });

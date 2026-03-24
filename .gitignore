@@ -12,6 +12,7 @@ dist
 dist-react
 dist-electron
 dist-python
+dist-channel-bridge
 build-temp
 *.local
 

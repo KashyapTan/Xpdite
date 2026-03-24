@@ -9,6 +9,7 @@ import SettingsSystemPrompt from '../components/settings/SettingsSystemPrompt';
 import SettingsSkills from '../components/settings/SettingsSkills';
 import MeetingRecorderSettings from '../components/settings/MeetingRecorderSettings';
 import SettingsSubAgents from '../components/settings/SettingsSubAgents';
+import SettingsMobileChannels from '../components/settings/SettingsMobileChannels';
 import '../CSS/Settings.css';
 import modelsIcon from '../assets/models.svg';
 import connectionsIcon from '../assets/mcp.svg';
@@ -56,6 +57,7 @@ const Settings: React.FC = () => {
     { id: 'skills', label: 'Skills', icon: settingsIcon, className: 'settings-skills-tab', component: <SettingsSkills /> },
     { id: 'meeting', label: 'Meeting', icon: settingsIcon, className: 'settings-meeting-tab', component: <MeetingRecorderSettings /> },
     { id: 'sub-agents', label: 'Sub-Agents', icon: settingsIcon, className: 'settings-sub-agents-tab', component: <SettingsSubAgents /> },
+    { id: 'mobile', label: 'Mobile', icon: settingsIcon, className: 'settings-mobile-tab', component: <SettingsMobileChannels /> },
     { id: 'system-prompt', label: 'Prompt', icon: settingsIcon, className: 'settings-system-prompt-tab', component: <SettingsSystemPrompt /> },
     { id: 'ollama', label: 'Ollama', icon: ollamaIcon, className: 'settings-ollama-model', component: <Placeholder title="Ollama Settings" /> },
     { id: 'anthropic', label: 'Anthropic', icon: anthropicIcon, className: 'settings-anthropic-api-key', component: <SettingsApiKey provider="anthropic" /> },

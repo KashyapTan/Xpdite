@@ -702,4 +702,85 @@ export const api = {
     });
     return response.json();
   },
+
+  // ============================================
+  // Mobile Channels API
+  // ============================================
+
+  /**
+   * Get all paired mobile devices.
+   */
+  async getMobilePairedDevices(): Promise<{ devices: Array<{
+    id: number;
+    platform: string;
+    sender_id: string;
+    display_name: string | null;
+    paired_at: number;
+    last_active: number | null;
+  }> }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/internal/mobile/devices`);
+    if (!response.ok) throw new Error('Failed to fetch paired devices');
+    return response.json();
+  },
+
+  /**
+   * Generate a new pairing code.
+   */
+  async generateMobilePairingCode(): Promise<{ code: string; expires_in_seconds: number }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/internal/mobile/pair/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expires_in_seconds: 600 }),
+    });
+    if (!response.ok) throw new Error('Failed to generate pairing code');
+    return response.json();
+  },
+
+  /**
+   * Revoke a paired device.
+   */
+  async revokeMobilePairedDevice(deviceId: number): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/internal/mobile/devices/${deviceId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to revoke device');
+  },
+
+  /**
+   * Get mobile channels configuration.
+   */
+  async getMobileChannelsConfig(): Promise<{
+    platforms?: Record<string, {
+      enabled: boolean;
+      token?: string;
+      status: 'connected' | 'disconnected' | 'error';
+    }>;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/mobile-channels/config`);
+    if (!response.ok) {
+      // Return empty config if not found
+      return { platforms: {} };
+    }
+    return response.json();
+  },
+
+  /**
+   * Set configuration for a mobile platform.
+   */
+  async setMobilePlatformConfig(
+    platformId: string,
+    config: { token?: string; enabled?: boolean; phoneNumber?: string; authMethod?: string; forcePairing?: boolean }
+  ): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/mobile-channels/config/${platformId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (!response.ok) throw new Error('Failed to save platform config');
+  },
 };

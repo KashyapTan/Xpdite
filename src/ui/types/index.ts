@@ -3,6 +3,19 @@
  */
 
 // ============================================
+// Mobile Channel Types
+// ============================================
+
+/** Supported mobile messaging platforms */
+export type MobilePlatform = 'telegram' | 'discord' | 'whatsapp';
+
+/** Origin information for messages that came from mobile platforms */
+export interface MobileOrigin {
+  platform: MobilePlatform;
+  displayName: string;
+}
+
+// ============================================
 // Chat & Message Types
 // ============================================
 
@@ -100,6 +113,8 @@ export interface ChatMessage {
   timestamp?: number;
   activeResponseIndex?: number;
   responseVersions?: ResponseVariant[];
+  /** Origin info if message came from a mobile platform (Telegram, Discord, WhatsApp) */
+  mobileOrigin?: MobileOrigin;
 }
 
 // ============================================
@@ -297,6 +312,8 @@ export interface ConversationMessagePayload {
   content_blocks?: ConversationContentBlockPayload[];
   active_response_index?: number;
   response_variants?: ConversationResponseVariantPayload[];
+  /** Origin info if message came from a mobile platform (JSON from DB) */
+  mobile_origin?: { platform: MobilePlatform; display_name: string } | null;
 }
 
 export interface ConversationTurnPayload {
@@ -393,6 +410,12 @@ declare global {
       getBootState: () => Promise<ElectronBootState>;
       onBootState: (callback: (state: ElectronBootState) => void) => () => void;
       retryBoot: () => Promise<void>;
+      // Channel Bridge methods
+      getChannelBridgePort: () => Promise<number>;
+      getChannelBridgeStatus: () => Promise<{ platforms: Array<{ platform: string; status: string; error?: string }> }>;
+      onChannelBridgeStatus: (callback: (platforms: Array<{ platform: string; status: string; error?: string }>) => void) => () => void;
+      // WhatsApp pairing listeners
+      onWhatsAppPairingCode: (callback: (code: string) => void) => () => void;
     };
   }
 }
@@ -404,6 +427,8 @@ declare global {
 export interface TabInfo {
   id: string;
   title: string;
+  /** Platform icon badge if tab was created by a mobile message */
+  mobilePlatform?: MobilePlatform;
 }
 
 /** Queued item reported by the backend. */

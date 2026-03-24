@@ -498,6 +498,72 @@ class TestHttpApiEndpoints:
         assert result["settings"] == {"always_on": ["a", "b"], "top_k": 3}
 
     @pytest.mark.asyncio
+    async def test_get_mobile_channels_config_parses_json_and_defaults(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.side_effect = lambda key: {
+            "mobile_channel_telegram": '{"enabled": true, "token": "tg-token", "status": "connected"}',
+            "mobile_channel_discord": None,
+            "mobile_channel_whatsapp": "{bad-json",
+        }.get(key)
+
+        with patch("source.database.db", db_mock):
+            result = await http_api.get_mobile_channels_config()
+
+        assert result == {
+            "platforms": {
+                "telegram": {
+                    "enabled": True,
+                    "token": "tg-token",
+                    "status": "connected",
+                },
+                "discord": {
+                    "enabled": False,
+                    "status": "disconnected",
+                },
+                "whatsapp": {
+                    "enabled": False,
+                    "status": "disconnected",
+                },
+            }
+        }
+
+    @pytest.mark.asyncio
+    async def test_set_mobile_platform_config_serializes_dict_for_storage(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = (
+            '{"enabled": false, "token": "old-token", "status": "connected"}'
+        )
+
+        body = http_api.MobilePlatformConfig(enabled=True)
+        with patch("source.database.db", db_mock):
+            result = await http_api.set_mobile_platform_config("telegram", body)
+
+        args = db_mock.set_setting.call_args.args
+        assert args[0] == "mobile_channel_telegram"
+        assert isinstance(args[1], str)
+        assert (
+            args[1] == '{"enabled": true, "token": "old-token", "status": "connected"}'
+        )
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_mobile_platform_config_recovers_from_invalid_existing_json(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = "{bad-json"
+
+        body = http_api.MobilePlatformConfig(token="new-token", enabled=True)
+        with patch("source.database.db", db_mock):
+            result = await http_api.set_mobile_platform_config("telegram", body)
+
+        args = db_mock.set_setting.call_args.args
+        assert args[0] == "mobile_channel_telegram"
+        assert (
+            args[1]
+            == '{"token": "new-token", "enabled": true, "status": "disconnected"}'
+        )
+        assert result == {"success": True}
+
+    @pytest.mark.asyncio
     async def test_get_sub_agent_settings_uses_empty_defaults(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = None

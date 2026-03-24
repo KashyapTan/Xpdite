@@ -7,6 +7,7 @@
 import React from 'react';
 import { useTabs } from '../contexts/TabContext';
 import { XIcon } from './icons/AppIcons';
+import { MobilePlatformBadge } from './MobilePlatformBadge';
 import '../CSS/TabBar.css';
 
 interface TabBarProps {
@@ -36,6 +37,10 @@ const TabBar: React.FC<TabBarProps> = ({ wsSend }) => {
             onClick={() => switchTab(tab.id)}
             title={tab.title}
           >
+            {/* Platform badge for mobile-originated tabs */}
+            {tab.mobilePlatform && (
+              <MobilePlatformBadge platform={tab.mobilePlatform} size="small" />
+            )}
             <span className="tab-bar-tab-title">{tab.title}</span>
             {tabs.length > 1 && (
               <button

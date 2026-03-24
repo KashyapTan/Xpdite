@@ -245,6 +245,61 @@ class DatabaseManager:
                 END
             """)
 
+            # --- MOBILE CHANNEL TABLES ---
+            # Paired devices table - stores devices that have completed pairing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mobile_paired_devices (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform TEXT NOT NULL,
+                    sender_id TEXT NOT NULL,
+                    display_name TEXT,
+                    paired_at REAL NOT NULL,
+                    last_active REAL,
+                    UNIQUE(platform, sender_id)
+                )
+            """)
+
+            # Active sessions table - maps platform users to Xpdite tabs
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mobile_sessions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    platform TEXT NOT NULL,
+                    sender_id TEXT NOT NULL,
+                    tab_id TEXT NOT NULL,
+                    conversation_id TEXT,
+                    model_override TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL,
+                    UNIQUE(platform, sender_id)
+                )
+            """)
+
+            # Pairing codes table - short-lived codes for device pairing
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS mobile_pairing_codes (
+                    code TEXT PRIMARY KEY,
+                    created_at REAL NOT NULL,
+                    expires_at REAL NOT NULL,
+                    claimed INTEGER DEFAULT 0
+                )
+            """)
+
+            # Mobile channel indexes
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mobile_sessions_tab
+                ON mobile_sessions(tab_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_mobile_paired_devices_platform
+                ON mobile_paired_devices(platform, sender_id)
+            """)
+
+            # Mobile origin column on messages - stores JSON with platform info
+            try:
+                cursor.execute("ALTER TABLE messages ADD COLUMN mobile_origin TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             self._backfill_message_metadata(cursor)
 
             conn.commit()
@@ -474,7 +529,9 @@ class DatabaseManager:
             message["conversation_id"] = row[10]
             return message
 
-    def get_turn_messages(self, conversation_id: str, turn_id: str) -> List[Dict[str, Any]]:
+    def get_turn_messages(
+        self, conversation_id: str, turn_id: str
+    ) -> List[Dict[str, Any]]:
         """Return all persisted messages for a single turn."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -488,7 +545,9 @@ class DatabaseManager:
 
             return [self._build_message_record(row, conn) for row in rows]
 
-    def get_turn_payload(self, conversation_id: str, turn_id: str) -> Dict[str, Any] | None:
+    def get_turn_payload(
+        self, conversation_id: str, turn_id: str
+    ) -> Dict[str, Any] | None:
         """Return the canonical user/assistant payload for a turn."""
         messages = self.get_turn_messages(conversation_id, turn_id)
         if not messages:
@@ -654,7 +713,9 @@ class DatabaseManager:
 
         return self.get_message_by_id(assistant_message_id)
 
-    def truncate_conversation_after_turn(self, conversation_id: str, turn_id: str) -> None:
+    def truncate_conversation_after_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> None:
         """Delete all later turns after the specified turn."""
         with self._connect() as conn:
             cutoff = conn.execute(
@@ -785,8 +846,13 @@ class DatabaseManager:
                     "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
                     (assistant_id,),
                 )
-            conn.execute("DELETE FROM terminal_events WHERE conversation_id = ?", (conversation_id,))
-            conn.execute("DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            conn.execute(
+                "DELETE FROM terminal_events WHERE conversation_id = ?",
+                (conversation_id,),
+            )
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,)
+            )
             conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
             conn.commit()
 
@@ -842,7 +908,8 @@ class DatabaseManager:
         """Update the title of an existing conversation."""
         with self._connect() as conn:
             conn.execute(
-                "UPDATE conversations SET title = ? WHERE id = ?", (title, conversation_id)
+                "UPDATE conversations SET title = ? WHERE id = ?",
+                (title, conversation_id),
             )
             conn.commit()
 
@@ -883,14 +950,17 @@ class DatabaseManager:
     def get_setting(self, key: str) -> str | None:
         """Get a raw setting value by key. Returns None if not found."""
         with self._connect() as conn:
-            row = conn.execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM settings WHERE key = ?", (key,)
+            ).fetchone()
         return row[0] if row else None
 
     def set_setting(self, key: str, value: str):
         """Set a raw setting value (upsert)."""
         with self._connect() as conn:
             conn.execute(
-                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value)
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, value),
             )
             conn.commit()
 
@@ -957,9 +1027,19 @@ class DatabaseManager:
                     timed_out, denied, pty, background, created_at)
                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    event_id, conversation_id, message_index, command, exit_code,
-                    output_preview, full_output, cwd, duration_ms,
-                    int(timed_out), int(denied), int(pty), int(background),
+                    event_id,
+                    conversation_id,
+                    message_index,
+                    command,
+                    exit_code,
+                    output_preview,
+                    full_output,
+                    cwd,
+                    duration_ms,
+                    int(timed_out),
+                    int(denied),
+                    int(pty),
+                    int(background),
                     time.time(),
                 ),
             )
@@ -980,10 +1060,18 @@ class DatabaseManager:
 
         return [
             {
-                "id": r[0], "message_index": r[1], "command": r[2],
-                "exit_code": r[3], "output_preview": r[4], "cwd": r[5],
-                "duration_ms": r[6], "timed_out": bool(r[7]), "denied": bool(r[8]),
-                "pty": bool(r[9]), "background": bool(r[10]), "created_at": r[11],
+                "id": r[0],
+                "message_index": r[1],
+                "command": r[2],
+                "exit_code": r[3],
+                "output_preview": r[4],
+                "cwd": r[5],
+                "duration_ms": r[6],
+                "timed_out": bool(r[7]),
+                "denied": bool(r[8]),
+                "pty": bool(r[9]),
+                "background": bool(r[10]),
+                "created_at": r[11],
             }
             for r in rows
         ]
@@ -1006,9 +1094,16 @@ class DatabaseManager:
     def update_meeting_recording(self, recording_id: str, **fields) -> None:
         """Update one or more allowed fields on a meeting recording."""
         allowed = {
-            "title", "ended_at", "duration_seconds", "status",
-            "audio_file_path", "tier1_transcript", "tier2_transcript_json",
-            "ai_summary", "ai_actions_json", "ai_title_generated",
+            "title",
+            "ended_at",
+            "duration_seconds",
+            "status",
+            "audio_file_path",
+            "tier1_transcript",
+            "tier2_transcript_json",
+            "ai_summary",
+            "ai_actions_json",
+            "ai_title_generated",
         }
         updates = {k: v for k, v in fields.items() if k in allowed}
         if not updates:
@@ -1018,7 +1113,9 @@ class DatabaseManager:
         values = list(updates.values()) + [recording_id]
 
         with self._connect() as conn:
-            conn.execute(f"UPDATE meeting_recordings SET {set_clause} WHERE id = ?", values)
+            conn.execute(
+                f"UPDATE meeting_recordings SET {set_clause} WHERE id = ?", values
+            )
             conn.commit()
 
     def append_tier1_transcript(self, recording_id: str, text: str) -> None:
@@ -1044,8 +1141,14 @@ class DatabaseManager:
             ).fetchall()
 
         return [
-            {"id": r[0], "title": r[1], "started_at": r[2], "ended_at": r[3],
-             "duration_seconds": r[4], "status": r[5]}
+            {
+                "id": r[0],
+                "title": r[1],
+                "started_at": r[2],
+                "ended_at": r[3],
+                "duration_seconds": r[4],
+                "status": r[5],
+            }
             for r in rows
         ]
 
@@ -1063,8 +1166,13 @@ class DatabaseManager:
         if not r:
             return None
         return {
-            "id": r[0], "title": r[1], "started_at": r[2], "ended_at": r[3],
-            "duration_seconds": r[4], "status": r[5], "audio_file_path": r[6],
+            "id": r[0],
+            "title": r[1],
+            "started_at": r[2],
+            "ended_at": r[3],
+            "duration_seconds": r[4],
+            "status": r[5],
+            "audio_file_path": r[6],
             "tier1_transcript": r[7] or "",
             "tier2_transcript_json": json.loads(r[8]) if r[8] else None,
             "ai_summary": r[9],
@@ -1078,15 +1186,15 @@ class DatabaseManager:
             conn.execute("DELETE FROM meeting_recordings WHERE id = ?", (recording_id,))
             conn.commit()
 
-    def search_meeting_recordings(self, search_term: str, limit: int = 20) -> List[Dict]:
+    def search_meeting_recordings(
+        self, search_term: str, limit: int = 20
+    ) -> List[Dict]:
         """Search meeting recordings by title."""
         if not search_term or not search_term.strip():
             return []
 
         escaped = (
-            search_term.replace("\\", "\\\\")
-            .replace("%", "\\%")
-            .replace("_", "\\_")
+            search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         )
 
         with self._connect() as conn:
@@ -1100,8 +1208,285 @@ class DatabaseManager:
             ).fetchall()
 
         return [
-            {"id": r[0], "title": r[1], "started_at": r[2], "ended_at": r[3],
-             "duration_seconds": r[4], "status": r[5]}
+            {
+                "id": r[0],
+                "title": r[1],
+                "started_at": r[2],
+                "ended_at": r[3],
+                "duration_seconds": r[4],
+                "status": r[5],
+            }
+            for r in rows
+        ]
+
+    # ---------------------------------------------------------
+    # MOBILE CHANNEL OPERATIONS
+    # ---------------------------------------------------------
+
+    def create_pairing_code(self, code: str, expires_in_seconds: int = 600) -> None:
+        """Create a new pairing code with expiry."""
+        now = time.time()
+        with self._connect() as conn:
+            # Clean up old expired codes first
+            conn.execute(
+                "DELETE FROM mobile_pairing_codes WHERE expires_at < ?", (now,)
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO mobile_pairing_codes 
+                   (code, created_at, expires_at, claimed)
+                   VALUES (?, ?, ?, 0)""",
+                (code, now, now + expires_in_seconds),
+            )
+            conn.commit()
+
+    def verify_pairing_code(self, code: str) -> bool:
+        """Check if a pairing code is valid and mark it as claimed.
+
+        Returns True if the code was valid and is now claimed.
+        Returns False if the code doesn't exist, is expired, or was already claimed.
+        """
+        now = time.time()
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT claimed FROM mobile_pairing_codes
+                   WHERE code = ? AND expires_at > ?""",
+                (code, now),
+            ).fetchone()
+
+            if not row or row[0]:  # Not found or already claimed
+                return False
+
+            conn.execute(
+                "UPDATE mobile_pairing_codes SET claimed = 1 WHERE code = ?",
+                (code,),
+            )
+            conn.commit()
+            return True
+
+    def cleanup_expired_pairing_codes(self) -> int:
+        """Remove expired pairing codes. Returns count of deleted codes."""
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM mobile_pairing_codes WHERE expires_at < ?",
+                (time.time(),),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def add_paired_device(
+        self, platform: str, sender_id: str, display_name: str | None = None
+    ) -> int:
+        """Add or update a paired device. Returns the device ID."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO mobile_paired_devices 
+                   (platform, sender_id, display_name, paired_at, last_active)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(platform, sender_id) DO UPDATE SET
+                   display_name = excluded.display_name,
+                   last_active = excluded.last_active""",
+                (platform, sender_id, display_name, now, now),
+            )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT id FROM mobile_paired_devices WHERE platform = ? AND sender_id = ?",
+                (platform, sender_id),
+            ).fetchone()
+            return row[0] if row else 0
+
+    def get_paired_device(self, platform: str, sender_id: str) -> Dict | None:
+        """Get a paired device by platform and sender ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT id, platform, sender_id, display_name, paired_at, last_active
+                   FROM mobile_paired_devices
+                   WHERE platform = ? AND sender_id = ?""",
+                (platform, sender_id),
+            ).fetchone()
+
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "platform": row[1],
+            "sender_id": row[2],
+            "display_name": row[3],
+            "paired_at": row[4],
+            "last_active": row[5],
+        }
+
+    def get_all_paired_devices(self) -> List[Dict]:
+        """Get all paired devices."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, platform, sender_id, display_name, paired_at, last_active
+                   FROM mobile_paired_devices
+                   ORDER BY last_active DESC"""
+            ).fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "platform": r[1],
+                "sender_id": r[2],
+                "display_name": r[3],
+                "paired_at": r[4],
+                "last_active": r[5],
+            }
+            for r in rows
+        ]
+
+    def delete_paired_device(self, device_id: int) -> None:
+        """Delete a paired device by ID."""
+        with self._connect() as conn:
+            # Also delete any sessions for this device
+            device = conn.execute(
+                "SELECT platform, sender_id FROM mobile_paired_devices WHERE id = ?",
+                (device_id,),
+            ).fetchone()
+
+            if device:
+                conn.execute(
+                    "DELETE FROM mobile_sessions WHERE platform = ? AND sender_id = ?",
+                    (device[0], device[1]),
+                )
+
+            conn.execute(
+                "DELETE FROM mobile_paired_devices WHERE id = ?",
+                (device_id,),
+            )
+            conn.commit()
+
+    def update_paired_device_activity(self, platform: str, sender_id: str) -> None:
+        """Update the last_active timestamp for a paired device."""
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE mobile_paired_devices SET last_active = ?
+                   WHERE platform = ? AND sender_id = ?""",
+                (time.time(), platform, sender_id),
+            )
+            conn.commit()
+
+    def create_mobile_session(self, platform: str, sender_id: str, tab_id: str) -> int:
+        """Create a new mobile session. Returns the session ID."""
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO mobile_sessions 
+                   (platform, sender_id, tab_id, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(platform, sender_id) DO UPDATE SET
+                   tab_id = excluded.tab_id,
+                   updated_at = excluded.updated_at""",
+                (platform, sender_id, tab_id, now, now),
+            )
+            conn.commit()
+
+            row = conn.execute(
+                "SELECT id FROM mobile_sessions WHERE platform = ? AND sender_id = ?",
+                (platform, sender_id),
+            ).fetchone()
+            return row[0] if row else 0
+
+    def get_mobile_session(self, platform: str, sender_id: str) -> Dict | None:
+        """Get a mobile session by platform and sender ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT id, platform, sender_id, tab_id, conversation_id, 
+                          model_override, created_at, updated_at
+                   FROM mobile_sessions
+                   WHERE platform = ? AND sender_id = ?""",
+                (platform, sender_id),
+            ).fetchone()
+
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "platform": row[1],
+            "sender_id": row[2],
+            "tab_id": row[3],
+            "conversation_id": row[4],
+            "model_override": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+
+    def get_mobile_session_by_tab(self, tab_id: str) -> Dict | None:
+        """Get a mobile session by tab ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT id, platform, sender_id, tab_id, conversation_id, 
+                          model_override, created_at, updated_at
+                   FROM mobile_sessions
+                   WHERE tab_id = ?""",
+                (tab_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "platform": row[1],
+            "sender_id": row[2],
+            "tab_id": row[3],
+            "conversation_id": row[4],
+            "model_override": row[5],
+            "created_at": row[6],
+            "updated_at": row[7],
+        }
+
+    def update_mobile_session(self, platform: str, sender_id: str, **fields) -> None:
+        """Update fields on a mobile session."""
+        allowed = {"tab_id", "conversation_id", "model_override"}
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return
+
+        updates["updated_at"] = time.time()
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [platform, sender_id]
+
+        with self._connect() as conn:
+            conn.execute(
+                f"""UPDATE mobile_sessions SET {set_clause}
+                    WHERE platform = ? AND sender_id = ?""",
+                values,
+            )
+            conn.commit()
+
+    def delete_mobile_session(self, platform: str, sender_id: str) -> None:
+        """Delete a mobile session."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM mobile_sessions WHERE platform = ? AND sender_id = ?",
+                (platform, sender_id),
+            )
+            conn.commit()
+
+    def get_all_mobile_sessions(self) -> List[Dict]:
+        """Get all mobile sessions."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, platform, sender_id, tab_id, conversation_id, 
+                          model_override, created_at, updated_at
+                   FROM mobile_sessions
+                   ORDER BY updated_at DESC"""
+            ).fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "platform": r[1],
+                "sender_id": r[2],
+                "tab_id": r[3],
+                "conversation_id": r[4],
+                "model_override": r[5],
+                "created_at": r[6],
+                "updated_at": r[7],
+            }
             for r in rows
         ]
 
