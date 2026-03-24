@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     messageType: OutboundMessageType,
     replyToMessageId?: string,
     threadId?: string,
-  ): Promise<void> {
+  ): Promise<string | undefined> {
     console.log(
       `[ChannelBridge] Sending ${messageType} to ${platform}:${senderId} (thread: ${threadId ?? 'none'}, chars: ${message.length})`,
     );
@@ -281,9 +281,9 @@ async function main(): Promise<void> {
             throw new Error('Telegram adapter not initialized');
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
-          await adapter.postMessage(targetThreadId, { markdown: message });
-          console.log(`[ChannelBridge] Telegram message sent to ${senderId}`);
-          break;
+          const sent = await adapter.postMessage(targetThreadId, { markdown: message });
+          console.log(`[ChannelBridge] Telegram message sent to ${senderId} (id: ${sent.id})`);
+          return sent.id;
         }
         
         case 'discord': {
@@ -292,9 +292,9 @@ async function main(): Promise<void> {
             throw new Error('Discord adapter not initialized');
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
-          await adapter.postMessage(targetThreadId, { markdown: message });
-          console.log(`[ChannelBridge] Discord message sent to ${senderId}`);
-          break;
+          const sent = await adapter.postMessage(targetThreadId, { markdown: message });
+          console.log(`[ChannelBridge] Discord message sent to ${senderId} (id: ${sent.id})`);
+          return sent.id;
         }
         
         case 'whatsapp': {
@@ -305,8 +305,8 @@ async function main(): Promise<void> {
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
           const sent = await adapter.postMessage(targetThreadId, { markdown: message });
           whatsappOutboundTracker.remember(sent.id, targetThreadId, message);
-          console.log(`[ChannelBridge] WhatsApp message sent to ${senderId}`);
-          break;
+          console.log(`[ChannelBridge] WhatsApp message sent to ${senderId} (id: ${sent.id})`);
+          return sent.id;
         }
         
         default:
@@ -314,6 +314,65 @@ async function main(): Promise<void> {
       }
     } catch (err) {
       console.error(`[ChannelBridge] Error sending to ${platform}:`, err);
+      throw err;
+    }
+  }
+
+  // React to a message with an emoji (used for ack instead of text reply)
+  async function reactToMessage(
+    platform: Platform,
+    threadId: string | undefined,
+    messageId: string,
+    emoji: string,
+  ): Promise<void> {
+    try {
+      const adapter = adapters[platform];
+      if (!adapter) return;
+      // For DMs, we may need to resolve threadId if not provided
+      const resolvedThreadId = threadId ?? (adapter.openDM ? await adapter.openDM(messageId.split(':')[0]) : undefined);
+      if (!resolvedThreadId) {
+        console.warn(`[ChannelBridge] Cannot react on ${platform}: no threadId and cannot resolve DM`);
+        return;
+      }
+      await adapter.addReaction(resolvedThreadId, messageId, emoji);
+      console.log(`[ChannelBridge] Reacted with ${emoji} on ${platform} message ${messageId}`);
+    } catch (err) {
+      // Non-fatal — reactions failing should not break the flow
+      console.error(`[ChannelBridge] Failed to react on ${platform} (threadId=${threadId}, msgId=${messageId}):`, err);
+    }
+  }
+
+  // Show typing indicator on a platform thread
+  async function startTypingIndicator(
+    platform: Platform,
+    threadId: string | undefined,
+  ): Promise<void> {
+    try {
+      const adapter = adapters[platform];
+      if (!adapter || !threadId) return;
+      await adapter.startTyping(threadId);
+    } catch (err) {
+      // Non-fatal — typing indicator failing should not break the flow
+      console.error(`[ChannelBridge] Failed to start typing on ${platform} (thread=${threadId}):`, err);
+    }
+  }
+
+  // Edit an existing message on a platform (used for streaming updates)
+  async function editPlatformMessage(
+    platform: Platform,
+    threadId: string,
+    messageId: string,
+    content: string,
+  ): Promise<void> {
+    try {
+      const adapter = adapters[platform];
+      if (!adapter) {
+        throw new Error(`${platform} adapter not initialized`);
+      }
+      await adapter.editMessage(threadId, messageId, { markdown: content });
+      console.log(`[ChannelBridge] Edited message ${messageId} on ${platform}`);
+    } catch (err) {
+      console.error(`[ChannelBridge] Error editing message on ${platform}:`, err);
       throw err;
     }
   }
@@ -381,19 +440,21 @@ async function main(): Promise<void> {
       const result = await pythonClient.submitMessage(message);
       
       if (result.success && result.queued) {
-        // Send acknowledgment
-        const ackMessage = result.position && result.position > 1
-          ? `Got it! (queued, position ${result.position})`
-          : 'Got it, working on it...';
-        
-        await sendToPlatform(
-          message.platform, 
-          message.senderId, 
-          ackMessage, 
-          'ack', 
-          undefined, 
-          message.threadId
-        );
+        // React with checkmark instead of sending ack message
+        await reactToMessage(message.platform, message.threadId, message.messageId, '✅');
+        // Show typing indicator while processing
+        await startTypingIndicator(message.platform, message.threadId);
+        // Only send text if queued behind other messages
+        if (result.position && result.position > 1) {
+          await sendToPlatform(
+            message.platform, 
+            message.senderId, 
+            `Queued (position ${result.position})`, 
+            'ack', 
+            undefined, 
+            message.threadId
+          );
+        }
       } else if (!result.success) {
         // Check if it's a pairing error - rate limit these responses
         const isUnpairedError = result.error?.includes('pair first') || result.error?.includes('not paired');
@@ -536,6 +597,8 @@ async function main(): Promise<void> {
   // Create HTTP server
   const server = createBridgeServer({
     sendToPlatform,
+    startTypingIndicator,
+    editPlatformMessage,
     getPlatformStatuses,
   });
 

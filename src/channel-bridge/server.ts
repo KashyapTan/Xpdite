@@ -24,6 +24,16 @@ export interface ServerDependencies {
     messageType: OutboundMessageType,
     replyToMessageId?: string,
     threadId?: string,
+  ) => Promise<string | undefined>;
+  startTypingIndicator: (
+    platform: Platform,
+    threadId: string | undefined,
+  ) => Promise<void>;
+  editPlatformMessage: (
+    platform: Platform,
+    threadId: string,
+    messageId: string,
+    content: string,
   ) => Promise<void>;
   getPlatformStatuses: () => PlatformStatus[];
 }
@@ -136,7 +146,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           'error': 'final_response',
         };
 
-        await deps.sendToPlatform(
+        const messageId = await deps.sendToPlatform(
           body.platform,
           body.sender_id,
           body.content,
@@ -145,6 +155,42 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           body.thread_id
         );
 
+        sendJson(res, 200, { success: true, message_id: messageId });
+        return;
+      }
+
+      // Typing indicator from Python backend
+      if (path === '/outbound/typing' && method === 'POST') {
+        const body = await parseBody<{
+          platform: Platform;
+          thread_id: string;
+        }>(req);
+        
+        if (!body.platform || !body.thread_id) {
+          sendError(res, 400, 'Missing required fields: platform, thread_id');
+          return;
+        }
+
+        await deps.startTypingIndicator(body.platform, body.thread_id);
+        sendJson(res, 200, { success: true });
+        return;
+      }
+
+      // Edit existing message (for streaming updates)
+      if (path === '/outbound/edit' && method === 'POST') {
+        const body = await parseBody<{
+          platform: Platform;
+          thread_id: string;
+          message_id: string;
+          content: string;
+        }>(req);
+        
+        if (!body.platform || !body.thread_id || !body.message_id || !body.content) {
+          sendError(res, 400, 'Missing required fields: platform, thread_id, message_id, content');
+          return;
+        }
+
+        await deps.editPlatformMessage(body.platform, body.thread_id, body.message_id, body.content);
         sendJson(res, 200, { success: true });
         return;
       }

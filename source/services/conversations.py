@@ -486,12 +486,23 @@ class ConversationService:
 
             if action == "submit":
                 turn_id = str(uuid.uuid4())
+
+                # Check if this is a mobile-originated message
+                mobile_origin = None
+                if tab_state is not None:
+                    from .mobile_channel import mobile_channel_service
+                    mobile_info = mobile_channel_service.get_mobile_tab_info(tab_state.tab_id)
+                    if mobile_info:
+                        platform_name, _sender_id, _thread_id = mobile_info
+                        mobile_origin = {"platform": platform_name, "display_name": platform_name.title()}
+
                 db.add_message(
                     _require_conv_id(),
                     "user",
                     display_query,
                     image_paths if image_paths else None,
                     turn_id=turn_id,
+                    mobile_origin=mobile_origin,
                 )
 
                 if response_text.strip() or tool_calls:

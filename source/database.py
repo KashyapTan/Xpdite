@@ -348,6 +348,9 @@ class DatabaseManager:
             "content_blocks": self._decode_content_blocks(row[8]),
             "active_response_index": row[9] or 0,
         }
+        # mobile_origin is stored as JSON text in row[10]
+        if len(row) > 10 and row[10]:
+            message["mobile_origin"] = json.loads(row[10])
         if message["role"] == "assistant" and message["message_id"]:
             message["response_variants"] = self._build_response_variants(
                 message["message_id"], conn
@@ -459,11 +462,13 @@ class DatabaseManager:
         message_id: str | None = None,
         created_at: float | None = None,
         active_response_index: int = 0,
+        mobile_origin: Dict[str, str] | None = None,
     ) -> Dict[str, Any]:
         """Save a message and return its persisted metadata."""
         now = created_at if created_at is not None else time.time()
         images_json = json.dumps(images) if images else None
         content_blocks_json = json.dumps(content_blocks) if content_blocks else None
+        mobile_origin_json = json.dumps(mobile_origin) if mobile_origin else None
         resolved_turn_id = turn_id or str(uuid.uuid4())
         resolved_message_id = message_id or str(uuid.uuid4())
 
@@ -471,8 +476,8 @@ class DatabaseManager:
             cursor = conn.execute(
                 """INSERT INTO messages
                    (conversation_id, role, content, images, model, content_blocks, created_at,
-                    message_id, turn_id, active_response_index)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    message_id, turn_id, active_response_index, mobile_origin)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     conversation_id,
                     role,
@@ -484,6 +489,7 @@ class DatabaseManager:
                     resolved_message_id,
                     resolved_turn_id,
                     active_response_index,
+                    mobile_origin_json,
                 ),
             )
             conn.execute(
@@ -503,7 +509,7 @@ class DatabaseManager:
         with self._connect() as conn:
             row = conn.execute(
                 """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
-                          model, content_blocks, active_response_index, conversation_id
+                          model, content_blocks, active_response_index, mobile_origin, conversation_id
                    FROM messages
                    WHERE message_id = ?""",
                 (message_id,),
@@ -523,10 +529,11 @@ class DatabaseManager:
                     row[7],
                     row[8],
                     row[9],
+                    row[10],
                 ),
                 conn,
             )
-            message["conversation_id"] = row[10]
+            message["conversation_id"] = row[11]
             return message
 
     def get_turn_messages(
@@ -536,7 +543,7 @@ class DatabaseManager:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
-                          model, content_blocks, active_response_index
+                          model, content_blocks, active_response_index, mobile_origin
                    FROM messages
                    WHERE conversation_id = ? AND turn_id = ?
                    ORDER BY created_at ASC, num_messages ASC""",
@@ -822,7 +829,7 @@ class DatabaseManager:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
-                          model, content_blocks, active_response_index
+                          model, content_blocks, active_response_index, mobile_origin
                    FROM messages
                    WHERE conversation_id = ?
                    ORDER BY created_at ASC, num_messages ASC""",

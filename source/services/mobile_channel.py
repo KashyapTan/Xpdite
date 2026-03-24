@@ -52,6 +52,9 @@ class MobileChannelService:
         self._mobile_tabs: dict[
             str, tuple[str, str, Optional[str]]
         ] = {}  # tab_id -> (platform, sender_id, thread_id)
+        # Streaming state per tab: tracks post+edit pattern for response chunks
+        # tab_id -> {posted_message_id, accumulated_text, last_edit_time, platform, sender_id, thread_id, last_typing_time}
+        self._streaming_state: dict[str, dict] = {}
 
     @property
     def channel_bridge_url(self) -> str:
@@ -506,13 +509,13 @@ Just send a message to chat with the AI."""
         message_type: str,
         content: str,
         thread_id: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[str]:
         """
         Send a message to a mobile platform via the Channel Bridge.
 
         message_type: 'ack', 'status', 'response', 'error'
 
-        Returns True if sent successfully.
+        Returns the posted message_id if successful, None otherwise.
         """
         try:
             client = await self._get_client()
@@ -530,15 +533,21 @@ Just send a message to chat with the AI."""
                 json=payload,
             )
             response.raise_for_status()
-            return True
+            data = response.json()
+            return data.get("message_id")
         except httpx.HTTPError as e:
             logger.warning(f"Failed to relay message to {platform}/{sender_id}: {e}")
-            return False
+            return None
 
     async def relay_acknowledgment(
         self, platform: str, sender_id: str, thread_id: Optional[str] = None
-    ) -> bool:
-        """Send acknowledgment that message was received."""
+    ) -> Optional[str]:
+        """Send acknowledgment that message was received.
+
+        Note: The channel-bridge now handles acknowledgment via a checkmark
+        reaction instead of a text message. This method is kept for backward
+        compatibility but is no longer called by default.
+        """
         return await self.relay_to_platform(
             platform, sender_id, "ack", "Got it, thinking...", thread_id
         )
@@ -549,7 +558,7 @@ Just send a message to chat with the AI."""
         sender_id: str,
         tool_name: str,
         thread_id: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[str]:
         """Send tool execution status update."""
         # Convert tool name to friendly text
         friendly = tool_name.replace("_", " ").title()
@@ -563,7 +572,7 @@ Just send a message to chat with the AI."""
         sender_id: str,
         response_text: str,
         thread_id: Optional[str] = None,
-    ) -> bool:
+    ) -> Optional[str]:
         """Send final AI response."""
         return await self.relay_to_platform(
             platform, sender_id, "response", response_text, thread_id
@@ -571,11 +580,54 @@ Just send a message to chat with the AI."""
 
     async def relay_error(
         self, platform: str, sender_id: str, error: str, thread_id: Optional[str] = None
-    ) -> bool:
+    ) -> Optional[str]:
         """Send error message."""
         return await self.relay_to_platform(
             platform, sender_id, "error", f"Error: {error}", thread_id
         )
+
+    async def relay_typing(
+        self, platform: str, thread_id: Optional[str] = None
+    ) -> bool:
+        """Send typing indicator to a platform thread via the bridge."""
+        if not thread_id:
+            return False
+        try:
+            client = await self._get_client()
+            response = await client.post(
+                f"{self._channel_bridge_url}/outbound/typing",
+                json={"platform": platform, "thread_id": thread_id},
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError as e:
+            logger.debug(f"Failed to send typing indicator to {platform}: {e}")
+            return False
+
+    async def relay_edit_message(
+        self,
+        platform: str,
+        thread_id: str,
+        message_id: str,
+        content: str,
+    ) -> bool:
+        """Edit an existing message on a platform via the bridge."""
+        try:
+            client = await self._get_client()
+            response = await client.post(
+                f"{self._channel_bridge_url}/outbound/edit",
+                json={
+                    "platform": platform,
+                    "thread_id": thread_id,
+                    "message_id": message_id,
+                    "content": content,
+                },
+            )
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError as e:
+            logger.debug(f"Failed to edit message on {platform}: {e}")
+            return False
 
     # =========================================================================
     # Startup / Restore
@@ -621,12 +673,12 @@ Just send a message to chat with the AI."""
         broadcast. We filter to only relay events for mobile-originated tabs.
 
         Events we relay:
+        - response_chunk: Streaming AI response (post+edit pattern)
         - response_complete: Final AI response
         - tool_call: Tool execution status (only 'calling' status)
         - error: Error messages
 
         Events we skip:
-        - response_chunk: Too granular, we batch into response_complete
         - thinking_chunk/thinking_complete: Internal reasoning
         - token_usage: Stats not useful for mobile
         - queue_updated: Internal state
@@ -642,20 +694,150 @@ Just send a message to chat with the AI."""
         platform, sender_id, thread_id = mobile_info
 
         # Route based on message type
-        if message_type == "response_complete":
-            # Get the accumulated response text from the tab's state
-            await self._relay_final_response(platform, sender_id, tab_id, thread_id)
+        if message_type == "response_chunk":
+            # Stream chunk to mobile platform using post+edit pattern
+            await self._handle_streaming_chunk(tab_id, platform, sender_id, thread_id, content)
+
+        elif message_type == "response_complete":
+            # Send final edit with complete text, then clean up streaming state
+            await self._finalize_streaming(tab_id, platform, sender_id, thread_id)
 
         elif message_type == "tool_call":
-            # Relay tool status when a tool starts
-            if isinstance(content, dict) and content.get("status") == "calling":
+            # Relay tool status updates
+            if isinstance(content, dict):
                 tool_name = content.get("name", "tool")
-                await self.relay_tool_status(platform, sender_id, tool_name, thread_id)
+                status = content.get("status", "")
+                if status == "calling":
+                    await self.relay_tool_status(platform, sender_id, tool_name, thread_id)
+                elif status == "complete":
+                    result = content.get("result", "")
+                    # Send a brief result summary
+                    result_text = str(result) if result else ""
+                    if len(result_text) > 200:
+                        result_text = result_text[:200] + "..."
+                    if result_text:
+                        friendly = tool_name.replace("_", " ").title()
+                        await self.relay_to_platform(
+                            platform, sender_id, "status",
+                            f"\u2705 {friendly}: {result_text}", thread_id
+                        )
 
         elif message_type == "error":
-            # Relay errors
+            # Relay errors and clean up any streaming state
+            self._streaming_state.pop(tab_id, None)
             error_text = content if isinstance(content, str) else str(content)
             await self.relay_error(platform, sender_id, error_text, thread_id)
+
+    async def _handle_streaming_chunk(
+        self,
+        tab_id: str,
+        platform: str,
+        sender_id: str,
+        thread_id: Optional[str],
+        content: Any,
+    ) -> None:
+        """Handle a streaming response chunk with post+edit pattern.
+
+        On the first chunk, post an initial message and store its ID.
+        On subsequent chunks, accumulate text and edit the posted message.
+        Also refreshes typing indicator every ~5 seconds.
+        """
+        import time as _time
+
+        chunk_text = content if isinstance(content, str) else str(content)
+        now = _time.time()
+
+        state = self._streaming_state.get(tab_id)
+
+        if state is None:
+            # First chunk — post initial message and capture the message ID
+            state = {
+                "accumulated_text": chunk_text,
+                "last_edit_time": now,
+                "last_typing_time": now,
+                "platform": platform,
+                "sender_id": sender_id,
+                "thread_id": thread_id,
+                "posted_message_id": None,
+            }
+            self._streaming_state[tab_id] = state
+
+            # Post the initial message and capture the returned message ID
+            sanitized = self._sanitize_for_platform(chunk_text, platform)
+            message_id = await self.relay_to_platform(
+                platform, sender_id, "response", sanitized, thread_id
+            )
+            if message_id:
+                state["posted_message_id"] = message_id
+                logger.debug(f"Streaming started for {tab_id}, posted message {message_id}")
+            else:
+                # Failed to post initial message, clean up
+                self._streaming_state.pop(tab_id, None)
+            return
+
+        # Accumulate text
+        state["accumulated_text"] += chunk_text
+
+        # Refresh typing indicator every 5 seconds
+        if now - state["last_typing_time"] >= 5.0:
+            await self.relay_typing(platform, thread_id)
+            state["last_typing_time"] = now
+
+        # Edit the posted message every ~1 second
+        time_since_edit = now - state["last_edit_time"]
+        if time_since_edit >= 1.0 and state["posted_message_id"] and thread_id:
+            sanitized = self._sanitize_for_platform(state["accumulated_text"], platform)
+            await self.relay_edit_message(
+                platform, thread_id, state["posted_message_id"], sanitized
+            )
+            state["last_edit_time"] = now
+
+    async def _finalize_streaming(
+        self,
+        tab_id: str,
+        platform: str,
+        sender_id: str,
+        thread_id: Optional[str],
+    ) -> None:
+        """Finalize streaming by editing the message with the complete response.
+
+        If streaming was active, sends a final edit.
+        Falls back to _relay_final_response if no streaming state exists.
+        """
+        state = self._streaming_state.pop(tab_id, None)
+
+        if state is not None and state.get("posted_message_id") and thread_id:
+            # Streaming was active — send final edit with complete text from chat history
+            from .tab_manager_instance import tab_manager
+
+            tab_session = tab_manager.get_session(tab_id)
+            if tab_session and tab_session.state.chat_history:
+                # Get the last assistant message for the final text
+                response_text = ""
+                for msg in reversed(tab_session.state.chat_history):
+                    if msg.get("role") == "assistant":
+                        content = msg.get("content", "")
+                        if isinstance(content, str):
+                            response_text = content
+                        elif isinstance(content, list):
+                            text_parts = []
+                            for part in content:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    text_parts.append(part.get("text", ""))
+                                elif isinstance(part, str):
+                                    text_parts.append(part)
+                            response_text = "\n".join(text_parts)
+                        break
+
+                if response_text:
+                    sanitized = self._sanitize_for_platform(response_text, platform)
+                    await self.relay_edit_message(
+                        platform, thread_id, state["posted_message_id"], sanitized
+                    )
+                    return
+
+        # No streaming state or no message ID — fall back to posting full response
+        await self._relay_final_response(platform, sender_id, tab_id, thread_id)
 
     async def _relay_final_response(
         self,
