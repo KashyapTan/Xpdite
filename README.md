@@ -62,7 +62,7 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 
 ## Demo
 
-### Video Demo
+### Video Demo (Currently outdated, will update soon)
 
 <div align="center">
   <img src="./assets/xpdite-demo.gif" alt="Xpdite Demo - Animated Preview" width="720">
