@@ -34,6 +34,17 @@ export interface WhatsAppAdapter {
   getChatSDKAdapter: () => ChatSDKBaileysAdapter | null;
 }
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 export function createWhatsAppAdapter(): WhatsAppAdapter {
   let chatSdkAdapter: ChatSDKBaileysAdapter | null = null;
   
@@ -65,7 +76,7 @@ export function createWhatsAppAdapter(): WhatsAppAdapter {
           // Pairing code authentication
           adapterOptions.phoneNumber = credentials.phoneNumber.replace(/\D/g, ''); // Strip non-digits
           adapterOptions.onPairingCode = (code: string) => {
-            console.log('[WhatsAppAdapter] Pairing code available:', code);
+            debugLog(`[WhatsAppAdapter] Pairing code available: ${code}`);
             // Emit pairing code to Electron for display in settings UI
             emitMessage({ type: 'whatsapp_pairing_code', code });
           };
@@ -73,7 +84,7 @@ export function createWhatsAppAdapter(): WhatsAppAdapter {
         
         chatSdkAdapter = createChatSDKBaileysAdapter(adapterOptions);
         
-        console.log('[WhatsAppAdapter] Chat SDK Baileys adapter created');
+        debugLog('[WhatsAppAdapter] Chat SDK Baileys adapter created');
         
         // Connect to WhatsApp WebSocket
         await chatSdkAdapter.connect();
@@ -82,13 +93,13 @@ export function createWhatsAppAdapter(): WhatsAppAdapter {
         status.connectedAt = Date.now();
         status.error = undefined;
         
-        console.log('[WhatsAppAdapter] Connected to WhatsApp');
+        debugLog('[WhatsAppAdapter] Connected to WhatsApp');
 
       } catch (err) {
         status.status = 'error';
         status.error = (err as Error).message;
         
-        console.error('[WhatsAppAdapter] Connection failed:', err);
+        errorLog('[WhatsAppAdapter] Connection failed:', err);
         throw err;
       }
     },
@@ -105,7 +116,7 @@ export function createWhatsAppAdapter(): WhatsAppAdapter {
       
       status.status = 'disconnected';
       status.connectedAt = undefined;
-      console.log('[WhatsAppAdapter] Disconnected');
+      debugLog('[WhatsAppAdapter] Disconnected');
     },
 
     async sendMessage(chatId: string, text: string): Promise<void> {
@@ -115,7 +126,7 @@ export function createWhatsAppAdapter(): WhatsAppAdapter {
       
       // Message sending will be handled through the Chat instance
       // The Baileys adapter supports reply() for quoted replies
-      console.log(`[WhatsAppAdapter] Would send to ${chatId}: ${text.slice(0, 50)}...`);
+      debugLog(`[WhatsAppAdapter] Would send to ${chatId}: ${text.slice(0, 50)}...`);
     },
 
     getStatus(): PlatformStatus {

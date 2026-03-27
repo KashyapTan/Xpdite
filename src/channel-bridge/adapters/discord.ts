@@ -26,6 +26,17 @@ export interface DiscordAdapter {
   startGatewayListener: () => Promise<void>;
 }
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 export function createDiscordAdapter(): DiscordAdapter {
   let chatSdkAdapter: ChatSDKDiscordAdapter | null = null;
   
@@ -46,14 +57,14 @@ export function createDiscordAdapter(): DiscordAdapter {
           applicationId: credentials.applicationId,
         });
         
-        console.log('[DiscordAdapter] Chat SDK adapter created');
+        debugLog('[DiscordAdapter] Chat SDK adapter created');
         
         // Mark as connected - Gateway will be started separately
         status.status = 'connected';
         status.connectedAt = Date.now();
         status.error = undefined;
         
-        console.log('[DiscordAdapter] Connected with Chat SDK');
+        debugLog('[DiscordAdapter] Connected with Chat SDK');
 
       } catch (err) {
         status.status = 'error';
@@ -74,7 +85,7 @@ export function createDiscordAdapter(): DiscordAdapter {
       chatSdkAdapter = null;
       status.status = 'disconnected';
       status.connectedAt = undefined;
-      console.log('[DiscordAdapter] Disconnected');
+      debugLog('[DiscordAdapter] Disconnected');
     },
 
     async sendMessage(channelId: string, text: string): Promise<void> {
@@ -83,7 +94,7 @@ export function createDiscordAdapter(): DiscordAdapter {
       }
       
       // Message sending will be handled through the Chat instance
-      console.log(`[DiscordAdapter] Would send to ${channelId}: ${text.slice(0, 50)}...`);
+      debugLog(`[DiscordAdapter] Would send to ${channelId}: ${text.slice(0, 50)}...`);
     },
 
     getStatus(): PlatformStatus {
@@ -104,11 +115,11 @@ export function createDiscordAdapter(): DiscordAdapter {
       // In serverless environments, this would be called by a cron job
       // For our desktop app, we keep it running continuously
       try {
-        console.log('[DiscordAdapter] Starting Gateway listener...');
+        debugLog('[DiscordAdapter] Starting Gateway listener...');
         // The Gateway listener runs indefinitely in the background
         // It's managed by the Chat SDK internally
       } catch (err) {
-        console.error('[DiscordAdapter] Failed to start Gateway listener:', err);
+        errorLog('[DiscordAdapter] Failed to start Gateway listener:', err);
         throw err;
       }
     },

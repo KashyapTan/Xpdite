@@ -44,6 +44,17 @@ export interface BridgeServer {
   getPort: () => number;
 }
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 export function createBridgeServer(deps: ServerDependencies): BridgeServer {
   let server: ReturnType<typeof createServer> | null = null;
   let actualPort = 0;
@@ -205,7 +216,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
       sendError(res, 404, `Not found: ${method} ${path}`);
 
     } catch (err) {
-      console.error('[BridgeServer] Error handling request:', err);
+      errorLog('[BridgeServer] Error handling request:', err);
       sendError(res, 500, err instanceof Error ? err.message : 'Internal server error');
     }
   }
@@ -215,7 +226,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
       return new Promise((resolve, reject) => {
         server = createServer((req, res) => {
           handleRequest(req, res).catch((err) => {
-            console.error('[BridgeServer] Unhandled error:', err);
+            errorLog('[BridgeServer] Unhandled error:', err);
             if (!res.headersSent) {
               sendError(res, 500, 'Internal server error');
             }
@@ -225,7 +236,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
         server.on('error', (err: NodeJS.ErrnoException) => {
           if (err.code === 'EADDRINUSE') {
             // Port in use, try next port
-            console.log(`[BridgeServer] Port ${port} in use, trying ${port + 1}`);
+            debugLog(`[BridgeServer] Port ${port} in use, trying ${port + 1}`);
             server?.close();
             resolve(this.start(port + 1));
           } else {
@@ -235,7 +246,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
 
         server.listen(port, '127.0.0.1', () => {
           actualPort = port;
-          console.log(`[BridgeServer] Listening on port ${port}`);
+          debugLog(`[BridgeServer] Listening on port ${port}`);
           resolve(port);
         });
       });

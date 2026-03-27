@@ -44,6 +44,17 @@ const COMMANDS: Record<string, { handler: string; acceptsArgs: boolean; descript
   '/pair': { handler: 'pair', acceptsArgs: true, description: 'Pair with your Xpdite code' },
 };
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 export function createCommandHandler(deps: CommandHandlerDeps): CommandHandler {
   const helpText = generateHelpText();
 
@@ -90,20 +101,20 @@ export function createCommandHandler(deps: CommandHandlerDeps): CommandHandler {
         }
 
         const pairingCode = args[0].trim();
-        console.log(`[CommandHandler] Attempting to pair ${platform}:${senderId} with code ${pairingCode.substring(0, 2)}****`);
+        debugLog(`[CommandHandler] Attempting to pair ${platform}:${senderId} with code ${pairingCode.substring(0, 2)}****`);
 
         try {
-          const response = await deps.callPython<CommandResponse>('/internal/mobile/pair/verify', {
+          const response = await deps.callPython<CommandResponse & { message: string }>('/internal/mobile/pair/verify', {
             platform,
             sender_id: senderId,
             display_name: senderName ?? `${platform}:${senderId}`,
             code: pairingCode,
           });
 
-          console.log(`[CommandHandler] Pairing response: success=${response.success ?? 'unknown'}, message=${response.message}`);
+          debugLog(`[CommandHandler] Pairing response: success=${response.success ?? 'unknown'}, message=${response.message}`);
           return response.message;
         } catch (err) {
-          console.error('[CommandHandler] Pairing error:', err);
+          errorLog('[CommandHandler] Pairing error:', err);
           return 'Pairing failed. Please try again or generate a new code in Xpdite.';
         }
       }
@@ -122,7 +133,7 @@ export function createCommandHandler(deps: CommandHandlerDeps): CommandHandler {
         return result.response || 'Command executed.';
 
       } catch (err) {
-        console.error(`[CommandHandler] Error executing ${commandName}:`, err);
+        errorLog(`[CommandHandler] Error executing ${commandName}:`, err);
         return `Failed to execute ${commandName}. Is Xpdite running?`;
       }
     },

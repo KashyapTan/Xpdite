@@ -59,6 +59,13 @@ export interface PythonClient {
   setBaseUrl: (url: string) => void;
 }
 
+// Simple logging helper
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
 export function createPythonClient(initialBaseUrl: string): PythonClient {
   let baseUrl = initialBaseUrl;
   const timeout = 30000; // 30 second timeout for requests
@@ -178,7 +185,7 @@ export function createPythonClient(initialBaseUrl: string): PythonClient {
 
     setBaseUrl(url: string): void {
       baseUrl = url;
-      console.log(`[PythonClient] Base URL updated to ${url}`);
+      debugLog(`[PythonClient] Base URL updated to ${url}`);
     },
   };
 }

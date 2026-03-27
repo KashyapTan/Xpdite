@@ -112,6 +112,16 @@ function debugLog(message: string): void {
   }
 }
 
+function infoLog(message: string): void {
+  if (mobileDebugLogs) {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 function clearWhatsAppConnectionPoller(): void {
   if (whatsappConnectionPollInterval) {
     clearInterval(whatsappConnectionPollInterval);
@@ -157,14 +167,14 @@ function shouldProcessMessage(
   
   // Check if already processed
   if (processedMessageIds.has(dedupKey)) {
-    console.log(`[ChannelBridge] Skipping duplicate message: ${dedupKey}`);
+    debugLog(`[ChannelBridge] Skipping duplicate message: ${dedupKey}`);
     return false;
   }
   
   // Ignore messages older than bridge startup (historical messages on reconnect)
   // Keep a small grace window for in-flight messages around startup.
   if (messageTimestamp && messageTimestamp < bridgeStartTime - MESSAGE_STARTUP_GRACE_MS) {
-    console.log(`[ChannelBridge] Skipping old message (${new Date(messageTimestamp).toISOString()}): ${dedupKey}`);
+    debugLog(`[ChannelBridge] Skipping old message (${new Date(messageTimestamp).toISOString()}): ${dedupKey}`);
     return false;
   }
   
@@ -234,9 +244,9 @@ function updatePlatformStatus(platform: Platform, update: Partial<PlatformStatus
 // ============================================================================
 
 async function main(): Promise<void> {
-  console.log('[ChannelBridge] Starting...');
-  console.log(`[ChannelBridge] User data dir: ${userDataDir}`);
-  console.log(`[ChannelBridge] Python server port: ${pythonPort}`);
+  infoLog('[ChannelBridge] Starting...');
+  debugLog(`[ChannelBridge] User data dir: ${userDataDir}`);
+  debugLog(`[ChannelBridge] Python server port: ${pythonPort}`);
   
   // Create Python client
   const pythonClient = createPythonClient(`http://127.0.0.1:${pythonPort}`);
@@ -265,12 +275,12 @@ async function main(): Promise<void> {
     replyToMessageId?: string,
     threadId?: string,
   ): Promise<string | undefined> {
-    console.log(
+    debugLog(
       `[ChannelBridge] Sending ${messageType} to ${platform}:${senderId} (thread: ${threadId ?? 'none'}, chars: ${message.length})`,
     );
     // Note: replyToMessageId support is platform-specific and not yet implemented
     if (replyToMessageId) {
-      console.log(`[ChannelBridge] Reply-to message ID: ${replyToMessageId} (not yet implemented)`);
+      debugLog(`[ChannelBridge] Reply-to message ID: ${replyToMessageId} (not yet implemented)`);
     }
     
     try {
@@ -282,7 +292,7 @@ async function main(): Promise<void> {
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
           const sent = await adapter.postMessage(targetThreadId, { markdown: message });
-          console.log(`[ChannelBridge] Telegram message sent to ${senderId} (id: ${sent.id})`);
+          debugLog(`[ChannelBridge] Telegram message sent to ${senderId} (id: ${sent.id})`);
           return sent.id;
         }
         
@@ -293,7 +303,7 @@ async function main(): Promise<void> {
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
           const sent = await adapter.postMessage(targetThreadId, { markdown: message });
-          console.log(`[ChannelBridge] Discord message sent to ${senderId} (id: ${sent.id})`);
+          debugLog(`[ChannelBridge] Discord message sent to ${senderId} (id: ${sent.id})`);
           return sent.id;
         }
         
@@ -305,7 +315,7 @@ async function main(): Promise<void> {
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
           const sent = await adapter.postMessage(targetThreadId, { markdown: message });
           whatsappOutboundTracker.remember(sent.id, targetThreadId, message);
-          console.log(`[ChannelBridge] WhatsApp message sent to ${senderId} (id: ${sent.id})`);
+          debugLog(`[ChannelBridge] WhatsApp message sent to ${senderId} (id: ${sent.id})`);
           return sent.id;
         }
         
@@ -313,7 +323,7 @@ async function main(): Promise<void> {
           throw new Error(`Unknown platform: ${platform}`);
       }
     } catch (err) {
-      console.error(`[ChannelBridge] Error sending to ${platform}:`, err);
+      errorLog(`[ChannelBridge] Error sending to ${platform}:`, err);
       throw err;
     }
   }
@@ -335,10 +345,10 @@ async function main(): Promise<void> {
         return;
       }
       await adapter.addReaction(resolvedThreadId, messageId, emoji);
-      console.log(`[ChannelBridge] Reacted with ${emoji} on ${platform} message ${messageId}`);
+      debugLog(`[ChannelBridge] Reacted with ${emoji} on ${platform} message ${messageId}`);
     } catch (err) {
       // Non-fatal — reactions failing should not break the flow
-      console.error(`[ChannelBridge] Failed to react on ${platform} (threadId=${threadId}, msgId=${messageId}):`, err);
+      errorLog(`[ChannelBridge] Failed to react on ${platform} (threadId=${threadId}, msgId=${messageId}):`, err);
     }
   }
 
@@ -353,7 +363,7 @@ async function main(): Promise<void> {
       await adapter.startTyping(threadId);
     } catch (err) {
       // Non-fatal — typing indicator failing should not break the flow
-      console.error(`[ChannelBridge] Failed to start typing on ${platform} (thread=${threadId}):`, err);
+      errorLog(`[ChannelBridge] Failed to start typing on ${platform} (thread=${threadId}):`, err);
     }
   }
 
@@ -370,9 +380,9 @@ async function main(): Promise<void> {
         throw new Error(`${platform} adapter not initialized`);
       }
       await adapter.editMessage(threadId, messageId, { markdown: content });
-      console.log(`[ChannelBridge] Edited message ${messageId} on ${platform}`);
+      debugLog(`[ChannelBridge] Edited message ${messageId} on ${platform}`);
     } catch (err) {
-      console.error(`[ChannelBridge] Error editing message on ${platform}:`, err);
+      errorLog(`[ChannelBridge] Error editing message on ${platform}:`, err);
       throw err;
     }
   }
@@ -401,7 +411,7 @@ async function main(): Promise<void> {
 
   // Function to handle incoming messages from any platform
   async function handleIncomingMessage(message: InboundMessage): Promise<void> {
-    console.log(
+    debugLog(
       `[ChannelBridge] Received message from ${message.platform}:${message.senderId} (chars: ${message.message.length}, command: ${message.isCommand})`,
     );
 
@@ -413,7 +423,7 @@ async function main(): Promise<void> {
 
     // Check if this is a command
     if (commandHandler.isCommand(message.message)) {
-      console.log(`[ChannelBridge] Processing command: ${message.message}`);
+      infoLog(`[ChannelBridge] Processing command: ${message.message}`);
       const response = await commandHandler.handle(
         message.platform,
         message.senderId,
@@ -422,7 +432,7 @@ async function main(): Promise<void> {
       );
       
       if (response) {
-        console.log(`[ChannelBridge] Command response generated (chars: ${response.length})`);
+        debugLog(`[ChannelBridge] Command response generated (chars: ${response.length})`);
         await sendToPlatform(
           message.platform, 
           message.senderId, 
@@ -473,7 +483,7 @@ async function main(): Promise<void> {
         );
       }
     } catch (err) {
-      console.error('[ChannelBridge] Error submitting message:', err);
+      errorLog('[ChannelBridge] Error submitting message:', err);
       
       // Check if it's a pairing issue - rate limit these responses
       const errorMsg = (err as Error).message;
@@ -520,7 +530,7 @@ async function main(): Promise<void> {
 
     const msgTimestamp = getMessageTimestampMs(message);
     if (msgTimestamp && msgTimestamp < bridgeStartTime - WHATSAPP_SELF_HISTORY_GRACE_MS) {
-      console.log(`[ChannelBridge] Ignoring historical WhatsApp self-message: ${message.id}`);
+      debugLog(`[ChannelBridge] Ignoring historical WhatsApp self-message: ${message.id}`);
       return true;
     }
 
@@ -530,7 +540,7 @@ async function main(): Promise<void> {
       getMessageText(message),
     );
     if (shouldIgnoreEcho) {
-      console.log(`[ChannelBridge] Ignoring WhatsApp outbound echo: ${message.id}`);
+      debugLog(`[ChannelBridge] Ignoring WhatsApp outbound echo: ${message.id}`);
     }
 
     return shouldIgnoreEcho;
@@ -590,7 +600,7 @@ async function main(): Promise<void> {
         await options.thread?.subscribe();
       }
     } catch (err) {
-      console.error('[ChannelBridge] Failed processing inbound message:', err);
+      errorLog('[ChannelBridge] Failed processing inbound message:', err);
     }
   }
 
@@ -621,7 +631,7 @@ async function main(): Promise<void> {
       // CRITICAL: Clean up existing Chat instance and adapters FIRST
       // This prevents polling conflicts and WebSocket issues during reload
       if (chatInstance) {
-        console.log('[ChannelBridge] Cleaning up existing Chat instance before reload...');
+        debugLog('[ChannelBridge] Cleaning up existing Chat instance before reload...');
         // Chat SDK doesn't have a built-in destroy() method, but we can disconnect adapters
       }
       
@@ -636,31 +646,31 @@ async function main(): Promise<void> {
       const shouldKeepWhatsApp = whatsappAlreadyConnected && newWhatsappConfig?.enabled && !newForcePairing;
 
       if (adapters.whatsapp && !shouldKeepWhatsApp) {
-        console.log('[ChannelBridge] Disconnecting existing WhatsApp adapter...');
+        debugLog('[ChannelBridge] Disconnecting existing WhatsApp adapter...');
         try {
           await adapters.whatsapp.disconnect?.();
         } catch (err) {
-          console.warn('[ChannelBridge] Error disconnecting WhatsApp:', err);
+          debugLog(`[ChannelBridge] Error disconnecting WhatsApp: ${(err as Error).message}`);
         }
         adapters.whatsapp = null;
       } else if (shouldKeepWhatsApp) {
-        console.log('[ChannelBridge] Keeping existing WhatsApp connection (already connected, no re-pairing needed)');
+        debugLog('[ChannelBridge] Keeping existing WhatsApp connection (already connected, no re-pairing needed)');
       }
       
       if (adapters.telegram) {
-        console.log('[ChannelBridge] Stopping existing Telegram adapter...');
+        debugLog('[ChannelBridge] Stopping existing Telegram adapter...');
         try {
           // Telegram adapter uses polling, calling stopPolling if available
           const tgAdapter = adapters.telegram as unknown as { stopPolling?: () => void };
           tgAdapter.stopPolling?.();
         } catch (err) {
-          console.warn('[ChannelBridge] Error stopping Telegram polling:', err);
+          debugLog(`[ChannelBridge] Error stopping Telegram polling: ${(err as Error).message}`);
         }
         adapters.telegram = null;
       }
       
       if (adapters.discord) {
-        console.log('[ChannelBridge] Disconnecting existing Discord adapter...');
+        debugLog('[ChannelBridge] Disconnecting existing Discord adapter...');
         adapters.discord = null;
       }
       
@@ -679,7 +689,7 @@ async function main(): Promise<void> {
       
       if (telegramConfig?.enabled) {
         const creds = telegramConfig.credentials as TelegramCredentials;
-        console.log('[ChannelBridge] Initializing Telegram adapter (Chat SDK)...');
+        debugLog('[ChannelBridge] Initializing Telegram adapter (Chat SDK)...');
         
         updatePlatformStatus('telegram', { status: 'connecting' });
         
@@ -696,9 +706,9 @@ async function main(): Promise<void> {
           
           chatAdapters.telegram = adapters.telegram;
           updatePlatformStatus('telegram', { status: 'connected', connectedAt: Date.now(), error: undefined });
-          console.log('[ChannelBridge] Telegram adapter initialized');
+          debugLog('[ChannelBridge] Telegram adapter initialized');
         } catch (err) {
-          console.error('[ChannelBridge] Failed to initialize Telegram:', err);
+          errorLog('[ChannelBridge] Failed to initialize Telegram:', err);
           updatePlatformStatus('telegram', { status: 'error', error: (err as Error).message });
         }
       } else {
@@ -711,7 +721,7 @@ async function main(): Promise<void> {
       
       if (discordConfig?.enabled) {
         const creds = discordConfig.credentials as DiscordCredentials;
-        console.log('[ChannelBridge] Initializing Discord adapter (Chat SDK)...');
+        debugLog('[ChannelBridge] Initializing Discord adapter (Chat SDK)...');
         
         updatePlatformStatus('discord', { status: 'connecting' });
         
@@ -724,9 +734,9 @@ async function main(): Promise<void> {
           
           chatAdapters.discord = adapters.discord;
           updatePlatformStatus('discord', { status: 'connected', connectedAt: Date.now(), error: undefined });
-          console.log('[ChannelBridge] Discord adapter initialized');
+          debugLog('[ChannelBridge] Discord adapter initialized');
         } catch (err) {
-          console.error('[ChannelBridge] Failed to initialize Discord:', err);
+          errorLog('[ChannelBridge] Failed to initialize Discord:', err);
           updatePlatformStatus('discord', { status: 'error', error: (err as Error).message });
         }
       } else {
@@ -740,12 +750,12 @@ async function main(): Promise<void> {
       
       // If we kept the existing WhatsApp adapter, just reuse it
       if (shouldKeepWhatsApp && adapters.whatsapp) {
-        console.log('[ChannelBridge] Reusing existing WhatsApp adapter (skipping teardown/rebuild)');
+        debugLog('[ChannelBridge] Reusing existing WhatsApp adapter (skipping teardown/rebuild)');
         chatAdapters.whatsapp = adapters.whatsapp;
         updatePlatformStatus('whatsapp', { status: 'connected' });
       } else if (whatsappConfig?.enabled) {
         const creds = whatsappConfig.credentials as WhatsAppCredentials;
-        console.log('[ChannelBridge] Initializing WhatsApp adapter (Chat SDK Baileys)...');
+        debugLog('[ChannelBridge] Initializing WhatsApp adapter (Chat SDK Baileys)...');
         
         updatePlatformStatus('whatsapp', { status: 'connecting' });
         
@@ -769,7 +779,7 @@ async function main(): Promise<void> {
           const needsCleanState = !fs.existsSync(credsPath) || creds.forcePairing;
           
           if (needsCleanState) {
-            console.log(`[ChannelBridge] Clearing WhatsApp auth state (${creds.forcePairing ? 'forcePairing requested' : 'fresh pairing'})`);
+            debugLog(`[ChannelBridge] Clearing WhatsApp auth state (${creds.forcePairing ? 'forcePairing requested' : 'fresh pairing'})`);
             // Clean all auth files for a fresh start
             if (fs.existsSync(authDir)) {
               const files = fs.readdirSync(authDir);
@@ -786,7 +796,7 @@ async function main(): Promise<void> {
           const { state, saveCreds } = await useMultiFileAuthState(authDir);
           const isRegistered = Boolean((state as { creds?: { registered?: boolean } }).creds?.registered);
           whatsappNeedsPairing = !isRegistered;
-          console.log(`[ChannelBridge] WhatsApp auth state: registered=${isRegistered}, needsPairing=${whatsappNeedsPairing}, credsExist=${fs.existsSync(path.join(authDir, 'creds.json'))}`);
+          debugLog(`[ChannelBridge] WhatsApp auth state: registered=${isRegistered}, needsPairing=${whatsappNeedsPairing}, credsExist=${fs.existsSync(path.join(authDir, 'creds.json'))}`);
           
           // Track if we've already requested a pairing code for this session
           let pairingCodeRequested = false;
@@ -822,7 +832,7 @@ async function main(): Promise<void> {
               if (pairingCodeRequested) return; // Only request once per applyConfig cycle
               pairingCodeRequested = true;
               
-              console.log('[ChannelBridge] WhatsApp QR event received, requesting pairing code...');
+              debugLog('[ChannelBridge] WhatsApp QR event received, requesting pairing code...');
               try {
                 // Small delay to ensure the socket is fully stabilized after QR generation.
                 await new Promise(resolve => setTimeout(resolve, 500));
@@ -834,13 +844,13 @@ async function main(): Promise<void> {
                 };
                 if (internal._socket?.requestPairingCode) {
                   const code = await internal._socket.requestPairingCode(formattedPhone);
-                  console.log('[ChannelBridge] ✓ WhatsApp pairing code received');
+                  debugLog('[ChannelBridge] ✓ WhatsApp pairing code received');
                   emitMessage({ type: 'whatsapp_pairing_code', code });
                 } else {
-                  console.error('[ChannelBridge] Cannot access WhatsApp socket for pairing code');
+                  errorLog('[ChannelBridge] Cannot access WhatsApp socket for pairing code');
                 }
               } catch (err) {
-                console.error('[ChannelBridge] Failed to request pairing code:', err);
+                errorLog('[ChannelBridge] Failed to request pairing code:', err);
                 updatePlatformStatus('whatsapp', { 
                   status: 'error', 
                   error: `Failed to request pairing code: ${(err as Error).message}` 
@@ -849,7 +859,7 @@ async function main(): Promise<void> {
             } : undefined,
           };
 
-          console.log(`[ChannelBridge] WhatsApp ${whatsappNeedsPairing ? 'needs pairing' : 'already registered'}, phone: ${formattedPhone.substring(0, 4)}****`);
+          debugLog(`[ChannelBridge] WhatsApp ${whatsappNeedsPairing ? 'needs pairing' : 'already registered'}, phone: ${formattedPhone.substring(0, 4)}****`);
           
           adapters.whatsapp = createChatSDKBaileysAdapter(baileysOptions);
           chatAdapters.whatsapp = adapters.whatsapp;
@@ -859,9 +869,9 @@ async function main(): Promise<void> {
           // per the Chat SDK documentation.
           
           updatePlatformStatus('whatsapp', { status: 'connecting' });
-          console.log('[ChannelBridge] WhatsApp adapter created (will connect after Chat init)');
+          debugLog('[ChannelBridge] WhatsApp adapter created (will connect after Chat init)');
         } catch (err) {
-          console.error('[ChannelBridge] Failed to initialize WhatsApp:', err);
+          errorLog('[ChannelBridge] Failed to initialize WhatsApp:', err);
           updatePlatformStatus('whatsapp', { status: 'error', error: (err as Error).message });
         }
       } else if (!shouldKeepWhatsApp) {
@@ -880,7 +890,7 @@ async function main(): Promise<void> {
         // Register message handlers
         // onNewMention: fires when bot is @-mentioned in a group it hasn't subscribed to
         chatInstance.onNewMention(async (thread, message) => {
-          console.log(`[ChannelBridge] 📨 onNewMention fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
+          debugLog(`[ChannelBridge] 📨 onNewMention fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
           await processInboundChatMessage(thread.id, message, {
             subscribeAfter: true,
             thread,
@@ -889,20 +899,20 @@ async function main(): Promise<void> {
         
         // onSubscribedMessage: fires for every message in a subscribed thread
         chatInstance.onSubscribedMessage(async (thread, message) => {
-          console.log(`[ChannelBridge] 📨 onSubscribedMessage fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
+          debugLog(`[ChannelBridge] 📨 onSubscribedMessage fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
           await processInboundChatMessage(thread.id, message);
         });
 
         // onNewMessage: fires for any message matching pattern in unsubscribed thread
         // We use this to handle DMs
         chatInstance.onNewMessage(/.*/, async (thread, message) => {
-          console.log(`[ChannelBridge] 📨 onNewMessage fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
+          debugLog(`[ChannelBridge] 📨 onNewMessage fired: thread=${thread.id} msgId=${message.id} author=${message.author.userName} isMe=${message.author.isMe}`);
           await processInboundChatMessage(thread.id, message);
         });
         
         // Initialize the Chat instance (attaches adapters, starts Telegram/Discord)
         await chatInstance.initialize();
-        console.log('[ChannelBridge] Chat SDK instance initialized');
+        debugLog('[ChannelBridge] Chat SDK instance initialized');
         
         // NOW connect WhatsApp - must be AFTER initialize() per Chat SDK docs
         // WhatsApp is WebSocket-based and needs to connect after Chat is initialized.
@@ -912,7 +922,7 @@ async function main(): Promise<void> {
         // already-connected adapter creates a second socket, causing an infinite loop.
         if (adapters.whatsapp && !shouldKeepWhatsApp) {
           try {
-            console.log('[ChannelBridge] Connecting WhatsApp WebSocket...');
+            debugLog('[ChannelBridge] Connecting WhatsApp WebSocket...');
             
             await adapters.whatsapp.connect();
             
@@ -925,36 +935,36 @@ async function main(): Promise<void> {
             if (waInternal._socket?.ev) {
               waInternal._socket.ev.on('messages.upsert', (...args: unknown[]) => {
                 const data = args[0] as { messages?: unknown[]; type?: string };
-                console.log(`[ChannelBridge] 🔔 RAW messages.upsert: type=${data?.type} count=${data?.messages?.length}`);
+                debugLog(`[ChannelBridge] 🔔 RAW messages.upsert: type=${data?.type} count=${data?.messages?.length}`);
               });
               waInternal._socket.ev.on('connection.update', (...args: unknown[]) => {
                 const data = args[0] as { connection?: string; lastDisconnect?: unknown };
-                console.log(`[ChannelBridge] 🔔 RAW connection.update: connection=${data?.connection}`);
+                debugLog(`[ChannelBridge] 🔔 RAW connection.update: connection=${data?.connection}`);
               });
-              console.log('[ChannelBridge] ✓ Direct Baileys event listeners attached');
+              debugLog('[ChannelBridge] ✓ Direct Baileys event listeners attached');
             }
 
             // Check if we're already connected (happens when resuming an existing session)
             if (adapters.whatsapp.botUserId) {
-              console.log(`[ChannelBridge] WhatsApp connected as ${adapters.whatsapp.botUserId}`);
+              infoLog(`[ChannelBridge] WhatsApp connected as ${adapters.whatsapp.botUserId}`);
               updatePlatformStatus('whatsapp', { status: 'connected', connectedAt: Date.now(), error: undefined });
               
               // Notify Python to reset forcePairing flag
               pythonClient.post('/internal/mobile/whatsapp/connection', {
                 status: 'connected',
                 bot_user_id: adapters.whatsapp.botUserId,
-              }).catch(err => console.error('[ChannelBridge] Failed to notify Python of WhatsApp connection:', err));
+              }).catch(err => errorLog('[ChannelBridge] Failed to notify Python of WhatsApp connection:', err));
             } else {
               // For pairing-code auth, we stay in connecting until the linked-device
               // flow is completed on the phone.
-              console.log('[ChannelBridge] WhatsApp connect() completed - waiting for pairing...');
+              debugLog('[ChannelBridge] WhatsApp connect() completed - waiting for pairing...');
               updatePlatformStatus('whatsapp', { status: 'connecting', error: undefined });
               
               // Start polling for connection status (pairing completion)
               clearWhatsAppConnectionPoller();
               whatsappConnectionPollInterval = setInterval(() => {
                 if (adapters.whatsapp?.botUserId) {
-                  console.log(`[ChannelBridge] WhatsApp paired successfully as ${adapters.whatsapp.botUserId}`);
+                  infoLog(`[ChannelBridge] WhatsApp paired successfully as ${adapters.whatsapp.botUserId}`);
                   updatePlatformStatus('whatsapp', { status: 'connected', connectedAt: Date.now(), error: undefined });
                   emitMessage({ type: 'status', platforms: getPlatformStatuses() });
                   clearWhatsAppConnectionPoller();
@@ -963,7 +973,7 @@ async function main(): Promise<void> {
                   pythonClient.post('/internal/mobile/whatsapp/connection', {
                     status: 'connected',
                     bot_user_id: adapters.whatsapp.botUserId,
-                  }).catch(err => console.error('[ChannelBridge] Failed to notify Python of WhatsApp connection:', err));
+                  }).catch(err => errorLog('[ChannelBridge] Failed to notify Python of WhatsApp connection:', err));
                 }
               }, 1000);
               
@@ -973,20 +983,20 @@ async function main(): Promise<void> {
               }, 5 * 60 * 1000);
             }
           } catch (err) {
-            console.error('[ChannelBridge] WhatsApp connection failed:', err);
+            errorLog('[ChannelBridge] WhatsApp connection failed:', err);
             updatePlatformStatus('whatsapp', { status: 'error', error: (err as Error).message });
           }
         }
       } else {
         chatInstance = null;
-        console.log('[ChannelBridge] No adapters configured, Chat SDK instance not created');
+        debugLog('[ChannelBridge] No adapters configured, Chat SDK instance not created');
       }
       
       // Emit status update
       emitMessage({ type: 'status', platforms: getPlatformStatuses() });
       
     } catch (err) {
-      console.error('[ChannelBridge] Error applying config:', err);
+      errorLog('[ChannelBridge] Error applying config:', err);
       emitMessage({ type: 'error', error: (err as Error).message });
     }
   }
@@ -1010,13 +1020,13 @@ async function main(): Promise<void> {
 
   // Watch for config changes
   configLoader.startWatching(async () => {
-    console.log('[ChannelBridge] Config changed, reloading...');
+    infoLog('[ChannelBridge] Config changed, reloading...');
     await applyConfig();
   });
 
   // Handle shutdown signals
   async function shutdown(): Promise<void> {
-    console.log('[ChannelBridge] Shutting down...');
+    infoLog('[ChannelBridge] Shutting down...');
     
     configLoader.stopWatching();
     clearWhatsAppConnectionPoller();
@@ -1037,23 +1047,23 @@ async function main(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  console.log(`[ChannelBridge] Ready on port ${actualPort}`);
+  infoLog(`[ChannelBridge] Ready on port ${actualPort}`);
 }
 
 // Handle unhandled rejections (important for async callbacks like pairing code)
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[ChannelBridge] Unhandled Rejection at:', promise, 'reason:', reason);
+  errorLog('[ChannelBridge] Unhandled Rejection at:', promise, 'reason:', reason);
   emitMessage({ type: 'error', error: 'Internal bridge error. Check logs for details.' });
 });
 
 process.on('uncaughtException', (err) => {
-  console.error('[ChannelBridge] Uncaught Exception:', err);
+  errorLog('[ChannelBridge] Uncaught Exception:', err);
   emitMessage({ type: 'error', error: 'Bridge process crashed with an internal error.' });
 });
 
 // Run
 main().catch((err) => {
-  console.error('[ChannelBridge] Fatal error:', err);
+  errorLog('[ChannelBridge] Fatal error:', err);
   emitMessage({ type: 'error', error: (err as Error).message });
   process.exit(1);
 });

@@ -20,6 +20,13 @@ export interface TelegramAdapter {
   getChatSDKAdapter: () => ChatSDKTelegramAdapter | null;
 }
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
 export function createTelegramAdapter(): TelegramAdapter {
   let chatSdkAdapter: ChatSDKTelegramAdapter | null = null;
   
@@ -45,7 +52,7 @@ export function createTelegramAdapter(): TelegramAdapter {
           },
         });
         
-        console.log('[TelegramAdapter] Chat SDK adapter created');
+        debugLog('[TelegramAdapter] Chat SDK adapter created');
         
         // The adapter starts polling automatically when initialized
         // We need to handle the initialization through the Chat instance
@@ -54,7 +61,7 @@ export function createTelegramAdapter(): TelegramAdapter {
         status.connectedAt = Date.now();
         status.error = undefined;
         
-        console.log('[TelegramAdapter] Connected with Chat SDK');
+        debugLog('[TelegramAdapter] Connected with Chat SDK');
         
       } catch (err) {
         status.status = 'error';
@@ -76,7 +83,7 @@ export function createTelegramAdapter(): TelegramAdapter {
       
       status.status = 'disconnected';
       status.connectedAt = undefined;
-      console.log('[TelegramAdapter] Disconnected');
+      debugLog('[TelegramAdapter] Disconnected');
     },
 
     async sendMessage(chatId: string, text: string): Promise<void> {
@@ -88,7 +95,7 @@ export function createTelegramAdapter(): TelegramAdapter {
       // The adapter provides thread.post() through the Chat instance
       // For direct messaging, we need to use the underlying Telegram API
       // This will be handled through the Chat instance's sendDM capability
-      console.log(`[TelegramAdapter] Would send to ${chatId}: ${text.slice(0, 50)}...`);
+      debugLog(`[TelegramAdapter] Would send to ${chatId}: ${text.slice(0, 50)}...`);
     },
 
     getStatus(): PlatformStatus {

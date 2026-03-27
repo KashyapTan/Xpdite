@@ -18,6 +18,17 @@ export interface ConfigLoader {
   getConfigPath: () => string;
 }
 
+// Simple logging helpers
+function debugLog(message: string): void {
+  if (process.env.XPDITE_MOBILE_DEBUG_LOGS === '1') {
+    console.log(message);
+  }
+}
+
+function errorLog(message: string, ...args: unknown[]): void {
+  console.error(message, ...args);
+}
+
 export function createConfigLoader(userDataDir: string, defaultPythonPort: number = 8000): ConfigLoader {
   const configPath = path.join(userDataDir, 'mobile_channels_config.json');
   let watcher: AsyncIterable<{ eventType: string; filename: string | null }> | null = null;
@@ -25,17 +36,17 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
 
   async function loadConfigFile(): Promise<ConfigFile> {
     if (!existsSync(configPath)) {
-      console.log(`[ConfigLoader] Config file not found at ${configPath}, using defaults`);
+      debugLog(`[ConfigLoader] Config file not found at ${configPath}, using defaults`);
       return getDefaultConfig(defaultPythonPort);
     }
 
     try {
       const content = await readFile(configPath, 'utf8');
       const parsed = JSON.parse(content) as ConfigFile;
-      console.log(`[ConfigLoader] Loaded config from ${configPath}`);
+      debugLog(`[ConfigLoader] Loaded config from ${configPath}`);
       return parsed;
     } catch (err) {
-      console.error(`[ConfigLoader] Error loading config:`, err);
+      errorLog(`[ConfigLoader] Error loading config:`, err);
       return getDefaultConfig(defaultPythonPort);
     }
   }
@@ -64,10 +75,10 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
           try {
             const configFile = await loadConfigFile();
             const config = parseConfigFile(configFile);
-            console.log(`[ConfigLoader] Config changed, notifying listeners`);
+            debugLog(`[ConfigLoader] Config changed, notifying listeners`);
             onChange(config);
           } catch (err) {
-            console.error(`[ConfigLoader] Error reloading config:`, err);
+            errorLog(`[ConfigLoader] Error reloading config:`, err);
           }
         }, 100); // 100ms debounce
       };
@@ -86,12 +97,12 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
           }
         } catch (err) {
           if ((err as NodeJS.ErrnoException).name !== 'AbortError') {
-            console.error(`[ConfigLoader] Watch error:`, err);
+            errorLog(`[ConfigLoader] Watch error:`, err);
           }
         }
       })();
 
-      console.log(`[ConfigLoader] Started watching ${configPath}`);
+      debugLog(`[ConfigLoader] Started watching ${configPath}`);
     },
 
     stopWatching(): void {
@@ -99,7 +110,7 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
         watchAbortController.abort();
         watchAbortController = null;
         watcher = null;
-        console.log(`[ConfigLoader] Stopped watching config file`);
+        debugLog(`[ConfigLoader] Stopped watching config file`);
       }
     },
 
