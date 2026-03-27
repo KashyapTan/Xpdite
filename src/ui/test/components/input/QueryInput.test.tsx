@@ -39,9 +39,11 @@ describe('QueryInput', () => {
     query: '',
     placeholder: 'Ask something',
     canSubmit: true,
+    enabledModels: ['ollama/llama3', 'anthropic/claude-3-sonnet', 'openai/gpt-4'],
     onQueryChange: vi.fn(),
     onSubmit: vi.fn(),
     onStopStreaming: vi.fn(),
+    onSelectModel: vi.fn(),
   };
 
   beforeEach(() => {

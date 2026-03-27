@@ -1765,9 +1765,11 @@ function App() {
             query={chatState.query}
             placeholder={getPlaceholder()}
             canSubmit={chatState.canSubmit}
+            enabledModels={enabledModels}
             onQueryChange={chatState.setQuery}
             onSubmit={handleSubmit}
             onStopStreaming={handleStopStreaming}
+            onSelectModel={setSelectedModel}
           />
 
           <div className="input-options-section">

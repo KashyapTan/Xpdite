@@ -1,0 +1,95 @@
+.model-command-menu {
+    position: absolute;
+    background-color: rgba(30, 30, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    z-index: 1000;
+    width: 280px;
+    max-height: 250px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: modelMenuSlideUp 0.15s ease-out;
+}
+
+@keyframes modelMenuSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.model-menu-header {
+    padding: 8px 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.5);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    background-color: rgba(0, 0, 0, 0.2);
+}
+
+.model-menu-list {
+    overflow-y: auto;
+    padding: 4px;
+}
+
+.model-menu-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.model-menu-list::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+}
+
+.model-menu-item {
+    display: flex;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.1s ease;
+    width: 100%;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-family: inherit;
+    color: inherit;
+    gap: 8px;
+}
+
+.model-menu-item:focus {
+    outline: none;
+}
+
+.model-menu-item:hover,
+.model-menu-item.selected {
+    background-color: rgba(59, 130, 246, 0.2);
+}
+
+.model-menu-name {
+    font-size: 0.9rem;
+    color: rgba(255, 255, 255, 0.9);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.model-menu-provider {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.45);
+    flex-shrink: 0;
+}

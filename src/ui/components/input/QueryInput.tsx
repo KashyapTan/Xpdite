@@ -15,6 +15,7 @@ import React, {
 } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
 import SlashCommandMenu from '../chat/SlashCommandMenu';
+import ModelCommandMenu from '../chat/ModelCommandMenu';
 import { X_ICON_PATHS } from '../icons/iconPaths';
 import { api } from '../../services/api';
 import type { Skill } from '../../types';
@@ -24,9 +25,11 @@ interface QueryInputProps {
   query: string;
   placeholder: string;
   canSubmit: boolean;
+  enabledModels: string[];
   onQueryChange: (value: string) => void;
   onSubmit: (e: FormEvent) => void;
   onStopStreaming: () => void;
+  onSelectModel: (model: string) => void;
 }
 
 type QuerySegment =
@@ -34,6 +37,12 @@ type QuerySegment =
   | { type: 'chip'; command: string; skillName: string };
 
 type SlashTrigger = {
+  start: number;
+  end: number;
+  searchTerm: string;
+};
+
+type ModelTrigger = {
   start: number;
   end: number;
   searchTerm: string;
@@ -210,6 +219,88 @@ function getSlashTrigger(query: string, cursorOffset: number): SlashTrigger | nu
   };
 }
 
+/**
+ * Detects when the user is typing `/model` or `/model <filter>`.
+ * Returns a ModelTrigger if the cursor is within or after `/model`.
+ * The searchTerm is the text after `/model ` (the filter for model names).
+ * 
+ * Algorithm:
+ * 1. Walk backward from cursor to find the start of the current segment
+ *    - Stop at newlines (each line is independent)
+ *    - Stop at whitespace UNLESS we're in the middle of `/model <filter>` 
+ *      (checked by seeing if text before whitespace ends with `/model`)
+ * 2. Check if the segment from start to cursor matches `/model` pattern
+ * 3. Calculate the end position by extending forward to cover any filter text
+ * 4. Return the trigger with start, end, and the filter text as searchTerm
+ * 
+ * Examples:
+ * - `/model` with cursor at end → searchTerm: ''
+ * - `/model qw` with cursor at end → searchTerm: 'qw'
+ * - `hello /model gpt` with cursor at end → searchTerm: 'gpt'
+ * - `/mod` → null (incomplete, doesn't match /model)
+ */
+function getModelTrigger(query: string, cursorOffset: number): ModelTrigger | null {
+  if (cursorOffset < 0 || cursorOffset > query.length) {
+    return null;
+  }
+
+  // Step 1: Walk backward from cursor to find segment start
+  // The segment should start at beginning of input, after a newline, or at the `/model` command
+  let start = cursorOffset;
+  while (start > 0 && query[start - 1] !== '\n') {
+    // When we hit whitespace, check if we're in a `/model <filter>` pattern
+    // If the text before this whitespace ends with `/model`, keep walking back
+    // Otherwise, we've found the start of a new segment
+    if (/\s/.test(query[start - 1])) {
+      const precedingText = query.slice(0, start - 1).trimEnd();
+      if (!precedingText.toLowerCase().endsWith('/model')) {
+        break;
+      }
+    }
+    start -= 1;
+  }
+
+  // Step 2: Check if segment matches `/model` pattern
+  const segment = query.slice(start, cursorOffset);
+  // Regex: `/model` optionally followed by whitespace and filter text
+  // Group 1: whitespace after /model (to detect if filter mode)
+  // Group 2: filter text after whitespace
+  const match = segment.match(/^\/model(?:(\s+)(.*))?$/i);
+  if (!match) {
+    return null;
+  }
+
+  // Step 3: Calculate end position
+  // First, extend to end of current word (if cursor is mid-word)
+  let end = cursorOffset;
+  while (end < query.length && !/[\s\n]/.test(query[end])) {
+    end += 1;
+  }
+
+  // If there's filter content (match[1] is the whitespace), extend to cover all filter text
+  if (match[1]) {
+    while (end < query.length && query[end] !== '\n') {
+      if (/\s/.test(query[end])) {
+        // Only continue if non-space text follows
+        const rest = query.slice(end).match(/^\s+\S/);
+        if (!rest) break;
+      }
+      end += 1;
+    }
+    // Remove trailing whitespace from end position
+    while (end > cursorOffset && /\s/.test(query[end - 1])) {
+      end -= 1;
+    }
+  }
+
+  // Step 4: Return trigger with extracted searchTerm
+  return {
+    start,
+    end,
+    searchTerm: (match[2] ?? '').toLowerCase().trim(),
+  };
+}
+
 function getSelectionOffset(editor: HTMLDivElement): number {
   const selection = window.getSelection();
   if (!selection || !selection.rangeCount) {
@@ -363,9 +454,11 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       query,
       placeholder,
       canSubmit,
+      enabledModels,
       onQueryChange,
       onSubmit,
       onStopStreaming,
+      onSelectModel,
     },
     ref,
   ) => {
@@ -375,6 +468,11 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     const [selectedIndex, setSelectedIndex] = useState(0);
     const [menuPosition, setMenuPosition] = useState({ top: 0, left: 8 });
     const [dismissedTriggerKey, setDismissedTriggerKey] = useState<string | null>(null);
+    // Model menu state
+    const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
+    const [modelMenuPosition, setModelMenuPosition] = useState({ top: 0, left: 8 });
+    const [dismissedModelTriggerKey, setDismissedModelTriggerKey] = useState<string | null>(null);
+
     const containerRef = useRef<HTMLDivElement>(null);
     const formRef = useRef<HTMLFormElement>(null);
     const editorRef = useRef<HTMLDivElement>(null);
@@ -500,6 +598,46 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       });
     }, [activeTrigger, skills]);
 
+    // Model command trigger detection
+    const detectedModelTrigger = useMemo(
+      () =>
+        isFocused && !isOffsetAtChipBoundary(segments, selectionOffset)
+          ? getModelTrigger(serializedQuery, selectionOffset)
+          : null,
+      [isFocused, segments, selectionOffset, serializedQuery],
+    );
+
+    const detectedModelTriggerKey = useMemo(
+      () =>
+        detectedModelTrigger
+          ? `model:${detectedModelTrigger.start}:${detectedModelTrigger.end}:${detectedModelTrigger.searchTerm}:${serializedQuery}`
+          : null,
+      [detectedModelTrigger, serializedQuery],
+    );
+
+    const activeModelTrigger = useMemo(
+      () =>
+        detectedModelTriggerKey !== null && detectedModelTriggerKey === dismissedModelTriggerKey
+          ? null
+          : detectedModelTrigger,
+      [detectedModelTrigger, detectedModelTriggerKey, dismissedModelTriggerKey],
+    );
+
+    const filteredModels = useMemo(() => {
+      if (!activeModelTrigger) {
+        return [];
+      }
+
+      return enabledModels.filter((model) =>
+        model.toLowerCase().includes(activeModelTrigger.searchTerm),
+      );
+    }, [activeModelTrigger, enabledModels]);
+
+    // Check if model menu should take priority over slash command menu
+    // Model menu takes priority when /model is detected
+    const showModelMenu = filteredModels.length > 0;
+    const showSlashMenu = filteredSkills.length > 0 && !showModelMenu;
+
     const renderedSegmentsSignature = useMemo(
       () =>
         segments
@@ -543,11 +681,17 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       );
 
       setMenuPosition({ top: 0, left: nextLeft });
+      setModelMenuPosition({ top: 0, left: nextLeft });
     }, []);
 
     useEffect(() => {
       setSelectedIndex(0);
     }, [activeTrigger?.searchTerm, filteredSkills.length]);
+
+    // Reset model selection index when model trigger or filtered models change
+    useEffect(() => {
+      setModelSelectedIndex(0);
+    }, [activeModelTrigger?.searchTerm, filteredModels.length]);
 
     useEffect(() => {
       if (internalUpdateRef.current) {
@@ -582,6 +726,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         internalUpdateRef.current = true;
         setSelectionOffset(nextOffset);
         setDismissedTriggerKey(null);
+        setDismissedModelTriggerKey(null);
         onQueryChange(nextValue);
       },
       [onQueryChange],
@@ -626,6 +771,35 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         });
       },
       [activeTrigger, serializedQuery, updateQueryValue],
+    );
+
+    /**
+     * Handles model selection from the model command menu.
+     * Switches the model and removes /model from the input.
+     */
+    const handleSelectModel = useCallback(
+      (model: string) => {
+        if (!activeModelTrigger) {
+          return;
+        }
+
+        // Switch the model
+        onSelectModel(model);
+
+        // Remove /model and any filter text from input
+        const nextValue =
+          serializedQuery.slice(0, activeModelTrigger.start) +
+          serializedQuery.slice(activeModelTrigger.end);
+        const trimmedValue = nextValue.trimStart();
+        const offsetAdjustment = nextValue.length - trimmedValue.length;
+        const nextOffset = Math.max(0, activeModelTrigger.start - offsetAdjustment);
+
+        updateQueryValue(trimmedValue, Math.min(nextOffset, trimmedValue.length));
+        requestAnimationFrame(() => {
+          editorRef.current?.focus();
+        });
+      },
+      [activeModelTrigger, serializedQuery, onSelectModel, updateQueryValue],
     );
 
     const handleRemoveCommand = useCallback(
@@ -710,7 +884,51 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     };
 
     const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-      if (filteredSkills.length > 0) {
+      // Model menu takes priority over slash command menu
+      if (showModelMenu) {
+        // Defensive guard against race conditions where filteredModels could empty
+        if (filteredModels.length === 0) {
+          return;
+        }
+
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setModelSelectedIndex((previous) => (previous + 1) % filteredModels.length);
+          return;
+        }
+
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setModelSelectedIndex(
+            (previous) => (previous - 1 + filteredModels.length) % filteredModels.length,
+          );
+          return;
+        }
+
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const safeIndex = Math.min(modelSelectedIndex, filteredModels.length - 1);
+          if (safeIndex >= 0) {
+            handleSelectModel(filteredModels[safeIndex]);
+          }
+          return;
+        }
+
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (detectedModelTriggerKey) {
+            setDismissedModelTriggerKey(detectedModelTriggerKey);
+          }
+          return;
+        }
+      }
+
+      if (showSlashMenu) {
+        // Defensive guard against race conditions
+        if (filteredSkills.length === 0) {
+          return;
+        }
+
         if (e.key === 'ArrowDown') {
           e.preventDefault();
           setSelectedIndex((previous) => (previous + 1) % filteredSkills.length);
@@ -727,7 +945,10 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
         if (e.key === 'Enter' || e.key === 'Tab') {
           e.preventDefault();
-          handleSelectCommand(filteredSkills[selectedIndex]);
+          const safeIndex = Math.min(selectedIndex, filteredSkills.length - 1);
+          if (safeIndex >= 0) {
+            handleSelectCommand(filteredSkills[safeIndex]);
+          }
           return;
         }
 
@@ -754,13 +975,25 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         className="query-input-text-box-section"
         style={{ position: 'relative' }}
       >
-        <SlashCommandMenu
-          skills={filteredSkills}
-          selectedIndex={selectedIndex}
-          position={menuPosition}
-          onSelect={handleSelectCommand}
-          onHover={setSelectedIndex}
-        />
+        {showSlashMenu && (
+          <SlashCommandMenu
+            skills={filteredSkills}
+            selectedIndex={selectedIndex}
+            position={menuPosition}
+            onSelect={handleSelectCommand}
+            onHover={setSelectedIndex}
+          />
+        )}
+
+        {showModelMenu && (
+          <ModelCommandMenu
+            models={filteredModels}
+            selectedIndex={modelSelectedIndex}
+            position={modelMenuPosition}
+            onSelect={handleSelectModel}
+            onHover={setModelSelectedIndex}
+          />
+        )}
 
         <form ref={formRef} onSubmit={handleSubmit} className="query-input-form">
           <div
@@ -785,6 +1018,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
             onBlur={() => {
               setIsFocused(false);
               setDismissedTriggerKey(null);
+              setDismissedModelTriggerKey(null);
             }}
           />
         </form>
