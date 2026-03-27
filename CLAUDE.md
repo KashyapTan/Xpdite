@@ -227,3 +227,4 @@ The fixture is already defined in `conftest.py` — just accept `db_manager` as 
 | `source/CLAUDE_backend.md` | Python backend architecture, DB schema, WS protocol, MCP integration, architecture decisions |
 | `src/CLAUDE_frontend.md` | Frontend + Electron patterns, state management, IPC, how to add pages/components |
 | `mcp_servers/CLAUDE_mcp.md` | MCP server directory, per-server purpose, how to add a new server |
+| `src/channel-bridge/CLAUDE_mobile.md` | Mobile messenger (WhatsApp/Telegram/Discord) integration architecture, messaging flow, and platform adapters |

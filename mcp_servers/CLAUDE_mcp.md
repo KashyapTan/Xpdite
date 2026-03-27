@@ -111,15 +111,20 @@ Public MCP servers that don't require authentication.
 
 ## File Layout
 
-```
+```text
 mcp_servers/
+├── __init__.py
+├── requirements.txt         # Dependencies for MCP servers
+├── test_demo.py             # pytest script for testing MCP servers
 ├── config/
 │   └── servers.json         # Enable/disable servers; per-server env vars and credentials (UI metadata only — backend does not read this)
 ├── servers/
+│   ├── __init__.py
+│   ├── description_format.py# Shared format for tool descriptions
 │   ├── calendar/            ✅ server.py + calander_descriptions.py
-│   ├── canvas/              📝 server.py placeholder (no tools yet) — needs CANVAS_URL + CANVAS_TOKEN
-│   ├── demo/                ✅ server.py (disabled by default)
-│   ├── discord/             📝 server.py placeholder (no tools yet) — needs DISCORD_BOT_TOKEN
+│   ├── canvas/              📝 server.py + canvas_descriptions.py (placeholder, no tools yet) — needs CANVAS_URL + CANVAS_TOKEN
+│   ├── demo/                ✅ server.py + demo_descriptions.py (disabled by default)
+│   ├── discord/             📝 server.py + discord_descriptions.py (placeholder, no tools yet) — needs DISCORD_BOT_TOKEN
 │   ├── filesystem/          ✅ server.py + filesystem_descriptions.py
 │   ├── gmail/               ✅ server.py + gmail_descriptions.py
 │   ├── skills/              ✅ inline_tools.py + skills_descriptions.py (inline-only tool metadata)
@@ -129,6 +134,7 @@ mcp_servers/
 │   ├── websearch/           ✅ server.py + websearch_descriptions.py
 │   └── github/, jira/, notion/, obsidian/, outlook/, slack/, teams/, whatsapp/, yahoo/   🗂️ Empty directories (no files)
 └── client/
+    ├── __init__.py
     └── ollama_bridge.py    # Standalone bridge for testing MCP servers outside the main app (not used in production)
 ```
 

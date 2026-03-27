@@ -4,19 +4,21 @@
 
 ```
 src/
+├── channel-bridge/           # Mobile messenger (WhatsApp/Telegram/Discord) integration (see CLAUDE_mobile.md)
 ├── electron/
-│   ├── main.ts          # Electron entry: window creation, IPC handlers, Python lifecycle
-│   ├── preload.ts       # contextBridge: exposes electronAPI to renderer (minimal surface)
-│   ├── pythonApi.ts     # Python server spawn/kill logic + killProcessesOnPorts() pre-spawn cleanup
-│   ├── pcResources.ts   # Resource path resolution for packaged app
-│   └── utils.ts         # isDev() — checks NODE_ENV === 'development'
+│   ├── main.ts               # Electron entry: window creation, IPC handlers, Python lifecycle
+│   ├── preload.ts            # contextBridge: exposes electronAPI to renderer (minimal surface)
+│   ├── pythonApi.ts          # Python server spawn/kill logic + killProcessesOnPorts() pre-spawn cleanup
+│   ├── channelBridgeApi.ts   # Inter-process communication for channel-bridge service lifecycle
+│   ├── bootShellHtml.ts      # HTML payload for the early startup boot screen overlay
+│   ├── pcResources.ts        # Resource path resolution for packaged app
+│   └── utils.ts              # isDev() — checks NODE_ENV === 'development'
 │
 └── ui/
-    ├── main.tsx         # React entry, createHashRouter (6 routes), TabProvider wrap
+    ├── main.tsx              # React entry, createHashRouter (6 routes), TabProvider wrap
     ├── pages/
     │   ├── App.tsx                  # Main chat page (query input, response, tool calls, screenshots, tab routing)
-    │   ├── App_old.tsx              # Archive — not imported anywhere; can be removed
-    │   ├── Settings.tsx             # Settings page (models, connections, API keys, MCP, skills, meeting, system-prompt)
+    │   ├── Settings.tsx             # Settings page (models, connections, API keys, MCP, skills, meeting, system-prompt, channels)
     │   ├── ChatHistory.tsx          # Past conversations browser with full-text search
     │   ├── MeetingRecorder.tsx      # Live meeting recording UI
     │   ├── MeetingAlbum.tsx         # Past meeting recordings list (grouped by date)
@@ -25,9 +27,13 @@ src/
     │   ├── Layout.tsx        # Shell; manages mini/hidden state; passes {setMini,setIsHidden} via Outlet context
     │   ├── TitleBar.tsx      # Custom title bar: new-chat button, nav icons, mini-mode toggle
     │   ├── TabBar.tsx        # Tab strip (hidden when 1 tab), switch/close
+    │   ├── MobilePlatformBadge.tsx # UI component to render platform icons (WhatsApp, Telegram, etc.)
+    │   ├── boot/
+    │   │   └── BootScreen.tsx    # Early startup loading screen overlay component
     │   ├── icons/
-    │   │   ├── AppIcons.tsx  # Shared inline SVG icon components used across the UI
-    │   │   └── iconPaths.ts  # Shared SVG path constants for React and DOM-built icons
+    │   │   ├── AppIcons.tsx      # Shared inline SVG icon components used across the UI
+    │   │   ├── ProviderLogos.tsx # Shared React components for AI provider brand logos
+    │   │   └── iconPaths.ts      # Shared SVG path constants for React and DOM-built icons
     │   ├── chat/
     │   │   ├── ChatMessage.tsx          # User + assistant message; inline edit, retry, response version nav
     │   │   ├── CodeBlock.tsx            # Syntax-highlighted code block with copy button
@@ -53,6 +59,7 @@ src/
     │   │   ├── MeetingRecorderSettings.tsx  # Whisper model, diarization, audio retention (WS-based)
     │   │   ├── SettingsApiKey.tsx           # API key entry per provider
     │   │   ├── SettingsConnections.tsx      # Google OAuth (Gmail + Calendar)
+    │   │   ├── SettingsMobileChannels.tsx   # Mobile platforms connection status & QR
     │   │   ├── SettingsModels.tsx           # Ollama + cloud model enable/disable toggles
     │   │   ├── SettingsSkills.tsx           # Full CRUD for user skills and builtin overrides
     │   │   ├── SettingsSubAgents.tsx        # Tier model mapping for sub-agent fast/smart modes
@@ -64,6 +71,7 @@ src/
     │       ├── TerminalCard.tsx         # Past terminal event in chat history
     │       └── TerminalPanel.tsx        # ⚠️ Fully implemented but NOT rendered in App.tsx; supplanted by InlineTerminalBlock
     ├── contexts/
+    │   ├── BootContext.tsx           # Boot sequence initialization, readiness state
     │   ├── WebSocketContext.tsx      # Single WS connection provider (send, subscribe, isConnected)
     │   ├── MeetingRecorderContext.tsx # Recording state (persists across routes)
     │   └── TabContext.tsx             # TabProvider: tab list, active tab, switch/close/create with callbacks
@@ -80,9 +88,13 @@ src/
     ├── types/
     │   └── index.ts           # ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant…
     ├── CSS/                   # Per-component stylesheets
+    ├── assets/                # App icons, provider SVGs, logos
+    ├── test/                  # Vitest frontend behavioral & unit tests (matches ui structure)
     └── utils/
         ├── chatMessages.ts    # Message mapping, merging, retry/edit reconciliation utilities
         ├── clipboard.ts       # copyToClipboard helper
+        ├── modelDisplay.ts    # Model name formatting tools for UI display
+        ├── providerLogos.ts   # Resolves logos based on API provider string
         └── index.ts
 ```
 
@@ -194,10 +206,12 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → skills → meeting → system-prompt → sub-agents → ollama (placeholder) → anthropic → gemini → openai`
+`models → connections → tools → skills → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
 
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
+- **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. Handles QR pairing.
+- **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`.
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 
@@ -257,10 +271,14 @@ api.skillsApi.delete(name)       → DELETE /api/skills/{name}
 - `setDisplayMediaRequestHandler` — auto-approves `getDisplayMedia` with `{ video: { source: tab-capture-stream } }` for WASAPI loopback audio capture; required by `useAudioCapture`.
 
 ### IPC surface (preload.ts)
-Three methods are exposed via `contextBridge`:
+Several key methods are exposed via `contextBridge`:
 - `window.electronAPI.setMiniMode(mini: boolean)`
-- `window.electronAPI.setHidden(hidden: boolean)` — hides window content during screenshot capture (opacity: 0)
-- `window.electronAPI.getPythonPort()` — returns the port the Python backend is listening on (production only)
+- `window.electronAPI.focusWindow()`
+- `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
+- `window.electronAPI.getBootState()` / `onBootState` — Boot initialization communication
+- `window.electronAPI.retryBoot()`
+- `window.electronAPI.getChannelBridgePort()` / `getChannelBridgeStatus` / `onChannelBridgeStatus` — Channel Bridge daemon RPC
+- `window.electronAPI.onWhatsAppPairingCode` — Receives Baileys WhatsApp OTP codes
 
 Do not add IPC channels without updating both `preload.ts` (expose) and `main.ts` (handle).
 
