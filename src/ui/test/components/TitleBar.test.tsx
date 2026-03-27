@@ -8,6 +8,7 @@ const createTabMock = vi.fn();
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({ pathname: '/' }),
 }));
 
 vi.mock('../../contexts/TabContext', () => ({

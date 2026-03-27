@@ -189,7 +189,7 @@ function App() {
   // Tab Management
   // ============================================
   const {
-    tabs, activeTabId, updateTabTitle,
+    tabs, activeTabId, updateTabTitle, createTab,
     queueMap, setQueueItems, getTabSnapshot, setTabSnapshot, deleteTabSnapshot,
     registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed,
   } = useTabs();
@@ -1382,6 +1382,55 @@ function App() {
 
     const queryText = chatState.query.trim();
     if (!queryText) return;
+
+    // Handle /new command - create a new tab
+    if (queryText === '/new' || queryText.startsWith('/new ')) {
+      // Clear query state and the input DOM immediately
+      chatState.setQuery('');
+      if (inputRef.current) {
+        inputRef.current.textContent = '';
+      }
+
+      // Manually save the current tab state with query cleared before switching
+      // This is needed because React state updates are async, but createTab()
+      // triggers beforeSwitch which snapshots state immediately
+      const oldTabId = activeTabIdRef.current;
+      const chatSnapshot = chatState.getSnapshot();
+      setTabSnapshot(oldTabId, {
+        chat: { ...chatSnapshot, query: '' },
+        screenshots: screenshotState.getSnapshot(),
+        tokens: tokenState.getSnapshot(),
+        terminal: {
+          terminalSessionActive,
+          terminalSessionRequest,
+        },
+        generatingModel: generatingModelRef.current,
+      });
+
+      const newTabId = createTab();
+
+      // If there's a message after /new, submit it in the new tab
+      if (newTabId && queryText.startsWith('/new ')) {
+        const initialMessage = queryText.slice(5).trim();
+        if (initialMessage) {
+          // Start the query in the new tab's chat state (will be initialized by afterSwitch)
+          // Use a short delay to ensure tab state is initialized
+          setTimeout(() => {
+            chatState.startQuery(initialMessage);
+            setTimeout(scrollToBottom, 50);
+            generatingModelRef.current = selectedModel;
+            wsSendRaw({
+              tab_id: newTabId,
+              type: 'submit_query',
+              content: initialMessage,
+              capture_mode: screenshotState.captureMode,
+              model: selectedModel,
+            });
+          }, 0);
+        }
+      }
+      return;
+    }
 
     chatState.setQuery('');
 
