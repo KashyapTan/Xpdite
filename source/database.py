@@ -300,6 +300,11 @@ class DatabaseManager:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+            try:
+                cursor.execute("ALTER TABLE mobile_paired_devices ADD COLUMN default_model TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             self._backfill_message_metadata(cursor)
 
             conn.commit()
@@ -1307,7 +1312,7 @@ class DatabaseManager:
         """Get a paired device by platform and sender ID."""
         with self._connect() as conn:
             row = conn.execute(
-                """SELECT id, platform, sender_id, display_name, paired_at, last_active
+                """SELECT id, platform, sender_id, display_name, paired_at, last_active, default_model
                    FROM mobile_paired_devices
                    WHERE platform = ? AND sender_id = ?""",
                 (platform, sender_id),
@@ -1322,6 +1327,7 @@ class DatabaseManager:
             "display_name": row[3],
             "paired_at": row[4],
             "last_active": row[5],
+            "default_model": row[6],
         }
 
     def get_all_paired_devices(self) -> List[Dict]:
@@ -1373,6 +1379,25 @@ class DatabaseManager:
                 """UPDATE mobile_paired_devices SET last_active = ?
                    WHERE platform = ? AND sender_id = ?""",
                 (time.time(), platform, sender_id),
+            )
+            conn.commit()
+
+    def get_paired_device_default_model(self, platform: str, sender_id: str) -> str | None:
+        """Get the default model preference for a paired device."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT default_model FROM mobile_paired_devices WHERE platform = ? AND sender_id = ?",
+                (platform, sender_id),
+            ).fetchone()
+            return row[0] if row else None
+
+    def set_paired_device_default_model(self, platform: str, sender_id: str, model: str) -> None:
+        """Set the default model preference for a paired device."""
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE mobile_paired_devices SET default_model = ?
+                   WHERE platform = ? AND sender_id = ?""",
+                (model, platform, sender_id),
             )
             conn.commit()
 

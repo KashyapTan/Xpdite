@@ -440,8 +440,8 @@ async function main(): Promise<void> {
       const result = await pythonClient.submitMessage(message);
       
       if (result.success && result.queued) {
-        // React with checkmark instead of sending ack message
-        await reactToMessage(message.platform, message.threadId, message.messageId, '✅');
+        // React with thumbs up instead of sending ack message
+        await reactToMessage(message.platform, message.threadId, message.messageId, '👍');
         // Show typing indicator while processing
         await startTypingIndicator(message.platform, message.threadId);
         // Only send text if queued behind other messages

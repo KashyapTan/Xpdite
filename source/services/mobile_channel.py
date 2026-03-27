@@ -280,8 +280,13 @@ class MobileChannelService:
         # Determine model to use
         model = session.get("model_override")
         if not model:
-            enabled_models = db.get_enabled_models()
-            model = enabled_models[0] if enabled_models else "qwen3-vl:8b-instruct"
+            # Check for device default model
+            device_default = db.get_paired_device_default_model(platform, canonical_id)
+            if device_default:
+                model = device_default
+            else:
+                enabled_models = db.get_enabled_models()
+                model = enabled_models[0] if enabled_models else "qwen3-vl:8b-instruct"
 
         # Create and enqueue the query
         query = QueuedQuery(
@@ -363,6 +368,9 @@ class MobileChannelService:
         if command == "model":
             return self._cmd_model(platform, canonical_id, args)
 
+        if command == "default":
+            return self._cmd_default(platform, canonical_id, args)
+
         return f"Unknown command: /{command}\n\nSend /help for available commands."
 
     def _cmd_help(self) -> str:
@@ -373,6 +381,7 @@ class MobileChannelService:
 /stop - Stop the current generation
 /model - Show available models
 /model <name> - Switch to a different model
+/default <name> - Set the default model for this device
 /status - Show current session status
 /pair <code> - Pair with your Xpdite instance
 /help - Show this help message
@@ -425,7 +434,13 @@ Just send a message to chat with the AI."""
             return "No active session. Send a message to start chatting."
 
         # Get model info
-        model = session.get("model_override") or "default"
+        model = session.get("model_override")
+        if not model:
+            model = db.get_paired_device_default_model(platform, sender_id)
+        if not model:
+            enabled_models = db.get_enabled_models()
+            model = enabled_models[0] if enabled_models else "default"
+            
         tab_id = session["tab_id"]
 
         # Get queue info
@@ -457,6 +472,8 @@ Just send a message to chat with the AI."""
 
         session = self.get_session(platform, sender_id)
         current_model = session.get("model_override") if session else None
+        if not current_model:
+            current_model = db.get_paired_device_default_model(platform, sender_id)
         if not current_model:
             current_model = enabled_models[0]
 
@@ -497,6 +514,49 @@ Just send a message to chat with the AI."""
             db.update_mobile_session(platform, sender_id, model_override=new_model)
 
         return f"Switched to {new_model}"
+
+    def _cmd_default(self, platform: str, sender_id: str, args: Optional[str]) -> str:
+        """Handle /default command - set default model for device."""
+        enabled_models = db.get_enabled_models()
+
+        if not enabled_models:
+            return "No models are currently enabled. Please configure models in Xpdite settings."
+
+        current_default = db.get_paired_device_default_model(platform, sender_id)
+
+        # No args - show current default
+        if not args:
+            if current_default:
+                return f"Current default model is: {current_default}\n\nReply /default <name> to change."
+            return "No default model set for this device.\n\nReply /default <name> to set one."
+
+        # Try to match the model name
+        target = args.strip().lower()
+        matches = [m for m in enabled_models if target in m.lower()]
+
+        if not matches:
+            return (
+                f"No model matches '{args}'.\n\nAvailable: {', '.join(enabled_models)}"
+            )
+
+        if len(matches) > 1:
+            exact = [m for m in matches if m.lower() == target]
+            if len(exact) == 1:
+                matches = exact
+            else:
+                return f"Ambiguous match. Did you mean: {', '.join(matches)}?"
+
+        new_model = matches[0]
+
+        # Update paired device default
+        db.set_paired_device_default_model(platform, sender_id, new_model)
+        
+        # Also update current session if exists
+        session = self.get_session(platform, sender_id)
+        if session:
+            db.update_mobile_session(platform, sender_id, model_override=new_model)
+
+        return f"Default model set to {new_model} for this device."
 
     # =========================================================================
     # Response Relay (outbound to Channel Bridge)

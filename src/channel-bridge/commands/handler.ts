@@ -39,6 +39,7 @@ const COMMANDS: Record<string, { handler: string; acceptsArgs: boolean; descript
   '/stop': { handler: 'stop', acceptsArgs: false, description: 'Stop the current task' },
   '/status': { handler: 'status', acceptsArgs: false, description: 'Check current status' },
   '/model': { handler: 'model', acceptsArgs: true, description: 'List or switch models' },
+  '/default': { handler: 'default', acceptsArgs: true, description: 'Set default model for this device' },
   '/help': { handler: 'help', acceptsArgs: false, description: 'Show available commands' },
   '/pair': { handler: 'pair', acceptsArgs: true, description: 'Pair with your Xpdite code' },
 };
