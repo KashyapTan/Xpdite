@@ -47,6 +47,7 @@ dependencies = [
     "twikit>=2.3.3",
     "youtube-transcript-api>=1.2.4",
     "yt-dlp>=2026.3.17",
+    "apscheduler>=3.11.2",
 ]
 
 [dependency-groups]
