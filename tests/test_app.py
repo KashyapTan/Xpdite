@@ -38,6 +38,7 @@ class TestCreateApp:
         assert inspect.iscoroutinefunction(init_handler)
 
         init_calls: list[str] = []
+        sync_calls: list[str] = []
 
         with patch(
             "source.services.tab_manager_instance.init_tab_manager",
@@ -49,3 +50,20 @@ class TestCreateApp:
             asyncio.run(init_handler())
 
         assert init_calls == ["called"]
+
+        sync_handler = next(
+            handler
+            for handler in startup_handlers
+            if getattr(handler, "__name__", "") == "_sync_mobile_channels_bridge_config"
+        )
+        assert inspect.iscoroutinefunction(sync_handler)
+
+        with patch(
+            "source.api.http._write_mobile_channels_config_file",
+            side_effect=lambda: sync_calls.append("called"),
+        ):
+            import asyncio
+
+            asyncio.run(sync_handler())
+
+        assert sync_calls == ["called"]

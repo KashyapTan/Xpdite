@@ -1,5 +1,6 @@
 """High-value tests for source/api/http.py endpoints and helpers."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 import sys
@@ -541,7 +542,7 @@ class TestHttpApiEndpoints:
             "platforms": {
                 "telegram": {
                     "enabled": True,
-                    "token": "tg-token",
+                    "token": "***",
                     "status": "connected",
                 },
                 "discord": {
@@ -563,15 +564,20 @@ class TestHttpApiEndpoints:
         )
 
         body = http_api.MobilePlatformConfig(enabled=True)
-        with patch("source.database.db", db_mock):
+        with (
+            patch("source.database.db", db_mock),
+            patch.object(http_api, "_write_mobile_channels_config_file"),
+        ):
             result = await http_api.set_mobile_platform_config("telegram", body)
 
         args = db_mock.set_setting.call_args.args
         assert args[0] == "mobile_channel_telegram"
         assert isinstance(args[1], str)
-        assert (
-            args[1] == '{"enabled": true, "token": "old-token", "status": "connected"}'
-        )
+        assert json.loads(args[1]) == {
+            "enabled": True,
+            "token": "old-token",
+            "status": "connected",
+        }
         assert result == {"success": True}
 
     @pytest.mark.asyncio
@@ -580,16 +586,104 @@ class TestHttpApiEndpoints:
         db_mock.get_setting.return_value = "{bad-json"
 
         body = http_api.MobilePlatformConfig(token="new-token", enabled=True)
-        with patch("source.database.db", db_mock):
+        with (
+            patch("source.database.db", db_mock),
+            patch.object(http_api, "_write_mobile_channels_config_file"),
+        ):
             result = await http_api.set_mobile_platform_config("telegram", body)
 
         args = db_mock.set_setting.call_args.args
         assert args[0] == "mobile_channel_telegram"
-        assert (
-            args[1]
-            == '{"token": "new-token", "enabled": true, "status": "disconnected"}'
-        )
+        assert json.loads(args[1]) == {
+            "token": "new-token",
+            "enabled": True,
+            "status": "disconnected",
+        }
         assert result == {"success": True}
+
+    @pytest.mark.asyncio
+    async def test_set_mobile_platform_config_returns_500_when_bridge_sync_fails(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = '{"enabled": false}'
+
+        body = http_api.MobilePlatformConfig(enabled=True)
+        with (
+            patch("source.database.db", db_mock),
+            patch.object(
+                http_api,
+                "_write_mobile_channels_config_file",
+                side_effect=OSError("disk full"),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.set_mobile_platform_config("telegram", body)
+
+        assert exc.value.status_code == 500
+        assert "failed to sync mobile bridge config" in str(exc.value.detail).lower()
+
+    def test_write_mobile_channels_config_file_serializes_defaults_and_db_values(
+        self, tmp_path
+    ):
+        db_mock = MagicMock()
+        db_mock.get_setting.side_effect = lambda key: {
+            "mobile_channel_telegram": '{"enabled": true, "token": "tg-token"}',
+            "mobile_channel_discord": "{bad-json",
+            "mobile_channel_whatsapp": '{"enabled": true, "phoneNumber": "15551234567", "forcePairing": true}',
+        }.get(key)
+
+        fake_state = SimpleNamespace(server_loop_holder={"port": 8012})
+
+        with (
+            patch("source.database.db", db_mock),
+            patch("source.config.USER_DATA_DIR", tmp_path),
+            patch("source.core.state.app_state", fake_state),
+        ):
+            http_api._write_mobile_channels_config_file()
+
+        config_path = tmp_path / "mobile_channels_config.json"
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+        assert payload == {
+            "version": 1,
+            "pythonServerPort": 8012,
+            "platforms": {
+                "telegram": {
+                    "enabled": True,
+                    "botToken": "tg-token",
+                    "botUsername": "xpdite-bot",
+                },
+                "discord": {
+                    "enabled": False,
+                    "botToken": "",
+                    "publicKey": "",
+                    "applicationId": "",
+                },
+                "whatsapp": {
+                    "enabled": True,
+                    "authMethod": "pairing_code",
+                    "phoneNumber": "15551234567",
+                    "forcePairing": True,
+                },
+            },
+        }
+
+    def test_write_mobile_channels_config_file_uses_atomic_replace(self, tmp_path):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = None
+        fake_state = SimpleNamespace(server_loop_holder={"port": 8000})
+
+        with (
+            patch("source.database.db", db_mock),
+            patch("source.config.USER_DATA_DIR", tmp_path),
+            patch("source.core.state.app_state", fake_state),
+            patch.object(http_api.os, "replace") as replace_mock,
+        ):
+            http_api._write_mobile_channels_config_file()
+
+        assert replace_mock.call_count == 1
+        src_path, dst_path = replace_mock.call_args.args
+        assert src_path.name.endswith(".tmp")
+        assert dst_path == tmp_path / "mobile_channels_config.json"
 
     @pytest.mark.asyncio
     async def test_get_sub_agent_settings_uses_empty_defaults(self):

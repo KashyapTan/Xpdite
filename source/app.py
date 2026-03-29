@@ -4,6 +4,8 @@ FastAPI application factory.
 Creates and configures the FastAPI application instance.
 """
 
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,6 +13,10 @@ from .api.websocket import websocket_endpoint
 from .api.http import router as http_router
 from .api.terminal import router as terminal_router
 from .api.mobile_internal import router as mobile_router
+from .core.thread_pool import run_in_thread
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:
@@ -62,6 +68,16 @@ def create_app() -> FastAPI:
         mobile_channel_service.restore_sessions_from_db()
         mobile_channel_service.cleanup_expired_codes()
         mobile_channel_service.register_relay_callback()
+
+    # ── Channel Bridge config sync ────────────────────────────────
+    @app.on_event("startup")
+    async def _sync_mobile_channels_bridge_config():
+        from .api.http import _write_mobile_channels_config_file
+
+        try:
+            await run_in_thread(_write_mobile_channels_config_file)
+        except Exception as e:
+            logger.warning("Failed to sync mobile channels config on startup: %s", e)
 
     return app
 

@@ -10,7 +10,9 @@ Use for:
 
 import json
 import logging
+import os
 import time
+import uuid
 
 import requests
 from fastapi import APIRouter, HTTPException
@@ -1116,6 +1118,13 @@ class MobilePlatformConfig(BaseModel):
     forcePairing: Optional[bool] = None  # Force clearing existing auth state
 
 
+def _mask_token(token: str | None) -> str:
+    """Mask sensitive tokens while preserving configured/not-configured semantics."""
+    if not token:
+        return ""
+    return "***"
+
+
 @router.get("/mobile-channels/config")
 async def get_mobile_channels_config():
     """
@@ -1143,6 +1152,8 @@ async def get_mobile_channels_config():
             parsed_dict = parsed if isinstance(parsed, dict) else default_config
             if platform_id == "whatsapp" and isinstance(parsed_dict, dict):
                 parsed_dict["authMethod"] = "pairing_code"
+            if isinstance(parsed_dict, dict) and parsed_dict.get("token"):
+                parsed_dict["token"] = _mask_token(parsed_dict.get("token"))
             platforms[platform_id] = parsed_dict
         except (json.JSONDecodeError, TypeError, ValueError):
             platforms[platform_id] = default_config
@@ -1168,7 +1179,26 @@ def _write_mobile_channels_config_file() -> None:
     config_data: dict[str, Any] = {
         "version": 1,
         "pythonServerPort": api_port,
-        "platforms": {},
+        "platforms": {
+            "telegram": {
+                "enabled": False,
+                "botToken": "",
+                "botUsername": "xpdite-bot",
+            },
+            "discord": {
+                "enabled": False,
+                "botToken": "",
+                "publicKey": "",
+                "applicationId": "",
+            },
+            "whatsapp": {
+                "enabled": False,
+                # Pairing-code authentication only
+                "authMethod": "pairing_code",
+                "phoneNumber": "",
+                "forcePairing": False,
+            },
+        },
     }
 
     # Telegram
@@ -1176,11 +1206,14 @@ def _write_mobile_channels_config_file() -> None:
     if telegram_raw:
         try:
             telegram = json.loads(telegram_raw)
-            config_data["platforms"]["telegram"] = {
-                "enabled": telegram.get("enabled", False),
-                "botToken": telegram.get("token", ""),
-                "botUsername": telegram.get("username", "xpdite-bot"),
-            }
+            if isinstance(telegram, dict):
+                config_data["platforms"]["telegram"].update(
+                    {
+                        "enabled": telegram.get("enabled", False),
+                        "botToken": telegram.get("token", ""),
+                        "botUsername": telegram.get("username", "xpdite-bot"),
+                    }
+                )
         except Exception as e:
             logger.debug(f"Error parsing telegram settings: {e}")
 
@@ -1189,12 +1222,15 @@ def _write_mobile_channels_config_file() -> None:
     if discord_raw:
         try:
             discord = json.loads(discord_raw)
-            config_data["platforms"]["discord"] = {
-                "enabled": discord.get("enabled", False),
-                "botToken": discord.get("token", ""),
-                "publicKey": discord.get("publicKey", ""),
-                "applicationId": discord.get("applicationId", ""),
-            }
+            if isinstance(discord, dict):
+                config_data["platforms"]["discord"].update(
+                    {
+                        "enabled": discord.get("enabled", False),
+                        "botToken": discord.get("token", ""),
+                        "publicKey": discord.get("publicKey", ""),
+                        "applicationId": discord.get("applicationId", ""),
+                    }
+                )
         except Exception as e:
             logger.debug(f"Error parsing discord settings: {e}")
 
@@ -1203,20 +1239,35 @@ def _write_mobile_channels_config_file() -> None:
     if whatsapp_raw:
         try:
             whatsapp = json.loads(whatsapp_raw)
-            config_data["platforms"]["whatsapp"] = {
-                "enabled": whatsapp.get("enabled", False),
-                # Pairing-code authentication only
-                "authMethod": "pairing_code",
-                "phoneNumber": whatsapp.get("phoneNumber", ""),
-                # Pass through forcePairing flag to clear auth state
-                "forcePairing": whatsapp.get("forcePairing", False),
-            }
+            if isinstance(whatsapp, dict):
+                config_data["platforms"]["whatsapp"].update(
+                    {
+                        "enabled": whatsapp.get("enabled", False),
+                        # Pairing-code authentication only
+                        "authMethod": "pairing_code",
+                        "phoneNumber": whatsapp.get("phoneNumber", ""),
+                        # Pass through forcePairing flag to clear auth state
+                        "forcePairing": whatsapp.get("forcePairing", False),
+                    }
+                )
         except Exception as e:
             logger.debug(f"Error parsing whatsapp settings: {e}")
 
     config_path = USER_DATA_DIR / "mobile_channels_config.json"
-    with open(config_path, "w", encoding="utf-8") as f:
-        json.dump(config_data, f, indent=2)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = config_path.with_name(f"{config_path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(config_data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, config_path)
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                logger.debug("Failed to remove temporary config file: %s", temp_path)
 
 
 @router.put("/mobile-channels/config/{platform_id}")
@@ -1267,6 +1318,10 @@ async def set_mobile_platform_config(platform_id: str, config: MobilePlatformCon
         _write_mobile_channels_config_file()
     except Exception as e:
         logger.error(f"Failed to write mobile channels config file: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Configuration saved, but failed to sync mobile bridge config.",
+        )
 
     return {"success": True}
 
