@@ -26,6 +26,10 @@ from .video_watcher_executor import (
     is_video_watcher_tool,
 )
 from .skills_executor import execute_skill_tool
+from .scheduler_executor import (
+    is_scheduler_tool,
+    execute_scheduler_tool,
+)
 from .tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -68,7 +72,9 @@ def retrieve_relevant_tools(user_query: str) -> list:
     if len(filtered_tools) < len(all_tools):
         logger.debug(
             "Retriever selected %d/%d tools for query: '%s...'",
-            len(filtered_tools), len(all_tools), user_query[:30]
+            len(filtered_tools),
+            len(all_tools),
+            user_query[:30],
         )
 
     return filtered_tools
@@ -79,7 +85,9 @@ def _truncate_result(result: str) -> str:
     result_str = str(result)
     if len(result_str) > MAX_TOOL_RESULT_LENGTH:
         logger.warning("Truncating large tool output (%d chars)", len(result_str))
-        return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+        return (
+            result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+        )
     return result_str
 
 
@@ -131,7 +139,8 @@ async def handle_mcp_tool_calls(
     tool_names = [t["function"]["name"] for t in filtered_tools]
     logger.info(
         "Submitting %d tool(s) to Ollama: %s",
-        len(tool_names), tool_names,
+        len(tool_names),
+        tool_names,
     )
 
     # Use provided client or create a new async one
@@ -170,7 +179,7 @@ async def handle_mcp_tool_calls(
     # Normalize initial tool calls from the detection response
     current_content = response.message.content or ""
     current_tool_calls = []
-    for tc in (response.message.tool_calls or []):
+    for tc in response.message.tool_calls or []:
         raw_args = tc.function.arguments
         parsed_args, arg_error = normalize_tool_args(raw_args)
         current_tool_calls.append(
@@ -208,7 +217,12 @@ async def handle_mcp_tool_calls(
             "content": current_content,
         }
         assistant_msg["tool_calls"] = [
-            {"function": {"name": tc["name"], "arguments": tc.get("raw_args", tc["args"])}}
+            {
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc.get("raw_args", tc["args"]),
+                }
+            }
             for tc in current_tool_calls
         ]
         messages.append(assistant_msg)
@@ -231,16 +245,19 @@ async def handle_mcp_tool_calls(
                 continue
             if fn_name == "spawn_agent" and sn == "sub_agent":
                 spawn_agent_indices.append(idx)
-                spawn_agent_calls.append({
-                    "instruction": fn_args.get("instruction", ""),
-                    "model_tier": fn_args.get("model_tier", "fast"),
-                    "agent_name": fn_args.get("agent_name", "Sub-Agent"),
-                })
+                spawn_agent_calls.append(
+                    {
+                        "instruction": fn_args.get("instruction", ""),
+                        "model_tier": fn_args.get("model_tier", "fast"),
+                        "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+                    }
+                )
 
         # Run all spawn_agent calls in parallel (if any)
         spawn_results: Dict[int, str] = {}
         if spawn_agent_calls and not is_current_request_cancelled():
             from ..services.sub_agent import execute_sub_agents_parallel
+
             results = await execute_sub_agents_parallel(spawn_agent_calls)
             for i, result_str in enumerate(results):
                 spawn_results[spawn_agent_indices[i]] = result_str
@@ -251,7 +268,9 @@ async def handle_mcp_tool_calls(
             arg_error = tc.get("arg_error")
             server_name = mcp_manager.get_tool_server_name(fn_name)
 
-            logger.info("Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name)
+            logger.info(
+                "Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name
+            )
 
             if is_current_request_cancelled():
                 break
@@ -306,12 +325,17 @@ async def handle_mcp_tool_calls(
                     result = await execute_video_watcher_tool(
                         fn_name, fn_args, server_name
                     )
-                elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
+                elif server_name == "skills" and fn_name in (
+                    "list_skills",
+                    "use_skill",
+                ):
                     try:
                         result = execute_skill_tool(fn_name, fn_args)
                     except Exception as e:
                         logger.warning("Skills tool error for %s: %s", fn_name, e)
                         result = f"Error executing skill tool: {e}"
+                elif is_scheduler_tool(fn_name, server_name):
+                    result = await execute_scheduler_tool(fn_name, fn_args, server_name)
                 else:
                     try:
                         result = await mcp_manager.call_tool(fn_name, fn_args)
@@ -358,8 +382,8 @@ async def handle_mcp_tool_calls(
 
         # ── Stream follow-up call ─────────────────────────────────
         # Text is broadcast to the user in real-time inside this call
-        current_content, current_tool_calls, round_stats = (
-            await _stream_tool_follow_up(messages, filtered_tools, client=async_client)
+        current_content, current_tool_calls, round_stats = await _stream_tool_follow_up(
+            messages, filtered_tools, client=async_client
         )
 
         total_token_stats["prompt_eval_count"] += round_stats.get(
@@ -382,12 +406,16 @@ async def handle_mcp_tool_calls(
         logger.info(
             "Tool loop complete after %d round(s) with interleaved streaming", rounds
         )
-        return messages, tool_calls_made, {
-            "content": "".join(all_accumulated_text),
-            "token_stats": total_token_stats,
-            "already_streamed": True,
-            "interleaved_blocks": interleaved_blocks,
-        }
+        return (
+            messages,
+            tool_calls_made,
+            {
+                "content": "".join(all_accumulated_text),
+                "token_stats": total_token_stats,
+                "already_streamed": True,
+                "interleaved_blocks": interleaved_blocks,
+            },
+        )
 
     return messages, tool_calls_made, None
 
@@ -434,7 +462,9 @@ async def _stream_tool_follow_up(
                 # Collect tool calls (typically arrive in/near the final chunk)
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tc in msg.tool_calls:
-                        parsed_args, arg_error = normalize_tool_args(tc.function.arguments)
+                        parsed_args, arg_error = normalize_tool_args(
+                            tc.function.arguments
+                        )
                         tool_calls_found.append(
                             {
                                 "name": tc.function.name,
@@ -449,9 +479,7 @@ async def _stream_tool_follow_up(
                 token_stats["prompt_eval_count"] = (
                     getattr(chunk, "prompt_eval_count", 0) or 0
                 )
-                token_stats["eval_count"] = (
-                    getattr(chunk, "eval_count", 0) or 0
-                )
+                token_stats["eval_count"] = getattr(chunk, "eval_count", 0) or 0
 
     except Exception as e:
         if not is_current_request_cancelled():

@@ -10,6 +10,7 @@ import SettingsSkills from '../components/settings/SettingsSkills';
 import MeetingRecorderSettings from '../components/settings/MeetingRecorderSettings';
 import SettingsSubAgents from '../components/settings/SettingsSubAgents';
 import SettingsMobileChannels from '../components/settings/SettingsMobileChannels';
+import SettingsScheduledJobs from '../components/settings/SettingsScheduledJobs';
 import '../CSS/Settings.css';
 import modelsIcon from '../assets/models.svg';
 import connectionsIcon from '../assets/mcp.svg';
@@ -55,6 +56,7 @@ const Settings: React.FC = () => {
     { id: 'connections', label: 'Connections', icon: connectionsIcon, className: 'settings-mcp-connections', component: <SettingsConnections /> },
     { id: 'tools', label: 'Tools', icon: toolsIcon, className: 'settings-tools', component: <SettingsTools /> },
     { id: 'skills', label: 'Skills', icon: settingsIcon, className: 'settings-skills-tab', component: <SettingsSkills /> },
+    { id: 'scheduled-jobs', label: 'Tasks', icon: settingsIcon, className: 'settings-scheduled-jobs-tab', component: <SettingsScheduledJobs /> },
     { id: 'meeting', label: 'Meeting', icon: settingsIcon, className: 'settings-meeting-tab', component: <MeetingRecorderSettings /> },
     { id: 'sub-agents', label: 'Sub-Agents', icon: settingsIcon, className: 'settings-sub-agents-tab', component: <SettingsSubAgents /> },
     { id: 'mobile', label: 'Mobile', icon: settingsIcon, className: 'settings-mobile-tab', component: <SettingsMobileChannels /> },

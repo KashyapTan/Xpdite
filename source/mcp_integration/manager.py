@@ -618,6 +618,18 @@ async def init_mcp_servers():
         skip_embed=False,  # Include in semantic retrieval
     )
 
+    # ── Scheduler tools (inline — no subprocess) ─────────────────
+    # Scheduler tools allow LLMs to create and manage scheduled jobs
+    # that execute AI requests at specified times. These are intercepted
+    # at the handler layer and executed by scheduler_executor.py.
+    from mcp_servers.servers.scheduler.inline_tools import SCHEDULER_INLINE_TOOLS
+
+    mcp_manager.register_inline_tools(
+        "scheduler",
+        SCHEDULER_INLINE_TOOLS,
+        skip_embed=True,  # No semantic retrieval needed for scheduling
+    )
+
     # ── Add more servers here as you implement them ────────────────
     # Example:
     # await mcp_manager.connect_server(

@@ -48,8 +48,6 @@ _SENSITIVE_TOOL_ARG_KEYS = (
 )
 
 
-
-
 def _load_image_as_base64(path: str) -> Optional[str]:
     """Load an image file and return its base64-encoded content."""
     try:
@@ -92,7 +90,9 @@ def _truncate_tool_result(result: str) -> str:
     result_str = str(result)
     if len(result_str) > MAX_TOOL_RESULT_LENGTH:
         logger.warning("Truncating large tool output (%d chars)", len(result_str))
-        return result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+        return (
+            result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+        )
     return result_str
 
 
@@ -151,18 +151,22 @@ def _append_tool_result(
 ) -> None:
     """Record a tool result for persistence and UI reconstruction."""
     safe_args = _sanitize_tool_args(fn_args)
-    tool_calls_list.append({
-        "name": fn_name,
-        "args": safe_args,
-        "result": result_str,
-        "server": server_name,
-    })
-    interleaved_blocks.append({
-        "type": "tool_call",
-        "name": fn_name,
-        "args": safe_args,
-        "server": server_name,
-    })
+    tool_calls_list.append(
+        {
+            "name": fn_name,
+            "args": safe_args,
+            "result": result_str,
+            "server": server_name,
+        }
+    )
+    interleaved_blocks.append(
+        {
+            "type": "tool_call",
+            "name": fn_name,
+            "args": safe_args,
+            "server": server_name,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -199,15 +203,19 @@ def _build_messages(
             continue
 
         if role == "user" and msg.get("images"):
-            messages.append({
-                "role": "user",
-                "content": _build_user_content(content, msg["images"]),
-            })
+            messages.append(
+                {
+                    "role": "user",
+                    "content": _build_user_content(content, msg["images"]),
+                }
+            )
         else:
             messages.append({"role": role, "content": content})
 
     # Current user message
-    messages.append({"role": "user", "content": _build_user_content(user_query, image_paths)})
+    messages.append(
+        {"role": "user", "content": _build_user_content(user_query, image_paths)}
+    )
 
     return messages
 
@@ -232,12 +240,19 @@ async def _execute_and_broadcast_tool(
     Returns the (possibly truncated) result string.
     """
     from ..mcp_integration.manager import mcp_manager
-    from ..mcp_integration.terminal_executor import is_terminal_tool, execute_terminal_tool
+    from ..mcp_integration.terminal_executor import (
+        is_terminal_tool,
+        execute_terminal_tool,
+    )
     from ..mcp_integration.video_watcher_executor import (
         is_video_watcher_tool,
         execute_video_watcher_tool,
     )
     from ..mcp_integration.skills_executor import execute_skill_tool
+    from ..mcp_integration.scheduler_executor import (
+        is_scheduler_tool,
+        execute_scheduler_tool,
+    )
 
     try:
         server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
@@ -262,10 +277,14 @@ async def _execute_and_broadcast_tool(
 
     await broadcast_message(
         "tool_call",
-        json.dumps({
-            "name": fn_name, "args": safe_args,
-            "server": server_name, "status": "calling",
-        }),
+        json.dumps(
+            {
+                "name": fn_name,
+                "args": safe_args,
+                "server": server_name,
+                "status": "calling",
+            }
+        ),
     )
 
     try:
@@ -275,6 +294,8 @@ async def _execute_and_broadcast_tool(
             result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
         elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
             result = execute_skill_tool(fn_name, fn_args)
+        elif is_scheduler_tool(fn_name, server_name):
+            result = await execute_scheduler_tool(fn_name, fn_args, server_name)
         else:
             result = await mcp_manager.call_tool(fn_name, fn_args)
     except Exception as e:
@@ -290,10 +311,15 @@ async def _execute_and_broadcast_tool(
     result_str = _truncate_tool_result(str(result))
     await broadcast_message(
         "tool_call",
-        json.dumps({
-            "name": fn_name, "args": safe_args, "result": result_str,
-            "server": server_name, "status": "complete",
-        }),
+        json.dumps(
+            {
+                "name": fn_name,
+                "args": safe_args,
+                "result": result_str,
+                "server": server_name,
+                "status": "complete",
+            }
+        ),
     )
 
     _append_tool_result(
@@ -423,7 +449,9 @@ async def _stream_litellm(
     max_tokens = _get_max_tokens(litellm_model, model_info)
     if max_tokens is None and provider == "anthropic":
         max_tokens = 16384
-        logger.debug("Anthropic model not in registry; using fallback max_tokens=%d", max_tokens)
+        logger.debug(
+            "Anthropic model not in registry; using fallback max_tokens=%d", max_tokens
+        )
 
     # Reasoning params (hoisted outside the loop — model doesn't change)
     reasoning_params = _get_reasoning_params(litellm_model, model_info)
@@ -447,7 +475,9 @@ async def _stream_litellm(
                 all_tools = []
 
             if all_tools:
-                tools = [t for t in all_tools if t["function"]["name"] in allowed_tool_names]
+                tools = [
+                    t for t in all_tools if t["function"]["name"] in allowed_tool_names
+                ]
                 if not tools:
                     tools = None
 
@@ -507,7 +537,9 @@ async def _stream_litellm(
             )
 
             # Stream the response
-            response = cast(AsyncIterator[Any], await litellm.acompletion(**create_kwargs))
+            response = cast(
+                AsyncIterator[Any], await litellm.acompletion(**create_kwargs)
+            )
 
             # Accumulate tool call deltas during streaming
             pending_tool_calls: Dict[int, Dict[str, str]] = {}
@@ -559,14 +591,20 @@ async def _stream_litellm(
                     for tc_delta in delta.tool_calls:
                         idx = tc_delta.index
                         if idx not in pending_tool_calls:
-                            pending_tool_calls[idx] = {"id": "", "name": "", "arguments": ""}
+                            pending_tool_calls[idx] = {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            }
                         if tc_delta.id:
                             pending_tool_calls[idx]["id"] = tc_delta.id
                         if tc_delta.function:
                             if tc_delta.function.name:
                                 pending_tool_calls[idx]["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
-                                pending_tool_calls[idx]["arguments"] += tc_delta.function.arguments
+                                pending_tool_calls[idx]["arguments"] += (
+                                    tc_delta.function.arguments
+                                )
 
             # Add this round's usage to running totals (summed across rounds)
             total_token_stats["prompt_eval_count"] += round_prompt_tokens
@@ -587,7 +625,8 @@ async def _stream_litellm(
                     logger.debug(
                         "Provider %s returned tool calls with finish_reason=%r "
                         "(expected 'tool_calls'); proceeding with execution.",
-                        provider, finish_reason,
+                        provider,
+                        finish_reason,
                     )
                 # Build assistant message with tool calls
                 assistant_tool_calls = []
@@ -596,11 +635,16 @@ async def _stream_litellm(
                     # Ensure tool call ID is present (some providers omit it)
                     if not tc["id"]:
                         tc["id"] = f"call_{rounds}_{idx}"
-                    assistant_tool_calls.append({
-                        "id": tc["id"],
-                        "type": "function",
-                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                    })
+                    assistant_tool_calls.append(
+                        {
+                            "id": tc["id"],
+                            "type": "function",
+                            "function": {
+                                "name": tc["name"],
+                                "arguments": tc["arguments"],
+                            },
+                        }
+                    )
 
                 # Build the assistant message to append
                 assistant_msg: Dict[str, Any] = {
@@ -609,10 +653,14 @@ async def _stream_litellm(
                 }
 
                 # Include text content if the model produced any before tool calls
-                assistant_msg["content"] = "".join(current_round_text) if current_round_text else None
+                assistant_msg["content"] = (
+                    "".join(current_round_text) if current_round_text else None
+                )
 
                 if current_round_text:
-                    interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
+                    interleaved_blocks.append(
+                        {"type": "text", "content": "".join(current_round_text)}
+                    )
                     current_round_text.clear()
 
                 # Execute each tool and append results
@@ -638,6 +686,7 @@ async def _stream_litellm(
                     parsed_args_by_index[idx] = fn_args
 
                     from ..mcp_integration.manager import mcp_manager as _mm
+
                     try:
                         sn = _mm.get_tool_server_name(fn_name) or "unknown"
                     except Exception:
@@ -645,16 +694,19 @@ async def _stream_litellm(
 
                     if fn_name == "spawn_agent" and sn == "sub_agent":
                         spawn_agent_indices.append(idx)
-                        spawn_agent_calls.append({
-                            "instruction": fn_args.get("instruction", ""),
-                            "model_tier": fn_args.get("model_tier", "fast"),
-                            "agent_name": fn_args.get("agent_name", "Sub-Agent"),
-                        })
+                        spawn_agent_calls.append(
+                            {
+                                "instruction": fn_args.get("instruction", ""),
+                                "model_tier": fn_args.get("model_tier", "fast"),
+                                "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+                            }
+                        )
 
                 # Run all spawn_agent calls in parallel (if any)
                 spawn_results: Dict[int, str] = {}
                 if spawn_agent_calls and not is_current_request_cancelled():
                     from ..services.sub_agent import execute_sub_agents_parallel
+
                     results = await execute_sub_agents_parallel(spawn_agent_calls)
                     for i, result_str in enumerate(results):
                         spawn_results[spawn_agent_indices[i]] = result_str
@@ -679,11 +731,13 @@ async def _stream_litellm(
                             fn_name,
                             len(raw_args or ""),
                         )
-                        tool_result_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc_info["id"],
-                            "content": error_result,
-                        })
+                        tool_result_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_info["id"],
+                                "content": error_result,
+                            }
+                        )
                         _append_tool_result(
                             fn_name,
                             {},
@@ -694,21 +748,24 @@ async def _stream_litellm(
                         )
                         continue
 
-                    if allowed_tool_names is not None and fn_name not in allowed_tool_names:
-                        error_result = (
-                            f"System error: tool '{fn_name}' is not available for this request."
-                        )
+                    if (
+                        allowed_tool_names is not None
+                        and fn_name not in allowed_tool_names
+                    ):
+                        error_result = f"System error: tool '{fn_name}' is not available for this request."
                         logger.warning(
                             "Rejected unauthorized tool call from %s/%s: %s",
                             provider,
                             model,
                             fn_name,
                         )
-                        tool_result_messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc_info["id"],
-                            "content": error_result,
-                        })
+                        tool_result_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_info["id"],
+                                "content": error_result,
+                            }
+                        )
                         _append_tool_result(
                             fn_name,
                             fn_args,
@@ -737,16 +794,21 @@ async def _stream_litellm(
                         )
                     else:
                         result_str = await _execute_and_broadcast_tool(
-                            fn_name, fn_args, provider.capitalize(),
-                            tool_calls_list, interleaved_blocks,
+                            fn_name,
+                            fn_args,
+                            provider.capitalize(),
+                            tool_calls_list,
+                            interleaved_blocks,
                         )
 
                     # Append tool result in OpenAI format (LiteLLM translates)
-                    tool_result_messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc_info["id"],
-                        "content": result_str,
-                    })
+                    tool_result_messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc_info["id"],
+                            "content": result_str,
+                        }
+                    )
 
                 if not cancelled_during_tool_loop:
                     messages.append(assistant_msg)
@@ -764,11 +826,20 @@ async def _stream_litellm(
         await broadcast_message("token_usage", json.dumps(total_token_stats))
 
         if tool_calls_list:
-            logger.info("%s tool loop complete after %d round(s)", provider.capitalize(), rounds)
+            logger.info(
+                "%s tool loop complete after %d round(s)", provider.capitalize(), rounds
+            )
         if current_round_text:
-            interleaved_blocks.append({"type": "text", "content": "".join(current_round_text)})
+            interleaved_blocks.append(
+                {"type": "text", "content": "".join(current_round_text)}
+            )
 
-        return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
+        return (
+            "".join(all_accumulated),
+            total_token_stats,
+            tool_calls_list,
+            interleaved_blocks or None,
+        )
 
     except Exception as e:
         # Keep detailed error in server logs only — exception messages
@@ -781,7 +852,12 @@ async def _stream_litellm(
         )
         await broadcast_message("error", error_msg)
         # Return accumulated data so partial responses are preserved
-        return "".join(all_accumulated), total_token_stats, tool_calls_list, interleaved_blocks or None
+        return (
+            "".join(all_accumulated),
+            total_token_stats,
+            tool_calls_list,
+            interleaved_blocks or None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -809,8 +885,14 @@ async def stream_cloud_chat(
     Text and tool calls are interleaved and broadcast in real-time.
     """
     return await _stream_litellm(
-        provider, api_key, model, user_query, image_paths,
-        chat_history, allowed_tool_names, system_prompt,
+        provider,
+        api_key,
+        model,
+        user_query,
+        image_paths,
+        chat_history,
+        allowed_tool_names,
+        system_prompt,
     )
 
 

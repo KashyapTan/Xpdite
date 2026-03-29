@@ -15,7 +15,7 @@
 }
 
 .nav-bar {
-  width: 90px;
+  width: 115px;
   height: 100%;
   display: flex;
   align-items: center;
@@ -25,7 +25,7 @@
 }
 
 .blank-space-to-drag {
-  width: calc(100% - 150px);
+  width: calc(100% - 155px);
   height: 100%;
   -webkit-app-region: drag;
 }
@@ -33,7 +33,7 @@
 .nav-bar-right-side {
   display: flex;
   justify-content: space-between;
-  width: 60px;
+  width: 90px;
   height: 100%;
   -webkit-user-select: none;
   user-select: none;
@@ -57,7 +57,7 @@
   user-select: none;
 }
 
-.settingsButton, .chatHistoryButton, .recordedMeetingsAlbumButton, .newChatButton {
+.settingsButton, .chatHistoryButton, .recordedMeetingsAlbumButton, .newChatButton, .scheduledJobsButton {
   width: 30px;
   height: 30px;
   display: flex;
@@ -65,7 +65,7 @@
   justify-content: center;
 }
 
-.settings-icon, .recorded-meetings-album-icon, .new-chat-icon {
+.settings-icon, .recorded-meetings-album-icon, .new-chat-icon, .scheduled-jobs-icon {
   width: 70%;
   height: 70%;
   color: white;

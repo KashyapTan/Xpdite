@@ -783,4 +783,288 @@ export const api = {
     });
     if (!response.ok) throw new Error('Failed to save platform config');
   },
+
+  // ============================================
+  // Notifications API
+  // ============================================
+
+  /**
+   * Get all notifications.
+   */
+  async getNotifications(): Promise<{
+    notifications: Array<{
+      id: string;
+      type: string;
+      title: string;
+      body: string;
+      payload: Record<string, unknown> | null;
+      created_at: number;
+    }>;
+    unread_count: number;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/notifications`);
+    if (!response.ok) throw new Error('Failed to fetch notifications');
+    return response.json();
+  },
+
+  /**
+   * Get notification count.
+   */
+  async getNotificationCount(): Promise<{ count: number }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/notifications/count`);
+    if (!response.ok) throw new Error('Failed to fetch notification count');
+    return response.json();
+  },
+
+  /**
+   * Dismiss a single notification.
+   */
+  async dismissNotification(notificationId: string): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/notifications/${notificationId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to dismiss notification');
+  },
+
+  /**
+   * Dismiss all notifications.
+   */
+  async dismissAllNotifications(): Promise<{ dismissed_count: number }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/notifications`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to dismiss notifications');
+    return response.json();
+  },
+
+  // ============================================
+  // Scheduled Jobs API
+  // ============================================
+
+  /**
+   * Get all scheduled jobs.
+   */
+  async getScheduledJobs(): Promise<{
+    jobs: Array<{
+      id: string;
+      name: string;
+      cron_expression: string;
+      instruction: string;
+      model: string | null;
+      timezone: string;
+      delivery_platform: string | null;
+      delivery_sender_id: string | null;
+      enabled: boolean;
+      is_one_shot: boolean;
+      created_at: number;
+      last_run_at: number | null;
+      next_run_at: number | null;
+      run_count: number;
+      missed: boolean;
+    }>;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs`);
+    if (!response.ok) throw new Error('Failed to fetch scheduled jobs');
+    return response.json();
+  },
+
+  /**
+   * Get a specific scheduled job.
+   */
+  async getScheduledJob(jobId: string): Promise<{
+    id: string;
+    name: string;
+    cron_expression: string;
+    instruction: string;
+    model: string | null;
+    timezone: string;
+    delivery_platform: string | null;
+    delivery_sender_id: string | null;
+    enabled: boolean;
+    is_one_shot: boolean;
+    created_at: number;
+    last_run_at: number | null;
+    next_run_at: number | null;
+    run_count: number;
+    missed: boolean;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}`);
+    if (!response.ok) throw new Error('Failed to fetch scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Create a new scheduled job.
+   */
+  async createScheduledJob(job: {
+    name: string;
+    cron_expression: string;
+    instruction: string;
+    timezone: string;
+    model?: string;
+    delivery_platform?: string;
+    delivery_sender_id?: string;
+    is_one_shot?: boolean;
+  }): Promise<{
+    id: string;
+    name: string;
+    cron_expression: string;
+    instruction: string;
+    timezone: string;
+    model: string | null;
+    delivery_platform: string | null;
+    delivery_sender_id: string | null;
+    enabled: boolean;
+    is_one_shot: boolean;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(job),
+    });
+    if (!response.ok) throw new Error('Failed to create scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Update a scheduled job.
+   */
+  async updateScheduledJob(jobId: string, updates: {
+    name?: string;
+    cron_expression?: string;
+    instruction?: string;
+    timezone?: string;
+    model?: string;
+    delivery_platform?: string;
+    delivery_sender_id?: string;
+    enabled?: boolean;
+    is_one_shot?: boolean;
+  }): Promise<{
+    id: string;
+    name: string;
+    cron_expression: string;
+    instruction: string;
+    timezone: string;
+    model: string | null;
+    enabled: boolean;
+    is_one_shot: boolean;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) throw new Error('Failed to update scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Delete a scheduled job.
+   */
+  async deleteScheduledJob(jobId: string): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) throw new Error('Failed to delete scheduled job');
+  },
+
+  /**
+   * Pause a scheduled job.
+   */
+  async pauseScheduledJob(jobId: string): Promise<{
+    id: string;
+    name: string;
+    enabled: boolean;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}/pause`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to pause scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Resume a scheduled job.
+   */
+  async resumeScheduledJob(jobId: string): Promise<{
+    id: string;
+    name: string;
+    enabled: boolean;
+    next_run_at: number | null;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}/resume`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to resume scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Run a scheduled job immediately.
+   */
+  async runScheduledJobNow(jobId: string): Promise<{
+    success: boolean;
+    conversation_id: string | null;
+    job_name: string;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}/run-now`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to run scheduled job');
+    return response.json();
+  },
+
+  /**
+   * Get all conversations created by scheduled jobs.
+   */
+  async getScheduledJobConversations(): Promise<{
+    conversations: Array<{
+      id: string;
+      job_id: string;
+      job_name: string | null;
+      title: string;
+      created_at: number;
+      updated_at: number;
+    }>;
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/conversations`);
+    if (!response.ok) throw new Error('Failed to fetch job conversations');
+    return response.json();
+  },
+
+  /**
+   * Get conversations for a specific scheduled job.
+   */
+  async getJobConversations(jobId: string): Promise<{
+    conversations: Array<{
+      id: string;
+      job_id: string;
+      job_name: string | null;
+      title: string;
+      created_at: number;
+      updated_at: number;
+    }>;
+    job: {
+      id: string;
+      name: string;
+    };
+  }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/scheduled-jobs/${jobId}/conversations`);
+    if (!response.ok) throw new Error('Failed to fetch job conversations');
+    return response.json();
+  },
 };

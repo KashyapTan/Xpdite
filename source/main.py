@@ -153,6 +153,15 @@ def start_server():
     except Exception as e:
         logger.warning("Failed to start Google servers (non-fatal): %s", e)
 
+    # Initialize and start the scheduler service
+    try:
+        from .services.scheduler import scheduler_service
+
+        loop.run_until_complete(scheduler_service.start())
+        logger.info("Scheduler service started")
+    except Exception as e:
+        logger.warning("Failed to start scheduler service (non-fatal): %s", e)
+
     # Start uvicorn server
     _emit_boot_marker("starting_http", "Preparing chat features", 75)
     config = uvicorn.Config(

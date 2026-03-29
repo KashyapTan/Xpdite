@@ -88,17 +88,41 @@ const SettingsMobileChannels: React.FC = () => {
     }
   }, []);
 
-  // Load platform statuses from Channel Bridge
+  // Load platform config from Python backend and live status from Channel Bridge
   const loadPlatformStatuses = useCallback(async () => {
     try {
+      // Get config (enabled/configured) from Python backend database
       const config = await api.getMobileChannelsConfig();
+      
+      // Get live connection status from Channel Bridge via Electron IPC
+      // This is the source of truth for whether platforms are actually connected
+      let liveStatuses: Array<{ platform: string; status: string; error?: string }> = [];
+      if (typeof window !== 'undefined' && window.electronAPI?.getChannelBridgeStatus) {
+        try {
+          const bridgeResponse = await window.electronAPI.getChannelBridgeStatus();
+          if (bridgeResponse?.platforms) {
+            liveStatuses = bridgeResponse.platforms;
+          }
+        } catch (err) {
+          console.warn('Failed to get Channel Bridge status:', err);
+        }
+      }
+      
       setPlatforms((prev) =>
-        prev.map((p) => ({
-          ...p,
-          enabled: config.platforms?.[p.id]?.enabled ?? false,
-          configured: !!config.platforms?.[p.id]?.token,
-          status: config.platforms?.[p.id]?.status ?? 'disconnected',
-        }))
+        prev.map((p) => {
+          // Find live status from Channel Bridge (source of truth for connection state)
+          const liveStatus = liveStatuses.find((s) => s.platform === p.id);
+          return {
+            ...p,
+            enabled: config.platforms?.[p.id]?.enabled ?? false,
+            configured: !!config.platforms?.[p.id]?.token,
+            // Use live status from Channel Bridge if available, otherwise fallback to DB
+            status: (liveStatus?.status as 'connected' | 'disconnected' | 'error') 
+              ?? config.platforms?.[p.id]?.status 
+              ?? 'disconnected',
+            statusMessage: liveStatus?.error,
+          };
+        })
       );
     } catch (err) {
       console.error('Failed to load platform statuses:', err);
@@ -122,6 +146,35 @@ const SettingsMobileChannels: React.FC = () => {
         console.log('Received WhatsApp pairing code:', code);
         setWhatsappPairingCode(code);
         setWhatsappConnecting(false);
+      });
+      return () => {
+        unsubscribe();
+      };
+    }
+  }, []);
+
+  // Listen for real-time Channel Bridge status updates via IPC (Electron)
+  // This is the source of truth for platform connection status
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.electronAPI?.onChannelBridgeStatus) {
+      const unsubscribe = window.electronAPI.onChannelBridgeStatus((platformStatuses: unknown) => {
+        if (Array.isArray(platformStatuses)) {
+          setPlatforms((prev) =>
+            prev.map((p) => {
+              const bridgeStatus = platformStatuses.find(
+                (s: { platform: string }) => s.platform === p.id
+              ) as { platform: string; status: string; error?: string } | undefined;
+              if (bridgeStatus) {
+                return {
+                  ...p,
+                  status: bridgeStatus.status as 'connected' | 'disconnected' | 'error',
+                  statusMessage: bridgeStatus.error,
+                };
+              }
+              return p;
+            })
+          );
+        }
       });
       return () => {
         unsubscribe();

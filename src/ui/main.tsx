@@ -12,6 +12,7 @@ const ChatHistory = lazy(() => import('./pages/ChatHistory.tsx'))
 const MeetingAlbum = lazy(() => import('./pages/MeetingAlbum.tsx'))
 const MeetingRecorder = lazy(() => import('./pages/MeetingRecorder.tsx'))
 const MeetingRecordingDetail = lazy(() => import('./pages/MeetingRecordingDetail.tsx'))
+const ScheduledJobsResults = lazy(() => import('./pages/ScheduledJobsResults.tsx'))
 
 // eslint-disable-next-line react-refresh/only-export-components
 const LazyFallback = () => (
@@ -48,6 +49,10 @@ const router = createHashRouter([
       {
         path: '/recording/:id',
         element: <Suspense fallback={<LazyFallback />}><MeetingRecordingDetail /></Suspense>,
+      },
+      {
+        path: '/scheduled-jobs',
+        element: <Suspense fallback={<LazyFallback />}><ScheduledJobsResults /></Suspense>,
       },
     ]
   }

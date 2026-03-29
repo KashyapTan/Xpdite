@@ -17,6 +17,14 @@ vi.mock('../../contexts/TabContext', () => ({
   }),
 }));
 
+vi.mock('../../contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    send: vi.fn(),
+    subscribe: vi.fn(() => vi.fn()),
+    isConnected: true,
+  }),
+}));
+
 describe('TitleBar', () => {
   beforeEach(() => {
     vi.clearAllMocks();

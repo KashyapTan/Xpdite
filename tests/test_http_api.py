@@ -5,7 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import sys
 
 import pytest
+from fastapi import FastAPI
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 import source.api.http as http_api
 
@@ -64,6 +66,32 @@ class TestHttpApiHelpers:
 
 
 class TestHttpApiEndpoints:
+    def test_scheduled_job_conversations_route_returns_job_conversations(self):
+        app = FastAPI()
+        app.include_router(http_api.router)
+
+        conversations_payload = [
+            {
+                "id": "conv-1",
+                "title": "[Job] Daily Summary",
+                "created_at": 123.0,
+                "updated_at": 124.0,
+                "job_id": "job-1",
+                "job_name": "Daily Summary",
+            }
+        ]
+
+        with patch(
+            "source.database.db.get_job_conversations",
+            return_value=conversations_payload,
+        ) as get_job_conversations:
+            client = TestClient(app)
+            response = client.get("/api/scheduled-jobs/conversations")
+
+        assert response.status_code == 200
+        assert response.json() == {"conversations": conversations_payload}
+        get_job_conversations.assert_called_once_with()
+
     @pytest.mark.asyncio
     async def test_health_check_returns_healthy(self):
         result = await http_api.health_check()

@@ -1269,3 +1269,258 @@ async def set_mobile_platform_config(platform_id: str, config: MobilePlatformCon
         logger.error(f"Failed to write mobile channels config file: {e}")
 
     return {"success": True}
+
+
+# ============================================
+# Scheduled Jobs API
+# ============================================
+
+
+class ScheduledJobCreate(BaseModel):
+    """Request body for creating a scheduled job."""
+
+    name: str
+    cron_expression: str
+    instruction: str
+    timezone: str
+    model: Optional[str] = None
+    delivery_platform: Optional[str] = None
+    delivery_sender_id: Optional[str] = None
+    is_one_shot: bool = False
+
+
+class ScheduledJobUpdate(BaseModel):
+    """Request body for updating a scheduled job."""
+
+    name: Optional[str] = None
+    cron_expression: Optional[str] = None
+    instruction: Optional[str] = None
+    timezone: Optional[str] = None
+    model: Optional[str] = None
+    delivery_platform: Optional[str] = None
+    delivery_sender_id: Optional[str] = None
+    enabled: Optional[bool] = None
+    is_one_shot: Optional[bool] = None
+
+
+@router.get("/scheduled-jobs")
+async def list_scheduled_jobs():
+    """List all scheduled jobs."""
+    from ..services.scheduler import scheduler_service
+
+    jobs = scheduler_service.list_jobs()
+    return {"jobs": jobs}
+
+
+@router.get("/scheduled-jobs/conversations")
+async def list_scheduled_job_conversations():
+    """List all conversations created by scheduled jobs."""
+    from ..database import db
+
+    conversations = db.get_job_conversations()
+    return {"conversations": conversations}
+
+
+@router.get("/scheduled-jobs/{job_id}")
+async def get_scheduled_job(job_id: str):
+    """Get a specific scheduled job by ID."""
+    from ..services.scheduler import scheduler_service
+
+    job = scheduler_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+    return job
+
+
+@router.post("/scheduled-jobs")
+async def create_scheduled_job(job_data: ScheduledJobCreate):
+    """Create a new scheduled job."""
+    from ..services.scheduler import scheduler_service
+
+    try:
+        job = await scheduler_service.create_job(
+            name=job_data.name,
+            cron_expression=job_data.cron_expression,
+            instruction=job_data.instruction,
+            timezone=job_data.timezone,
+            model=job_data.model,
+            delivery_platform=job_data.delivery_platform,
+            delivery_sender_id=job_data.delivery_sender_id,
+            is_one_shot=job_data.is_one_shot,
+        )
+        return job
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to create scheduled job: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create job")
+
+
+@router.put("/scheduled-jobs/{job_id}")
+async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
+    """Update an existing scheduled job."""
+    from ..database import db
+    from ..services.scheduler import scheduler_service
+
+    job = scheduler_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    # Build update dict from non-None values
+    updates: dict[str, Any] = {}
+    if job_data.name is not None:
+        updates["name"] = job_data.name
+    if job_data.cron_expression is not None:
+        updates["cron_expression"] = job_data.cron_expression
+    if job_data.instruction is not None:
+        updates["instruction"] = job_data.instruction
+    if job_data.timezone is not None:
+        updates["timezone"] = job_data.timezone
+    if job_data.model is not None:
+        updates["model"] = job_data.model
+    if job_data.delivery_platform is not None:
+        updates["delivery_platform"] = job_data.delivery_platform
+    if job_data.delivery_sender_id is not None:
+        updates["delivery_sender_id"] = job_data.delivery_sender_id
+    if job_data.enabled is not None:
+        updates["enabled"] = job_data.enabled
+    if job_data.is_one_shot is not None:
+        updates["is_one_shot"] = job_data.is_one_shot
+
+    if not updates:
+        return job  # Nothing to update
+
+    # Update the job in DB
+    try:
+        updated_job = db.update_scheduled_job(job_id, **updates)
+        if not updated_job:
+            raise HTTPException(status_code=500, detail="Failed to update job")
+
+        # Reschedule in APScheduler if needed
+        await scheduler_service._reschedule_job(job_id)
+
+        return updated_job
+    except Exception as e:
+        logger.error(f"Failed to update scheduled job: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update job")
+
+
+@router.delete("/scheduled-jobs/{job_id}")
+async def delete_scheduled_job(job_id: str):
+    """Delete a scheduled job."""
+    from ..services.scheduler import scheduler_service
+
+    job = scheduler_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    success = await scheduler_service.delete_job(job_id)
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to delete job")
+
+    return {"success": True}
+
+
+@router.post("/scheduled-jobs/{job_id}/pause")
+async def pause_scheduled_job(job_id: str):
+    """Pause a scheduled job."""
+    from ..services.scheduler import scheduler_service
+
+    job = await scheduler_service.pause_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    return job
+
+
+@router.post("/scheduled-jobs/{job_id}/resume")
+async def resume_scheduled_job(job_id: str):
+    """Resume a paused scheduled job."""
+    from ..services.scheduler import scheduler_service
+
+    job = await scheduler_service.resume_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    return job
+
+
+@router.post("/scheduled-jobs/{job_id}/run-now")
+async def run_scheduled_job_now(job_id: str):
+    """Trigger a scheduled job to run immediately."""
+    from ..services.scheduler import scheduler_service
+
+    job = scheduler_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    try:
+        conversation_id = await scheduler_service.run_job_now(job_id)
+        return {
+            "success": True,
+            "conversation_id": conversation_id,
+            "job_name": job["name"],
+        }
+    except Exception as e:
+        logger.error(f"Failed to run job now: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to run job: {e}")
+
+
+@router.get("/scheduled-jobs/{job_id}/conversations")
+async def list_job_conversations(job_id: str):
+    """List conversations for a specific scheduled job."""
+    from ..database import db
+    from ..services.scheduler import scheduler_service
+
+    job = scheduler_service.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    conversations = db.get_job_conversations(job_id)
+    return {"conversations": conversations, "job": job}
+
+
+# ============================================
+# Notifications API
+# ============================================
+
+
+@router.get("/notifications")
+async def list_notifications():
+    """List all notifications."""
+    from ..services.notifications import notification_service
+
+    notifications = notification_service.list()
+    count = notification_service.count()
+    return {"notifications": notifications, "unread_count": count}
+
+
+@router.get("/notifications/count")
+async def get_notification_count():
+    """Get the count of unread notifications."""
+    from ..services.notifications import notification_service
+
+    count = notification_service.count()
+    return {"count": count}
+
+
+@router.delete("/notifications/{notification_id}")
+async def dismiss_notification(notification_id: str):
+    """Dismiss (delete) a single notification."""
+    from ..services.notifications import notification_service
+
+    success = await notification_service.dismiss(notification_id)
+    if not success:
+        raise HTTPException(
+            status_code=404, detail=f"Notification '{notification_id}' not found"
+        )
+    return {"success": True}
+
+
+@router.delete("/notifications")
+async def dismiss_all_notifications():
+    """Dismiss (delete) all notifications."""
+    from ..services.notifications import notification_service
+
+    count = await notification_service.dismiss_all()
+    return {"success": True, "dismissed_count": count}

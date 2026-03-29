@@ -301,9 +301,65 @@ class DatabaseManager:
                 pass  # Column already exists
 
             try:
-                cursor.execute("ALTER TABLE mobile_paired_devices ADD COLUMN default_model TEXT")
+                cursor.execute(
+                    "ALTER TABLE mobile_paired_devices ADD COLUMN default_model TEXT"
+                )
             except sqlite3.OperationalError:
                 pass  # Column already exists
+
+            # --- TABLE: SCHEDULED JOBS ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_jobs (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    cron_expression TEXT NOT NULL,
+                    instruction TEXT NOT NULL,
+                    model TEXT,
+                    timezone TEXT NOT NULL,
+                    delivery_platform TEXT,
+                    delivery_sender_id TEXT,
+                    enabled INTEGER DEFAULT 1,
+                    is_one_shot INTEGER DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    last_run_at REAL,
+                    next_run_at REAL,
+                    run_count INTEGER DEFAULT 0,
+                    missed INTEGER DEFAULT 0
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_scheduled_jobs_enabled
+                ON scheduled_jobs(enabled, next_run_at)
+            """)
+
+            # --- TABLE: NOTIFICATIONS ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS notifications (
+                    id TEXT PRIMARY KEY,
+                    type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT,
+                    payload TEXT,
+                    created_at REAL NOT NULL
+                )
+            """)
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_notifications_created
+                ON notifications(created_at DESC)
+            """)
+
+            # --- CONVERSATION JOB_ID MIGRATION ---
+            try:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN job_id TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_conversations_job
+                ON conversations(job_id)
+            """)
 
             self._backfill_message_metadata(cursor)
 
@@ -821,10 +877,14 @@ class DatabaseManager:
     # ---------------------------------------------------------
 
     def get_recent_conversations(self, limit: int = 5, offset: int = 0) -> List[Dict]:
-        """Return conversations ordered by most recently active, with pagination."""
+        """Return conversations ordered by most recently active, with pagination.
+        Excludes conversations created by scheduled jobs (those have job_id set).
+        """
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                """SELECT id, title, updated_at FROM conversations
+                   WHERE job_id IS NULL
+                   ORDER BY updated_at DESC LIMIT ? OFFSET ?""",
                 (limit, offset),
             ).fetchall()
         return [{"id": r[0], "title": r[1], "date": r[2]} for r in rows]
@@ -876,7 +936,9 @@ class DatabaseManager:
 
     def search_conversations(self, search_term: str, limit: int = 20) -> List[Dict]:
         """Search conversations by title or message content using FTS5.
-        Falls back to LIKE if FTS tables are unavailable."""
+        Falls back to LIKE if FTS tables are unavailable.
+        Excludes conversations created by scheduled jobs (those have job_id set).
+        """
         if not search_term or not search_term.strip():
             return []
 
@@ -887,7 +949,7 @@ class DatabaseManager:
                 rows = conn.execute(
                     """SELECT c.id, c.title, c.updated_at
                        FROM conversations c
-                       WHERE c.id IN (
+                       WHERE c.job_id IS NULL AND c.id IN (
                            SELECT conversation_id FROM conversations_fts
                            WHERE conversations_fts MATCH ?
                            UNION
@@ -908,7 +970,7 @@ class DatabaseManager:
                     """SELECT DISTINCT c.id, c.title, c.updated_at
                        FROM conversations c
                        LEFT JOIN messages m ON c.id = m.conversation_id
-                       WHERE c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\'
+                       WHERE c.job_id IS NULL AND (c.title LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\')
                        ORDER BY c.updated_at DESC
                        LIMIT ?""",
                     (f"%{escaped}%", f"%{escaped}%", limit),
@@ -1382,7 +1444,9 @@ class DatabaseManager:
             )
             conn.commit()
 
-    def get_paired_device_default_model(self, platform: str, sender_id: str) -> str | None:
+    def get_paired_device_default_model(
+        self, platform: str, sender_id: str
+    ) -> str | None:
         """Get the default model preference for a paired device."""
         with self._connect() as conn:
             row = conn.execute(
@@ -1391,7 +1455,9 @@ class DatabaseManager:
             ).fetchone()
             return row[0] if row else None
 
-    def set_paired_device_default_model(self, platform: str, sender_id: str, model: str) -> None:
+    def set_paired_device_default_model(
+        self, platform: str, sender_id: str, model: str
+    ) -> None:
         """Set the default model preference for a paired device."""
         with self._connect() as conn:
             conn.execute(
@@ -1521,6 +1587,317 @@ class DatabaseManager:
             }
             for r in rows
         ]
+
+    # ---------------------------------------------------------
+    # SCHEDULED JOBS OPERATIONS
+    # ---------------------------------------------------------
+
+    def create_scheduled_job(
+        self,
+        name: str,
+        cron_expression: str,
+        instruction: str,
+        timezone: str,
+        model: str | None = None,
+        delivery_platform: str | None = None,
+        delivery_sender_id: str | None = None,
+        is_one_shot: bool = False,
+        next_run_at: float | None = None,
+    ) -> Dict[str, Any]:
+        """Create a new scheduled job. Returns the full job record."""
+        job_id = str(uuid.uuid4())
+        now = time.time()
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO scheduled_jobs
+                   (id, name, cron_expression, instruction, model, timezone,
+                    delivery_platform, delivery_sender_id, enabled, is_one_shot,
+                    created_at, next_run_at, run_count, missed)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 0, 0)""",
+                (
+                    job_id,
+                    name,
+                    cron_expression,
+                    instruction,
+                    model,
+                    timezone,
+                    delivery_platform,
+                    delivery_sender_id,
+                    int(is_one_shot),
+                    now,
+                    next_run_at,
+                ),
+            )
+            conn.commit()
+
+        return self.get_scheduled_job(job_id)  # type: ignore
+
+    def get_scheduled_job(self, job_id: str) -> Dict[str, Any] | None:
+        """Get a scheduled job by ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT id, name, cron_expression, instruction, model, timezone,
+                          delivery_platform, delivery_sender_id, enabled, is_one_shot,
+                          created_at, last_run_at, next_run_at, run_count, missed
+                   FROM scheduled_jobs WHERE id = ?""",
+                (job_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "name": row[1],
+            "cron_expression": row[2],
+            "instruction": row[3],
+            "model": row[4],
+            "timezone": row[5],
+            "delivery_platform": row[6],
+            "delivery_sender_id": row[7],
+            "enabled": bool(row[8]),
+            "is_one_shot": bool(row[9]),
+            "created_at": row[10],
+            "last_run_at": row[11],
+            "next_run_at": row[12],
+            "run_count": row[13],
+            "missed": bool(row[14]),
+        }
+
+    def list_scheduled_jobs(self, enabled_only: bool = False) -> List[Dict[str, Any]]:
+        """List all scheduled jobs, optionally filtering to enabled only."""
+        query = """SELECT id, name, cron_expression, instruction, model, timezone,
+                          delivery_platform, delivery_sender_id, enabled, is_one_shot,
+                          created_at, last_run_at, next_run_at, run_count, missed
+                   FROM scheduled_jobs"""
+        if enabled_only:
+            query += " WHERE enabled = 1"
+        query += " ORDER BY created_at DESC"
+
+        with self._connect() as conn:
+            rows = conn.execute(query).fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "name": r[1],
+                "cron_expression": r[2],
+                "instruction": r[3],
+                "model": r[4],
+                "timezone": r[5],
+                "delivery_platform": r[6],
+                "delivery_sender_id": r[7],
+                "enabled": bool(r[8]),
+                "is_one_shot": bool(r[9]),
+                "created_at": r[10],
+                "last_run_at": r[11],
+                "next_run_at": r[12],
+                "run_count": r[13],
+                "missed": bool(r[14]),
+            }
+            for r in rows
+        ]
+
+    def update_scheduled_job(self, job_id: str, **fields) -> Dict[str, Any] | None:
+        """Update fields on a scheduled job."""
+        allowed = {
+            "name",
+            "cron_expression",
+            "instruction",
+            "model",
+            "timezone",
+            "delivery_platform",
+            "delivery_sender_id",
+            "enabled",
+            "is_one_shot",
+            "last_run_at",
+            "next_run_at",
+            "run_count",
+            "missed",
+        }
+        updates = {k: v for k, v in fields.items() if k in allowed}
+        if not updates:
+            return self.get_scheduled_job(job_id)
+
+        # Convert bool fields to int for SQLite
+        for bool_field in ("enabled", "is_one_shot", "missed"):
+            if bool_field in updates:
+                updates[bool_field] = int(updates[bool_field])
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [job_id]
+
+        with self._connect() as conn:
+            conn.execute(f"UPDATE scheduled_jobs SET {set_clause} WHERE id = ?", values)
+            conn.commit()
+
+        return self.get_scheduled_job(job_id)
+
+    def delete_scheduled_job(self, job_id: str) -> None:
+        """Delete a scheduled job by ID."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM scheduled_jobs WHERE id = ?", (job_id,))
+            conn.commit()
+
+    def mark_job_run(
+        self, job_id: str, last_run_at: float, next_run_at: float | None
+    ) -> None:
+        """Update job after execution: increment run_count, update timestamps."""
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE scheduled_jobs
+                   SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1
+                   WHERE id = ?""",
+                (last_run_at, next_run_at, job_id),
+            )
+            conn.commit()
+
+    def get_job_conversations(
+        self, job_id: str | None = None, limit: int = 50, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Get conversations generated by scheduled jobs.
+
+        If job_id is provided, filter to that job only.
+        Returns conversations with their job metadata.
+        """
+        if job_id:
+            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id, j.name as job_name
+                       FROM conversations c
+                       LEFT JOIN scheduled_jobs j ON c.job_id = j.id
+                       WHERE c.job_id = ?
+                       ORDER BY c.created_at DESC
+                       LIMIT ? OFFSET ?"""
+            params = (job_id, limit, offset)
+        else:
+            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id, j.name as job_name
+                       FROM conversations c
+                       LEFT JOIN scheduled_jobs j ON c.job_id = j.id
+                       WHERE c.job_id IS NOT NULL
+                       ORDER BY c.created_at DESC
+                       LIMIT ? OFFSET ?"""
+            params = (limit, offset)
+
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "title": r[1],
+                "created_at": r[2],
+                "updated_at": r[3],
+                "job_id": r[4],
+                "job_name": r[5],
+            }
+            for r in rows
+        ]
+
+    def start_job_conversation(self, title: str, job_id: str) -> str:
+        """Create a new conversation tagged with a job ID. Returns conversation UUID."""
+        new_id = str(uuid.uuid4())
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO conversations (id, title, created_at, updated_at, job_id)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (new_id, title, now, now, job_id),
+            )
+            conn.commit()
+        return new_id
+
+    # ---------------------------------------------------------
+    # NOTIFICATION OPERATIONS
+    # ---------------------------------------------------------
+
+    def create_notification(
+        self,
+        notification_type: str,
+        title: str,
+        body: str | None = None,
+        payload: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        """Create a notification. Returns the full notification record."""
+        notification_id = str(uuid.uuid4())
+        now = time.time()
+        payload_json = json.dumps(payload) if payload else None
+
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT INTO notifications (id, type, title, body, payload, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (notification_id, notification_type, title, body, payload_json, now),
+            )
+            conn.commit()
+
+        return {
+            "id": notification_id,
+            "type": notification_type,
+            "title": title,
+            "body": body,
+            "payload": payload,
+            "created_at": now,
+        }
+
+    def get_notification(self, notification_id: str) -> Dict[str, Any] | None:
+        """Get a notification by ID."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, type, title, body, payload, created_at FROM notifications WHERE id = ?",
+                (notification_id,),
+            ).fetchone()
+
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "type": row[1],
+            "title": row[2],
+            "body": row[3],
+            "payload": json.loads(row[4]) if row[4] else None,
+            "created_at": row[5],
+        }
+
+    def list_notifications(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """List all notifications, newest first."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, type, title, body, payload, created_at
+                   FROM notifications
+                   ORDER BY created_at DESC
+                   LIMIT ?""",
+                (limit,),
+            ).fetchall()
+
+        return [
+            {
+                "id": r[0],
+                "type": r[1],
+                "title": r[2],
+                "body": r[3],
+                "payload": json.loads(r[4]) if r[4] else None,
+                "created_at": r[5],
+            }
+            for r in rows
+        ]
+
+    def delete_notification(self, notification_id: str) -> None:
+        """Delete a notification (mark as read)."""
+        with self._connect() as conn:
+            conn.execute("DELETE FROM notifications WHERE id = ?", (notification_id,))
+            conn.commit()
+
+    def delete_all_notifications(self) -> int:
+        """Delete all notifications. Returns count of deleted notifications."""
+        with self._connect() as conn:
+            cursor = conn.execute("DELETE FROM notifications")
+            conn.commit()
+            return cursor.rowcount
+
+    def get_notification_count(self) -> int:
+        """Get the count of unread notifications."""
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) FROM notifications").fetchone()
+            return row[0] if row else 0
 
 
 # Global singleton instance so all modules share the same DB connection logic

@@ -60,8 +60,8 @@ class TestInitMcpServers:
 
         # 3 servers: filesystem, websearch, windows_mcp
         assert connect_server.await_count == 3
-        # 4 inline tool registrations: terminal, sub_agent, video_watcher, skills
-        assert register_inline_tools.call_count == 4
+        # 5 inline tool registrations: terminal, sub_agent, video_watcher, skills, scheduler
+        assert register_inline_tools.call_count == 5
         embed_tools.assert_called_once_with([])
         assert manager._initialized is True
 
