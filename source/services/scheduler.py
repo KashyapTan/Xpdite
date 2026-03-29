@@ -207,9 +207,11 @@ class SchedulerService:
         async def _do_submit() -> Optional[str]:
             token = set_current_tab_id(tab_id)
             try:
-                # Create a conversation tagged with the job ID
+                # Create a conversation tagged with the job ID and name
                 conversation_id = db.start_job_conversation(
-                    title=f"[Job] {job['name']}", job_id=job["id"]
+                    title=f"[Job] {job['name']}",
+                    job_id=job["id"],
+                    job_name=job["name"],
                 )
                 session.state.conversation_id = conversation_id
 

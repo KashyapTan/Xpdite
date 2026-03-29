@@ -361,6 +361,13 @@ class DatabaseManager:
                 ON conversations(job_id)
             """)
 
+            # --- CONVERSATION JOB_NAME MIGRATION ---
+            # Store job_name directly so it persists even if scheduled_job is deleted
+            try:
+                cursor.execute("ALTER TABLE conversations ADD COLUMN job_name TEXT")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
             self._backfill_message_metadata(cursor)
 
             conn.commit()
@@ -1759,9 +1766,14 @@ class DatabaseManager:
 
         If job_id is provided, filter to that job only.
         Returns conversations with their job metadata.
+
+        Note: Prefers the stored c.job_name (captured at creation) over the joined
+        j.name so that conversations retain their original job name even if the
+        scheduled job is later renamed or deleted.
         """
         if job_id:
-            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id, j.name as job_name
+            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id,
+                              COALESCE(c.job_name, j.name) as job_name
                        FROM conversations c
                        LEFT JOIN scheduled_jobs j ON c.job_id = j.id
                        WHERE c.job_id = ?
@@ -1769,7 +1781,8 @@ class DatabaseManager:
                        LIMIT ? OFFSET ?"""
             params = (job_id, limit, offset)
         else:
-            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id, j.name as job_name
+            query = """SELECT c.id, c.title, c.created_at, c.updated_at, c.job_id,
+                              COALESCE(c.job_name, j.name) as job_name
                        FROM conversations c
                        LEFT JOIN scheduled_jobs j ON c.job_id = j.id
                        WHERE c.job_id IS NOT NULL
@@ -1792,15 +1805,26 @@ class DatabaseManager:
             for r in rows
         ]
 
-    def start_job_conversation(self, title: str, job_id: str) -> str:
-        """Create a new conversation tagged with a job ID. Returns conversation UUID."""
+    def start_job_conversation(
+        self, title: str, job_id: str, job_name: str | None = None
+    ) -> str:
+        """Create a new conversation tagged with a job ID.
+
+        Args:
+            title: The conversation title (e.g., "[Job] Daily Summary")
+            job_id: The scheduled job's UUID
+            job_name: The job's name at creation time (persisted even if job is deleted)
+
+        Returns:
+            The new conversation's UUID.
+        """
         new_id = str(uuid.uuid4())
         now = time.time()
         with self._connect() as conn:
             conn.execute(
-                """INSERT INTO conversations (id, title, created_at, updated_at, job_id)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (new_id, title, now, now, job_id),
+                """INSERT INTO conversations (id, title, created_at, updated_at, job_id, job_name)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (new_id, title, now, now, job_id, job_name),
             )
             conn.commit()
         return new_id
