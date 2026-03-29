@@ -226,6 +226,42 @@ textarea,
   margin-bottom: 0.8em;
 }
 
+/* Table styles for markdown tables */
+.response table {
+  border-collapse: collapse;
+  margin: 1em 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
+  font-size: 0.9rem;
+}
+
+.response thead {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.response th,
+.response td {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5em 0.75em;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.response th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.08);
+}
+
+.response tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.response tr:hover {
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
 .error {
   background-color: rgba(255, 100, 100, 0.2);
   border: none;
@@ -723,6 +759,31 @@ textarea,
 .thinking-content pre code {
   background-color: transparent;
   padding: 0;
+}
+
+/* Table styles for thinking content */
+.thinking-content table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+  max-width: 100%;
+  font-size: 0.75rem;
+}
+
+.thinking-content th,
+.thinking-content td {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 0.4em 0.6em;
+  text-align: left;
+}
+
+.thinking-content th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.06);
+}
+
+.thinking-content tr:nth-child(even) {
+  background-color: rgba(255, 255, 255, 0.02);
 }
 
 /* .chat-user {
@@ -1516,6 +1577,26 @@ textarea,
   padding-right: 4px;
 }
 
+/* Table styles for chain thought content */
+.chain-thought-content table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+  font-size: 0.75rem;
+}
+
+.chain-thought-content th,
+.chain-thought-content td {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.35em 0.5em;
+  text-align: left;
+}
+
+.chain-thought-content th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
 /* ── Tool call item ───────────────────────────────────────────── */
 
 .chain-tool-header {
@@ -1622,6 +1703,26 @@ textarea,
 
 .sa-transcript-text p:last-child {
   margin-bottom: 0;
+}
+
+/* Table styles for sub-agent transcript text */
+.sa-transcript-text table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+  font-size: 0.78rem;
+}
+
+.sa-transcript-text th,
+.sa-transcript-text td {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.35em 0.5em;
+  text-align: left;
+}
+
+.sa-transcript-text th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
 /* Tool step card */

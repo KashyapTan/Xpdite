@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
@@ -111,6 +112,7 @@ function ChainThinkingItem({ text }: { text: string }) {
       {!collapsed && (
         <div className="chain-thought-content">
           <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
             components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
           >
             {text}

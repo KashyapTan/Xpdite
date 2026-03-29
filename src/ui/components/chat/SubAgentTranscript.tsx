@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -130,6 +131,7 @@ export function SubAgentTranscript({ stepsJson, isRunning }: SubAgentTranscriptP
           return (
             <div key={key} className="sa-transcript-text">
               <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
                 components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
               >
                 {step.content}

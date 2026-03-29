@@ -4,6 +4,7 @@
  * Shows the model's reasoning process in a collapsible section.
  */
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { ChevronRightIcon } from '../icons/AppIcons';
 import { LoadingDots } from './LoadingDots';
 
@@ -33,7 +34,7 @@ export function ThinkingSection({ thinking, isThinking, collapsed, onToggle }: T
       </div>
       {!collapsed && (
         <div className="thinking-content">
-          <ReactMarkdown>{thinking}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{thinking}</ReactMarkdown>
         </div>
       )}
     </div>

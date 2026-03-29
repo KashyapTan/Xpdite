@@ -9,6 +9,7 @@
  */
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 import { useStreamingAnimation } from '../../hooks/useStreamingAnimation';
 import '../../CSS/StreamingAnimation.css';
@@ -50,6 +51,7 @@ export function StreamingTextBlock({
   return (
     <div className="streaming-text-container">
       <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
         components={{
           code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>>,
         }}

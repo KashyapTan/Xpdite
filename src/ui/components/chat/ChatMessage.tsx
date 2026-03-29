@@ -6,6 +6,7 @@
 import { useEffect, useState } from 'react';
 import type { ComponentPropsWithRef, ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 import { InlineContentBlocks } from './ToolCallsDisplay';
 import { MobilePlatformBadge } from '../MobilePlatformBadge';
@@ -215,6 +216,7 @@ export function ChatMessage({
     return (
       <>
         <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
           components={{
             code: CodeBlock as ComponentType<ComponentPropsWithRef<'code'>>,
           }}
