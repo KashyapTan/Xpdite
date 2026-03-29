@@ -46,6 +46,10 @@ const BOOT_SHELL_HTML = `<!doctype html>
         background: radial-gradient(ellipse at center, rgba(15, 15, 15, 0.95) 0%, rgba(0, 0, 0, 0.98) 100%);
         border: 2px solid rgba(255, 255, 255, 0.5);
         border-radius: 8px;
+        cursor: grab;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-app-region: drag;
       }
 
       .boot-content {
@@ -185,6 +189,7 @@ const BOOT_SHELL_HTML = `<!doctype html>
         font-size: 12px;
         cursor: pointer;
         transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+        -webkit-app-region: no-drag;
       }
 
       .boot-retry-btn:hover {

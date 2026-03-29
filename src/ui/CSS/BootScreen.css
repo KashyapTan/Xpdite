@@ -13,6 +13,9 @@
   transition: opacity 0.25s ease-out;
   pointer-events: auto;
   -webkit-app-region: drag;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .boot-screen--fading {
@@ -162,6 +165,7 @@
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease;
+  -webkit-app-region: no-drag;
 }
 
 .boot-retry-btn:hover {

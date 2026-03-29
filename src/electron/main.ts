@@ -16,7 +16,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
-let normalBounds = { width: 450, height: 450, x: 100, y: 100 };
+const DEFAULT_WINDOW_BOUNDS = { width: 420, height: 420 };
+let normalBounds = { ...DEFAULT_WINDOW_BOUNDS, x: 100, y: 100 };
 const DEV_RENDERER_URL = 'http://127.0.0.1:5123';
 const bootProfileEnabled = process.env.XPDITE_BOOT_PROFILE === '1';
 const bootProfileStartedAt = Date.now();
@@ -299,14 +300,15 @@ app.on('ready', async () => {
     const preloadPath = path.join(__dirname, 'preload.js');
 
     mainWindow = new BrowserWindow({
-        width: 550,
-        height: 550,
+        width: DEFAULT_WINDOW_BOUNDS.width,
+        height: DEFAULT_WINDOW_BOUNDS.height,
         minWidth: 30,
         minHeight: 20,
         title: 'Xpdite',
         frame: false,
         transparent: true,
         resizable: true,
+        movable: true,
         alwaysOnTop: true,
         minimizable: false,
         maximizable: false,
