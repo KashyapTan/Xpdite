@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../services/api';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import '../CSS/NotificationBell.css';
 
@@ -11,6 +10,16 @@ interface Notification {
   body: string;
   payload: Record<string, unknown> | null;
   created_at: number;
+}
+
+let notificationsApiPromise: Promise<typeof import('../services/api').api> | null = null;
+
+async function getNotificationsApi() {
+  if (!notificationsApiPromise) {
+    notificationsApiPromise = import('../services/api').then(({ api }) => api);
+  }
+
+  return notificationsApiPromise;
 }
 
 const NotificationBell: React.FC = () => {
@@ -24,17 +33,58 @@ const NotificationBell: React.FC = () => {
   // Subscribe to real-time notification updates
   const { subscribe } = useWebSocket();
 
-  // Fetch notifications on mount
-  useEffect(() => {
-    fetchNotifications();
+  const fetchNotifications = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const api = await getNotificationsApi();
+      const data = await api.getNotifications();
+      setNotifications(data.notifications);
+      setUnreadCount(data.unread_count);
+    } catch (error) {
+      console.error('Failed to fetch notifications:', error);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
+
+  const fetchNotificationCount = useCallback(async () => {
+    try {
+      const api = await getNotificationsApi();
+      const data = await api.getNotificationCount();
+      setUnreadCount(data.count);
+    } catch (error) {
+      console.error('Failed to fetch notification count:', error);
+    }
+  }, []);
+
+  // Defer the initial unread-count fetch until after the shell settles.
+  useEffect(() => {
+    const fetchCount = () => {
+      void fetchNotificationCount();
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(fetchCount, { timeout: 3000 });
+      return () => {
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(fetchCount, 1000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [fetchNotificationCount]);
 
   // Handle real-time notification updates via WebSocket
   useEffect(() => {
     const unsubscribe = subscribe((message) => {
       if (message.type === 'notification_added') {
-        // A new notification was created - refresh the list
-        fetchNotifications();
+        if (isOpen) {
+          void fetchNotifications();
+        } else {
+          void fetchNotificationCount();
+        }
       } else if (message.type === 'notification_dismissed') {
         // A notification was dismissed
         const data = message.content as { id?: string } | undefined;
@@ -50,7 +100,7 @@ const NotificationBell: React.FC = () => {
     });
 
     return unsubscribe;
-  }, [subscribe]);
+  }, [fetchNotificationCount, fetchNotifications, isOpen, subscribe]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -64,22 +114,10 @@ const NotificationBell: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const fetchNotifications = async () => {
-    try {
-      setIsLoading(true);
-      const data = await api.getNotifications();
-      setNotifications(data.notifications);
-      setUnreadCount(data.unread_count);
-    } catch (error) {
-      console.error('Failed to fetch notifications:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const handleDismiss = async (e: React.MouseEvent, notificationId: string) => {
     e.stopPropagation();
     try {
+      const api = await getNotificationsApi();
       await api.dismissNotification(notificationId);
       setNotifications((prev) => prev.filter((n) => n.id !== notificationId));
       setUnreadCount((prev) => Math.max(0, prev - 1));
@@ -90,6 +128,7 @@ const NotificationBell: React.FC = () => {
 
   const handleDismissAll = async () => {
     try {
+      const api = await getNotificationsApi();
       await api.dismissAllNotifications();
       setNotifications([]);
       setUnreadCount(0);
@@ -174,7 +213,13 @@ const NotificationBell: React.FC = () => {
     <div className="notification-bell-container" ref={dropdownRef}>
       <button
         className="notification-bell-button"
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => {
+          const nextOpen = !isOpen;
+          setIsOpen(nextOpen);
+          if (nextOpen) {
+            void fetchNotifications();
+          }
+        }}
         title={unreadCount > 0 ? `${unreadCount} notifications` : 'No notifications'}
       >
         <svg

@@ -3,12 +3,30 @@
  * 
  * Container for chat history and current streaming response.
  */
-import React from 'react';
-import { ChatMessage } from './ChatMessage';
+import React, { Suspense, useEffect } from 'react';
 import { LoadingDots } from './LoadingDots';
-import { InlineContentBlocks } from './ToolCallsDisplay';
+import {
+  DeferredChatHistory,
+  DeferredInlineContentBlocks,
+  warmDeferredChatRenderers,
+} from './deferredChatRenderers';
 import type { ChatMessage as ChatMessageType, ContentBlock } from '../../types';
-import { buildRenderableContentBlocks } from '../../utils/chatMessages';
+import { buildRenderableContentBlocks } from '../../utils/renderableContentBlocks';
+
+function LiveContentFallback({
+  generatingModel,
+  isStreaming,
+}: {
+  generatingModel: string;
+  isStreaming: boolean;
+}) {
+  return (
+    <div className="response">
+      <div className="assistant-header">Xpdite • {generatingModel}</div>
+      <LoadingDots isVisible={isStreaming} />
+    </div>
+  );
+}
 
 interface ResponseAreaProps {
   chatHistory: ChatMessageType[];
@@ -81,6 +99,8 @@ export function ResponseArea({
   const isSingleThinkingTimeline = !!liveBlocks
     && liveBlocks.length === 1
     && liveBlocks[0].type === 'thinking';
+  const shouldRenderHistory = !error && chatHistory.length > 0;
+  const shouldRenderLiveContent = !error && hasContentBlocks;
   const responseAreaStyle = {
     marginTop: hasTabBar ? 0 : `${topInset}px`,
     marginBottom: `${bottomInset}px`,
@@ -89,6 +109,24 @@ export function ResponseArea({
   const scrollButtonStyle = {
     bottom: `${scrollButtonBottom}px`,
   };
+
+  useEffect(() => {
+    const warmRenderers = () => {
+      void warmDeferredChatRenderers();
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(warmRenderers, { timeout: 1500 });
+      return () => {
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(warmRenderers, 750);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   return (
     <>
@@ -100,18 +138,18 @@ export function ResponseArea({
         )}
 
         {/* Chat history */}
-        {!error &&
-          chatHistory.map((msg, idx) => (
-            <ChatMessage
-              key={msg.messageId ?? `${msg.role}-${idx}`}
-              message={msg}
-              selectedModel={generatingModel}
-              actionsDisabled={!canSubmit}
+        {shouldRenderHistory && (
+          <Suspense fallback={null}>
+            <DeferredChatHistory
+              chatHistory={chatHistory}
+              generatingModel={generatingModel}
+              canSubmit={canSubmit}
               onRetryMessage={onRetryMessage}
               onEditMessage={onEditMessage}
               onSetActiveResponse={onSetActiveResponse}
             />
-          ))}
+          </Suspense>
+        )}
 
         {/* Current query being processed */}
         {!error && currentQuery && !canSubmit && (
@@ -124,23 +162,32 @@ export function ResponseArea({
         <LoadingDots isVisible={!error && !canSubmit && !thinking && !hasContentBlocks} />
 
         {/* Live inline content blocks (text interleaved with tool calls) */}
-        {!error && hasContentBlocks && (
-          <div className="response">
-            <div className="assistant-header">Xpdite • {generatingModel}</div>
-            <InlineContentBlocks
-              blocks={liveBlocks!}
-              isThinking={isThinking}
-              isStreaming={!canSubmit}
-              expanded={isSingleThinkingTimeline ? !thinkingCollapsed : undefined}
-              onToggleExpanded={isSingleThinkingTimeline ? onToggleThinking : undefined}
-              onTerminalApprove={onTerminalApprove}
-              onTerminalDeny={onTerminalDeny}
-              onTerminalApproveRemember={onTerminalApproveRemember}
-              onTerminalKill={onTerminalKill}
-              onTerminalResize={onTerminalResize}
-              onYouTubeApprovalResponse={onYouTubeApprovalResponse}
-            />
-          </div>
+        {shouldRenderLiveContent && (
+          <Suspense
+            fallback={(
+              <LiveContentFallback
+                generatingModel={generatingModel}
+                isStreaming={!canSubmit}
+              />
+            )}
+          >
+            <div className="response">
+              <div className="assistant-header">Xpdite • {generatingModel}</div>
+              <DeferredInlineContentBlocks
+                blocks={liveBlocks!}
+                isThinking={isThinking}
+                isStreaming={!canSubmit}
+                expanded={isSingleThinkingTimeline ? !thinkingCollapsed : undefined}
+                onToggleExpanded={isSingleThinkingTimeline ? onToggleThinking : undefined}
+                onTerminalApprove={onTerminalApprove}
+                onTerminalDeny={onTerminalDeny}
+                onTerminalApproveRemember={onTerminalApproveRemember}
+                onTerminalKill={onTerminalKill}
+                onTerminalResize={onTerminalResize}
+                onYouTubeApprovalResponse={onYouTubeApprovalResponse}
+              />
+            </div>
+          </Suspense>
         )}
       </div>
 

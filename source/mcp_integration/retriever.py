@@ -21,13 +21,8 @@ except ImportError:  # pragma: no cover - dependency is managed in pyproject.tom
 # logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
-try:
-    from sentence_transformers import SentenceTransformer
-
-    SENTENCE_TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    SENTENCE_TRANSFORMERS_AVAILABLE = False
-    SentenceTransformer = None
+SentenceTransformer = None
+_SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED = False
 
 
 _PROJECT_ROOT = os.path.dirname(
@@ -40,6 +35,25 @@ _CACHE_INDEX_FILE = os.path.join(_CACHE_DIR, "tool_embedding_index.json")
 RRF_K = 10
 DEBUG_SCORE_LOG_LIMIT = 10
 _SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
+
+
+def _ensure_sentence_transformers_available() -> bool:
+    """Import sentence-transformers only when the fallback backend is needed."""
+    global SentenceTransformer, _SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED
+
+    if SentenceTransformer is not None:
+        return True
+    if _SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED:
+        return False
+
+    _SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED = True
+    try:
+        from sentence_transformers import SentenceTransformer as _SentenceTransformer
+    except ImportError:
+        return False
+
+    SentenceTransformer = _SentenceTransformer
+    return True
 
 
 class ToolRetriever:
@@ -114,7 +128,7 @@ class ToolRetriever:
         except Exception as exc:
             logger.warning("Ollama check failed: %s", exc)
 
-        if SENTENCE_TRANSFORMERS_AVAILABLE:
+        if _ensure_sentence_transformers_available():
             self._embedding_model_type = "sentence-transformers"
             logger.info(
                 "Embedding backend active: sentence-transformers (%s)",
@@ -140,8 +154,8 @@ class ToolRetriever:
         if self._embedding_model_type == "sentence-transformers":
             if (
                 self._st_model is None
-                and SENTENCE_TRANSFORMERS_AVAILABLE
-                and SentenceTransformer
+                and _ensure_sentence_transformers_available()
+                and SentenceTransformer is not None
             ):
                 logger.info("Loading sentence-transformers model...")
                 self._st_model = SentenceTransformer(_SENTENCE_TRANSFORMER_MODEL)  # type: ignore

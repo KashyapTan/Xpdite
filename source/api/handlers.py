@@ -19,12 +19,29 @@ from ..core.connection import (
 )
 from ..core.state import app_state
 from ..database import db
-from ..services.conversations import ConversationService
-from ..services.screenshots import ScreenshotHandler
-from ..services.terminal import terminal_service
-from ..services.video_watcher import video_watcher_service
 
 logger = logging.getLogger(__name__)
+
+
+def __getattr__(name: str):
+    """Provide lazy module-level imports for compatibility and test patching."""
+    if name == "ConversationService":
+        from ..services.conversations import ConversationService
+
+        return ConversationService
+    if name == "ScreenshotHandler":
+        from ..services.screenshots import ScreenshotHandler
+
+        return ScreenshotHandler
+    if name == "terminal_service":
+        from ..services.terminal import terminal_service
+
+        return terminal_service
+    if name == "video_watcher_service":
+        from ..services.video_watcher import video_watcher_service
+
+        return video_watcher_service
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 class MessageHandler:
@@ -62,6 +79,30 @@ class MessageHandler:
     def _get_tab_manager(self):
         from ..services.tab_manager_instance import tab_manager
         return tab_manager
+
+    @staticmethod
+    def _conversation_service():
+        from ..services.conversations import ConversationService
+
+        return ConversationService
+
+    @staticmethod
+    def _screenshot_handler():
+        from ..services.screenshots import ScreenshotHandler
+
+        return ScreenshotHandler
+
+    @staticmethod
+    def _terminal_service():
+        from ..services.terminal import terminal_service
+
+        return terminal_service
+
+    @staticmethod
+    def _video_watcher_service():
+        from ..services.video_watcher import video_watcher_service
+
+        return video_watcher_service
 
     # ── Tab lifecycle ─────────────────────────────────────────────
 
@@ -114,7 +155,7 @@ class MessageHandler:
             return
 
         # Parse slash commands from the query text
-        forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(query_text)
+        forced_skills, cleaned_query = await self._conversation_service().extract_skill_slash_commands(query_text)
 
         if forced_skills:
             logger.debug("Slash commands matched: %s", [s.name for s in forced_skills])
@@ -133,7 +174,7 @@ class MessageHandler:
         ):
             token = set_current_tab_id(tab_id)
             try:
-                await ScreenshotHandler.capture_fullscreen(tab_state=session.state)
+                await self._screenshot_handler().capture_fullscreen(tab_state=session.state)
             finally:
                 reset_current_tab_id(token)
 
@@ -233,7 +274,7 @@ class MessageHandler:
             )
             return
 
-        forced_skills, cleaned_query = await ConversationService.extract_skill_slash_commands(
+        forced_skills, cleaned_query = await self._conversation_service().extract_skill_slash_commands(
             query_text
         )
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
@@ -299,7 +340,7 @@ class MessageHandler:
         session = self._get_tab_manager().get_or_create(tab_id)
         token = set_current_tab_id(tab_id)
         try:
-            ConversationService.set_active_response_variant(
+            self._conversation_service().set_active_response_variant(
                 message_id, response_index, tab_state=session.state
             )
         except ValueError as exc:
@@ -317,9 +358,9 @@ class MessageHandler:
             await session.queue.stop_current()
 
         # Cancel any pending terminal approvals/sessions so tool loop unblocks
-        terminal_service.cancel_all_pending()
+        self._terminal_service().cancel_all_pending()
         # Cancel any pending YouTube transcription approvals as well
-        video_watcher_service.cancel_all_pending()
+        self._video_watcher_service().cancel_all_pending()
 
     async def _handle_cancel_queued_item(self, data: Dict[str, Any]):
         """Handle cancellation of a specific queued (not yet running) item."""
@@ -339,7 +380,7 @@ class MessageHandler:
 
         token = set_current_tab_id(tab_id)
         try:
-            await ConversationService.clear_context(tab_state=tab_state)
+            await self._conversation_service().clear_context(tab_state=tab_state)
         finally:
             reset_current_tab_id(token)
 
@@ -355,7 +396,7 @@ class MessageHandler:
             session = self._get_tab_manager().get_or_create(tab_id)
             token = set_current_tab_id(tab_id)
             try:
-                await ConversationService.resume_conversation(conv_id, tab_state=session.state)
+                await self._conversation_service().resume_conversation(conv_id, tab_state=session.state)
                 # Update the queue's resolved conversation_id
                 session.queue.resolved_conversation_id = conv_id
             finally:
@@ -367,7 +408,7 @@ class MessageHandler:
         if screenshot_id:
             tab_id = self._get_tab_id(data)
             tab_state = self._get_tab_manager().get_state(tab_id)
-            await ScreenshotHandler.remove_screenshot(screenshot_id, tab_state=tab_state)
+            await self._screenshot_handler().remove_screenshot(screenshot_id, tab_state=tab_state)
 
     async def _handle_set_capture_mode(self, data: Dict[str, Any]):
         """Handle capture mode change."""
@@ -380,7 +421,7 @@ class MessageHandler:
         """Handle conversation list request."""
         limit = data.get("limit", 50)
         offset = data.get("offset", 0)
-        conversations = ConversationService.get_conversations(
+        conversations = self._conversation_service().get_conversations(
             limit=limit, offset=offset
         )
         # TODO(frontend): content is now a native object, not a JSON string.
@@ -395,7 +436,7 @@ class MessageHandler:
         """Handle full conversation load request."""
         conv_id = data.get("conversation_id")
         if conv_id:
-            messages = ConversationService.get_full_conversation(conv_id)
+            messages = self._conversation_service().get_full_conversation(conv_id)
             await self.websocket.send_text(
                 json.dumps(
                     {
@@ -409,7 +450,7 @@ class MessageHandler:
         """Handle conversation deletion."""
         conv_id = data.get("conversation_id")
         if conv_id:
-            ConversationService.delete_conversation(conv_id)
+            self._conversation_service().delete_conversation(conv_id)
             await self.websocket.send_text(
                 json.dumps(
                     {
@@ -423,9 +464,9 @@ class MessageHandler:
         """Handle conversation search."""
         search_term = data.get("query", "")
         if search_term:
-            results = ConversationService.search_conversations(search_term)
+            results = self._conversation_service().search_conversations(search_term)
         else:
-            results = ConversationService.get_conversations(limit=50)
+            results = self._conversation_service().get_conversations(limit=50)
 
         await self.websocket.send_text(
             json.dumps({"type": "conversations_list", "content": results})
@@ -725,12 +766,12 @@ class MessageHandler:
         approved = data.get("approved", False)
         remember = data.get("remember", False)
 
-        terminal_service.resolve_approval(request_id, approved, remember)
+        self._terminal_service().resolve_approval(request_id, approved, remember)
 
     async def _handle_terminal_session_response(self, data: Dict[str, Any]):
         """Handle user's response to a session mode request."""
         approved = data.get("approved", False)
-        terminal_service.resolve_session(approved)
+        self._terminal_service().resolve_session(approved)
 
     async def _handle_youtube_transcription_approval_response(
         self, data: Dict[str, Any]
@@ -738,21 +779,21 @@ class MessageHandler:
         """Handle user's response to a YouTube transcription approval request."""
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
-        video_watcher_service.resolve_transcription_approval(request_id, approved)
+        self._video_watcher_service().resolve_transcription_approval(request_id, approved)
 
     async def _handle_terminal_stop_session(self, data: Dict[str, Any]):
         """Handle user clicking the Stop button on an active session."""
-        await terminal_service.end_session()
+        await self._terminal_service().end_session()
 
     async def _handle_terminal_kill_command(self, data: Dict[str, Any]):
         """Handle user clicking the Kill button to terminate a running command."""
-        await terminal_service.kill_running_command()
+        await self._terminal_service().kill_running_command()
 
     async def _handle_terminal_set_ask_level(self, data: Dict[str, Any]):
         """Handle ask level change from frontend."""
         level = data.get("level", "on-miss")
         if level in ("always", "on-miss", "off"):
-            terminal_service.ask_level = level
+            self._terminal_service().ask_level = level
 
     async def _handle_terminal_resize(self, data: Dict[str, Any]):
         """Handle terminal panel resize — sync PTY dimensions with xterm viewport."""
@@ -764,4 +805,4 @@ class MessageHandler:
             and 0 < cols <= 500
             and 0 < rows <= 200
         ):
-            await terminal_service.resize_all_pty(cols, rows)
+            await self._terminal_service().resize_all_pty(cols, rows)

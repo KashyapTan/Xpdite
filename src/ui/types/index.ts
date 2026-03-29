@@ -280,6 +280,7 @@ export interface ConversationContentBlockPayload {
   channel?: string;
   duration?: string;
   duration_seconds?: number;
+  url?: string;
   no_captions_reason?: string;
   audio_size_estimate?: string;
   audio_size_bytes?: number;

@@ -3,12 +3,15 @@ import { useOutletContext, useNavigate } from 'react-router-dom';
 import { RecordIcon, StopSquareIcon, XIcon } from '../components/icons/AppIcons';
 import TitleBar from '../components/TitleBar';
 import { ModeSelector } from '../components/input/ModeSelector';
-import { useMeetingRecorder } from '../contexts/MeetingRecorderContext';
+import {
+    MeetingRecorderProvider,
+    useMeetingRecorder,
+} from '../contexts/MeetingRecorderContext';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import '../CSS/MeetingRecorder.css';
 
-const MeetingRecorder: React.FC = () => {
+const MeetingRecorderContent: React.FC = () => {
     const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
     const navigate = useNavigate();
     const {
@@ -159,5 +162,11 @@ const MeetingRecorder: React.FC = () => {
         </div>
     );
 };
+
+const MeetingRecorder: React.FC = () => (
+    <MeetingRecorderProvider>
+        <MeetingRecorderContent />
+    </MeetingRecorderProvider>
+);
 
 export default MeetingRecorder;

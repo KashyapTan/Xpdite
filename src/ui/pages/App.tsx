@@ -25,8 +25,8 @@ import { useWebSocket } from '../contexts/WebSocketContext';
 // Components
 import TitleBar from '../components/TitleBar';
 import TabBar from '../components/TabBar';
-import { ResponseArea } from '../components/chat/ResponseArea';
 import { BoltIcon } from '../components/icons/AppIcons';
+import { ResponseArea } from '../components/chat/ResponseArea.tsx';
 import { QueryInput } from '../components/input/QueryInput';
 import { QueueDropdown } from '../components/input/QueueDropdown';
 import { ModeSelector } from '../components/input/ModeSelector';
@@ -55,12 +55,7 @@ import type {
   TerminalCommandComplete,
   YouTubeTranscriptionApprovalRequest,
 } from '../types';
-import {
-  applyResponseVariant,
-  applySavedTurnToHistory,
-  mapConversationMessagePayload,
-  type LocalTurnPatch,
-} from '../utils/chatMessages';
+import type { LocalTurnPatch } from '../utils/conversationMessageTransforms';
 import { formatModelLabel, getModelProviderKey, getProviderLabel } from '../utils/modelDisplay';
 import { ProviderLogo } from '../components/icons/ProviderLogos';
 import { hasProviderLogo } from '../utils/providerLogos';
@@ -73,14 +68,22 @@ import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import contextWindowInsightsIcon from '../assets/context-window-icon.svg';
 import scrollDownIcon from '../assets/scroll-down-icon.svg';
 
-// API
-import { api } from '../services/api';
-
 type PendingTurnAction = {
   type: 'retry' | 'edit';
   messageId: string;
   editedContent?: string;
 };
+
+type ConversationMessageTransforms = typeof import('../utils/conversationMessageTransforms');
+let conversationMessageTransformsPromise: Promise<ConversationMessageTransforms> | null = null;
+
+function loadConversationMessageTransforms() {
+  if (!conversationMessageTransformsPromise) {
+    conversationMessageTransformsPromise = import('../utils/conversationMessageTransforms');
+  }
+
+  return conversationMessageTransformsPromise;
+}
 
 function hasTurnInHistory(
   history: ChatMessage[],
@@ -398,7 +401,25 @@ function App() {
    * Only the subset of message types that affect persistent state are handled;
    * UI-only messages (screenshot_start, terminal_running_notice, etc.) are ignored.
    */
-  const applyToBackgroundTab = useCallback((tabId: string, data: WebSocketMessage) => {
+  useEffect(() => {
+    const warm = () => {
+      void loadConversationMessageTransforms();
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(warm, { timeout: 4000 });
+      return () => {
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(warm, 2000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
+
+  const applyToBackgroundTab = useCallback(async (tabId: string, data: WebSocketMessage) => {
     const snap = getTabSnapshot(tabId) ?? freshSnapshot();
     const chat = { ...snap.chat };
     const pendingTurnAction = pendingTurnActionsRef.current.get(tabId);
@@ -510,6 +531,7 @@ function App() {
         break;
 
       case 'conversation_saved': {
+        const { applySavedTurnToHistory } = await loadConversationMessageTransforms();
         const sd = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as ConversationSavedContent;
         chat.conversationId = sd.conversation_id;
         if (pendingTurnAction && !sd.turn) {
@@ -562,6 +584,7 @@ function App() {
       }
 
       case 'conversation_resumed': {
+        const { mapConversationMessagePayload } = await loadConversationMessageTransforms();
         const resumeData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as ConversationResumedContent;
@@ -747,6 +770,7 @@ function App() {
   // ============================================
   useEffect(() => {
     const fetchEnabledModels = async () => {
+      const { api } = await import('../services/api');
       const models = await api.getEnabledModels();
       setEnabledModels(models);
       // Auto-select first model if current selection is empty or no longer enabled
@@ -867,7 +891,7 @@ function App() {
   }, [chatState, setIsHidden, wsSend, setQueueItems]);
 
   /** Handle tab-scoped messages for the active tab. */
-  const handleActiveTabMessage = useCallback((data: WebSocketMessage) => {
+  const handleActiveTabMessage = useCallback(async (data: WebSocketMessage) => {
     const activePendingTurnAction = pendingTurnActionsRef.current.get(activeTabIdRef.current);
 
     switch (data.type) {
@@ -1075,6 +1099,7 @@ function App() {
       }
 
       case 'conversation_saved': {
+        const { applySavedTurnToHistory } = await loadConversationMessageTransforms();
         const saveData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as ConversationSavedContent;
@@ -1132,6 +1157,7 @@ function App() {
       }
 
       case 'conversation_resumed': {
+        const { mapConversationMessagePayload } = await loadConversationMessageTransforms();
         const resumeData = (typeof data.content === 'string'
           ? JSON.parse(data.content)
           : data.content) as unknown as ConversationResumedContent;
@@ -1261,9 +1287,9 @@ function App() {
       : 'default';
 
     if (messageTabId === activeTabIdRef.current) {
-      handleActiveTabMessage(data);
+      void handleActiveTabMessage(data);
     } else {
-      applyToBackgroundTab(messageTabId, data);
+      void applyToBackgroundTab(messageTabId, data);
     }
   }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab]);
 
@@ -1293,7 +1319,7 @@ function App() {
         return;
       }
       // Route all real messages through the existing handler
-      handleWebSocketMessageRef.current(data as WebSocketMessage);
+      handleWebSocketMessageRef.current(data as unknown as WebSocketMessage);
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wsSubscribe]);
@@ -1491,11 +1517,12 @@ function App() {
     });
   }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
 
-  const handleSetActiveResponse = useCallback((message: ChatMessage, responseIndex: number) => {
+  const handleSetActiveResponse = useCallback(async (message: ChatMessage, responseIndex: number) => {
     if (!message.messageId || !message.responseVersions) {
       return;
     }
 
+    const { applyResponseVariant } = await loadConversationMessageTransforms();
     const nextMessage = applyResponseVariant(message, responseIndex);
     if (!nextMessage) {
       return;

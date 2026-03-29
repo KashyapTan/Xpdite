@@ -17,6 +17,52 @@ const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
 let normalBounds = { width: 450, height: 450, x: 100, y: 100 };
+const DEV_RENDERER_URL = 'http://127.0.0.1:5123';
+const bootProfileEnabled = process.env.XPDITE_BOOT_PROFILE === '1';
+const bootProfileStartedAt = Date.now();
+const DEV_RENDERER_SHELL_PROBE_URLS = [
+    `${DEV_RENDERER_URL}/@vite/client`,
+    `${DEV_RENDERER_URL}/src/ui/main.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/Layout.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/boot/BootScreen.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/MobilePlatformBadge.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/contexts/BootContext.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/contexts/TabContext.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/contexts/WebSocketContext.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/hooks/useChatState.ts`,
+    `${DEV_RENDERER_URL}/src/ui/hooks/useScreenshots.ts`,
+    `${DEV_RENDERER_URL}/src/ui/hooks/useTokenUsage.ts`,
+    `${DEV_RENDERER_URL}/src/ui/services/portDiscovery.ts`,
+    `${DEV_RENDERER_URL}/src/ui/utils/modelDisplay.ts`,
+    `${DEV_RENDERER_URL}/src/ui/utils/providerLogos.ts`,
+    `${DEV_RENDERER_URL}/src/ui/utils/renderableContentBlocks.ts`,
+    `${DEV_RENDERER_URL}/src/ui/pages/App.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/TitleBar.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/TabBar.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/chat/ResponseArea.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/chat/LoadingDots.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/icons/AppIcons.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/icons/ProviderLogos.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/icons/iconPaths.ts`,
+    `${DEV_RENDERER_URL}/src/ui/components/input/QueryInput.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/input/QueueDropdown.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/input/ModeSelector.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/input/TokenUsagePopup.tsx`,
+    `${DEV_RENDERER_URL}/src/ui/components/input/ScreenshotChips.tsx`,
+    DEV_RENDERER_URL,
+];
+
+function bootProfile(event: string, details: Record<string, unknown> = {}) {
+    if (!bootProfileEnabled) {
+        return;
+    }
+
+    console.log(`XPDITE_ELECTRON_BOOT ${JSON.stringify({
+        event,
+        elapsed_ms: Date.now() - bootProfileStartedAt,
+        ...details,
+    })}`);
+}
 
 // ── Boot State Management ──────────────────────────────────────────
 interface BootState {
@@ -31,10 +77,41 @@ let currentBootState: BootState = {
     message: 'Launching local services',
     progress: 5,
 };
+let channelBridgeStarted = false;
+let channelBridgeStartupPromise: Promise<void> | null = null;
 
 function publishBootState(state: BootState) {
     currentBootState = state;
+    bootProfile('boot_state', {
+        phase: state.phase,
+        progress: state.progress,
+        message: state.message,
+        error: state.error,
+    });
     mainWindow?.webContents?.send('boot-state', state);
+}
+
+function startChannelBridgeInBackground() {
+    if (channelBridgeStarted || channelBridgeStartupPromise) {
+        return;
+    }
+
+    bootProfile('channel_bridge_start');
+    channelBridgeStartupPromise = startChannelBridge(getServerPort())
+        .then(() => {
+            channelBridgeStarted = true;
+            bootProfile('channel_bridge_ready', {
+                port: getChannelBridgePort(),
+            });
+        })
+        .catch((error) => {
+            const message = error instanceof Error ? error.message : String(error);
+            console.warn('Channel Bridge failed to start (non-fatal):', error);
+            bootProfile('channel_bridge_error', { message });
+        })
+        .finally(() => {
+            channelBridgeStartupPromise = null;
+        });
 }
 
 /** Map Python XPDITE_BOOT markers to user-friendly boot state. */
@@ -66,10 +143,11 @@ async function bootBackend(): Promise<boolean> {
 
     try {
         await startPythonServer();
-        
-        // Start Channel Bridge after Python is ready
+
+        // Start Channel Bridge after Python is ready, but do not block the
+        // first workspace render on mobile bridge startup.
         publishBootState({ phase: 'connecting_tools', message: 'Starting mobile channels...', progress: 75 });
-        
+
         // Listen for Channel Bridge status updates
         onBridgeMessage((message) => {
             if (message.type === 'status') {
@@ -81,14 +159,9 @@ async function bootBackend(): Promise<boolean> {
                 console.error('Channel Bridge error:', message.error);
             }
         });
-        
-        try {
-            await startChannelBridge(getServerPort());
-        } catch (error) {
-            // Channel Bridge failure is non-fatal - log but continue
-            console.warn('Channel Bridge failed to start (non-fatal):', error);
-        }
-        
+
+        startChannelBridgeInBackground();
+
         return true;
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -109,22 +182,47 @@ async function bootBackend(): Promise<boolean> {
 async function loadReactApp(): Promise<void> {
     if (!mainWindow) return;
 
+    bootProfile('renderer_load_start', { dev: isDev() });
+
     if (isDev()) {
-        await mainWindow.loadURL('http://localhost:5123');
+        await mainWindow.loadURL(DEV_RENDERER_URL);
     } else {
         await mainWindow.loadFile(path.join(app.getAppPath(), '/dist-react/index.html'));
     }
+
+    bootProfile('renderer_load_resolved', {
+        url: mainWindow.webContents.getURL(),
+    });
 }
 
 async function waitForRendererApp(): Promise<void> {
     if (!isDev()) return;
 
-    const viteUrl = 'http://localhost:5123';
+    bootProfile('renderer_wait_start', { urls: DEV_RENDERER_SHELL_PROBE_URLS });
 
     for (let attempt = 0; attempt < 300; attempt++) {
         try {
-            const response = await fetch(viteUrl, { method: 'HEAD' }).catch(() => null);
-            if (response?.ok) return;
+            const responses = await Promise.all(
+                DEV_RENDERER_SHELL_PROBE_URLS.map((url) =>
+                    fetch(url).catch(() => null),
+                ),
+            );
+            const allReady = responses.every((response) => response?.ok);
+            if (allReady) {
+                await Promise.all(
+                    responses.map(async (response) => {
+                        if (!response) {
+                            return;
+                        }
+                        await response.text().catch(() => '');
+                    }),
+                );
+                bootProfile('renderer_wait_ready', {
+                    urls: DEV_RENDERER_SHELL_PROBE_URLS,
+                    attempts: attempt + 1,
+                });
+                return;
+            }
         } catch {
             // Ignore fetch failures while Vite is still starting up.
         }
@@ -132,7 +230,7 @@ async function waitForRendererApp(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    throw new Error(`Vite dev server was not reachable at ${viteUrl}`);
+    throw new Error(`Vite dev server probes were not reachable: ${DEV_RENDERER_SHELL_PROBE_URLS.join(', ')}`);
 }
 
 let bootSequenceInProgress = false;
@@ -141,6 +239,7 @@ let reactAppLoaded = false;
 async function startBootSequence(): Promise<void> {
     if (bootSequenceInProgress) return;
     bootSequenceInProgress = true;
+    bootProfile('boot_sequence_start');
 
     const rendererAppLoadPromise = (reactAppLoaded
         ? Promise.resolve()
@@ -185,6 +284,7 @@ async function startBootSequence(): Promise<void> {
 }
 
 app.on('ready', async () => {
+    bootProfile('app_ready');
     // Auto-approve getDisplayMedia requests for meeting recording.
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
         if (request.frame) {
@@ -222,6 +322,30 @@ app.on('ready', async () => {
 
     normalBounds = mainWindow.getBounds();
     mainWindow.setAlwaysOnTop(true, 'screen-saver');
+
+    mainWindow.webContents.on('did-start-loading', () => {
+        bootProfile('did_start_loading', {
+            url: mainWindow?.webContents.getURL(),
+        });
+    });
+
+    mainWindow.webContents.on('dom-ready', () => {
+        bootProfile('dom_ready', {
+            url: mainWindow?.webContents.getURL(),
+        });
+    });
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        bootProfile('did_finish_load', {
+            url: mainWindow?.webContents.getURL(),
+        });
+    });
+
+    mainWindow.webContents.on('did-stop-loading', () => {
+        bootProfile('did_stop_loading', {
+            url: mainWindow?.webContents.getURL(),
+        });
+    });
 
     // Load the boot shell HTML *instantly* as a data: URL.
     // This renders the black-hole animation + progress bar before Vite or
@@ -303,4 +427,6 @@ app.on('before-quit', async () => {
     console.log('App is quitting, cleaning up processes...');
     await stopChannelBridge();
     await stopPythonServer();
+    channelBridgeStarted = false;
+    channelBridgeStartupPromise = null;
 });

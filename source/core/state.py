@@ -7,11 +7,17 @@ maintainability and testability.
 
 import os
 import threading
-from typing import List, Dict, Any, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from ..ss import ScreenshotService
 from .request_context import RequestContext
 import asyncio
+
+if TYPE_CHECKING:
+    from ..ss import ScreenshotService
+
+# Compatibility placeholder for tests and patch sites. The actual screenshot
+# implementation is imported lazily elsewhere during runtime startup.
+ScreenshotService = Any
 
 
 class AppState:
@@ -57,7 +63,7 @@ class AppState:
         self.conversation_id: Optional[str] = None
 
         # Service references for cleanup
-        self.screenshot_service: Optional[ScreenshotService] = None
+        self.screenshot_service: Optional["ScreenshotService"] = None
         self.transcription_service: Optional[Any] = None
         self.server_thread: Optional[threading.Thread] = None
         self.service_thread: Optional[threading.Thread] = None

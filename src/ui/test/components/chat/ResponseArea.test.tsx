@@ -18,9 +18,15 @@ const { buildRenderableContentBlocksMock } = vi.hoisted(() => ({
   ),
 }));
 
-vi.mock('../../../components/chat/ChatMessage', () => ({
-  ChatMessage: ({ message }: { message: ChatMessage }) => (
-    <div data-testid="chat-message">{message.content}</div>
+vi.mock('../../../components/chat/DeferredChatHistory', () => ({
+  default: ({ chatHistory }: { chatHistory: ChatMessage[] }) => (
+    <>
+      {chatHistory.map((message) => (
+        <div key={message.messageId ?? message.content} data-testid="chat-message">
+          {message.content}
+        </div>
+      ))}
+    </>
   ),
 }));
 
@@ -30,13 +36,13 @@ vi.mock('../../../components/chat/LoadingDots', () => ({
   ),
 }));
 
-vi.mock('../../../components/chat/ToolCallsDisplay', () => ({
-  InlineContentBlocks: ({ blocks }: { blocks: ContentBlock[] }) => (
+vi.mock('../../../components/chat/DeferredInlineContentBlocks', () => ({
+  default: ({ blocks }: { blocks: ContentBlock[] }) => (
     <div data-testid="inline-content-blocks">{blocks.length}</div>
   ),
 }));
 
-vi.mock('../../../utils/chatMessages', () => ({
+vi.mock('../../../utils/renderableContentBlocks', () => ({
   buildRenderableContentBlocks: buildRenderableContentBlocksMock,
 }));
 
@@ -75,7 +81,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof ResponseArea>>
 }
 
 describe('ResponseArea', () => {
-  test('falls back to role-index key when messageId is missing', () => {
+  test('falls back to role-index key when messageId is missing', async () => {
     render(
       <ResponseArea
         {...makeProps({
@@ -84,7 +90,7 @@ describe('ResponseArea', () => {
       />,
     );
 
-    expect(screen.getByTestId('chat-message')).toHaveTextContent('no id');
+    expect(await screen.findByTestId('chat-message')).toHaveTextContent('no id');
   });
 
   test('renders error and hides chat history when error is present', () => {
@@ -102,7 +108,7 @@ describe('ResponseArea', () => {
     expect(screen.queryByTestId('chat-message')).not.toBeInTheDocument();
   });
 
-  test('renders chat history messages when no error', () => {
+  test('renders chat history messages when no error', async () => {
     render(
       <ResponseArea
         {...makeProps({
@@ -114,7 +120,7 @@ describe('ResponseArea', () => {
       />,
     );
 
-    const messages = screen.getAllByTestId('chat-message');
+    const messages = await screen.findAllByTestId('chat-message');
     expect(messages).toHaveLength(2);
     expect(messages[0]).toHaveTextContent('first');
     expect(messages[1]).toHaveTextContent('second');
@@ -133,7 +139,7 @@ describe('ResponseArea', () => {
     expect(screen.getByText('What is happening?')).toBeInTheDocument();
   });
 
-  test('renders inline content blocks and assistant header when blocks exist', () => {
+  test('renders inline content blocks and assistant header when blocks exist', async () => {
     render(
       <ResponseArea
         {...makeProps({
@@ -144,27 +150,27 @@ describe('ResponseArea', () => {
     );
 
     expect(screen.getByText('Xpdite • claude-sonnet')).toBeInTheDocument();
-    expect(screen.getByTestId('inline-content-blocks')).toHaveTextContent('1');
+    expect(await screen.findByTestId('inline-content-blocks')).toHaveTextContent('1');
   });
 
-  test('passes expandable thinking controls when there is only a single thinking block', () => {
+  test('passes expandable thinking controls when there is only a single thinking block', async () => {
     buildRenderableContentBlocksMock.mockReturnValueOnce([
       { type: 'thinking', content: 'Thinking...' },
     ]);
     const onToggleThinking = vi.fn();
     render(<ResponseArea {...makeProps({ onToggleThinking })} />);
 
-    expect(screen.getByTestId('inline-content-blocks')).toHaveTextContent('1');
+    expect(await screen.findByTestId('inline-content-blocks')).toHaveTextContent('1');
   });
 
-  test('does not pass thinking toggle for mixed content timelines', () => {
+  test('does not pass thinking toggle for mixed content timelines', async () => {
     buildRenderableContentBlocksMock.mockReturnValueOnce([
       { type: 'thinking', content: 'Thinking...' },
       { type: 'text', content: 'Answer' },
     ]);
     render(<ResponseArea {...makeProps()} />);
 
-    expect(screen.getByTestId('inline-content-blocks')).toHaveTextContent('2');
+    expect(await screen.findByTestId('inline-content-blocks')).toHaveTextContent('2');
   });
 
   test('renders scroll-to-bottom button and triggers callback', () => {

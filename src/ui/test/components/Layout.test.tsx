@@ -8,10 +8,6 @@ vi.mock('../../contexts/WebSocketContext', () => ({
   WebSocketProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
-vi.mock('../../contexts/MeetingRecorderContext', () => ({
-  MeetingRecorderProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
-}));
-
 vi.mock('../../components/boot/BootScreen', () => ({
   default: () => <div data-testid="boot-screen">boot</div>,
 }));

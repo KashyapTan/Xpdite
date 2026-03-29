@@ -108,6 +108,40 @@ def find_available_port(
     )
 
 
+async def _start_optional_services() -> None:
+    """Start non-critical services after HTTP startup is already underway."""
+    await asyncio.sleep(0)
+
+    async def _start_google_servers() -> None:
+        try:
+            from .config import GOOGLE_TOKEN_FILE
+            import os
+
+            if os.path.exists(GOOGLE_TOKEN_FILE):
+                from .mcp_integration.manager import mcp_manager
+
+                await mcp_manager.connect_google_servers()
+                logger.info("Gmail & Calendar MCP servers started (token found)")
+            else:
+                logger.info("No Google token found — skipping Gmail & Calendar servers")
+        except Exception as e:
+            logger.warning("Failed to start Google servers (non-fatal): %s", e)
+
+    async def _start_scheduler_service() -> None:
+        try:
+            from .services.scheduler import scheduler_service
+
+            await scheduler_service.start()
+            logger.info("Scheduler service started")
+        except Exception as e:
+            logger.warning("Failed to start scheduler service (non-fatal): %s", e)
+
+    await asyncio.gather(
+        _start_google_servers(),
+        _start_scheduler_service(),
+    )
+
+
 def start_server():
     """Start FastAPI server in the current thread & store its loop."""
     _emit_boot_marker("loading_runtime", "Loading AI runtime", 20)
@@ -138,36 +172,13 @@ def start_server():
     except Exception as e:
         logger.warning("MCP server initialization failed (non-fatal): %s", e)
 
-    # Conditionally start Google MCP servers if user has connected their account
-    try:
-        from .config import GOOGLE_TOKEN_FILE
-        import os
-
-        if os.path.exists(GOOGLE_TOKEN_FILE):
-            from .mcp_integration.manager import mcp_manager
-
-            loop.run_until_complete(mcp_manager.connect_google_servers())
-            logger.info("Gmail & Calendar MCP servers started (token found)")
-        else:
-            logger.info("No Google token found — skipping Gmail & Calendar servers")
-    except Exception as e:
-        logger.warning("Failed to start Google servers (non-fatal): %s", e)
-
-    # Initialize and start the scheduler service
-    try:
-        from .services.scheduler import scheduler_service
-
-        loop.run_until_complete(scheduler_service.start())
-        logger.info("Scheduler service started")
-    except Exception as e:
-        logger.warning("Failed to start scheduler service (non-fatal): %s", e)
-
     # Start uvicorn server
     _emit_boot_marker("starting_http", "Preparing chat features", 75)
     config = uvicorn.Config(
         app, host="0.0.0.0", port=port, log_level="warning", loop="asyncio"
     )
     server = uvicorn.Server(config)
+    loop.create_task(_start_optional_services(), name="xpdite-optional-startup")
     loop.run_until_complete(server.serve())
 
 

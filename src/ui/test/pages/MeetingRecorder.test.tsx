@@ -66,6 +66,7 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('../../contexts/MeetingRecorderContext', () => ({
+  MeetingRecorderProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useMeetingRecorder: () => recorderState,
 }));
 

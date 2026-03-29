@@ -67,6 +67,8 @@ class McpToolManager:
         command: str,
         args: list,
         env: Optional[Dict[str, str]] = None,
+        *,
+        skip_embed: bool = False,
     ):
         """Connect to an MCP server by launching it as a subprocess.
 
@@ -187,10 +189,11 @@ class McpToolManager:
             # tools so reconnects can reuse them without re-embedding.
             from ..core.thread_pool import run_in_thread
 
-            try:
-                await run_in_thread(self.refresh_tool_embeddings)
-            except Exception as e:
-                logger.warning("Tool embedding failed (non-fatal): %s", e)
+            if not skip_embed:
+                try:
+                    await run_in_thread(self.refresh_tool_embeddings)
+                except Exception as e:
+                    logger.warning("Tool embedding failed (non-fatal): %s", e)
         except Exception as e:
             logger.error("Error connecting to '%s': %s", server_name, e)
             logger.warning("The server will work without '%s' tools.", server_name)
@@ -445,6 +448,7 @@ class McpToolManager:
                         )
                     ],
                     env=env,
+                    skip_embed=True,
                 )
             )
 
@@ -463,6 +467,7 @@ class McpToolManager:
                         )
                     ],
                     env=env,
+                    skip_embed=True,
                 )
             )
 
@@ -531,7 +536,7 @@ async def init_mcp_servers():
         """Connect a single MCP server with a timeout."""
         try:
             await asyncio.wait_for(
-                mcp_manager.connect_server(name, cmd, args),
+                mcp_manager.connect_server(name, cmd, args, skip_embed=True),
                 timeout=timeout_s,
             )
         except asyncio.TimeoutError:

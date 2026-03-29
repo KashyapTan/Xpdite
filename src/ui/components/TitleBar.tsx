@@ -1,9 +1,19 @@
-import React from 'react';
+import React, { Suspense, lazy, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTabs } from '../contexts/TabContext';
-import NotificationBell from './NotificationBell';
 import '../CSS/TitleBar.css';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
+
+const NotificationBell = lazy(() => import('./NotificationBell'));
+let notificationBellWarmupPromise: Promise<unknown> | null = null;
+
+function warmNotificationBell() {
+  if (!notificationBellWarmupPromise) {
+    notificationBellWarmupPromise = import('./NotificationBell');
+  }
+
+  return notificationBellWarmupPromise;
+}
 
 
 interface TitleBarProps {
@@ -14,6 +24,24 @@ const TitleBar: React.FC<TitleBarProps> = ({ setMini }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { createTab } = useTabs();
+
+  useEffect(() => {
+    const warm = () => {
+      void warmNotificationBell();
+    };
+
+    if (typeof window.requestIdleCallback === 'function') {
+      const idleId = window.requestIdleCallback(warm, { timeout: 2000 });
+      return () => {
+        window.cancelIdleCallback?.(idleId);
+      };
+    }
+
+    const timeoutId = window.setTimeout(warm, 1000);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
 
   const handleNewChat = () => {
     // If not on main chat page, just navigate to it
@@ -74,7 +102,9 @@ const TitleBar: React.FC<TitleBarProps> = ({ setMini }) => {
             <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>
           </svg>
         </div>
-        <NotificationBell />
+        <Suspense fallback={<div aria-hidden="true" style={{ width: 34, height: 34 }} />}>
+          <NotificationBell />
+        </Suspense>
         <div className="xpdite-logo-holder">
           <img
             src={xpditeLogo}

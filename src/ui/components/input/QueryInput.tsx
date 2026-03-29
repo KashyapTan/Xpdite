@@ -6,20 +6,34 @@
  */
 import React, {
   forwardRef,
+  Suspense,
   useCallback,
   useEffect,
   useLayoutEffect,
+  lazy,
   useMemo,
   useRef,
   useState,
 } from 'react';
 import type { FormEvent, KeyboardEvent } from 'react';
-import SlashCommandMenu from '../chat/SlashCommandMenu';
-import ModelCommandMenu from '../chat/ModelCommandMenu';
 import { X_ICON_PATHS } from '../icons/iconPaths';
-import { api } from '../../services/api';
 import type { Skill } from '../../types';
 import '../../CSS/SlashCommandChips.css';
+
+const SlashCommandMenu = lazy(() => import('../chat/SlashCommandMenu'));
+const ModelCommandMenu = lazy(() => import('../chat/ModelCommandMenu'));
+let queryInputMenusWarmupPromise: Promise<unknown> | null = null;
+
+function warmQueryInputMenus() {
+  if (!queryInputMenusWarmupPromise) {
+    queryInputMenusWarmupPromise = Promise.all([
+      import('../chat/SlashCommandMenu'),
+      import('../chat/ModelCommandMenu'),
+    ]);
+  }
+
+  return queryInputMenusWarmupPromise;
+}
 
 interface QueryInputProps {
   query: string;
@@ -499,6 +513,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
       const loadSkills = async () => {
         try {
+          const { api } = await import('../../services/api');
           const allSkills = await api.skillsApi.getAll();
           if (!isMounted) {
             return;
@@ -514,6 +529,24 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
       return () => {
         isMounted = false;
+      };
+    }, []);
+
+    useEffect(() => {
+      const warm = () => {
+        void warmQueryInputMenus();
+      };
+
+      if (typeof window.requestIdleCallback === 'function') {
+        const idleId = window.requestIdleCallback(warm, { timeout: 2500 });
+        return () => {
+          window.cancelIdleCallback?.(idleId);
+        };
+      }
+
+      const timeoutId = window.setTimeout(warm, 1200);
+      return () => {
+        window.clearTimeout(timeoutId);
       };
     }, []);
 
@@ -976,23 +1009,27 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         style={{ position: 'relative' }}
       >
         {showSlashMenu && (
-          <SlashCommandMenu
-            skills={filteredSkills}
-            selectedIndex={selectedIndex}
-            position={menuPosition}
-            onSelect={handleSelectCommand}
-            onHover={setSelectedIndex}
-          />
+          <Suspense fallback={null}>
+            <SlashCommandMenu
+              skills={filteredSkills}
+              selectedIndex={selectedIndex}
+              position={menuPosition}
+              onSelect={handleSelectCommand}
+              onHover={setSelectedIndex}
+            />
+          </Suspense>
         )}
 
         {showModelMenu && (
-          <ModelCommandMenu
-            models={filteredModels}
-            selectedIndex={modelSelectedIndex}
-            position={modelMenuPosition}
-            onSelect={handleSelectModel}
-            onHover={setModelSelectedIndex}
-          />
+          <Suspense fallback={null}>
+            <ModelCommandMenu
+              models={filteredModels}
+              selectedIndex={modelSelectedIndex}
+              position={modelMenuPosition}
+              onSelect={handleSelectModel}
+              onHover={setModelSelectedIndex}
+            />
+          </Suspense>
         )}
 
         <form ref={formRef} onSubmit={handleSubmit} className="query-input-form">

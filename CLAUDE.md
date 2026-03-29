@@ -154,6 +154,7 @@ uv run <file_name>                            # run python files for testing
 **YouTube analysis flow (`watch_youtube_video`)** → The `video_watcher` inline tool first tries native YouTube captions; if captions are unavailable it emits a `youtube_transcription_approval` content block in chat, waits for `youtube_transcription_approval_response`, then (if approved) downloads audio and transcribes with Whisper using detected compute backend (`cuda`/`cpu`) and estimated timing metadata.
 
 **Boot system** → The Electron window loads instantly, showing a boot screen overlay (`src/ui/components/boot/BootScreen.tsx` + `BootContext.tsx`) while the Python backend starts. Boot progress is communicated via structured `XPDITE_BOOT {"phase":"...","message":"...","progress":N}` markers on stdout (emitted by `_emit_boot_marker()` in `source/main.py`), parsed in `pythonApi.ts`, and relayed to the renderer via the `boot-state` IPC channel. The backend is only considered ready after a successful HTTP health-check response — not from stdout markers alone. In dev mode (no Electron), `BootContext` falls back to polling `/api/health` on ports 8000–8009.
+In dev mode, Electron also prewarms the Vite renderer by probing the real entry/module URLs before swapping away from the boot shell. Keep the initial renderer shell lightweight (`Layout.css` is intentionally separated from the heavier chat styles), and avoid moving markdown / syntax-highlighting / terminal-heavy imports back onto the boot-critical path unless they are behind a deliberate lazy boundary.
 
 ---
 

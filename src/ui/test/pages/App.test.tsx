@@ -190,7 +190,7 @@ vi.mock('../../components/input/QueueDropdown', () => ({ QueueDropdown: () => <d
 vi.mock('../../components/input/TokenUsagePopup', () => ({ TokenUsagePopup: () => <div>token-popup</div> }));
 vi.mock('../../components/input/ScreenshotChips', () => ({ ScreenshotChips: () => <div>screenshot-chips</div> }));
 
-vi.mock('../../components/chat/ResponseArea', () => ({
+vi.mock('../../components/chat/ResponseArea.tsx', () => ({
   ResponseArea: (props: ResponseAreaProps) => {
     latestResponseAreaProps = props;
     return (
@@ -266,12 +266,12 @@ describe('App websocket-driven behavior', () => {
     screenshotStateMock.meetingRecordingMode = false;
   });
 
-  test('renders core sections', () => {
+  test('renders core sections', async () => {
     render(<App />);
 
     expect(screen.getByText('title-bar')).toBeInTheDocument();
     expect(screen.getByText('tab-bar')).toBeInTheDocument();
-    expect(screen.getByText('response-area')).toBeInTheDocument();
+    expect(await screen.findByText('response-area')).toBeInTheDocument();
   });
 
   test('submits query through websocket with active tab routing', async () => {
@@ -355,6 +355,7 @@ describe('App websocket-driven behavior', () => {
     await waitFor(() => {
       expect(api.getEnabledModels).toHaveBeenCalled();
     });
+    expect(await screen.findByText('response-area')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('retry-message'));
 
@@ -384,15 +385,17 @@ describe('App websocket-driven behavior', () => {
       content: { conversation_id: 'conv-123' },
     });
 
-    expect(chatStateMock.setConversationId).toHaveBeenCalledWith('conv-123');
-    expect(chatStateMock.clearStreamingState).toHaveBeenCalledWith('Updated turn saved. Reloading conversation...');
-    expect(wsSendMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        type: 'resume_conversation',
-        conversation_id: 'conv-123',
-        tab_id: 'tab-1',
-      }),
-    );
+    await waitFor(() => {
+      expect(chatStateMock.setConversationId).toHaveBeenCalledWith('conv-123');
+      expect(chatStateMock.clearStreamingState).toHaveBeenCalledWith('Updated turn saved. Reloading conversation...');
+      expect(wsSendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'resume_conversation',
+          conversation_id: 'conv-123',
+          tab_id: 'tab-1',
+        }),
+      );
+    });
   });
 
   test('links first terminal output to pending run_command metadata', () => {
@@ -432,11 +435,13 @@ describe('App websocket-driven behavior', () => {
     expect(chatStateMock.appendTerminalOutput).toHaveBeenCalledWith('req-1', 'line 1', false);
   });
 
-  test('handles youtube approval message and approval action callback', () => {
+  test('handles youtube approval message and approval action callback', async () => {
     render(<App />);
     chatStateMock.addYouTubeApprovalBlock.mockClear();
     chatStateMock.updateYouTubeApprovalBlock.mockClear();
     wsSendMock.mockClear();
+
+    expect(await screen.findByText('response-area')).toBeInTheDocument();
 
     emitWebSocketEvent({
       type: 'youtube_transcription_approval',

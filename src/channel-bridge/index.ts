@@ -16,12 +16,7 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 // Note: useMultiFileAuthState is from Baileys, NOT a React hook
 
-import { Chat, type Adapter, type Message } from 'chat';
-import { createMemoryState } from '@chat-adapter/state-memory';
-import { createTelegramAdapter as createChatSDKTelegramAdapter } from '@chat-adapter/telegram';
-import { createDiscordAdapter as createChatSDKDiscordAdapter } from '@chat-adapter/discord';
-import { createBaileysAdapter as createChatSDKBaileysAdapter } from 'chat-adapter-baileys';
-import { useMultiFileAuthState } from 'baileys';
+import type { Adapter, Message } from 'chat';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -46,6 +41,77 @@ import type {
   BridgeMessage
 } from './types.js';
 
+type ChatConstructor = typeof import('chat')['Chat'];
+type ChatInstance = InstanceType<ChatConstructor>;
+type MemoryStateFactory = typeof import('@chat-adapter/state-memory')['createMemoryState'];
+type TelegramAdapterFactory = typeof import('@chat-adapter/telegram')['createTelegramAdapter'];
+type DiscordAdapterFactory = typeof import('@chat-adapter/discord')['createDiscordAdapter'];
+type BaileysAdapterFactory = typeof import('chat-adapter-baileys')['createBaileysAdapter'];
+type ChatSDKTelegramAdapter = ReturnType<TelegramAdapterFactory>;
+type ChatSDKDiscordAdapter = ReturnType<DiscordAdapterFactory>;
+type ChatSDKBaileysAdapter = ReturnType<BaileysAdapterFactory>;
+type BaileysAdapterOptions = Parameters<BaileysAdapterFactory>[0];
+type UseMultiFileAuthState = typeof import('baileys')['useMultiFileAuthState'];
+
+let chatSdkCorePromise: Promise<{
+  Chat: ChatConstructor;
+  createMemoryState: MemoryStateFactory;
+}> | null = null;
+let telegramAdapterFactoryPromise: Promise<TelegramAdapterFactory> | null = null;
+let discordAdapterFactoryPromise: Promise<DiscordAdapterFactory> | null = null;
+let whatsAppSdkPromise: Promise<{
+  createChatSDKBaileysAdapter: BaileysAdapterFactory;
+  useMultiFileAuthState: UseMultiFileAuthState;
+}> | null = null;
+
+function loadChatSdkCore() {
+  if (!chatSdkCorePromise) {
+    chatSdkCorePromise = Promise.all([
+      import('chat'),
+      import('@chat-adapter/state-memory'),
+    ]).then(([chatModule, stateMemoryModule]) => ({
+      Chat: chatModule.Chat,
+      createMemoryState: stateMemoryModule.createMemoryState,
+    }));
+  }
+
+  return chatSdkCorePromise;
+}
+
+function loadTelegramAdapterFactory() {
+  if (!telegramAdapterFactoryPromise) {
+    telegramAdapterFactoryPromise = import('@chat-adapter/telegram').then(
+      ({ createTelegramAdapter }) => createTelegramAdapter,
+    );
+  }
+
+  return telegramAdapterFactoryPromise;
+}
+
+function loadDiscordAdapterFactory() {
+  if (!discordAdapterFactoryPromise) {
+    discordAdapterFactoryPromise = import('@chat-adapter/discord').then(
+      ({ createDiscordAdapter }) => createDiscordAdapter,
+    );
+  }
+
+  return discordAdapterFactoryPromise;
+}
+
+function loadWhatsAppSdk() {
+  if (!whatsAppSdkPromise) {
+    whatsAppSdkPromise = Promise.all([
+      import('chat-adapter-baileys'),
+      import('baileys'),
+    ]).then(([baileysAdapterModule, baileysModule]) => ({
+      createChatSDKBaileysAdapter: baileysAdapterModule.createBaileysAdapter,
+      useMultiFileAuthState: baileysModule.useMultiFileAuthState,
+    }));
+  }
+
+  return whatsAppSdkPromise;
+}
+
 // ============================================================================
 // Environment Configuration
 // ============================================================================
@@ -60,9 +126,9 @@ const mobileDebugLogs = process.env.XPDITE_MOBILE_DEBUG_LOGS === '1';
 // ============================================================================
 
 interface AdapterState {
-  telegram: ReturnType<typeof createChatSDKTelegramAdapter> | null;
-  discord: ReturnType<typeof createChatSDKDiscordAdapter> | null;
-  whatsapp: ReturnType<typeof createChatSDKBaileysAdapter> | null;
+  telegram: ChatSDKTelegramAdapter | null;
+  discord: ChatSDKDiscordAdapter | null;
+  whatsapp: ChatSDKBaileysAdapter | null;
 }
 
 const adapters: AdapterState = {
@@ -72,7 +138,7 @@ const adapters: AdapterState = {
 };
 
 // Current Chat SDK instance
-let chatInstance: Chat | null = null;
+let chatInstance: ChatInstance | null = null;
 
 // Platform connection status tracking
 const platformStatuses: Map<Platform, PlatformStatus> = new Map([
@@ -686,15 +752,31 @@ async function main(): Promise<void> {
       
       // Initialize Telegram if configured
       const telegramConfig = config.platforms.find(p => p.platform === 'telegram');
+      const telegramCredentials = telegramConfig?.enabled
+        ? telegramConfig.credentials as TelegramCredentials
+        : null;
+      const telegramAdapterFactoryLoad =
+        telegramConfig?.enabled && telegramCredentials?.botToken
+          ? loadTelegramAdapterFactory()
+          : Promise.resolve(null);
       
       if (telegramConfig?.enabled) {
-        const creds = telegramConfig.credentials as TelegramCredentials;
+        const creds = telegramCredentials;
         debugLog('[ChannelBridge] Initializing Telegram adapter (Chat SDK)...');
         
         updatePlatformStatus('telegram', { status: 'connecting' });
         
         try {
-          adapters.telegram = createChatSDKTelegramAdapter({
+          if (!creds?.botToken) {
+            throw new Error('Telegram bot token is required');
+          }
+
+          const createTelegramAdapter = await telegramAdapterFactoryLoad;
+          if (!createTelegramAdapter) {
+            throw new Error('Telegram adapter loader unavailable');
+          }
+
+          adapters.telegram = createTelegramAdapter({
             botToken: creds.botToken,
             userName: creds.botUsername,
             mode: 'polling', // Desktop app uses polling, not webhooks
@@ -718,15 +800,40 @@ async function main(): Promise<void> {
       
       // Initialize Discord if configured
       const discordConfig = config.platforms.find(p => p.platform === 'discord');
+      const discordCredentials = discordConfig?.enabled
+        ? discordConfig.credentials as DiscordCredentials
+        : null;
+      const discordAdapterFactoryLoad =
+        discordConfig?.enabled
+        && discordCredentials?.botToken
+        && discordCredentials?.publicKey
+        && discordCredentials?.applicationId
+          ? loadDiscordAdapterFactory()
+          : Promise.resolve(null);
       
       if (discordConfig?.enabled) {
-        const creds = discordConfig.credentials as DiscordCredentials;
+        const creds = discordCredentials;
         debugLog('[ChannelBridge] Initializing Discord adapter (Chat SDK)...');
         
         updatePlatformStatus('discord', { status: 'connecting' });
         
         try {
-          adapters.discord = createChatSDKDiscordAdapter({
+          if (!creds?.botToken) {
+            throw new Error('Discord bot token is required');
+          }
+          if (!creds.publicKey) {
+            throw new Error('Discord public key is required');
+          }
+          if (!creds.applicationId) {
+            throw new Error('Discord application ID is required');
+          }
+
+          const createDiscordAdapter = await discordAdapterFactoryLoad;
+          if (!createDiscordAdapter) {
+            throw new Error('Discord adapter loader unavailable');
+          }
+
+          adapters.discord = createDiscordAdapter({
             botToken: creds.botToken,
             publicKey: creds.publicKey,
             applicationId: creds.applicationId,
@@ -746,7 +853,14 @@ async function main(): Promise<void> {
       
       // Initialize WhatsApp if configured
       const whatsappConfig = newWhatsappConfig;
+      const whatsappCredentials = whatsappConfig?.enabled
+        ? whatsappConfig.credentials as WhatsAppCredentials
+        : null;
       let whatsappNeedsPairing = false;
+      const whatsAppSdkLoad =
+        whatsappConfig?.enabled && !shouldKeepWhatsApp && !!whatsappCredentials?.phoneNumber
+          ? loadWhatsAppSdk()
+          : Promise.resolve(null);
       
       // If we kept the existing WhatsApp adapter, just reuse it
       if (shouldKeepWhatsApp && adapters.whatsapp) {
@@ -754,18 +868,28 @@ async function main(): Promise<void> {
         chatAdapters.whatsapp = adapters.whatsapp;
         updatePlatformStatus('whatsapp', { status: 'connected' });
       } else if (whatsappConfig?.enabled) {
-        const creds = whatsappConfig.credentials as WhatsAppCredentials;
+        const creds = whatsappCredentials;
         debugLog('[ChannelBridge] Initializing WhatsApp adapter (Chat SDK Baileys)...');
         
         updatePlatformStatus('whatsapp', { status: 'connecting' });
         
         try {
-          // Load or create WhatsApp auth state
-          const authDir = path.join(userDataDir, 'whatsapp_auth');
-
-          if (!creds.phoneNumber) {
+          if (!creds?.phoneNumber) {
             throw new Error('WhatsApp phone number is required for pairing code authentication');
           }
+
+          const whatsAppSdk = await whatsAppSdkLoad;
+          if (!whatsAppSdk) {
+            throw new Error('WhatsApp SDK loader unavailable');
+          }
+
+          const {
+            createChatSDKBaileysAdapter,
+            useMultiFileAuthState,
+          } = whatsAppSdk;
+
+          // Load or create WhatsApp auth state
+          const authDir = path.join(userDataDir, 'whatsapp_auth');
 
           const formattedPhone = creds.phoneNumber.replace(/\D/g, '');
           if (!formattedPhone) {
@@ -809,7 +933,7 @@ async function main(): Promise<void> {
           // reconnect, leading to infinite retry loops that result in a 401 logout.
           // Instead, use onQR as the trigger since QR emission means the WS socket
           // is fully open and ready for protocol operations.
-          const baileysOptions: Parameters<typeof createChatSDKBaileysAdapter>[0] = {
+          const baileysOptions: BaileysAdapterOptions = {
             auth: { state, saveCreds },
             userName: 'xpdite-bot',
             // Prevent Baileys from printing QR codes to stdout (conflicts
@@ -881,6 +1005,7 @@ async function main(): Promise<void> {
       
       // Create or recreate the Chat instance with current adapters
       if (Object.keys(chatAdapters).length > 0) {
+        const { Chat, createMemoryState } = await loadChatSdkCore();
         chatInstance = new Chat({
           userName: 'xpdite-bot',
           adapters: chatAdapters,

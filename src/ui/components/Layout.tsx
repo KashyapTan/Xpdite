@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { WebSocketProvider } from '../contexts/WebSocketContext';
-import { MeetingRecorderProvider } from '../contexts/MeetingRecorderContext';
 import BootScreen from './boot/BootScreen';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
-import '../CSS/App.css';
+import '../CSS/Layout.css';
 
 const Layout: React.FC = () => {
   const [mini, setMini] = useState<boolean>(false);
@@ -21,26 +20,24 @@ const Layout: React.FC = () => {
 
   return (
     <WebSocketProvider>
-      <MeetingRecorderProvider>
-        <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
-          <div
-            className="mini-container"
-            title="Restore Xpdite"
-            onClick={() => toggleMini(false)}
-          >
-            <img
-              src={xpditeLogo}
-              alt="Xpdite Logo"
-              className="xpdite-logo"
-            />
-          </div>
-
-          <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
-            <BootScreen />
-            <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
-          </div>
+      <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
+        <div
+          className="mini-container"
+          title="Restore Xpdite"
+          onClick={() => toggleMini(false)}
+        >
+          <img
+            src={xpditeLogo}
+            alt="Xpdite Logo"
+            className="xpdite-logo"
+          />
         </div>
-      </MeetingRecorderProvider>
+
+        <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
+          <BootScreen />
+          <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
+        </div>
+      </div>
     </WebSocketProvider>
   );
 };

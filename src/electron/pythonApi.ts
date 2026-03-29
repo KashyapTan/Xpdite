@@ -19,7 +19,7 @@ export function onBootMarker(cb: BootMarkerCallback) {
 /** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
 const SERVER_PORT_RANGE = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
 const HEALTHCHECK_HOST = '127.0.0.1';
-const STARTUP_POLL_INTERVAL_MS = 1000;
+const STARTUP_POLL_INTERVAL_MS = 250;
 const STARTUP_HEALTHCHECK_TIMEOUT_MS = 1500;
 const STARTUP_TIMEOUT_MS = 90_000;
 const PROCESS_RELEASE_GRACE_MS = 350;
