@@ -130,6 +130,7 @@ export function ResponseArea({
             <InlineContentBlocks
               blocks={liveBlocks!}
               isThinking={isThinking}
+              isStreaming={!canSubmit}
               expanded={isSingleThinkingTimeline ? !thinkingCollapsed : undefined}
               onToggleExpanded={isSingleThinkingTimeline ? onToggleThinking : undefined}
               onTerminalApprove={onTerminalApprove}

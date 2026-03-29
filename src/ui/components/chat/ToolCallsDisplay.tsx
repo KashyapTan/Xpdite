@@ -6,6 +6,7 @@ import { CodeBlock } from './CodeBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
 import { InlineYouTubeApprovalBlock } from './InlineYouTubeApprovalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
+import { StreamingTextBlock } from './StreamingTextBlock';
 import { getHumanReadableDescription, getServerSummaryFragment } from './toolCallUtils';
 import '../../CSS/InlineTerminal.css';
 
@@ -175,6 +176,7 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
 interface ToolChainTimelineProps {
   blocks: ContentBlock[];
   isThinking?: boolean;
+  isStreaming?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
   onTerminalApprove?: (requestId: string) => void;
@@ -188,6 +190,7 @@ interface ToolChainTimelineProps {
 function ToolChainTimeline({
   blocks,
   isThinking = false,
+  isStreaming = false,
   expanded: controlledExpanded,
   onToggleExpanded,
   onTerminalApprove,
@@ -435,13 +438,13 @@ function ToolChainTimeline({
       {/* Response text (after all tool calls) */}
       {responseBlocks.map((block, idx) => {
         if (block.type === 'text' && block.content.trim()) {
+          // Use streaming animation for live streaming text
           return (
-            <ReactMarkdown
+            <StreamingTextBlock
               key={`resp-${idx}`}
-              components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
-            >
-              {block.content}
-            </ReactMarkdown>
+              content={block.content}
+              isStreaming={isStreaming}
+            />
           );
         }
         if (block.type === 'terminal_command') {
@@ -477,6 +480,7 @@ function ToolChainTimeline({
 interface InlineContentBlocksProps {
   blocks: ContentBlock[];
   isThinking?: boolean;
+  isStreaming?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
   onTerminalApprove?: (requestId: string) => void;
@@ -490,6 +494,7 @@ interface InlineContentBlocksProps {
 export function InlineContentBlocks({
   blocks,
   isThinking,
+  isStreaming = false,
   expanded,
   onToggleExpanded,
   onTerminalApprove,
@@ -512,6 +517,7 @@ export function InlineContentBlocks({
       <ToolChainTimeline
         blocks={blocks}
         isThinking={isThinking}
+        isStreaming={isStreaming}
         expanded={expanded}
         onToggleExpanded={onToggleExpanded}
         onTerminalApprove={onTerminalApprove}
@@ -529,13 +535,13 @@ export function InlineContentBlocks({
     <>
       {blocks.map((block, idx) => {
         if (block.type === 'text' && block.content.trim()) {
+          // Use streaming animation for live streaming text
           return (
-            <ReactMarkdown
+            <StreamingTextBlock
               key={idx}
-              components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
-            >
-              {block.content}
-            </ReactMarkdown>
+              content={block.content}
+              isStreaming={isStreaming}
+            />
           );
         }
         if (block.type === 'terminal_command') {
