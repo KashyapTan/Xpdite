@@ -407,10 +407,30 @@
 .settings-task-action.delete {
   background-color: rgba(239, 68, 68, 0.2);
   color: #f87171;
+  transition: background-color 0.2s, color 0.2s, transform 0.1s;
 }
 
 .settings-task-action.delete:hover:not(:disabled) {
   background-color: rgba(239, 68, 68, 0.3);
+}
+
+.settings-task-action.delete.confirm {
+  background-color: #ef4444;
+  color: white;
+  animation: pulse-delete 1s infinite;
+}
+
+.settings-task-action.delete.confirm:hover:not(:disabled) {
+  background-color: #dc2626;
+}
+
+@keyframes pulse-delete {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
 }
 
 .settings-task-action.save {

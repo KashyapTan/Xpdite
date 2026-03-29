@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../services/api';
 import '../../CSS/SettingsScheduledJobs.css';
 
@@ -44,6 +44,8 @@ const SettingsScheduledJobs: React.FC = () => {
   const [editingForwarding, setEditingForwarding] = useState<string | null>(null);
   const [forwardingPlatform, setForwardingPlatform] = useState<string>('');
   const [forwardingSenderId, setForwardingSenderId] = useState<string>('');
+  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const deleteTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -124,6 +126,15 @@ const SettingsScheduledJobs: React.FC = () => {
     }
   }, []);
 
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (deleteTimeoutRef.current) {
+        clearTimeout(deleteTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const handleToggleEnabled = async (job: ScheduledJob) => {
     try {
       setActionLoading(job.id);
@@ -142,8 +153,24 @@ const SettingsScheduledJobs: React.FC = () => {
   };
 
   const handleDelete = async (job: ScheduledJob) => {
-    if (!confirm(`Are you sure you want to delete "${job.name}"?`)) {
+    // Double-click confirmation pattern: first click shows "Confirm", second click deletes
+    if (pendingDeleteId !== job.id) {
+      setPendingDeleteId(job.id);
+      // Clear any existing timer before setting a new one
+      if (deleteTimeoutRef.current) {
+        clearTimeout(deleteTimeoutRef.current);
+      }
+      // Auto-reset after 3 seconds if user doesn't confirm
+      deleteTimeoutRef.current = setTimeout(() => {
+        setPendingDeleteId((current) => (current === job.id ? null : current));
+      }, 3000);
       return;
+    }
+    // Second click - actually delete
+    setPendingDeleteId(null);
+    if (deleteTimeoutRef.current) {
+      clearTimeout(deleteTimeoutRef.current);
+      deleteTimeoutRef.current = null;
     }
     try {
       setActionLoading(job.id);
@@ -493,11 +520,11 @@ const SettingsScheduledJobs: React.FC = () => {
                       {actionLoading === job.id ? 'Running...' : 'Run Now'}
                     </button>
                     <button
-                      className="settings-task-action delete"
+                      className={`settings-task-action delete ${pendingDeleteId === job.id ? 'confirm' : ''}`}
                       onClick={() => handleDelete(job)}
                       disabled={actionLoading === job.id}
                     >
-                      Delete
+                      {pendingDeleteId === job.id ? 'Confirm' : 'Delete'}
                     </button>
                   </div>
                 </div>
