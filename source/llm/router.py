@@ -157,8 +157,14 @@ async def route_chat(
 
         from .ollama_provider import stream_ollama_chat
 
+        prefiltered_tools = retrieved_tools if retrieved_tools else None
+
         return await stream_ollama_chat(
-            user_query, image_paths, chat_history, system_prompt
+            user_query,
+            image_paths,
+            chat_history,
+            system_prompt,
+            prefiltered_tools=prefiltered_tools,
         )
 
     # ── Cloud provider path ──────────────────────────────────────────

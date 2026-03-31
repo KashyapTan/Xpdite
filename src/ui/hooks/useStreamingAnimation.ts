@@ -1,20 +1,47 @@
 /**
  * Character-drain streaming animation hook.
  *
- * Buffers incoming text chunks into a queue and drains them at a consistent
- * pace using requestAnimationFrame, creating a smooth character-by-character
- * rendering effect independent of network chunk delivery.
- *
- * Key features:
- * - Character queue decouples network delivery from display speed
- * - rAF drain loop runs at ~60fps, pulling CHARS_PER_FRAME characters per frame
- * - Automatic cleanup on unmount or when streaming ends
- * - Flush callback for instant completion when stream finishes
+ * Incoming text is buffered and drained on rAF ticks. Drain speed adapts to
+ * backlog size, and React state commits are throttled for large backlogs to
+ * reduce markdown reparse pressure while preserving smooth live output.
  */
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-/** Number of characters to drain per animation frame (~60fps = 180 chars/sec) */
-const CHARS_PER_FRAME = 3;
+const BASE_CHARS_PER_TICK = 4;
+const COMMIT_INTERVAL_MS = 48;
+const LARGE_BACKLOG_COMMIT_THRESHOLD = 120;
+const CHUNK_COMPACT_THRESHOLD = 32;
+const STREAM_DEBUG_FLAG = 'xpdite_stream_debug';
+
+function charsPerTick(backlog: number): number {
+  if (backlog >= 4000) return 192;
+  if (backlog >= 2000) return 128;
+  if (backlog >= 1000) return 96;
+  if (backlog >= 500) return 64;
+  if (backlog >= 200) return 40;
+  if (backlog >= 80) return 20;
+  if (backlog >= 40) return 12;
+  return BASE_CHARS_PER_TICK;
+}
+
+function nowMs(): number {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function isStreamDebugEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(STREAM_DEBUG_FLAG) === '1';
+  } catch {
+    return false;
+  }
+}
 
 interface UseStreamingAnimationOptions {
   /** Full raw text from the stream (updated as chunks arrive) */
@@ -39,30 +66,31 @@ export function useStreamingAnimation({
   isStreaming,
   onCatchUp,
 }: UseStreamingAnimationOptions): UseStreamingAnimationReturn {
-  // Initialize displayedText with existing rawText on mount.
-  // This ensures pre-existing content (e.g., after tab switch) is shown immediately,
-  // and only NEW characters that arrive after mount will be animated.
-  const [displayedText, setDisplayedText] = useState(() => rawText);
+  const [displayedTextState, setDisplayedTextState] = useState(() => rawText);
+  const displayedTextRef = useRef(rawText);
 
-  // Track the last length we've "seen" to detect new characters.
-  // Initialize to current rawText length so we don't re-drain existing content.
   const lastProcessedLengthRef = useRef(rawText.length);
-
-  // Track the previous rawText to detect content replacement (not just growth)
   const prevRawTextRef = useRef(rawText);
 
-  // Character queue: stores characters waiting to be displayed
-  const queueRef = useRef<string[]>([]);
+  const pendingChunksRef = useRef<string[]>([]);
+  const pendingChunkIndexRef = useRef(0);
+  const pendingChunkOffsetRef = useRef(0);
+  const pendingLengthRef = useRef(0);
 
-  // rAF handle for cleanup
+  const displayBufferRef = useRef(rawText);
   const rafRef = useRef<number | null>(null);
+  const lastFrameTimeRef = useRef(0);
+  const lastCommitTimeRef = useRef(-COMMIT_INTERVAL_MS);
 
-  // Track if we're actively draining
   const [isDraining, setIsDraining] = useState(false);
 
-  // Stable refs for callbacks to avoid stale closures
   const isStreamingRef = useRef(isStreaming);
   const onCatchUpRef = useRef(onCatchUp);
+  const debugEnabledRef = useRef(false);
+  const debugStartedAtRef = useRef<number | null>(null);
+  const debugMaxBacklogRef = useRef(0);
+  const debugDrainedCharsRef = useRef(0);
+  const debugCommitCountRef = useRef(0);
 
   useEffect(() => {
     isStreamingRef.current = isStreaming;
@@ -72,132 +100,262 @@ export function useStreamingAnimation({
     onCatchUpRef.current = onCatchUp;
   }, [onCatchUp]);
 
-  // Drain loop: pulls characters from queue and appends to displayedText
-  const drainLoop = useCallback(() => {
-    const queue = queueRef.current;
+  useEffect(() => {
+    debugEnabledRef.current = isStreamDebugEnabled();
+  }, []);
 
-    if (queue.length === 0) {
-      // Queue empty - stop draining
-      setIsDraining(false);
+  const commitDisplayedText = useCallback((nextText: string) => {
+    if (displayedTextRef.current === nextText) {
+      return;
+    }
+
+    displayedTextRef.current = nextText;
+    setDisplayedTextState(nextText);
+    if (debugEnabledRef.current) {
+      debugCommitCountRef.current += 1;
+    }
+  }, []);
+
+  const clearPendingQueue = useCallback(() => {
+    pendingChunksRef.current = [];
+    pendingChunkIndexRef.current = 0;
+    pendingChunkOffsetRef.current = 0;
+    pendingLengthRef.current = 0;
+  }, []);
+
+  const compactPendingQueue = useCallback(() => {
+    const chunkIndex = pendingChunkIndexRef.current;
+    const chunks = pendingChunksRef.current;
+    if (chunkIndex < CHUNK_COMPACT_THRESHOLD || chunkIndex < chunks.length / 2) {
+      return;
+    }
+
+    pendingChunksRef.current = chunks.slice(chunkIndex);
+    pendingChunkIndexRef.current = 0;
+  }, []);
+
+  const drainChars = useCallback((maxChars: number): string => {
+    if (maxChars <= 0 || pendingLengthRef.current <= 0) {
+      return '';
+    }
+
+    let remaining = maxChars;
+    const drainedParts: string[] = [];
+
+    while (remaining > 0 && pendingLengthRef.current > 0) {
+      const chunks = pendingChunksRef.current;
+      const chunk = chunks[pendingChunkIndexRef.current];
+      if (chunk === undefined) {
+        clearPendingQueue();
+        break;
+      }
+
+      const offset = pendingChunkOffsetRef.current;
+      const available = chunk.length - offset;
+      if (available <= 0) {
+        pendingChunkIndexRef.current += 1;
+        pendingChunkOffsetRef.current = 0;
+        compactPendingQueue();
+        continue;
+      }
+
+      const take = Math.min(remaining, available);
+      drainedParts.push(chunk.slice(offset, offset + take));
+      pendingChunkOffsetRef.current += take;
+      pendingLengthRef.current -= take;
+      remaining -= take;
+
+      if (pendingChunkOffsetRef.current >= chunk.length) {
+        pendingChunkIndexRef.current += 1;
+        pendingChunkOffsetRef.current = 0;
+        compactPendingQueue();
+      }
+    }
+
+    return drainedParts.join('');
+  }, [clearPendingQueue, compactPendingQueue]);
+
+  const drainAllChars = useCallback(() => {
+    return drainChars(pendingLengthRef.current);
+  }, [drainChars]);
+
+  const finishDebugCycle = useCallback((reason: string) => {
+    if (!debugEnabledRef.current) {
+      return;
+    }
+
+    const startedAt = debugStartedAtRef.current;
+    if (startedAt !== null) {
+      const duration = nowMs() - startedAt;
+      console.debug(
+        `[stream-animation] ${reason}: drained=${debugDrainedCharsRef.current} max_backlog=${debugMaxBacklogRef.current} commits=${debugCommitCountRef.current} duration_ms=${Math.round(duration)}`,
+      );
+    }
+
+    debugStartedAtRef.current = null;
+    debugMaxBacklogRef.current = 0;
+    debugDrainedCharsRef.current = 0;
+    debugCommitCountRef.current = 0;
+  }, []);
+
+  const cancelDrainLoop = useCallback(() => {
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
+    }
+  }, []);
 
-      // Notify if we caught up while still streaming
+  const stopDraining = useCallback((reason: string) => {
+    cancelDrainLoop();
+    setIsDraining(false);
+    finishDebugCycle(reason);
+  }, [cancelDrainLoop, finishDebugCycle]);
+
+  const queueText = useCallback((text: string) => {
+    if (!text) {
+      return;
+    }
+
+    pendingChunksRef.current.push(text);
+    pendingLengthRef.current += text.length;
+
+    if (debugEnabledRef.current) {
+      if (debugStartedAtRef.current === null) {
+        debugStartedAtRef.current = nowMs();
+      }
+      if (pendingLengthRef.current > debugMaxBacklogRef.current) {
+        debugMaxBacklogRef.current = pendingLengthRef.current;
+      }
+    }
+  }, []);
+
+  const drainLoop = useCallback((frameTime?: number) => {
+    const resolvedTime = Number.isFinite(frameTime)
+      ? Number(frameTime)
+      : lastFrameTimeRef.current + 16;
+    lastFrameTimeRef.current = resolvedTime;
+
+    const backlogBefore = pendingLengthRef.current;
+    if (backlogBefore <= 0) {
+      stopDraining('queue-empty');
       if (isStreamingRef.current && onCatchUpRef.current) {
         onCatchUpRef.current();
       }
       return;
     }
 
-    // Pull CHARS_PER_FRAME characters from the front of the queue
-    const chars = queue.splice(0, CHARS_PER_FRAME);
-    setDisplayedText((prev) => prev + chars.join(''));
+    const drained = drainChars(charsPerTick(backlogBefore));
+    if (drained) {
+      displayBufferRef.current += drained;
+      if (debugEnabledRef.current) {
+        debugDrainedCharsRef.current += drained.length;
+        if (pendingLengthRef.current > debugMaxBacklogRef.current) {
+          debugMaxBacklogRef.current = pendingLengthRef.current;
+        }
+      }
+    }
 
-    // Schedule next frame
+    const shouldCommit = pendingLengthRef.current === 0
+      || backlogBefore <= LARGE_BACKLOG_COMMIT_THRESHOLD
+      || (resolvedTime - lastCommitTimeRef.current) >= COMMIT_INTERVAL_MS;
+
+    if (shouldCommit) {
+      commitDisplayedText(displayBufferRef.current);
+      lastCommitTimeRef.current = resolvedTime;
+    }
+
+    if (pendingLengthRef.current <= 0) {
+      stopDraining('queue-empty');
+      if (isStreamingRef.current && onCatchUpRef.current) {
+        onCatchUpRef.current();
+      }
+      return;
+    }
+
     rafRef.current = requestAnimationFrame(drainLoop);
-  }, []);
+  }, [commitDisplayedText, drainChars, stopDraining]);
 
-  // Start the drain loop if not already running
   const startDrainLoop = useCallback(() => {
-    if (rafRef.current === null && queueRef.current.length > 0) {
+    if (rafRef.current === null && pendingLengthRef.current > 0) {
       setIsDraining(true);
+      lastCommitTimeRef.current = lastFrameTimeRef.current - COMMIT_INTERVAL_MS;
       rafRef.current = requestAnimationFrame(drainLoop);
     }
   }, [drainLoop]);
 
-  // When rawText changes, push new characters to the queue
   useEffect(() => {
     const prevRawText = prevRawTextRef.current;
     const prevLength = lastProcessedLengthRef.current;
     const newLength = rawText.length;
 
-    // Update prev ref for next comparison
     prevRawTextRef.current = rawText;
 
     if (newLength > prevLength) {
-      // Check if this is a content replacement (tab switch) vs. incremental growth.
-      // Content replacement: the new text is longer but doesn't start with the previous text.
-      // This happens when switching tabs and the component receives entirely different content.
       const isContentReplacement = prevRawText.length > 0 && !rawText.startsWith(prevRawText);
 
       if (isContentReplacement) {
-        // Content was replaced (e.g., tab switch) - show new content immediately
-        queueRef.current = [];
+        stopDraining('content-replaced');
+        clearPendingQueue();
+        displayBufferRef.current = rawText;
         lastProcessedLengthRef.current = newLength;
-        setDisplayedText(rawText);
-        setIsDraining(false);
-        if (rafRef.current !== null) {
-          cancelAnimationFrame(rafRef.current);
-          rafRef.current = null;
-        }
+        commitDisplayedText(rawText);
         return;
       }
 
-      // Normal incremental growth - extract new characters and push to queue
-      const newChars = rawText.slice(prevLength).split('');
-      queueRef.current.push(...newChars);
+      queueText(rawText.slice(prevLength));
       lastProcessedLengthRef.current = newLength;
-
-      // Start draining if not already
       startDrainLoop();
     } else if (newLength < prevLength) {
-      // Text was reset (new stream started) - reset everything and animate new content
-      queueRef.current = [];
+      stopDraining('text-reset');
+      clearPendingQueue();
+      displayBufferRef.current = '';
       lastProcessedLengthRef.current = 0;
-      setDisplayedText('');
-      setIsDraining(false);
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      commitDisplayedText('');
 
-      // If the new text is non-empty, queue those characters for draining
       if (newLength > 0) {
-        const newChars = rawText.split('');
-        queueRef.current.push(...newChars);
+        queueText(rawText);
         lastProcessedLengthRef.current = newLength;
         startDrainLoop();
       }
     }
-  }, [rawText, startDrainLoop]);
+  }, [
+    clearPendingQueue,
+    commitDisplayedText,
+    queueText,
+    rawText,
+    startDrainLoop,
+    stopDraining,
+  ]);
 
-  // Flush: instantly display all remaining characters
   const flush = useCallback(() => {
-    // Cancel any pending animation frame
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
+    cancelDrainLoop();
+
+    const remaining = drainAllChars();
+    if (remaining) {
+      displayBufferRef.current += remaining;
     }
 
-    // Drain all remaining characters at once
-    const queue = queueRef.current;
-    if (queue.length > 0) {
-      setDisplayedText((prev) => prev + queue.join(''));
-      queueRef.current = [];
-    }
-
+    commitDisplayedText(displayBufferRef.current);
     setIsDraining(false);
-  }, []);
+    finishDebugCycle('flush');
+  }, [cancelDrainLoop, commitDisplayedText, drainAllChars, finishDebugCycle]);
 
-  // Auto-flush when streaming stops
   useEffect(() => {
-    if (!isStreaming && queueRef.current.length > 0) {
+    if (!isStreaming && pendingLengthRef.current > 0) {
       flush();
     }
   }, [isStreaming, flush]);
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
-      queueRef.current = [];
+      cancelDrainLoop();
+      clearPendingQueue();
+      finishDebugCycle('unmount');
     };
-  }, []);
+  }, [cancelDrainLoop, clearPendingQueue, finishDebugCycle]);
 
   return {
-    displayedText,
+    displayedText: displayedTextState,
     isDraining,
     flush,
   };

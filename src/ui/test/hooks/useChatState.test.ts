@@ -156,6 +156,22 @@ describe('useChatState', () => {
       expect(result.current.contentBlocks[1].type).toBe('tool_call');
       expect(result.current.contentBlocks[2]).toEqual({ type: 'text', content: 'After' });
     });
+
+    test('should keep a single text block under high chunk counts', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        for (let i = 0; i < 500; i += 1) {
+          result.current.appendResponse(`chunk-${i};`);
+        }
+      });
+
+      expect(result.current.contentBlocks).toHaveLength(1);
+      expect(result.current.contentBlocks[0]).toEqual({
+        type: 'text',
+        content: Array.from({ length: 500 }, (_unused, idx) => `chunk-${idx};`).join(''),
+      });
+    });
   });
 
   describe('appendThinking', () => {

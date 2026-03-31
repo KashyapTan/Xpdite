@@ -101,6 +101,7 @@ async def handle_mcp_tool_calls(
     messages: List[Dict[str, Any]],
     image_paths: List[str],
     client: Optional[OllamaAsyncClient] = None,
+    prefiltered_tools: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """
     Check for and execute MCP tool calls from Ollama with interleaved streaming.
@@ -132,7 +133,10 @@ async def handle_mcp_tool_calls(
             user_query = msg.get("content", "")
             break
 
-    filtered_tools = retrieve_relevant_tools(user_query)
+    filtered_tools = prefiltered_tools
+    if filtered_tools is None:
+        filtered_tools = retrieve_relevant_tools(user_query)
+
     if not filtered_tools:
         logger.info("No tools retrieved for Ollama query '%s...'", user_query[:40])
         return messages, tool_calls_made, None
@@ -356,9 +360,7 @@ async def handle_mcp_tool_calls(
                         server_name,
                         type(e).__name__,
                     )
-                    result = (
-                        "System error: tool execution failed. See server logs for details."
-                    )
+                    result = "System error: tool execution failed. See server logs for details."
 
                 result_str = _truncate_result(str(result))
                 logger.debug("Tool result:\n%s...", result_str[:100])

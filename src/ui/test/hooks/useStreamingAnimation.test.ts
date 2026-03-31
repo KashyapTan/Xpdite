@@ -7,14 +7,16 @@ import { useStreamingAnimation } from '../../hooks/useStreamingAnimation';
 
 describe('useStreamingAnimation', () => {
   // Mock requestAnimationFrame/cancelAnimationFrame
-  let rafCallbacks: Array<() => void> = [];
+  let rafCallbacks: Array<(time?: number) => void> = [];
   let rafId = 0;
+  let rafNow = 0;
 
   beforeEach(() => {
     rafCallbacks = [];
     rafId = 0;
+    rafNow = 0;
 
-    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+    vi.stubGlobal('requestAnimationFrame', (cb: (time?: number) => void) => {
       rafCallbacks.push(cb);
       return ++rafId;
     });
@@ -32,7 +34,8 @@ describe('useStreamingAnimation', () => {
   function flushRafCallbacks() {
     while (rafCallbacks.length > 0) {
       const cb = rafCallbacks.shift()!;
-      cb();
+      rafNow += 16;
+      cb(rafNow);
     }
   }
 
@@ -41,7 +44,8 @@ describe('useStreamingAnimation', () => {
     for (let i = 0; i < n; i++) {
       if (rafCallbacks.length > 0) {
         const cb = rafCallbacks.shift()!;
-        cb();
+        rafNow += 16;
+        cb(rafNow);
       }
     }
   }
@@ -89,7 +93,7 @@ describe('useStreamingAnimation', () => {
       expect(result.current.isDraining).toBe(true);
     });
 
-    test('should drain 3 characters per frame (CHARS_PER_FRAME)', () => {
+    test('should drain baseline 4 characters per frame for small backlogs', () => {
       const { result, rerender } = renderHook(
         ({ rawText, isStreaming }) =>
           useStreamingAnimation({ rawText, isStreaming }),
@@ -101,17 +105,59 @@ describe('useStreamingAnimation', () => {
       // Add 9 characters
       rerender({ rawText: 'abcdefghi', isStreaming: true });
 
-      // First frame: drain 'abc'
+      // First frame: drain 'abcd'
       act(() => runFrames(1));
-      expect(result.current.displayedText).toBe('abc');
+      expect(result.current.displayedText).toBe('abcd');
 
-      // Second frame: drain 'def'
+      // Second frame: drain 'efgh'
       act(() => runFrames(1));
-      expect(result.current.displayedText).toBe('abcdef');
+      expect(result.current.displayedText).toBe('abcdefgh');
 
-      // Third frame: drain 'ghi'
+      // Third frame: drain remaining 'i'
       act(() => runFrames(1));
       expect(result.current.displayedText).toBe('abcdefghi');
+    });
+
+    test('should use larger adaptive drain batches for large backlogs', () => {
+      const { result, rerender } = renderHook(
+        ({ rawText, isStreaming }) =>
+          useStreamingAnimation({ rawText, isStreaming }),
+        {
+          initialProps: { rawText: '', isStreaming: true },
+        },
+      );
+
+      rerender({ rawText: 'a'.repeat(250), isStreaming: true });
+
+      act(() => runFrames(1));
+      expect(result.current.displayedText.length).toBe(40);
+
+      act(() => runFrames(3));
+      expect(result.current.displayedText.length).toBeGreaterThan(40);
+    });
+
+    test('should batch UI commits while backlog remains large', () => {
+      const { result, rerender } = renderHook(
+        ({ rawText, isStreaming }) =>
+          useStreamingAnimation({ rawText, isStreaming }),
+        {
+          initialProps: { rawText: '', isStreaming: true },
+        },
+      );
+
+      rerender({ rawText: 'b'.repeat(200), isStreaming: true });
+
+      act(() => runFrames(1));
+      expect(result.current.displayedText.length).toBe(40);
+
+      act(() => runFrames(1));
+      expect(result.current.displayedText.length).toBe(40);
+
+      act(() => runFrames(1));
+      expect(result.current.displayedText.length).toBe(40);
+
+      act(() => runFrames(1));
+      expect(result.current.displayedText.length).toBeGreaterThan(40);
     });
 
     test('should stop draining when queue is empty', async () => {
@@ -171,8 +217,8 @@ describe('useStreamingAnimation', () => {
       rerender({ rawText: 'Hello World!', isStreaming: true });
 
       // Drain only some characters
-      act(() => runFrames(1)); // 'Hel'
-      expect(result.current.displayedText).toBe('Hel');
+      act(() => runFrames(1)); // 'Hell'
+      expect(result.current.displayedText).toBe('Hell');
 
       // Stop streaming - should auto-flush remaining
       act(() => {
@@ -328,10 +374,10 @@ describe('useStreamingAnimation', () => {
       expect(rafCallbacks.length).toBe(1);
 
       // Drain the new characters
-      act(() => runFrames(1)); // 3 chars: ' Wo'
-      expect(result.current.displayedText).toBe('Hello Wo');
+      act(() => runFrames(1)); // 4 chars: ' Wor'
+      expect(result.current.displayedText).toBe('Hello Wor');
 
-      act(() => runFrames(1)); // 3 chars: 'rld'
+      act(() => runFrames(1)); // remaining 2 chars: 'ld'
       expect(result.current.displayedText).toBe('Hello World');
     });
 
@@ -401,11 +447,11 @@ describe('useStreamingAnimation', () => {
       rerender({ rawText: 'Hello', isStreaming: true });
 
       // All characters should be queued
-      // After first frame, we should have 3 chars
+      // After first frame, we should have 4 chars
       act(() => runFrames(1));
-      expect(result.current.displayedText).toBe('Hel');
+      expect(result.current.displayedText).toBe('Hell');
 
-      // After second frame, remaining 2 chars
+      // After second frame, remaining character
       act(() => runFrames(1));
       expect(result.current.displayedText).toBe('Hello');
     });

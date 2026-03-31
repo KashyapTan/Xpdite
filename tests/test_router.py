@@ -129,6 +129,40 @@ class TestRouteChat:
                     p.stop()
 
     @pytest.mark.asyncio
+    async def test_route_chat_reuses_prefiltered_tools_for_ollama(self):
+        """Ollama path should reuse already retrieved tools from the router."""
+        mock_stream = AsyncMock(
+            return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
+        )
+        retrieved_tools = [{"function": {"name": "read_file"}}]
+
+        mock_mcp = MagicMock()
+        mock_mcp.has_tools.return_value = True
+
+        patches = {**_ROUTE_PATCHES}
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.mcp_integration.handlers.retrieve_relevant_tools"] = MagicMock(
+            return_value=retrieved_tools
+        )
+
+        ctx = {k: patch(k, v) for k, v in patches.items()}
+        for p in ctx.values():
+            p.start()
+        try:
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.router import route_chat
+
+                await route_chat("llama3:8b", "Hello", [], [])
+
+                mock_stream.assert_awaited_once()
+                call = mock_stream.await_args
+                assert call is not None
+                assert call.kwargs.get("prefiltered_tools") == retrieved_tools
+        finally:
+            for p in ctx.values():
+                p.stop()
+
+    @pytest.mark.asyncio
     async def test_route_chat_calls_cloud_for_anthropic(self):
         """Anthropic-prefixed models should be dispatched to stream_cloud_chat."""
         mock_stream = AsyncMock(

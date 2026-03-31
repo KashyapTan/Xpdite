@@ -3,7 +3,7 @@
  *
  * Renders a single chat message (user or assistant).
  */
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { ComponentPropsWithRef, ComponentType, KeyboardEvent as ReactKeyboardEvent } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -90,7 +90,7 @@ function ArrowRightIcon() {
   );
 }
 
-export function ChatMessage({
+function ChatMessageComponent({
   message,
   selectedModel,
   actionsDisabled,
@@ -329,6 +329,8 @@ export function ChatMessage({
     </div>
   );
 }
+
+export const ChatMessage = memo(ChatMessageComponent);
 
 interface MessageImagesProps {
   images: Array<{ name: string; thumbnail: string }>;

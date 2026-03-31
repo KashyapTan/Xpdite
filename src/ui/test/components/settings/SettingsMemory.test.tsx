@@ -69,9 +69,8 @@ describe('SettingsMemory', () => {
 
     expect(await screen.findByText('User Profile')).toBeInTheDocument();
     expect(screen.getByText('SQLite Fix')).toBeInTheDocument();
-    expect(
-      screen.getByText(/That memory is sent to the active model, including cloud providers/i),
-    ).toBeInTheDocument();
+    expect(screen.getAllByText('profile/user_profile.md').length).toBeGreaterThan(0);
+    expect(screen.getByText(/into the system prompt when it exists\./i)).toBeInTheDocument();
 
     const toggle = screen.getByLabelText('Profile auto-inject') as HTMLInputElement;
     expect(toggle.checked).toBe(true);
@@ -240,7 +239,7 @@ describe('SettingsMemory', () => {
 
     resolveDelete?.();
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument();
     });
 
     const clearButton = screen.getByRole('button', { name: 'Clear All Memories' });

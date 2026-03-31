@@ -74,6 +74,38 @@ type PendingTurnAction = {
   editedContent?: string;
 };
 
+type StreamPerfStats = {
+  submitAtMs: number;
+  firstChunkAtMs: number | null;
+  lastChunkAtMs: number | null;
+  chunkCount: number;
+  chunkChars: number;
+  maxChunkIntervalMs: number;
+  model: string;
+  queryPreview: string;
+};
+
+const STREAM_PERF_DEBUG_FLAG = 'xpdite_stream_debug';
+
+function nowMs(): number {
+  if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+    return performance.now();
+  }
+  return Date.now();
+}
+
+function isStreamPerfDebugEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  try {
+    return window.localStorage.getItem(STREAM_PERF_DEBUG_FLAG) === '1';
+  } catch {
+    return false;
+  }
+}
+
 type ConversationMessageTransforms = typeof import('../utils/conversationMessageTransforms');
 let conversationMessageTransformsPromise: Promise<ConversationMessageTransforms> | null = null;
 
@@ -187,6 +219,79 @@ function App() {
   const hasNormalizedCaptureModeRef = useRef(false);
   // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
   const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
+  const streamPerfStatsRef = useRef<StreamPerfStats | null>(null);
+  const streamPerfEnabledRef = useRef(false);
+
+  useEffect(() => {
+    streamPerfEnabledRef.current = isStreamPerfDebugEnabled();
+  }, []);
+
+  const startStreamPerfCycle = useCallback((queryText: string, modelName: string) => {
+    if (!streamPerfEnabledRef.current) {
+      return;
+    }
+
+    streamPerfStatsRef.current = {
+      submitAtMs: nowMs(),
+      firstChunkAtMs: null,
+      lastChunkAtMs: null,
+      chunkCount: 0,
+      chunkChars: 0,
+      maxChunkIntervalMs: 0,
+      model: modelName,
+      queryPreview: queryText.slice(0, 120),
+    };
+  }, []);
+
+  const markStreamPerfChunk = useCallback((chunk: string) => {
+    if (!streamPerfEnabledRef.current || !chunk) {
+      return;
+    }
+
+    const stats = streamPerfStatsRef.current;
+    if (!stats) {
+      return;
+    }
+
+    const ts = nowMs();
+    if (stats.firstChunkAtMs === null) {
+      stats.firstChunkAtMs = ts;
+    }
+    if (stats.lastChunkAtMs !== null) {
+      const interval = ts - stats.lastChunkAtMs;
+      if (interval > stats.maxChunkIntervalMs) {
+        stats.maxChunkIntervalMs = interval;
+      }
+    }
+    stats.lastChunkAtMs = ts;
+    stats.chunkCount += 1;
+    stats.chunkChars += chunk.length;
+  }, []);
+
+  const finishStreamPerfCycle = useCallback((reason: string) => {
+    if (!streamPerfEnabledRef.current) {
+      return;
+    }
+
+    const stats = streamPerfStatsRef.current;
+    if (!stats) {
+      return;
+    }
+
+    const finishedAt = nowMs();
+    const submitToFirstChunk = stats.firstChunkAtMs === null
+      ? null
+      : Math.round(stats.firstChunkAtMs - stats.submitAtMs);
+    const streamDuration = stats.firstChunkAtMs === null
+      ? null
+      : Math.round(finishedAt - stats.firstChunkAtMs);
+
+    console.debug(
+      `[stream-perf] ${reason}: model=${stats.model} submit_to_first_chunk_ms=${submitToFirstChunk ?? 'n/a'} stream_duration_ms=${streamDuration ?? 'n/a'} chunks=${stats.chunkCount} chars=${stats.chunkChars} max_chunk_interval_ms=${Math.round(stats.maxChunkIntervalMs)} query="${stats.queryPreview}"`,
+    );
+
+    streamPerfStatsRef.current = null;
+  }, []);
 
   // ============================================
   // Tab Management
@@ -427,6 +532,9 @@ function App() {
     switch (data.type) {
       case 'query':
         chat.currentQuery = String(data.content);
+        if (tabId === activeTabIdRef.current) {
+          startStreamPerfCycle(chat.currentQuery, snap.generatingModel || selectedModel);
+        }
         chat.error = '';
         chat.status = 'Thinking...';
         chat.isThinking = true;
@@ -459,6 +567,9 @@ function App() {
 
       case 'response_chunk': {
         const chunk = String(data.content);
+        if (tabId === activeTabIdRef.current) {
+          markStreamPerfChunk(chunk);
+        }
         chat.response += chunk;
         const blocks = [...chat.contentBlocks];
         if (blocks.length > 0 && blocks[blocks.length - 1].type === 'text') {
@@ -474,6 +585,9 @@ function App() {
       }
 
       case 'response_complete': {
+        if (tabId === activeTabIdRef.current) {
+          finishStreamPerfCycle('background-response-complete');
+        }
         if (pendingTurnAction) {
           chat.isThinking = false;
           chat.status = 'Saving updated turn...';
@@ -603,6 +717,9 @@ function App() {
       }
 
       case 'error':
+        if (tabId === activeTabIdRef.current) {
+          finishStreamPerfCycle('background-error');
+        }
         chat.error = String(data.content);
         chat.status = 'An error occurred.';
         chat.canSubmit = true;
@@ -763,7 +880,16 @@ function App() {
     }
 
     setTabSnapshot(tabId, { ...snap, chat });
-  }, [freshSnapshot, getTabSnapshot, setQueueItems, setTabSnapshot]);
+  }, [
+    finishStreamPerfCycle,
+    freshSnapshot,
+    getTabSnapshot,
+    markStreamPerfChunk,
+    selectedModel,
+    setQueueItems,
+    setTabSnapshot,
+    startStreamPerfCycle,
+  ]);
 
   // ============================================
   // Fetch enabled models on mount & when returning from Settings
@@ -930,6 +1056,7 @@ function App() {
         // Guard: skip if we already started this query via optimistic update
         // (prevents resetting toolCalls/contentBlocks that may have arrived).
         const echoText = String(data.content);
+        startStreamPerfCycle(echoText, generatingModelRef.current || selectedModel);
         if (chatState.currentQueryRef.current !== echoText) {
           chatState.startQuery(echoText);
         }
@@ -1076,10 +1203,15 @@ function App() {
         break;
 
       case 'response_chunk':
-        chatState.appendResponse(String(data.content));
+        {
+          const chunk = String(data.content);
+          markStreamPerfChunk(chunk);
+          chatState.appendResponse(chunk);
+        }
         break;
 
       case 'response_complete':
+        finishStreamPerfCycle('response-complete');
         if (activePendingTurnAction) {
           chatState.setIsThinking(false);
           chatState.setStatus('Saving updated turn...');
@@ -1182,6 +1314,7 @@ function App() {
       }
 
       case 'error':
+        finishStreamPerfCycle('error');
         if (activePendingTurnAction) {
           pendingTurnActionsRef.current.delete(activeTabIdRef.current);
           chatState.clearStreamingState('An error occurred.');
@@ -1274,7 +1407,20 @@ function App() {
       case 'terminal_running_notice':
         break;
     }
-  }, [buildStreamingAssistantMessage, chatState, conversationTitle, screenshotState, tokenState, setIsHidden, updateTabTitle, wsSend]);
+  }, [
+    buildStreamingAssistantMessage,
+    chatState,
+    conversationTitle,
+    finishStreamPerfCycle,
+    markStreamPerfChunk,
+    screenshotState,
+    selectedModel,
+    setIsHidden,
+    startStreamPerfCycle,
+    tokenState,
+    updateTabTitle,
+    wsSend,
+  ]);
 
   /** Top-level WS message router: global → active tab → background tab. */
   const handleWebSocketMessage = useCallback((data: WebSocketMessage) => {
@@ -1463,6 +1609,7 @@ function App() {
     // Optimistic update: show the query immediately instead of waiting
     // for the server echo.  Only for non-queued queries (canSubmit===true)
     // to avoid overwriting in-flight state for queued messages.
+    startStreamPerfCycle(queryText, selectedModel);
     if (chatState.canSubmit) {
       chatState.startQuery(queryText);
     }

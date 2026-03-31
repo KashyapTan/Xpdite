@@ -17,7 +17,11 @@ from typing import List, Dict, Any, Optional
 from ollama import AsyncClient as OllamaAsyncClient
 from ..config import OLLAMA_CTX_SIZE
 from ..core.connection import broadcast_message
-from ..core.request_context import get_current_model, get_current_request, is_current_request_cancelled
+from ..core.request_context import (
+    get_current_model,
+    get_current_request,
+    is_current_request_cancelled,
+)
 from ..core.state import app_state
 from ..mcp_integration.handlers import handle_mcp_tool_calls
 from ..mcp_integration.manager import mcp_manager
@@ -54,7 +58,11 @@ def _build_messages(
 
 
 async def stream_ollama_chat(
-    user_query: str, image_paths: List[str], chat_history: List[Dict[str, Any]], system_prompt: str = ""
+    user_query: str,
+    image_paths: List[str],
+    chat_history: List[Dict[str, Any]],
+    system_prompt: str = "",
+    prefiltered_tools: Optional[List[Dict[str, Any]]] = None,
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream Ollama response using the async client.
@@ -92,6 +100,7 @@ async def stream_ollama_chat(
     def _abort():
         try:
             import asyncio
+
             loop = asyncio.get_running_loop()
             loop.create_task(client._client.aclose())  # type: ignore[union-attr]
         except Exception:
@@ -109,7 +118,12 @@ async def stream_ollama_chat(
                 updated_messages,
                 tool_calls_list,
                 pre_computed_response,
-            ) = await handle_mcp_tool_calls(messages.copy(), image_paths, client=client)
+            ) = await handle_mcp_tool_calls(
+                messages.copy(),
+                image_paths,
+                client=client,
+                prefiltered_tools=prefiltered_tools,
+            )
             messages = updated_messages
         except Exception as e:
             if is_current_request_cancelled():
@@ -181,7 +195,9 @@ async def stream_ollama_chat(
                 if msg and hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         fn = tool_call.function.name
-                        args, arg_error = normalize_tool_args(tool_call.function.arguments)
+                        args, arg_error = normalize_tool_args(
+                            tool_call.function.arguments
+                        )
                         if arg_error:
                             args = {"_arg_error": arg_error}
                         tool_text = f"\n\n[Model requested tool: {fn}({args})]"
