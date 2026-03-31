@@ -739,7 +739,7 @@ def search_web_pages(query: str) -> list[dict[str, Any]]:
 
 
 @mcp.tool(description=READ_WEBSITE_DESCRIPTION)
-async def read_website(url: str, mode: str = "precision", force_tier: int | str | None = None) -> str:
+async def read_website(url: str, mode: str = "full", force_tier: int | str | None = None) -> str:
     normalized_url = (url or "").strip()
     if not normalized_url:
         return "ERROR: URL is required."
