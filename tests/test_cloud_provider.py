@@ -8,7 +8,7 @@ Covers:
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -592,7 +592,7 @@ class TestStreamLitellm:
                 provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
             )
 
-        register_hint.assert_called_once_with("ollama_chat/qwen3:8b")
+        register_hint.assert_called_once_with("ollama_chat/qwen3:8b", ANY)
 
     @pytest.mark.asyncio
     async def test_non_ollama_does_not_register_function_calling_hint(

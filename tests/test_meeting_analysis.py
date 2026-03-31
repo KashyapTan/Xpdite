@@ -423,12 +423,10 @@ class TestCallLlm:
 
     def test_ollama_uses_litellm_with_api_base(self, call_llm, monkeypatch):
         fake_response = SimpleNamespace(
-            choices=[
-                SimpleNamespace(message=SimpleNamespace(content="Ollama summary"))
-            ]
+            choices=[SimpleNamespace(message=SimpleNamespace(content="Ollama summary"))]
         )
         monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
-        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+        monkeypatch.setenv("OLLAMA_API_KEY", "test-key")
 
         with patch("litellm.completion", return_value=fake_response) as mock_completion:
             result = call_llm(
@@ -439,7 +437,7 @@ class TestCallLlm:
         assert result == "Ollama summary"
         kwargs = mock_completion.call_args.kwargs
         assert kwargs["model"] == "ollama_chat/qwen3-coder-next:cloud"
-        assert kwargs["api_base"] == "https://ollama.example.com"
+        assert kwargs["api_base"] == "http://localhost:11434"
         assert kwargs["timeout"] == 120
         assert "api_key" not in kwargs
 

@@ -1,35 +1,23 @@
 """Ollama model capability hints for LiteLLM.
 
-LiteLLM can fall back to JSON-mode tool calling for Ollama models when
-function-calling support is unknown. For known-capable model families, we
-register a lightweight per-model capability hint so LiteLLM prefers native
-tool calling.
+Hints are only registered when launch-time metadata already indicates native
+function-calling support for that exact model.
 """
 
 from __future__ import annotations
 
 import logging
-import os
+from typing import Any
 
 import litellm
+import requests
+
+from .provider_resolution import DEFAULT_OLLAMA_API_BASE
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_NATIVE_FUNCTION_CALLING_PREFIXES = (
-    "llama3.1",
-    "llama3.2",
-    "qwen2.5",
-    "qwen3",
-)
 _REGISTERED_MODELS: set[str] = set()
-
-
-def _native_function_calling_prefixes() -> tuple[str, ...]:
-    raw = os.getenv("XPDITE_OLLAMA_NATIVE_FC_PREFIXES", "").strip()
-    if not raw:
-        return _DEFAULT_NATIVE_FUNCTION_CALLING_PREFIXES
-    parsed = tuple(part.strip().lower() for part in raw.split(",") if part.strip())
-    return parsed or _DEFAULT_NATIVE_FUNCTION_CALLING_PREFIXES
+_METADATA_TOOL_SUPPORT_CACHE: dict[str, bool] = {}
 
 
 def _bare_ollama_model(litellm_model: str) -> str:
@@ -38,23 +26,74 @@ def _bare_ollama_model(litellm_model: str) -> str:
     return litellm_model.partition("/")[2].strip().lower()
 
 
-def should_hint_native_function_calling(litellm_model: str) -> bool:
-    bare_model = _bare_ollama_model(litellm_model)
-    if not bare_model:
+def _supports_tools_from_launch_metadata(metadata: dict[str, Any] | None) -> bool:
+    if not metadata:
         return False
+
+    capabilities = metadata.get("capabilities")
+    if isinstance(capabilities, list):
+        lowered = {str(item).strip().lower() for item in capabilities}
+        if "tools" in lowered or "tool" in lowered:
+            return True
+
     return any(
-        bare_model.startswith(prefix) for prefix in _native_function_calling_prefixes()
+        metadata.get(key) is True
+        for key in (
+            "supports_function_calling",
+            "supports_tools",
+            "tool_calling",
+        )
     )
 
 
-def register_ollama_native_function_calling_hint(litellm_model: str) -> bool:
-    """Register ``supports_function_calling`` hint for known Ollama model families.
+def _fetch_launch_metadata(bare_model: str) -> dict[str, Any] | None:
+    cached = _METADATA_TOOL_SUPPORT_CACHE.get(bare_model)
+    if cached is not None:
+        return {"supports_tools": cached}
+
+    try:
+        response = requests.post(
+            f"{DEFAULT_OLLAMA_API_BASE}/api/show",
+            json={"model": bare_model},
+            timeout=2,
+        )
+        response.raise_for_status()
+        payload = response.json() if response.content else {}
+    except Exception:
+        _METADATA_TOOL_SUPPORT_CACHE[bare_model] = False
+        return None
+
+    supported = _supports_tools_from_launch_metadata(payload)
+    _METADATA_TOOL_SUPPORT_CACHE[bare_model] = supported
+    return payload
+
+
+def should_hint_native_function_calling(
+    litellm_model: str,
+    model_info: dict[str, Any] | None = None,
+) -> bool:
+    bare_model = _bare_ollama_model(litellm_model)
+    if not bare_model:
+        return False
+
+    if model_info and model_info.get("supports_function_calling") is True:
+        return True
+
+    metadata = _fetch_launch_metadata(bare_model)
+    return _supports_tools_from_launch_metadata(metadata)
+
+
+def register_ollama_native_function_calling_hint(
+    litellm_model: str,
+    model_info: dict[str, Any] | None = None,
+) -> bool:
+    """Register ``supports_function_calling`` hint when metadata confirms support.
 
     Returns ``True`` only when a new hint was registered in this process.
     """
     if litellm_model in _REGISTERED_MODELS:
         return False
-    if not should_hint_native_function_calling(litellm_model):
+    if not should_hint_native_function_calling(litellm_model, model_info):
         return False
 
     register_model = getattr(litellm, "register_model", None)

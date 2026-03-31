@@ -208,12 +208,10 @@ class TestProcessFnRouting:
         submit_query_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_cloud_model_submits_directly_without_global_queue(
-        self, monkeypatch
-    ):
+    async def test_ollama_cloud_suffix_model_routes_via_global_queue(self, monkeypatch):
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-ollama-cloud")
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        ollama_run_mock = AsyncMock(return_value="conv-ollama-cloud")
         monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
         monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
@@ -227,16 +225,13 @@ class TestProcessFnRouting:
         conversation_id = await manager._process_fn(query)
 
         assert conversation_id == "conv-ollama-cloud"
-        ollama_run_mock.assert_not_awaited()
-        submit_query_mock.assert_awaited_once()
+        ollama_run_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_cloud_colon_tag_submits_directly_without_global_queue(
-        self, monkeypatch
-    ):
+    async def test_ollama_cloud_colon_tag_routes_via_global_queue(self, monkeypatch):
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-ollama-cloud-colon")
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        ollama_run_mock = AsyncMock(return_value="conv-ollama-cloud-colon")
         monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
         monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
@@ -250,15 +245,15 @@ class TestProcessFnRouting:
         conversation_id = await manager._process_fn(query)
 
         assert conversation_id == "conv-ollama-cloud-colon"
-        ollama_run_mock.assert_not_awaited()
-        submit_query_mock.assert_awaited_once()
+        ollama_run_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_cloud_models_can_run_in_parallel(self, monkeypatch):
+    async def test_ollama_suffix_models_are_serialized(self, monkeypatch):
         manager = init_tab_manager()
         in_flight = 0
         max_in_flight = 0
         lock = asyncio.Lock()
+        run_lock = asyncio.Lock()
 
         async def fake_submit_query(**kwargs):
             nonlocal in_flight, max_in_flight
@@ -273,7 +268,11 @@ class TestProcessFnRouting:
 
             return f"conv-{kwargs['tab_state'].tab_id}"
 
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        async def fake_ollama_run(_tab_id, fn):
+            async with run_lock:
+                return await fn()
+
+        ollama_run_mock = AsyncMock(side_effect=fake_ollama_run)
         monkeypatch.setattr(ConversationService, "submit_query", fake_submit_query)
         monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
@@ -296,30 +295,8 @@ class TestProcessFnRouting:
         )
 
         assert set(results) == {"conv-tab-cloud-a", "conv-tab-cloud-b"}
-        assert max_in_flight == 2
-        ollama_run_mock.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_remote_ollama_api_base_bypasses_global_queue(self, monkeypatch):
-        monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
-        manager = init_tab_manager()
-        submit_query_mock = AsyncMock(return_value="conv-remote-ollama")
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
-        monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
-        monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
-
-        query = QueuedQuery(
-            tab_id="tab-remote-ollama",
-            content="hello remote ollama",
-            model="llama3.2",
-            capture_mode="none",
-        )
-
-        conversation_id = await manager._process_fn(query)
-
-        assert conversation_id == "conv-remote-ollama"
-        ollama_run_mock.assert_not_awaited()
-        submit_query_mock.assert_awaited_once()
+        assert max_in_flight == 1
+        assert ollama_run_mock.await_count == 2
 
     @pytest.mark.asyncio
     async def test_empty_model_uses_selected_model_and_routes_local_through_queue(
@@ -359,7 +336,7 @@ class TestProcessFnRouting:
     ):
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-selected-cloud")
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        ollama_run_mock = AsyncMock(return_value="conv-selected-cloud")
         monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
         monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
@@ -376,8 +353,7 @@ class TestProcessFnRouting:
             conversation_id = await manager._process_fn(query)
 
             assert conversation_id == "conv-selected-cloud"
-            ollama_run_mock.assert_not_awaited()
-            submit_query_mock.assert_awaited_once()
+            ollama_run_mock.assert_awaited_once()
         finally:
             app_state.selected_model = saved_model
 
@@ -387,7 +363,7 @@ class TestProcessFnRouting:
     ):
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-selected-cloud-colon")
-        ollama_run_mock = AsyncMock(return_value="should-not-be-used")
+        ollama_run_mock = AsyncMock(return_value="conv-selected-cloud-colon")
         monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
         monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
@@ -404,8 +380,7 @@ class TestProcessFnRouting:
             conversation_id = await manager._process_fn(query)
 
             assert conversation_id == "conv-selected-cloud-colon"
-            ollama_run_mock.assert_not_awaited()
-            submit_query_mock.assert_awaited_once()
+            ollama_run_mock.assert_awaited_once()
         finally:
             app_state.selected_model = saved_model
 

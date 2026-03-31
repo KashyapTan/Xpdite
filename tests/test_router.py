@@ -61,23 +61,23 @@ class TestIsLocalOllamaModel:
     def test_local_ollama_model_is_local(self):
         assert is_local_ollama_model("qwen3-vl:8b-instruct") is True
 
-    def test_cloud_ollama_model_is_not_local(self):
-        assert is_local_ollama_model("qwen3.5:397b-cloud") is False
+    def test_cloud_ollama_model_name_is_still_local(self):
+        assert is_local_ollama_model("qwen3.5:397b-cloud") is True
 
-    def test_cloud_ollama_model_with_explicit_prefix_is_not_local(self):
-        assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is False
+    def test_cloud_ollama_model_with_explicit_prefix_is_still_local(self):
+        assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is True
 
-    def test_cloud_ollama_colon_tag_with_explicit_prefix_is_not_local(self):
-        assert is_local_ollama_model("ollama/qwen3-coder-next:cloud") is False
+    def test_cloud_ollama_colon_tag_with_explicit_prefix_is_still_local(self):
+        assert is_local_ollama_model("ollama/qwen3-coder-next:cloud") is True
 
     def test_cloud_ollama_suffix_check_is_case_insensitive(self):
-        assert is_local_ollama_model("qwen3.5:397b-CLOUD") is False
+        assert is_local_ollama_model("qwen3.5:397b-CLOUD") is True
 
-    def test_cloud_ollama_colon_tag_is_not_local(self):
-        assert is_local_ollama_model("qwen3-coder-next:cloud") is False
+    def test_cloud_ollama_colon_tag_is_still_local(self):
+        assert is_local_ollama_model("qwen3-coder-next:cloud") is True
 
     def test_cloud_ollama_colon_tag_is_case_insensitive(self):
-        assert is_local_ollama_model("qwen3-coder-next:CLOUD") is False
+        assert is_local_ollama_model("qwen3-coder-next:CLOUD") is True
 
     def test_openai_model_is_not_local_ollama(self):
         assert is_local_ollama_model("openai/gpt-4o") is False
@@ -85,9 +85,11 @@ class TestIsLocalOllamaModel:
     def test_whitespace_around_provider_model_is_not_local_ollama(self):
         assert is_local_ollama_model("  openai/gpt-4o  ") is False
 
-    def test_remote_ollama_api_base_is_not_local_runtime(self, monkeypatch):
+    def test_remote_ollama_api_base_env_does_not_change_local_runtime(
+        self, monkeypatch
+    ):
         monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
-        assert is_local_ollama_model("llama3.2") is False
+        assert is_local_ollama_model("llama3.2") is True
 
 
 # ------------------------------------------------------------------
@@ -287,7 +289,10 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
-                assert mock_stream.await_args.kwargs["system_prompt"] == "system with profile"
+                assert (
+                    mock_stream.await_args.kwargs["system_prompt"]
+                    == "system with profile"
+                )
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",
@@ -337,7 +342,10 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
-                assert mock_stream.await_args.kwargs["system_prompt"] == "system without profile"
+                assert (
+                    mock_stream.await_args.kwargs["system_prompt"]
+                    == "system without profile"
+                )
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",

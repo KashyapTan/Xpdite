@@ -1,14 +1,13 @@
 """Shared model/provider resolution helpers.
 
-Centralizes parsing, LiteLLM model selection, Ollama env handling, and
-local-vs-remote runtime classification so chat, sub-agents, scheduling,
-and meeting analysis stay in sync.
+Centralizes parsing, LiteLLM model selection, and local Ollama runtime
+classification so chat, sub-agents, scheduling, and meeting analysis stay
+in sync.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-import os
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -56,12 +55,6 @@ def normalize_ollama_model_name(model_name: str) -> str:
     return normalized
 
 
-def is_cloud_tagged_ollama_model(model_name: str) -> bool:
-    """Whether an Ollama model name is explicitly tagged as cloud-hosted."""
-    normalized = normalize_ollama_model_name(model_name).lower()
-    return normalized.endswith(":cloud") or normalized.endswith("-cloud")
-
-
 def is_local_ollama_api_base(api_base: Optional[str]) -> bool:
     """Whether an Ollama API base points at a local daemon."""
     candidate = (api_base or DEFAULT_OLLAMA_API_BASE).strip()
@@ -74,14 +67,13 @@ def is_local_ollama_api_base(api_base: Optional[str]) -> bool:
 
 
 def get_ollama_api_base() -> str:
-    """Resolve the Ollama API base from the environment or local default."""
-    return (os.getenv("OLLAMA_API_BASE") or DEFAULT_OLLAMA_API_BASE).strip()
+    """Resolve the Ollama API base for the local daemon."""
+    return DEFAULT_OLLAMA_API_BASE
 
 
 def get_ollama_api_key() -> Optional[str]:
-    """Resolve the optional Ollama API key from the environment."""
-    api_key = (os.getenv("OLLAMA_API_KEY") or "").strip()
-    return api_key or None
+    """Ollama local daemon auth is not configured via app-managed API keys."""
+    return None
 
 
 def resolve_model_target(model_name: str) -> ResolvedModelTarget:
@@ -99,11 +91,7 @@ def resolve_model_target(model_name: str) -> ResolvedModelTarget:
             api_key=get_ollama_api_key(),
             api_base=api_base,
             provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            is_local_runtime=(
-                bool(bare_model)
-                and not is_cloud_tagged_ollama_model(bare_model)
-                and is_local_ollama_api_base(api_base)
-            ),
+            is_local_runtime=(bool(bare_model) and is_local_ollama_api_base(api_base)),
         )
 
     from .key_manager import key_manager

@@ -4,28 +4,91 @@ from unittest.mock import patch
 
 
 class TestShouldHintNativeFunctionCalling:
-    def test_known_prefix_returns_true(self):
+    def test_requires_explicit_metadata_support(self):
         from source.llm.ollama_model_registry import should_hint_native_function_calling
 
-        assert should_hint_native_function_calling("ollama_chat/qwen3:8b") is True
-        assert should_hint_native_function_calling("ollama_chat/llama3.2") is True
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value=None,
+        ):
+            assert (
+                should_hint_native_function_calling(
+                    "ollama_chat/qwen3:8b",
+                    {"supports_function_calling": True},
+                )
+                is True
+            )
 
-    def test_unknown_prefix_returns_false(self):
+    def test_launch_metadata_supports_tools_returns_true(self):
         from source.llm.ollama_model_registry import should_hint_native_function_calling
 
-        assert should_hint_native_function_calling("ollama_chat/mistral") is False
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value={"supports_tools": True},
+        ):
+            assert (
+                should_hint_native_function_calling("ollama_chat/qwen3:8b", {}) is True
+            )
+
+    def test_launch_metadata_capabilities_tools_returns_true(self):
+        from source.llm.ollama_model_registry import should_hint_native_function_calling
+
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value={"capabilities": ["tools"]},
+        ):
+            assert (
+                should_hint_native_function_calling("ollama_chat/qwen3:8b", {}) is True
+            )
+
+    def test_no_metadata_support_returns_false(self):
+        from source.llm.ollama_model_registry import should_hint_native_function_calling
+
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value=None,
+        ):
+            assert (
+                should_hint_native_function_calling("ollama_chat/qwen3:8b", {}) is False
+            )
+
+    def test_missing_or_false_metadata_returns_false(self):
+        from source.llm.ollama_model_registry import should_hint_native_function_calling
+
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value=None,
+        ):
+            assert should_hint_native_function_calling("ollama_chat/mistral") is False
+            assert (
+                should_hint_native_function_calling(
+                    "ollama_chat/qwen3:8b",
+                    {},
+                )
+                is False
+            )
+            assert (
+                should_hint_native_function_calling(
+                    "ollama_chat/qwen3:8b",
+                    {"supports_function_calling": False},
+                )
+                is False
+            )
 
     def test_non_ollama_model_returns_false(self):
         from source.llm.ollama_model_registry import should_hint_native_function_calling
 
-        assert should_hint_native_function_calling("openai/gpt-4o") is False
-
-    def test_env_override_prefixes(self):
-        from source.llm.ollama_model_registry import should_hint_native_function_calling
-
-        with patch.dict("os.environ", {"XPDITE_OLLAMA_NATIVE_FC_PREFIXES": "phi4"}):
-            assert should_hint_native_function_calling("ollama_chat/phi4") is True
-            assert should_hint_native_function_calling("ollama_chat/qwen3:8b") is False
+        with patch(
+            "source.llm.ollama_model_registry._fetch_launch_metadata",
+            return_value={"supports_tools": True},
+        ):
+            assert (
+                should_hint_native_function_calling(
+                    "openai/gpt-4o",
+                    {"supports_function_calling": True},
+                )
+                is False
+            )
 
 
 class TestRegisterOllamaNativeFunctionCallingHint:
@@ -33,12 +96,20 @@ class TestRegisterOllamaNativeFunctionCallingHint:
         from source.llm import ollama_model_registry as registry
 
         registry._REGISTERED_MODELS.clear()
-        with patch.object(registry.litellm, "register_model") as register_model:
+        with (
+            patch.object(registry.litellm, "register_model") as register_model,
+            patch(
+                "source.llm.ollama_model_registry._fetch_launch_metadata",
+                return_value=None,
+            ),
+        ):
             first = registry.register_ollama_native_function_calling_hint(
-                "ollama_chat/qwen3:8b"
+                "ollama_chat/qwen3:8b",
+                {"supports_function_calling": True},
             )
             second = registry.register_ollama_native_function_calling_hint(
-                "ollama_chat/qwen3:8b"
+                "ollama_chat/qwen3:8b",
+                {"supports_function_calling": True},
             )
 
         assert first is True
@@ -49,9 +120,16 @@ class TestRegisterOllamaNativeFunctionCallingHint:
         from source.llm import ollama_model_registry as registry
 
         registry._REGISTERED_MODELS.clear()
-        with patch.object(registry.litellm, "register_model") as register_model:
+        with (
+            patch.object(registry.litellm, "register_model") as register_model,
+            patch(
+                "source.llm.ollama_model_registry._fetch_launch_metadata",
+                return_value=None,
+            ),
+        ):
             result = registry.register_ollama_native_function_calling_hint(
-                "ollama_chat/mistral"
+                "ollama_chat/mistral",
+                {},
             )
 
         assert result is False
@@ -61,9 +139,16 @@ class TestRegisterOllamaNativeFunctionCallingHint:
         from source.llm import ollama_model_registry as registry
 
         registry._REGISTERED_MODELS.clear()
-        with patch.object(registry.litellm, "register_model", None):
+        with (
+            patch.object(registry.litellm, "register_model", None),
+            patch(
+                "source.llm.ollama_model_registry._fetch_launch_metadata",
+                return_value=None,
+            ),
+        ):
             result = registry.register_ollama_native_function_calling_hint(
-                "ollama_chat/qwen3:8b"
+                "ollama_chat/qwen3:8b",
+                {"supports_function_calling": True},
             )
 
         assert result is False
@@ -73,13 +158,20 @@ class TestRegisterOllamaNativeFunctionCallingHint:
         from source.llm import ollama_model_registry as registry
 
         registry._REGISTERED_MODELS.clear()
-        with patch.object(
-            registry.litellm,
-            "register_model",
-            side_effect=RuntimeError("fail"),
+        with (
+            patch.object(
+                registry.litellm,
+                "register_model",
+                side_effect=RuntimeError("fail"),
+            ),
+            patch(
+                "source.llm.ollama_model_registry._fetch_launch_metadata",
+                return_value=None,
+            ),
         ):
             result = registry.register_ollama_native_function_calling_hint(
-                "ollama_chat/qwen3:8b"
+                "ollama_chat/qwen3:8b",
+                {"supports_function_calling": True},
             )
 
         assert result is False

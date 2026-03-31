@@ -4,7 +4,7 @@ const SettingsOllama: React.FC = () => (
   <div style={{ padding: 20 }}>
     <h2 style={{ margin: '0 0 10px 0', fontSize: '1.5rem' }}>Ollama</h2>
     <p style={{ margin: '0 0 18px 0', color: 'rgba(255,255,255,0.65)', lineHeight: 1.6 }}>
-      Ollama now runs through the same LiteLLM path as the other providers. Local Ollama keeps working at <code>http://localhost:11434</code> by default.
+      Ollama now runs through the same LiteLLM path as the other providers, with a local-first setup at <code>http://localhost:11434</code>.
     </p>
     <div style={{
       border: '1px solid rgba(255,255,255,0.14)',
@@ -15,12 +15,10 @@ const SettingsOllama: React.FC = () => (
       lineHeight: 1.6,
     }}>
       <div style={{ marginBottom: 10 }}>
-        For Ollama Cloud or any remote Ollama-compatible endpoint, configure environment variables before launching the app:
+        1) Start your local Ollama daemon. 2) Pull models (for example <code>ollama pull llama3.2</code>). 3) Refresh the Models tab.
       </div>
-      <div><code>OLLAMA_API_BASE=https://your-endpoint</code></div>
-      <div><code>OLLAMA_API_KEY=your-token</code> (only if the endpoint requires auth)</div>
       <div style={{ marginTop: 10, color: 'rgba(255,255,255,0.62)' }}>
-        Model selection stays in the Models tab. Add a custom Ollama model ID there to keep env-driven cloud models selectable.
+        Model selection stays in the Models tab. Add a custom Ollama model ID there if you want to keep a model selectable before it is pulled.
       </div>
     </div>
   </div>

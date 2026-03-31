@@ -526,13 +526,6 @@ async def _stream_litellm(
     # LiteLLM model string: "provider/model-name"
     litellm_model = litellm_model_override or f"{provider}/{model}"
 
-    if provider == "ollama":
-        from .ollama_model_registry import (
-            register_ollama_native_function_calling_hint,
-        )
-
-        register_ollama_native_function_calling_hint(litellm_model)
-
     # Query model info once and derive all model-specific params from it.
     # This avoids redundant get_model_info() calls per round.
     try:
@@ -540,6 +533,13 @@ async def _stream_litellm(
     except Exception:
         logger.debug("Model %s not in litellm registry", litellm_model)
         model_info = {}
+
+    if provider == "ollama":
+        from .ollama_model_registry import (
+            register_ollama_native_function_calling_hint,
+        )
+
+        register_ollama_native_function_calling_hint(litellm_model, model_info)
 
     # Max output tokens — no hardcoded limits.  Each model gets its native
     # capacity.  Providers that *require* max_tokens (Anthropic) are

@@ -68,14 +68,13 @@ function isOllamaModelId(modelName: string): boolean {
 
 function buildCustomOllamaModel(name: string): OllamaModel {
   const normalized = normalizeOllamaModelName(name);
-  const isCloudTagged = normalized.toLowerCase().endsWith(':cloud') || normalized.toLowerCase().endsWith('-cloud');
   return {
     name: normalized,
     size: 0,
     parameter_size: '',
     quantization: '',
     source: 'custom',
-    is_local: !isCloudTagged,
+    is_local: true,
   };
 }
 
@@ -448,7 +447,7 @@ const SettingsModels: React.FC = () => {
         <div className="settings-models-ollama-content">
           <div className="settings-models-ollama-custom">
             <div className="settings-models-ollama-custom-copy">
-              Add any Ollama model ID to keep it selectable. Uses <code>OLLAMA_API_BASE</code> and <code>OLLAMA_API_KEY</code> when set, otherwise the local daemon at <code>http://localhost:11434</code>.
+              Add any Ollama model ID to keep it selectable. Xpdite uses your local daemon at <code>http://localhost:11434</code>.
             </div>
             <div className="settings-models-ollama-custom-row">
               <input
@@ -466,7 +465,7 @@ const SettingsModels: React.FC = () => {
                     addCustomOllamaModel();
                   }
                 }}
-                placeholder="llama3.2, qwen3-coder-next:cloud, or ollama/model-name"
+                placeholder="llama3.2 or ollama/model-name"
               />
               <button
                 className="settings-models-refresh-btn"
@@ -498,15 +497,15 @@ const SettingsModels: React.FC = () => {
           )}
           {!loading && !error && visibleOllamaModels.length === 0 && (
             <div className="settings-models-ollama-model settings-models-empty">
-              No Ollama models found. Pull one with <code>ollama pull model-name</code> or add a custom/env-driven model ID above.
+              No Ollama models found. Pull one with <code>ollama pull model-name</code> or add a custom model ID above.
             </div>
           )}
           {!loading &&
             visibleOllamaModels.map((model) => {
               const isEnabled = enabledModels.includes(model.name);
-              const metaParts = [
-                model.source === 'custom'
-                  ? (model.is_local === false ? 'Custom / env-driven' : 'Custom')
+                const metaParts = [
+                  model.source === 'custom'
+                  ? 'Custom'
                   : '',
                 model.parameter_size,
                 model.quantization,

@@ -155,10 +155,14 @@ class TestHttpApiEndpoints:
             ]
         )
         async_client = SimpleNamespace(list=AsyncMock(return_value=response))
-        db_mock = MagicMock(get_enabled_models=MagicMock(return_value=[
-            "ollama/qwen3-coder-next:cloud",
-            "openai/gpt-4o",
-        ]))
+        db_mock = MagicMock(
+            get_enabled_models=MagicMock(
+                return_value=[
+                    "ollama/qwen3-coder-next:cloud",
+                    "openai/gpt-4o",
+                ]
+            )
+        )
 
         with (
             patch("source.database.db", db_mock),
@@ -175,7 +179,7 @@ class TestHttpApiEndpoints:
         ]
         assert result[0]["source"] == "installed"
         assert result[1]["source"] == "custom"
-        assert result[1]["is_local"] is False
+        assert result[1]["is_local"] is True
         mock_client_cls.assert_called_once_with(
             host=http_api.OLLAMA_LOCAL_LIST_API_BASE
         )
@@ -184,10 +188,16 @@ class TestHttpApiEndpoints:
     async def test_get_ollama_models_returns_custom_entries_when_local_ollama_unreachable(
         self,
     ):
-        db_mock = MagicMock(get_enabled_models=MagicMock(return_value=[
-            "ollama/gpt-oss:120b-cloud",
-        ]))
-        async_client = SimpleNamespace(list=AsyncMock(side_effect=RuntimeError("offline")))
+        db_mock = MagicMock(
+            get_enabled_models=MagicMock(
+                return_value=[
+                    "ollama/gpt-oss:120b-cloud",
+                ]
+            )
+        )
+        async_client = SimpleNamespace(
+            list=AsyncMock(side_effect=RuntimeError("offline"))
+        )
 
         with (
             patch("source.database.db", db_mock),
@@ -206,7 +216,7 @@ class TestHttpApiEndpoints:
                 "parameter_size": "",
                 "quantization": "",
                 "source": "custom",
-                "is_local": False,
+                "is_local": True,
             }
         ]
         mock_client_cls.assert_called_once_with(
