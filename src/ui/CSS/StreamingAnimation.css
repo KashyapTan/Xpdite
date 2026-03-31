@@ -1,49 +1,11 @@
 /**
  * Streaming Animation CSS
  *
- * GPU-accelerated animations for the character-drain streaming effect.
- * Only uses opacity and transform properties which run on the compositor
- * thread, avoiding layout and paint costs.
+ * Base styles for streaming text rendering.
  */
 
-/* Container for streaming text with cursor */
+/* Container for streaming text */
 .streaming-text-container {
   position: relative;
-  contain: content; /* Isolate layout/paint for performance */
-}
-
-/* Animated cursor that appears at the end of streaming text */
-.streaming-cursor {
-  display: inline-block;
-  width: 2px;
-  height: 1.1em;
-  background-color: rgba(255, 255, 255, 0.7);
-  margin-left: 1px;
-  vertical-align: text-bottom;
-  border-radius: 1px;
-  will-change: opacity;
-  animation: streaming-cursor-pulse 0.8s cubic-bezier(0.25, 1, 0.5, 1) infinite;
-}
-
-/* Cursor pulse animation - smooth fade in/out */
-@keyframes streaming-cursor-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
-}
-
-/* Cursor variant for thinking blocks (slightly dimmer) */
-.streaming-cursor--thinking {
-  background-color: rgba(255, 255, 255, 0.5);
-}
-
-/* Respect reduced motion preferences */
-@media (prefers-reduced-motion: reduce) {
-  .streaming-cursor {
-    animation: none;
-    opacity: 0.7;
-  }
+  contain: content;
 }
