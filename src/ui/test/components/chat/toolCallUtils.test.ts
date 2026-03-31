@@ -32,6 +32,7 @@ describe('toolCallUtils', () => {
       expect(getServerSummaryFragment('video_watcher', 1)).toBe('watched a YouTube video');
       expect(getServerSummaryFragment('video_watcher', 2)).toBe('watched 2 YouTube videos');
       expect(getServerSummaryFragment('skills', 1)).toBe('checked skills');
+      expect(getServerSummaryFragment('memory', 1)).toBe('checked memory');
     });
 
     test('falls back for unknown servers', () => {
@@ -256,6 +257,47 @@ describe('toolCallUtils', () => {
       ).toEqual({
         badge: 'SKILLS',
         text: "Loading skill 'unknown'",
+      });
+    });
+
+    test('formats memory actions', () => {
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'memory',
+            name: 'memlist',
+            args: { folder: 'procedural' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'MEMORY',
+        text: "Browsing memory in 'procedural'",
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'memory',
+            name: 'memread',
+            args: { path: 'procedural/sqlite_fix.md' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'MEMORY',
+        text: "Reading memory 'procedural/sqlite_fix.md'",
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'memory',
+            name: 'memcommit',
+            args: { path: 'procedural/sqlite_fix.md' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'MEMORY',
+        text: "Saving memory 'procedural/sqlite_fix.md'",
       });
     });
 

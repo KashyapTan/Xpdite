@@ -794,6 +794,108 @@ describe('api singleton - HTTP endpoints', () => {
     });
   });
 
+  describe('memory endpoints', () => {
+    test('gets memory settings', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ profile_auto_inject: true }),
+      });
+
+      const result = await api.getMemorySettings();
+      expect(result).toEqual({ profile_auto_inject: true });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/settings/memory');
+    });
+
+    test('getMemorySettings throws on backend failure', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ detail: 'settings unavailable' }),
+      });
+
+      await expect(api.getMemorySettings()).rejects.toThrow('settings unavailable');
+    });
+
+    test('sets memory settings', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.setMemorySettings({ profile_auto_inject: false });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/settings/memory', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile_auto_inject: false }),
+      });
+    });
+
+    test('lists memories with optional folder filter', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ memories: [{ path: 'semantic/prefs.md' }] }),
+      });
+
+      const result = await api.listMemories('semantic');
+      expect(result).toEqual([{ path: 'semantic/prefs.md' }]);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/memory?folder=semantic');
+    });
+
+    test('gets a single memory detail', async () => {
+      const detail = { path: 'procedural/fix.md', body: 'Body', raw_text: '---' };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(detail),
+      });
+
+      const result = await api.getMemory('procedural/fix.md');
+      expect(result).toEqual(detail);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/memory/file?path=procedural%2Ffix.md');
+    });
+
+    test('updates a memory file', async () => {
+      const memory = {
+        path: 'procedural/fix.md',
+        title: 'Fix',
+        category: 'procedural',
+        importance: 0.9,
+        tags: ['sqlite'],
+        abstract: 'A fix.',
+        body: 'Body',
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(memory),
+      });
+
+      const result = await api.updateMemory(memory);
+      expect(result).toEqual(memory);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/memory/file', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(memory),
+      });
+    });
+
+    test('deletes a memory file', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.deleteMemory('procedural/fix.md');
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/memory/file?path=procedural%2Ffix.md', {
+        method: 'DELETE',
+      });
+    });
+
+    test('clears all memories', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ success: true, deleted_count: 3 }),
+      });
+
+      const result = await api.clearAllMemories();
+      expect(result).toEqual({ success: true, deleted_count: 3 });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/memory', {
+        method: 'DELETE',
+      });
+    });
+  });
+
   describe('getSystemPrompt', () => {
     test('returns system prompt on success', async () => {
       const mockPrompt = { template: 'You are a helpful assistant', is_custom: true };

@@ -1,0 +1,292 @@
+.settings-memory {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 20px;
+  box-sizing: border-box;
+  gap: 16px;
+  color: #f5f7fb;
+}
+
+.settings-memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.settings-memory-header h2,
+.settings-memory-browser-header h3,
+.settings-memory-editor-header h3,
+.settings-memory-toggle-card h3,
+.settings-memory-danger h3 {
+  margin: 0;
+}
+
+.settings-memory-header p,
+.settings-memory-toggle-card p,
+.settings-memory-danger p {
+  margin: 8px 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  line-height: 1.5;
+}
+
+.settings-memory-header code,
+.settings-memory-toggle-card code,
+.settings-memory-empty code {
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.settings-memory-toggle-card,
+.settings-memory-browser,
+.settings-memory-editor {
+  background:
+    linear-gradient(180deg, rgba(18, 30, 46, 0.92), rgba(10, 18, 28, 0.95));
+  border: 1px solid rgba(120, 188, 255, 0.16);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.28);
+}
+
+.settings-memory-toggle-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 20px;
+}
+
+.settings-memory-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.settings-memory-toggle input {
+  width: 18px;
+  height: 18px;
+}
+
+.settings-memory-error {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(188, 53, 80, 0.18);
+  border: 1px solid rgba(255, 98, 98, 0.3);
+  color: #ffd5d5;
+}
+
+.settings-memory-body {
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+  flex: 1;
+}
+
+.settings-memory-browser,
+.settings-memory-editor {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-memory-browser {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-memory-browser-header,
+.settings-memory-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-memory-browser-header span,
+.settings-memory-editor-header span,
+.settings-memory-editor-meta span,
+.settings-memory-item-meta span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.85rem;
+}
+
+.settings-memory-groups {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-memory-folder {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.settings-memory-folder-toggle {
+  width: 100%;
+  border: none;
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 600;
+}
+
+.settings-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.settings-memory-item {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  color: inherit;
+  text-align: left;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.settings-memory-item:hover,
+.settings-memory-item.selected {
+  border-color: rgba(120, 188, 255, 0.45);
+  background: rgba(73, 145, 214, 0.14);
+}
+
+.settings-memory-item-top,
+.settings-memory-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-memory-item-path {
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.settings-memory-item-abstract {
+  color: rgba(255, 255, 255, 0.76);
+  line-height: 1.45;
+  font-size: 0.92rem;
+}
+
+.settings-memory-warning {
+  color: #ffd88c;
+}
+
+.settings-memory-danger {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px 20px 20px;
+}
+
+.settings-memory-danger-button,
+.settings-memory-delete-button {
+  border: 1px solid rgba(255, 111, 122, 0.36);
+  background: rgba(166, 38, 62, 0.2);
+  color: #ffd9de;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.settings-memory-editor {
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-memory-form {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-memory-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.settings-memory-field label {
+  font-size: 0.88rem;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.settings-memory-field input,
+.settings-memory-field textarea {
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: inherit;
+  padding: 10px 12px;
+  font: inherit;
+}
+
+.settings-memory-field input[readonly] {
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.settings-memory-field textarea {
+  resize: vertical;
+  min-height: 90px;
+}
+
+.settings-memory-body-input {
+  min-height: 260px;
+  font-family: Consolas, 'Courier New', monospace;
+  line-height: 1.5;
+}
+
+.settings-memory-editor-meta,
+.settings-memory-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-memory-empty {
+  padding: 22px 20px;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.5;
+}
+
+@media (max-width: 1120px) {
+  .settings-memory-body {
+    grid-template-columns: 1fr;
+  }
+}

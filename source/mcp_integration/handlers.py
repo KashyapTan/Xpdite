@@ -25,12 +25,13 @@ from .video_watcher_executor import (
     execute_video_watcher_tool,
     is_video_watcher_tool,
 )
+from .memory_executor import execute_memory_tool, is_memory_tool
 from .skills_executor import execute_skill_tool
 from .scheduler_executor import (
     is_scheduler_tool,
     execute_scheduler_tool,
 )
-from .tool_args import normalize_tool_args
+from .tool_args import normalize_tool_args, sanitize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -267,9 +268,10 @@ async def handle_mcp_tool_calls(
             fn_args = tc["args"]
             arg_error = tc.get("arg_error")
             server_name = mcp_manager.get_tool_server_name(fn_name)
+            safe_args = sanitize_tool_args(fn_name, server_name, fn_args)
 
             logger.info(
-                "Tool call: %s(%s) from server '%s'", fn_name, fn_args, server_name
+                "Tool call: %s(%s) from server '%s'", fn_name, safe_args, server_name
             )
 
             if is_current_request_cancelled():
@@ -284,7 +286,7 @@ async def handle_mcp_tool_calls(
                     json.dumps(
                         {
                             "name": fn_name,
-                            "args": fn_args,
+                            "args": safe_args,
                             "server": server_name,
                             "status": "calling",
                         }
@@ -298,7 +300,7 @@ async def handle_mcp_tool_calls(
                     json.dumps(
                         {
                             "name": fn_name,
-                            "args": fn_args,
+                            "args": safe_args,
                             "result": result_str,
                             "server": server_name,
                             "status": "complete",
@@ -311,7 +313,7 @@ async def handle_mcp_tool_calls(
                     json.dumps(
                         {
                             "name": fn_name,
-                            "args": fn_args,
+                            "args": safe_args,
                             "server": server_name,
                             "status": "calling",
                         }
@@ -319,28 +321,44 @@ async def handle_mcp_tool_calls(
                 )
 
                 # Execute (terminal interception or standard MCP)
-                if is_terminal_tool(fn_name, server_name):
-                    result = await execute_terminal_tool(fn_name, fn_args, server_name)
-                elif is_video_watcher_tool(fn_name, server_name):
-                    result = await execute_video_watcher_tool(
-                        fn_name, fn_args, server_name
-                    )
-                elif server_name == "skills" and fn_name in (
-                    "list_skills",
-                    "use_skill",
-                ):
-                    try:
-                        result = execute_skill_tool(fn_name, fn_args)
-                    except Exception as e:
-                        logger.warning("Skills tool error for %s: %s", fn_name, e)
-                        result = f"Error executing skill tool: {e}"
-                elif is_scheduler_tool(fn_name, server_name):
-                    result = await execute_scheduler_tool(fn_name, fn_args, server_name)
-                else:
-                    try:
+                try:
+                    if is_terminal_tool(fn_name, server_name):
+                        result = await execute_terminal_tool(
+                            fn_name, fn_args, server_name
+                        )
+                    elif is_video_watcher_tool(fn_name, server_name):
+                        result = await execute_video_watcher_tool(
+                            fn_name, fn_args, server_name
+                        )
+                    elif is_memory_tool(fn_name, server_name):
+                        result = await execute_memory_tool(
+                            fn_name, fn_args, server_name
+                        )
+                    elif server_name == "skills" and fn_name in (
+                        "list_skills",
+                        "use_skill",
+                    ):
+                        try:
+                            result = execute_skill_tool(fn_name, fn_args)
+                        except Exception as e:
+                            logger.warning("Skills tool error for %s: %s", fn_name, e)
+                            result = f"Error executing skill tool: {e}"
+                    elif is_scheduler_tool(fn_name, server_name):
+                        result = await execute_scheduler_tool(
+                            fn_name, fn_args, server_name
+                        )
+                    else:
                         result = await mcp_manager.call_tool(fn_name, fn_args)
-                    except Exception as e:
-                        result = f"Error executing tool: {e}"
+                except Exception as e:
+                    logger.warning(
+                        "Tool execution failed for %s on server '%s' (%s)",
+                        fn_name,
+                        server_name,
+                        type(e).__name__,
+                    )
+                    result = (
+                        "System error: tool execution failed. See server logs for details."
+                    )
 
                 result_str = _truncate_result(str(result))
                 logger.debug("Tool result:\n%s...", result_str[:100])
@@ -350,7 +368,7 @@ async def handle_mcp_tool_calls(
                     json.dumps(
                         {
                             "name": fn_name,
-                            "args": fn_args,
+                            "args": safe_args,
                             "result": result_str,
                             "server": server_name,
                             "status": "complete",
@@ -361,7 +379,7 @@ async def handle_mcp_tool_calls(
             tool_calls_made.append(
                 {
                     "name": fn_name,
-                    "args": fn_args,
+                    "args": safe_args,
                     "result": result_str,
                     "server": server_name,
                 }
@@ -370,7 +388,7 @@ async def handle_mcp_tool_calls(
                 {
                     "type": "tool_call",
                     "name": fn_name,
-                    "args": fn_args,
+                    "args": safe_args,
                     "server": server_name,
                 }
             )

@@ -4,6 +4,7 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
 from source.llm.router import is_local_ollama_model, parse_provider
+import source.mcp_integration.manager as mcp_manager_module
 
 
 # ------------------------------------------------------------------
@@ -147,19 +148,19 @@ class TestRouteChat:
         patches = {**_ROUTE_PATCHES}
         patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
         patches["source.llm.key_manager.key_manager"] = mock_km
-        patches["source.mcp_integration.manager.mcp_manager"] = mock_mcp
 
         ctx = {k: patch(k, v) for k, v in patches.items()}
         for p in ctx.values():
             p.start()
         try:
-            from source.llm.router import route_chat
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.router import route_chat
 
-            result = await route_chat(
-                "anthropic/claude-sonnet-4-20250514", "Hello", [], []
-            )
-            mock_stream.assert_awaited_once()
-            assert result[0] == "cloud reply"
+                result = await route_chat(
+                    "anthropic/claude-sonnet-4-20250514", "Hello", [], []
+                )
+                mock_stream.assert_awaited_once()
+                assert result[0] == "cloud reply"
         finally:
             for p in ctx.values():
                 p.stop()
@@ -177,20 +178,119 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.llm.key_manager.key_manager"] = mock_km
-        patches["source.mcp_integration.manager.mcp_manager"] = mock_mcp
         patches["source.core.connection.broadcast_message"] = mock_broadcast
 
         ctx = {k: patch(k, v) for k, v in patches.items()}
         for p in ctx.values():
             p.start()
         try:
-            from source.llm.router import route_chat
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.router import route_chat
 
-            result = await route_chat("openai/gpt-4o", "Hi", [], [])
-            # Should return an error message
-            assert "Error" in result[0] or "error" in result[0].lower()
-            # Should have broadcast an error
-            mock_broadcast.assert_awaited_once()
+                result = await route_chat("openai/gpt-4o", "Hi", [], [])
+                # Should return an error message
+                assert "Error" in result[0] or "error" in result[0].lower()
+                # Should have broadcast an error
+                mock_broadcast.assert_awaited_once()
+        finally:
+            for p in ctx.values():
+                p.stop()
+
+    @pytest.mark.asyncio
+    async def test_route_chat_builds_profile_injection_when_enabled(self):
+        mock_stream = AsyncMock(
+            return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
+        )
+        mock_build_prompt = MagicMock(return_value="system with profile")
+        mock_db = MagicMock()
+        mock_db.get_setting.side_effect = lambda key: {
+            "system_prompt_template": None,
+            "memory_profile_auto_inject": "true",
+        }.get(key)
+
+        patches = {**_ROUTE_PATCHES}
+        patches["source.database.db"] = mock_db
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
+        patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
+            return_value="\nMEMORY BLOCK\n"
+        )
+        patches["source.llm.prompt.build_user_profile_block"] = MagicMock(
+            return_value="\n## User Profile\n\nProfile body\n"
+        )
+        patches["source.core.thread_pool.run_in_thread"] = AsyncMock(
+            return_value={"body": "Profile body"}
+        )
+        patches["source.config.MEMORY_PROFILE_FILE"] = MagicMock(
+            exists=MagicMock(return_value=True)
+        )
+        mock_mcp = MagicMock(has_tools=MagicMock(return_value=False))
+
+        ctx = {k: patch(k, v) for k, v in patches.items()}
+        for p in ctx.values():
+            p.start()
+        try:
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.router import route_chat
+
+                result = await route_chat("llama3:8b", "Hello", [], [])
+                assert result[0] == "reply"
+                mock_build_prompt.assert_called_once_with(
+                    skills_block="",
+                    memory_block="\nMEMORY BLOCK\n",
+                    user_profile_block="\n## User Profile\n\nProfile body\n",
+                    template=None,
+                )
+        finally:
+            for p in ctx.values():
+                p.stop()
+
+    @pytest.mark.asyncio
+    async def test_route_chat_skips_profile_injection_when_disabled(self):
+        mock_stream = AsyncMock(
+            return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
+        )
+        mock_build_prompt = MagicMock(return_value="system without profile")
+        mock_db = MagicMock()
+        mock_db.get_setting.side_effect = lambda key: {
+            "system_prompt_template": None,
+            "memory_profile_auto_inject": "false",
+        }.get(key)
+
+        patches = {**_ROUTE_PATCHES}
+        patches["source.database.db"] = mock_db
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
+        patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
+            return_value="\nMEMORY BLOCK\n"
+        )
+        patches["source.llm.prompt.build_user_profile_block"] = MagicMock(
+            return_value="\n## User Profile\n\nProfile body\n"
+        )
+        patches["source.core.thread_pool.run_in_thread"] = AsyncMock(
+            return_value={"body": "Profile body"}
+        )
+        patches["source.config.MEMORY_PROFILE_FILE"] = MagicMock(
+            exists=MagicMock(return_value=True)
+        )
+        mock_mcp = MagicMock(has_tools=MagicMock(return_value=False))
+
+        ctx = {k: patch(k, v) for k, v in patches.items()}
+        for p in ctx.values():
+            p.start()
+        try:
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.router import route_chat
+
+                result = await route_chat("llama3:8b", "Hello", [], [])
+                assert result[0] == "reply"
+                mock_build_prompt.assert_called_once_with(
+                    skills_block="",
+                    memory_block="\nMEMORY BLOCK\n",
+                    user_profile_block="",
+                    template=None,
+                )
+                patches["source.core.thread_pool.run_in_thread"].assert_not_awaited()
         finally:
             for p in ctx.values():
                 p.stop()

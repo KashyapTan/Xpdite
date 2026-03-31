@@ -47,7 +47,7 @@
  */
 
 import { discoverServerPort, getHttpBaseUrl, getWsBaseUrl } from './portDiscovery';
-import type { Skill } from '../types';
+import type { MemoryDetail, MemorySettings, MemorySummary, Skill } from '../types';
 
 /**
  * Awaits port discovery (cached after first call) and returns the HTTP base URL.
@@ -564,6 +564,104 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
+  },
+
+  // ============================================
+  // Memory Settings and Files
+  // ============================================
+
+  async getMemorySettings(): Promise<MemorySettings> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/settings/memory`);
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch memory settings');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async setMemorySettings(settings: MemorySettings): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/settings/memory`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to save memory settings');
+    }
+  },
+
+  async listMemories(folder?: string): Promise<MemorySummary[]> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/memory`);
+    if (folder) {
+      url.searchParams.set('folder', folder);
+    }
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      throw new Error('Failed to fetch memories');
+    }
+    const payload = await response.json();
+    return Array.isArray(payload?.memories) ? payload.memories : [];
+  },
+
+  async getMemory(path: string): Promise<MemoryDetail> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/memory/file`);
+    url.searchParams.set('path', path);
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch memory');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async updateMemory(memory: {
+    path: string;
+    title: string;
+    category: string;
+    importance: number;
+    tags: string[];
+    abstract: string;
+    body: string;
+  }): Promise<MemoryDetail> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/memory/file`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(memory),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to save memory');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async deleteMemory(path: string): Promise<void> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/memory/file`);
+    url.searchParams.set('path', path);
+    const response = await fetch(url.toString(), {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to delete memory');
+      throw new Error(detail);
+    }
+  },
+
+  async clearAllMemories(): Promise<{ success: boolean; deleted_count: number }> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/memory`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      throw new Error('Failed to clear memories');
+    }
+    return response.json();
   },
 
   // ============================================

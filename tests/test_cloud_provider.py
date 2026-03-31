@@ -205,9 +205,9 @@ class TestHelpers:
         assert result["image_url"]["url"] == "data:image/png;base64,abc123"
 
     def test_sanitize_tool_args_redacts_sensitive_keys(self):
-        from source.llm.cloud_provider import _sanitize_tool_args
+        from source.mcp_integration.tool_args import sanitize_tool_args
 
-        result = _sanitize_tool_args({
+        result = sanitize_tool_args("read_file", "filesystem", {
             "path": "notes.txt",
             "api_key": "secret-value",
             "nested": {"token": "abc123", "safe": "ok"},
@@ -217,6 +217,33 @@ class TestHelpers:
             "path": "notes.txt",
             "api_key": "[REDACTED]",
             "nested": {"token": "[REDACTED]", "safe": "ok"},
+        }
+
+    def test_sanitize_tool_args_redacts_memcommit_content(self):
+        from source.mcp_integration.tool_args import sanitize_tool_args
+
+        result = sanitize_tool_args(
+            "memcommit",
+            "memory",
+            {
+                "path": "profile/user_profile.md",
+                "title": "Personal profile",
+                "category": "profile",
+                "importance": 1.0,
+                "tags": ["profile"],
+                "abstract": "Sensitive summary",
+                "body": "Sensitive body",
+            },
+        )
+
+        assert result == {
+            "path": "profile/user_profile.md",
+            "title": "[REDACTED]",
+            "category": "profile",
+            "importance": 1.0,
+            "tags": ["profile"],
+            "abstract": "[REDACTED]",
+            "body": "[REDACTED]",
         }
 
     def test_get_reasoning_params_supported(self):
@@ -860,6 +887,127 @@ class TestStreamLitellm:
             if call.args[0] == "tool_call"
         ]
         assert any(payload["args"].get("api_key") == "[REDACTED]" for payload in tool_call_payloads)
+
+    @pytest.mark.asyncio
+    async def test_memory_tool_execution_is_intercepted(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
+    ):
+        """Memory tools should be handled by the inline memory executor."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_1", name="memread"),
+            _tool_call_chunk(0, arguments='{"path": "procedural/sqlite_fix.md"}'),
+            _tool_call_chunk(0, finish_reason="tool_calls"),
+        ]
+        text_stream = [
+            _text_chunk("Used memory"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        _mock_mcp.get_tool_server_name.return_value = "memory"
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+
+        with (
+            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch(
+                "source.mcp_integration.memory_executor.is_memory_tool",
+                return_value=True,
+            ),
+            patch(
+                "source.mcp_integration.memory_executor.execute_memory_tool",
+                new=AsyncMock(return_value="raw memory"),
+            ) as mock_execute,
+        ):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="read memory", image_paths=[], chat_history=[],
+                allowed_tool_names={"memread"},
+            )
+
+        assert text == "Used memory"
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "memread"
+        assert tool_calls[0]["result"] == "raw memory"
+        mock_execute.assert_awaited_once_with(
+            "memread",
+            {"path": "procedural/sqlite_fix.md"},
+            "memory",
+        )
+        _mock_mcp.call_tool.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_memcommit_args_are_redacted_in_persisted_tool_calls(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
+    ):
+        """Memory commit args should be redacted before UI/persistence surfaces."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_1", name="memcommit"),
+            _tool_call_chunk(
+                0,
+                arguments=(
+                    '{"path": "profile/user_profile.md", "title": "Profile", '
+                    '"category": "profile", "importance": 1, "tags": ["profile"], '
+                    '"abstract": "Sensitive summary", "body": "Sensitive body"}'
+                ),
+                finish_reason="tool_calls",
+            ),
+        ]
+        text_stream = [
+            _text_chunk("Committed"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        _mock_mcp.get_tool_server_name.return_value = "memory"
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+
+        with (
+            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch(
+                "source.mcp_integration.memory_executor.is_memory_tool",
+                return_value=True,
+            ),
+            patch(
+                "source.mcp_integration.memory_executor.execute_memory_tool",
+                new=AsyncMock(return_value="Created memory at 'profile/user_profile.md'."),
+            ),
+        ):
+            from source.llm.cloud_provider import stream_cloud_chat
+
+            _, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="commit memory", image_paths=[], chat_history=[],
+                allowed_tool_names={"memcommit"},
+            )
+
+        assert tool_calls[0]["args"] == {
+            "path": "profile/user_profile.md",
+            "title": "[REDACTED]",
+            "category": "profile",
+            "importance": 1,
+            "tags": ["profile"],
+            "abstract": "[REDACTED]",
+            "body": "[REDACTED]",
+        }
+
+        tool_call_payloads = [
+            json.loads(call.args[1])
+            for call in _mock_broadcast.call_args_list
+            if call.args[0] == "tool_call"
+        ]
+        assert any(
+            payload["args"].get("body") == "[REDACTED]"
+            and payload["args"].get("abstract") == "[REDACTED]"
+            for payload in tool_call_payloads
+        )
 
     @pytest.mark.asyncio
     async def test_cancellation_during_tool_execution_stops_loop(

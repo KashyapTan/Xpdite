@@ -623,6 +623,18 @@ async def init_mcp_servers():
         skip_embed=False,  # Include in semantic retrieval
     )
 
+    # - Memory tools (inline - no subprocess) ----------------------
+    # memlist, memread, and memcommit expose filesystem-backed long-term
+    # memory. These are embedded for retrieval so they surface naturally
+    # during memory-relevant conversations, similar to skills.
+    from mcp_servers.servers.memory.inline_tools import MEMORY_INLINE_TOOLS
+
+    mcp_manager.register_inline_tools(
+        "memory",
+        MEMORY_INLINE_TOOLS,
+        skip_embed=False,  # Include in semantic retrieval
+    )
+
     # ── Scheduler tools (inline — no subprocess) ─────────────────
     # Scheduler tools allow LLMs to create and manage scheduled jobs
     # that execute AI requests at specified times. These are intercepted

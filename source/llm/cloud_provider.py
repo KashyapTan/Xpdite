@@ -22,7 +22,7 @@ import litellm
 from ..core.connection import broadcast_message
 from ..config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ..core.request_context import is_current_request_cancelled
-from ..mcp_integration.tool_args import normalize_tool_args
+from ..mcp_integration.tool_args import normalize_tool_args, sanitize_tool_args
 
 logger = logging.getLogger(__name__)
 
@@ -35,17 +35,6 @@ litellm.modify_params = True
 litellm.suppress_debug_info = True
 
 _MAX_INLINE_IMAGE_BYTES = 50 * 1024 * 1024
-_REDACTED_VALUE = "[REDACTED]"
-_SENSITIVE_TOOL_ARG_KEYS = (
-    "api_key",
-    "token",
-    "secret",
-    "password",
-    "authorization",
-    "cookie",
-    "session",
-    "key",
-)
 
 
 def _load_image_as_base64(path: str) -> Optional[str]:
@@ -104,24 +93,6 @@ def _format_image(b64: str, media_type: str) -> dict:
     }
 
 
-def _sanitize_tool_args(value: Any) -> Any:
-    """Redact sensitive tool arguments before exposing them outside execution."""
-    if isinstance(value, dict):
-        redacted: Dict[str, Any] = {}
-        for key, item in value.items():
-            key_lower = key.lower()
-            if any(fragment in key_lower for fragment in _SENSITIVE_TOOL_ARG_KEYS):
-                redacted[key] = _REDACTED_VALUE
-            else:
-                redacted[key] = _sanitize_tool_args(item)
-        return redacted
-
-    if isinstance(value, list):
-        return [_sanitize_tool_args(item) for item in value]
-
-    return value
-
-
 def _build_user_content(text: str, image_paths: List[str]) -> Any:
     """Return either plain text or multipart user content with images."""
     parts: List[Dict[str, Any]] = []
@@ -150,7 +121,7 @@ def _append_tool_result(
     interleaved_blocks: List[Dict[str, Any]],
 ) -> None:
     """Record a tool result for persistence and UI reconstruction."""
-    safe_args = _sanitize_tool_args(fn_args)
+    safe_args = sanitize_tool_args(fn_name, server_name, fn_args)
     tool_calls_list.append(
         {
             "name": fn_name,
@@ -248,6 +219,10 @@ async def _execute_and_broadcast_tool(
         is_video_watcher_tool,
         execute_video_watcher_tool,
     )
+    from ..mcp_integration.memory_executor import (
+        is_memory_tool,
+        execute_memory_tool,
+    )
     from ..mcp_integration.skills_executor import execute_skill_tool
     from ..mcp_integration.scheduler_executor import (
         is_scheduler_tool,
@@ -269,11 +244,11 @@ async def _execute_and_broadcast_tool(
         "%s tool call: %s(%s) from '%s'",
         provider_label,
         fn_name,
-        _sanitize_tool_args(fn_args),
+        sanitize_tool_args(fn_name, server_name, fn_args),
         server_name,
     )
 
-    safe_args = _sanitize_tool_args(fn_args)
+    safe_args = sanitize_tool_args(fn_name, server_name, fn_args)
 
     await broadcast_message(
         "tool_call",
@@ -292,6 +267,8 @@ async def _execute_and_broadcast_tool(
             result = await execute_terminal_tool(fn_name, fn_args, server_name)
         elif is_video_watcher_tool(fn_name, server_name):
             result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
+        elif is_memory_tool(fn_name, server_name):
+            result = await execute_memory_tool(fn_name, fn_args, server_name)
         elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
             result = execute_skill_tool(fn_name, fn_args)
         elif is_scheduler_tool(fn_name, server_name):

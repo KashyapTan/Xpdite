@@ -75,7 +75,14 @@ async def route_chat(
     provider, model = parse_provider(model_name)
 
     from ..database import db
-    from .prompt import build_system_prompt
+    from ..core.thread_pool import run_in_thread
+    from ..config import MEMORY_PROFILE_FILE
+    from ..services.memory import memory_service
+    from .prompt import (
+        build_memory_prompt_block,
+        build_system_prompt,
+        build_user_profile_block,
+    )
     from ..mcp_integration.skill_injector import (
         get_skills_to_inject,
         build_skills_prompt_block,
@@ -117,8 +124,31 @@ async def route_chat(
         )
 
     custom_template = db.get_setting("system_prompt_template")
+    memory_block = build_memory_prompt_block()
+    user_profile_block = ""
+    auto_inject_profile = db.get_setting("memory_profile_auto_inject")
+    should_inject_profile = auto_inject_profile != "false"
+
+    if should_inject_profile and MEMORY_PROFILE_FILE.exists():
+        try:
+            profile_detail = await run_in_thread(
+                memory_service.read_memory,
+                "profile/user_profile.md",
+                touch_access=False,
+            )
+            profile_body = str(profile_detail.get("body", "")).strip()
+            if profile_body:
+                user_profile_block = build_user_profile_block(profile_body)
+        except FileNotFoundError:
+            user_profile_block = ""
+        except Exception as exc:
+            logger.warning("Profile auto-injection skipped: %s", exc)
+
     system_prompt = build_system_prompt(
-        skills_block=skills_block, template=custom_template
+        skills_block=skills_block,
+        memory_block=memory_block,
+        user_profile_block=user_profile_block,
+        template=custom_template,
     )
 
     if provider == "ollama":

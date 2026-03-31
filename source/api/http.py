@@ -796,6 +796,32 @@ class SubAgentSettingsUpdate(BaseModel):
     smart_model: Optional[str] = None
 
 
+class MemorySettingsUpdate(BaseModel):
+    """Request body for memory settings."""
+
+    profile_auto_inject: bool
+
+
+class MemoryFileUpdate(BaseModel):
+    """Request body for updating a single memory file."""
+
+    path: str
+    title: str
+    category: str
+    importance: float
+    tags: List[str]
+    abstract: str
+    body: str
+
+
+def _raise_memory_http_error(operation: str, exc: Exception) -> None:
+    logger.warning("Memory %s failed (%s)", operation, type(exc).__name__)
+    raise HTTPException(
+        status_code=500,
+        detail=f"Memory {operation} failed. See server logs for details.",
+    ) from exc
+
+
 @router.get("/settings/sub-agents")
 async def get_sub_agent_settings():
     """Get current sub-agent tier model settings."""
@@ -828,6 +854,118 @@ async def set_sub_agent_settings(body: SubAgentSettingsUpdate):
             db.delete_setting("sub_agent_tier_smart")
 
     return {"status": "updated"}
+
+
+@router.get("/settings/memory")
+async def get_memory_settings():
+    """Get persisted memory-related settings."""
+    from ..database import db
+
+    stored = db.get_setting("memory_profile_auto_inject")
+    return {"profile_auto_inject": stored != "false"}
+
+
+@router.put("/settings/memory")
+async def set_memory_settings(body: MemorySettingsUpdate):
+    """Persist memory-related settings."""
+    from ..database import db
+
+    db.set_setting(
+        "memory_profile_auto_inject",
+        "true" if body.profile_auto_inject else "false",
+    )
+    return {"status": "updated", "settings": body.model_dump()}
+
+
+@router.get("/memory")
+async def list_memories(folder: Optional[str] = None):
+    """List memory summaries, optionally scoped to a subtree."""
+    from ..services.memory import memory_service
+
+    try:
+        memories = await _run_in_thread(memory_service.list_memories, folder)
+        return {"memories": memories}
+    except (OSError, UnicodeError) as exc:
+        _raise_memory_http_error("listing", exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        _raise_memory_http_error("listing", exc)
+
+
+@router.get("/memory/file")
+async def get_memory_file(path: str):
+    """Read a single memory file in full."""
+    from ..services.memory import memory_service
+
+    try:
+        return await _run_in_thread(memory_service.read_memory, path, touch_access=True)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Memory '{path}' not found")
+    except (OSError, UnicodeError) as exc:
+        _raise_memory_http_error("read", exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        _raise_memory_http_error("read", exc)
+
+
+@router.put("/memory/file")
+async def update_memory_file(body: MemoryFileUpdate):
+    """Create or overwrite a single memory file."""
+    from ..services.memory import memory_service
+
+    try:
+        return await _run_in_thread(
+            memory_service.upsert_memory,
+            path=body.path,
+            title=body.title,
+            category=body.category,
+            importance=body.importance,
+            tags=body.tags,
+            abstract=body.abstract,
+            body=body.body,
+        )
+    except (OSError, UnicodeError) as exc:
+        _raise_memory_http_error("write", exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        _raise_memory_http_error("write", exc)
+
+
+@router.delete("/memory/file")
+async def delete_memory_file(path: str):
+    """Delete a single memory file."""
+    from ..services.memory import memory_service
+
+    try:
+        deleted = await _run_in_thread(memory_service.delete_memory, path)
+    except (OSError, UnicodeError) as exc:
+        _raise_memory_http_error("delete", exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        _raise_memory_http_error("delete", exc)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Memory '{path}' not found")
+
+    return {"success": True, "path": path}
+
+
+@router.delete("/memory")
+async def clear_all_memories():
+    """Delete all memory files and recreate the default directory layout."""
+    from ..services.memory import memory_service
+
+    try:
+        deleted_count = await _run_in_thread(memory_service.clear_all_memories)
+    except (OSError, UnicodeError) as exc:
+        _raise_memory_http_error("clear", exc)
+    except Exception as exc:
+        _raise_memory_http_error("clear", exc)
+    return {"success": True, "deleted_count": deleted_count}
 
 
 # ============================================

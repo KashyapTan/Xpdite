@@ -42,6 +42,16 @@ USER_SKILLS_DIR = SKILLS_DIR / "user"
 SKILLS_SEED_DIR = SOURCE_DIR / "skills_seed"
 SKILLS_PREFERENCES_FILE = SKILLS_DIR / "preferences.json"
 
+# Memory directories
+MEMORY_DIR = USER_DATA_DIR / "memory"
+MEMORY_PROFILE_FILE = MEMORY_DIR / "profile" / "user_profile.md"
+MEMORY_DEFAULT_FOLDERS = (
+    "profile",
+    "semantic",
+    "episodic",
+    "procedural",
+)
+
 # Server configuration
 DEFAULT_PORT = 8000
 MAX_PORT_ATTEMPTS = 10

@@ -42,7 +42,8 @@ export default function SettingsSystemPrompt() {
                     <h2>Customize System Prompt</h2>
                     <p>
                         Use <code>{"current_datetime"}</code>, <code>{"os_info"}</code>,
-                        and <code>{"skills_block"}</code> as placeholders exactly as written.
+                        <code>{"skills_block"}</code>, <code>{"memory_block"}</code>, and <code>{"user_profile_block"}</code> as placeholders exactly as written.
+                        Older custom templates that omit the memory or profile placeholders still get those sections auto-appended at runtime.
                         {/* {isCustom && <span className="custom-badge">Custom</span>} */}
                     </p>
                 </div>

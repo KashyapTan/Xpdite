@@ -7,22 +7,28 @@ import json
 import pathlib
 import sys
 import types
-import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 
+_HANDLERS_MODULE_CACHE = None
+
+
 def _load_handlers_module(monkeypatch):
     """Load handlers.py under an alias to bypass circular import stubs."""
+    global _HANDLERS_MODULE_CACHE
+    if _HANDLERS_MODULE_CACHE is not None:
+        return _HANDLERS_MODULE_CACHE
+
     root = pathlib.Path(__file__).resolve().parents[1]
 
     services_pkg = types.ModuleType("source.services")
     services_pkg.__path__ = [str(root / "source" / "services")]
     monkeypatch.setitem(sys.modules, "source.services", services_pkg)
 
-    module_name = f"source.mcp_integration.handlers_cov_{uuid.uuid4().hex}"
+    module_name = "source.mcp_integration.handlers_cov"
     module_path = root / "source" / "mcp_integration" / "handlers.py"
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     assert spec is not None and spec.loader is not None
@@ -30,6 +36,7 @@ def _load_handlers_module(monkeypatch):
     module = importlib.util.module_from_spec(spec)
     monkeypatch.setitem(sys.modules, module_name, module)
     spec.loader.exec_module(module)
+    _HANDLERS_MODULE_CACHE = module
     return module
 
 
@@ -388,3 +395,217 @@ class TestHandleMcpToolCalls:
         assert calls[0]["result"] == "parallel-result"
         mock_call_tool.assert_not_awaited()
         sub_agent_module.execute_sub_agents_parallel.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_memory_tools_are_intercepted(self, handlers_module):
+        memory_tool = SimpleNamespace(
+            function=SimpleNamespace(
+                name="memread",
+                arguments='{"path":"procedural/sqlite_fix.md"}',
+            )
+        )
+        detection = SimpleNamespace(
+            message=SimpleNamespace(content="Checking memory", tool_calls=[memory_tool])
+        )
+        fake_client = SimpleNamespace(chat=AsyncMock(return_value=detection))
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module,
+                "retrieve_relevant_tools",
+                return_value=[{"function": {"name": "memread"}}],
+            ),
+            patch.object(
+                handlers_module,
+                "is_current_request_cancelled",
+                side_effect=[False] * 10,
+            ),
+            patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
+            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
+            patch.object(
+                handlers_module,
+                "_stream_tool_follow_up",
+                new=AsyncMock(
+                    return_value=("", [], {"prompt_eval_count": 0, "eval_count": 0})
+                ),
+            ),
+            patch.object(
+                handlers_module.mcp_manager,
+                "get_tool_server_name",
+                return_value="memory",
+            ),
+            patch.object(handlers_module, "is_terminal_tool", return_value=False),
+            patch.object(handlers_module, "is_video_watcher_tool", return_value=False),
+            patch.object(handlers_module, "is_memory_tool", return_value=True),
+            patch.object(
+                handlers_module,
+                "execute_memory_tool",
+                new=AsyncMock(return_value="raw memory"),
+            ) as mock_execute,
+            patch.object(
+                handlers_module.mcp_manager,
+                "call_tool",
+                new=AsyncMock(),
+            ) as mock_call_tool,
+            patch.object(handlers_module, "broadcast_message", new=AsyncMock()),
+        ):
+            _, calls, precomputed = await handlers_module.handle_mcp_tool_calls(
+                [{"role": "user", "content": "use memory"}],
+                image_paths=[],
+                client=fake_client,
+            )
+
+        assert precomputed is not None
+        assert calls[0]["name"] == "memread"
+        assert calls[0]["result"] == "raw memory"
+        mock_execute.assert_awaited_once_with(
+            "memread",
+            {"path": "procedural/sqlite_fix.md"},
+            "memory",
+        )
+        mock_call_tool.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memcommit_args_are_redacted_in_broadcasts_and_persistence(
+        self, handlers_module
+    ):
+        memory_tool = SimpleNamespace(
+            function=SimpleNamespace(
+                name="memcommit",
+                arguments=(
+                    '{"path":"profile/user_profile.md","title":"Profile","category":"profile",'
+                    '"importance":1,"tags":["profile"],"abstract":"Sensitive summary",'
+                    '"body":"Sensitive body"}'
+                ),
+            )
+        )
+        detection = SimpleNamespace(
+            message=SimpleNamespace(content="Saving memory", tool_calls=[memory_tool])
+        )
+        fake_client = SimpleNamespace(chat=AsyncMock(return_value=detection))
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module,
+                "retrieve_relevant_tools",
+                return_value=[{"function": {"name": "memcommit"}}],
+            ),
+            patch.object(
+                handlers_module,
+                "is_current_request_cancelled",
+                side_effect=[False] * 10,
+            ),
+            patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
+            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
+            patch.object(
+                handlers_module,
+                "_stream_tool_follow_up",
+                new=AsyncMock(
+                    return_value=("", [], {"prompt_eval_count": 0, "eval_count": 0})
+                ),
+            ),
+            patch.object(
+                handlers_module.mcp_manager,
+                "get_tool_server_name",
+                return_value="memory",
+            ),
+            patch.object(handlers_module, "is_terminal_tool", return_value=False),
+            patch.object(handlers_module, "is_video_watcher_tool", return_value=False),
+            patch.object(handlers_module, "is_memory_tool", return_value=True),
+            patch.object(
+                handlers_module,
+                "execute_memory_tool",
+                new=AsyncMock(return_value="Created memory at 'profile/user_profile.md'."),
+            ),
+            patch.object(
+                handlers_module, "broadcast_message", new=AsyncMock()
+            ) as mock_bcast,
+        ):
+            _, calls, _ = await handlers_module.handle_mcp_tool_calls(
+                [{"role": "user", "content": "save memory"}],
+                image_paths=[],
+                client=fake_client,
+            )
+
+        assert calls[0]["args"] == {
+            "path": "profile/user_profile.md",
+            "title": "[REDACTED]",
+            "category": "profile",
+            "importance": 1,
+            "tags": ["profile"],
+            "abstract": "[REDACTED]",
+            "body": "[REDACTED]",
+        }
+
+        tool_call_payloads = [
+            json.loads(call.args[1])
+            for call in mock_bcast.await_args_list
+            if call.args[0] == "tool_call"
+        ]
+        assert any(
+            payload["args"].get("body") == "[REDACTED]"
+            and payload["args"].get("abstract") == "[REDACTED]"
+            for payload in tool_call_payloads
+        )
+
+    @pytest.mark.asyncio
+    async def test_memory_tool_failures_are_contained(self, handlers_module):
+        memory_tool = SimpleNamespace(
+            function=SimpleNamespace(
+                name="memread",
+                arguments='{"path":"procedural/sqlite_fix.md"}',
+            )
+        )
+        detection = SimpleNamespace(
+            message=SimpleNamespace(content="Checking memory", tool_calls=[memory_tool])
+        )
+        fake_client = SimpleNamespace(chat=AsyncMock(return_value=detection))
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module,
+                "retrieve_relevant_tools",
+                return_value=[{"function": {"name": "memread"}}],
+            ),
+            patch.object(
+                handlers_module,
+                "is_current_request_cancelled",
+                side_effect=[False] * 10,
+            ),
+            patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
+            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
+            patch.object(
+                handlers_module,
+                "_stream_tool_follow_up",
+                new=AsyncMock(
+                    return_value=("", [], {"prompt_eval_count": 0, "eval_count": 0})
+                ),
+            ),
+            patch.object(
+                handlers_module.mcp_manager,
+                "get_tool_server_name",
+                return_value="memory",
+            ),
+            patch.object(handlers_module, "is_terminal_tool", return_value=False),
+            patch.object(handlers_module, "is_video_watcher_tool", return_value=False),
+            patch.object(handlers_module, "is_memory_tool", return_value=True),
+            patch.object(
+                handlers_module,
+                "execute_memory_tool",
+                new=AsyncMock(side_effect=OSError("disk failure")),
+            ),
+            patch.object(handlers_module, "broadcast_message", new=AsyncMock()),
+        ):
+            _, calls, _ = await handlers_module.handle_mcp_tool_calls(
+                [{"role": "user", "content": "use memory"}],
+                image_paths=[],
+                client=fake_client,
+            )
+
+        assert calls[0]["name"] == "memread"
+        assert calls[0]["result"] == (
+            "System error: tool execution failed. See server logs for details."
+        )

@@ -169,6 +169,29 @@ export interface Skill {
   folder_path: string;
 }
 
+export interface MemorySummary {
+  path: string;
+  folder: string;
+  title: string;
+  category: string;
+  importance: number;
+  tags: string[];
+  abstract: string;
+  created: string;
+  updated: string;
+  last_accessed: string;
+  parse_warning?: string;
+}
+
+export interface MemoryDetail extends MemorySummary {
+  body: string;
+  raw_text: string;
+}
+
+export interface MemorySettings {
+  profile_auto_inject: boolean;
+}
+
 // ============================================
 // Terminal Types
 // ============================================

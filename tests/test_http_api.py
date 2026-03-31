@@ -708,6 +708,192 @@ class TestHttpApiEndpoints:
         assert result == {"status": "updated"}
 
     @pytest.mark.asyncio
+    async def test_get_memory_settings_defaults_to_enabled(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = None
+
+        with patch("source.database.db", db_mock):
+            result = await http_api.get_memory_settings()
+
+        assert result == {"profile_auto_inject": True}
+
+    @pytest.mark.asyncio
+    async def test_set_memory_settings_persists_boolean_flag(self):
+        db_mock = MagicMock()
+
+        with patch("source.database.db", db_mock):
+            result = await http_api.set_memory_settings(
+                http_api.MemorySettingsUpdate(profile_auto_inject=False)
+            )
+
+        db_mock.set_setting.assert_called_once_with(
+            "memory_profile_auto_inject", "false"
+        )
+        assert result == {
+            "status": "updated",
+            "settings": {"profile_auto_inject": False},
+        }
+
+    @pytest.mark.asyncio
+    async def test_list_memories_returns_payload_from_service(self):
+        memory_service = MagicMock()
+        memory_service.list_memories.return_value = [{"path": "semantic/prefs.md"}]
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.list_memories(folder="semantic")
+
+        memory_service.list_memories.assert_called_once_with("semantic")
+        assert result == {"memories": [{"path": "semantic/prefs.md"}]}
+
+    @pytest.mark.asyncio
+    async def test_list_memories_maps_filesystem_errors_to_500(self):
+        memory_service = MagicMock()
+        memory_service.list_memories.side_effect = OSError("disk failure")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.list_memories(folder="semantic")
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail == "Memory listing failed. See server logs for details."
+
+    @pytest.mark.asyncio
+    async def test_get_memory_file_maps_missing_files_to_404(self):
+        memory_service = MagicMock()
+        memory_service.read_memory.side_effect = FileNotFoundError
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_memory_file("semantic/prefs.md")
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_memory_file_maps_decode_errors_to_500(self):
+        memory_service = MagicMock()
+        memory_service.read_memory.side_effect = UnicodeDecodeError(
+            "utf-8", b"\xff", 0, 1, "invalid start byte"
+        )
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_memory_file("semantic/prefs.md")
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail == "Memory read failed. See server logs for details."
+
+    @pytest.mark.asyncio
+    async def test_update_memory_file_delegates_to_service(self):
+        memory_service = MagicMock()
+        memory_service.upsert_memory.return_value = {"path": "semantic/prefs.md"}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        body = http_api.MemoryFileUpdate(
+            path="semantic/prefs.md",
+            title="Prefs",
+            category="semantic",
+            importance=0.7,
+            tags=["prefs"],
+            abstract="Stores a preference.",
+            body="Be concise.",
+        )
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.update_memory_file(body)
+
+        memory_service.upsert_memory.assert_called_once_with(
+            path="semantic/prefs.md",
+            title="Prefs",
+            category="semantic",
+            importance=0.7,
+            tags=["prefs"],
+            abstract="Stores a preference.",
+            body="Be concise.",
+        )
+        assert result == {"path": "semantic/prefs.md"}
+
+    @pytest.mark.asyncio
+    async def test_delete_memory_file_returns_not_found_when_missing(self):
+        memory_service = MagicMock()
+        memory_service.delete_memory.return_value = False
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.delete_memory_file("semantic/prefs.md")
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_clear_all_memories_returns_deleted_count(self):
+        memory_service = MagicMock()
+        memory_service.clear_all_memories.return_value = 3
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.clear_all_memories()
+
+        memory_service.clear_all_memories.assert_called_once_with()
+        assert result == {"success": True, "deleted_count": 3}
+
+    @pytest.mark.asyncio
+    async def test_clear_all_memories_maps_filesystem_errors_to_500(self):
+        memory_service = MagicMock()
+        memory_service.clear_all_memories.side_effect = OSError("permission denied")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.clear_all_memories()
+
+        assert exc.value.status_code == 500
+        assert exc.value.detail == "Memory clear failed. See server logs for details."
+
+    @pytest.mark.asyncio
     async def test_get_system_prompt_returns_default_when_not_custom(self):
         db_mock = MagicMock()
         db_mock.get_system_prompt_template.return_value = None

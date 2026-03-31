@@ -265,6 +265,19 @@ const TOOL_DISPLAY_CONFIG: Record<string, ToolDisplayConfig> = {
     },
   },
 
+  memory: {
+    badge: 'MEMORY',
+    summaryNoun: 'memory action',
+    tools: {
+      memlist: (args) => {
+        const folder = getStringArg(args, 'folder');
+        return folder ? `Browsing memory in '${folder}'` : 'Browsing memory';
+      },
+      memread: (args) => `Reading memory ${quote(getStringArg(args, 'path'), 'file')}`,
+      memcommit: (args) => `Saving memory ${quote(getStringArg(args, 'path'), 'file')}`,
+    },
+  },
+
   // Windows MCP tools
   windows_mcp: {
     badge: 'WINDOWS',
@@ -327,6 +340,9 @@ export function getServerSummaryFragment(server: string, count: number): string 
     }
     if (server === 'skills' && count === 1) {
       return 'checked skills';
+    }
+    if (server === 'memory' && count === 1) {
+      return 'checked memory';
     }
 
     return `${verb} ${pluralize(count, noun)}`;

@@ -186,6 +186,8 @@ class TestStartServer:
 
             async def serve(self):
                 served.append(self.config.port)
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
 
         monkeypatch.setattr(main_module.uvicorn, "Config", _FakeConfig)
         monkeypatch.setattr(main_module.uvicorn, "Server", _FakeServer)

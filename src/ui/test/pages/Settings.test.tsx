@@ -31,6 +31,10 @@ vi.mock('../../components/settings/SettingsSkills', () => ({
   default: () => <div data-testid="settings-skills">skills</div>,
 }));
 
+vi.mock('../../components/settings/SettingsMemory', () => ({
+  default: () => <div data-testid="settings-memory">memory</div>,
+}));
+
 vi.mock('../../components/settings/MeetingRecorderSettings', () => ({
   default: () => <div data-testid="settings-meeting">meeting</div>,
 }));
@@ -67,6 +71,9 @@ describe('Settings page', () => {
 
     fireEvent.click(screen.getByText('Skills'));
     expect(screen.getByTestId('settings-skills')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Memory'));
+    expect(screen.getByTestId('settings-memory')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Meeting'));
     expect(screen.getByTestId('settings-meeting')).toBeInTheDocument();
