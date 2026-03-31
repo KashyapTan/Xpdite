@@ -28,6 +28,14 @@ _SENSITIVE_TOOL_ARG_KEYS = (
     "key",
 )
 
+# Tools where empty-object args are a safe recovery fallback when the model
+# emits malformed argument JSON. These tools either take no required arguments
+# or can operate meaningfully with defaults.
+_EMPTY_ARGS_FALLBACK_TOOLS = {
+    "list_skills",
+    "memlist",
+}
+
 
 def normalize_tool_args(raw_args: Any) -> Tuple[Dict[str, Any], Optional[str]]:
     """
@@ -58,6 +66,44 @@ def normalize_tool_args(raw_args: Any) -> Tuple[Dict[str, Any], Optional[str]]:
         return {}, f"tool arguments must be a JSON object, got {type(parsed).__name__}"
 
     return {}, f"unsupported argument type: {type(raw_args).__name__}"
+
+
+def merge_streamed_tool_call_arguments(existing: str, incoming: str) -> str:
+    """Merge streamed tool-argument chunks across provider styles.
+
+    Providers do not all stream function arguments the same way:
+    - incremental deltas (append behavior)
+    - cumulative snapshots (replace behavior)
+    - occasional duplicate snapshots
+
+    This helper reconstructs a stable argument string that works for both.
+    """
+    if not incoming:
+        return existing
+
+    if not existing:
+        return incoming
+
+    if incoming == existing:
+        return existing
+
+    # Cumulative snapshot (new chunk already contains prior text).
+    if len(incoming) > len(existing) and incoming.startswith(existing):
+        return incoming
+
+    # Duplicate or shorter reset snapshot.
+    if (
+        len(incoming) < len(existing) and existing.startswith(incoming)
+    ) or existing.endswith(incoming):
+        return existing
+
+    # Incremental delta chunk.
+    return existing + incoming
+
+
+def should_fallback_to_empty_args(fn_name: str) -> bool:
+    """Whether malformed args for this tool can safely fall back to ``{}``."""
+    return fn_name in _EMPTY_ARGS_FALLBACK_TOOLS
 
 
 def _sanitize_sensitive_tool_args(value: Any) -> Any:
@@ -101,4 +147,3 @@ def sanitize_tool_args(fn_name: str, server_name: str, value: Any) -> Any:
         return sanitized
 
     return _sanitize_sensitive_tool_args(value)
-

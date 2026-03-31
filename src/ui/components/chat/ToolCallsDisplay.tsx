@@ -15,7 +15,7 @@ import '../../CSS/InlineTerminal.css';
 
 function HourglassIcon() {
   return (
-    <svg className="chain-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg className="chain-icon chain-icon-hourglass" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M5 22h14" />
       <path d="M5 2h14" />
       <path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" />
@@ -106,7 +106,7 @@ function ChainThinkingItem({ text }: { text: string }) {
   return (
     <div className="chain-item-body">
       <div className="chain-tool-header clickable" onClick={() => setCollapsed(!collapsed)}>
-        <span className="chain-thought-label">Thought process</span>
+        <span className="chain-thought-label">Thinking...</span>
         <ChevronIcon expanded={!collapsed} small />
       </div>
       {!collapsed && (
@@ -202,23 +202,34 @@ function ToolChainTimeline({
   onTerminalResize,
   onYouTubeApprovalResponse,
 }: ToolChainTimelineProps) {
-  // Find last "chain" block: tool_call, thinking, or terminal_command.
-  // Everything up to it stays in the chain; trailing text blocks are the response.
+  // Helper to check if a block is a "chain" block (thinking/tool_call/terminal/youtube_approval)
+  const isChainBlock = (b: ContentBlock) =>
+    b.type === 'tool_call'
+    || b.type === 'thinking'
+    || b.type === 'terminal_command'
+    || b.type === 'youtube_transcription_approval';
+
+  // Find first and last "chain" block indices.
+  // Text BEFORE the first chain block = pre-chain response (render normally above timeline)
+  // Text BETWEEN chain blocks = intermediate commentary (render in timeline)
+  // Text AFTER the last chain block = final response (render normally below timeline)
+  let firstChainIndex = -1;
   let lastChainIndex = -1;
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const b = blocks[i];
-    if (
-      b.type === 'tool_call'
-      || b.type === 'thinking'
-      || b.type === 'terminal_command'
-      || b.type === 'youtube_transcription_approval'
-    ) {
+  for (let i = 0; i < blocks.length; i++) {
+    if (isChainBlock(blocks[i])) {
+      if (firstChainIndex === -1) {
+        firstChainIndex = i;
+      }
       lastChainIndex = i;
-      break;
     }
   }
 
-  const chainBlocks = lastChainIndex >= 0 ? blocks.slice(0, lastChainIndex + 1) : [];
+  // Split blocks into three parts:
+  // preChainBlocks: text before the first chain block (regular response text)
+  // chainBlocks: everything from first to last chain block (timeline content)
+  // responseBlocks: text after the last chain block (regular response text)
+  const preChainBlocks = firstChainIndex > 0 ? blocks.slice(0, firstChainIndex) : [];
+  const chainBlocks = firstChainIndex >= 0 ? blocks.slice(firstChainIndex, lastChainIndex + 1) : [];
   const responseBlocks = lastChainIndex >= 0 ? blocks.slice(lastChainIndex + 1) : blocks;
 
   const toolCalls = chainBlocks
@@ -258,10 +269,16 @@ function ToolChainTimeline({
   const expanded = controlledExpanded ?? internalExpanded;
   const handleToggleExpanded = onToggleExpanded ?? (() => setInternalExpanded((prev) => !prev));
 
-  // Build the flat list of timeline items
+  // Extract text blocks from chainBlocks - these are actual model output, not thinking
+  // They should be rendered as normal response text, not in the timeline
+  const intermediateTextBlocks = chainBlocks.filter(
+    (b): b is { type: 'text'; content: string } => b.type === 'text' && !!b.content.trim(),
+  );
+
+  // Build the flat list of timeline items (only thinking, tools, terminals, youtube_approval)
+  // Text blocks are NOT included here - they are actual model output, not internal reasoning
   const timelineItems: Array<
     | { kind: 'thinking_tokens'; text: string }
-    | { kind: 'thinking'; content: string }
     | { kind: 'tool'; toolCall: ToolCall }
     | { kind: 'terminal'; terminal: ContentBlock & { type: 'terminal_command' } }
     | {
@@ -275,9 +292,6 @@ function ToolChainTimeline({
     if (block.type === 'thinking' && block.content.trim()) {
       // Model's internal reasoning tokens — collapsible with markdown rendering
       timelineItems.push({ kind: 'thinking_tokens', text: block.content });
-    } else if (block.type === 'text' && block.content.trim()) {
-      // Model's visible preamble text between tool calls
-      timelineItems.push({ kind: 'thinking', content: block.content });
     } else if (block.type === 'tool_call') {
       timelineItems.push({ kind: 'tool', toolCall: block.toolCall });
     } else if (block.type === 'terminal_command') {
@@ -288,6 +302,7 @@ function ToolChainTimeline({
         approval: block as ContentBlock & { type: 'youtube_transcription_approval' },
       });
     }
+    // NOTE: text blocks are deliberately NOT added to timeline - they render separately
   }
   if (allDone) {
     timelineItems.push({ kind: 'done' });
@@ -319,6 +334,20 @@ function ToolChainTimeline({
 
   return (
     <>
+      {/* Pre-chain text (response text that appeared BEFORE any tool calls/thinking) */}
+      {preChainBlocks.map((block, idx) => {
+        if (block.type === 'text' && block.content.trim()) {
+          return (
+            <StreamingTextBlock
+              key={`pre-${idx}`}
+              content={block.content}
+              isStreaming={false}
+            />
+          );
+        }
+        return null;
+      })}
+
       {/* Chain section */}
       {chainBlocks.length > 0 && (
         <div className="tool-chain">
@@ -345,22 +374,6 @@ function ToolChainTimeline({
                         {!isLast && <div className="chain-item-line" />}
                       </div>
                       <ChainThinkingItem text={item.text} />
-                    </div>
-                  );
-                }
-
-                if (item.kind === 'thinking') {
-                  return (
-                    <div key={idx} className="chain-item">
-                      <div className="chain-item-marker">
-                        <div className="chain-item-dot">
-                          <HourglassIcon />
-                        </div>
-                        {!isLast && <div className="chain-item-line" />}
-                      </div>
-                      <div className="chain-item-body chain-thinking-text">
-                        {item.content}
-                      </div>
                     </div>
                   );
                 }
@@ -437,6 +450,15 @@ function ToolChainTimeline({
         </div>
       )}
 
+      {/* Intermediate text (text that appeared BETWEEN tool calls/thinking - still model output, not thinking) */}
+      {intermediateTextBlocks.map((block, idx) => (
+        <StreamingTextBlock
+          key={`mid-${idx}`}
+          content={block.content}
+          isStreaming={false}
+        />
+      ))}
+
       {/* Response text (after all tool calls) */}
       {responseBlocks.map((block, idx) => {
         if (block.type === 'text' && block.content.trim()) {
@@ -506,7 +528,8 @@ export function InlineContentBlocks({
   onTerminalResize,
   onYouTubeApprovalResponse,
 }: InlineContentBlocksProps) {
-  const hasTimelineBlocks = blocks.some(
+  // Check if we have any "chain" blocks that need special rendering
+  const hasChainBlocks = blocks.some(
     (block) =>
       block.type === 'thinking'
       || block.type === 'tool_call'
@@ -514,9 +537,10 @@ export function InlineContentBlocks({
       || block.type === 'youtube_transcription_approval',
   );
 
-  if (hasTimelineBlocks) {
+  // If we have chain blocks, use the interleaved timeline renderer
+  if (hasChainBlocks) {
     return (
-      <ToolChainTimeline
+      <InterleavedContentBlocks
         blocks={blocks}
         isThinking={isThinking}
         isStreaming={isStreaming}
@@ -532,12 +556,11 @@ export function InlineContentBlocks({
     );
   }
 
-  // No tool calls — render text and terminals normally
+  // No chain blocks — render text and terminals normally
   return (
     <>
       {blocks.map((block, idx) => {
         if (block.type === 'text' && block.content.trim()) {
-          // Use streaming animation for live streaming text
           return (
             <StreamingTextBlock
               key={idx}
@@ -571,6 +594,310 @@ export function InlineContentBlocks({
         return null;
       })}
     </>
+  );
+}
+
+// ─── Interleaved Content Blocks (renders blocks in true sequence) ─────────────
+
+// Helper to check if a block is a "chain" block (thinking/tool_call/terminal/youtube_approval)
+function isChainBlock(block: ContentBlock): boolean {
+  return (
+    block.type === 'thinking'
+    || block.type === 'tool_call'
+    || block.type === 'terminal_command'
+    || block.type === 'youtube_transcription_approval'
+  );
+}
+
+// Group consecutive chain blocks together, with text blocks as separators
+type BlockGroup =
+  | { kind: 'text'; block: ContentBlock & { type: 'text' } }
+  | { kind: 'chain'; blocks: ContentBlock[] };
+
+function groupConsecutiveBlocks(blocks: ContentBlock[]): BlockGroup[] {
+  const groups: BlockGroup[] = [];
+  let currentChainGroup: ContentBlock[] = [];
+
+  for (const block of blocks) {
+    if (isChainBlock(block)) {
+      // Add to current chain group
+      currentChainGroup.push(block);
+    } else if (block.type === 'text' && block.content.trim()) {
+      // Text block - flush current chain group first
+      if (currentChainGroup.length > 0) {
+        groups.push({ kind: 'chain', blocks: currentChainGroup });
+        currentChainGroup = [];
+      }
+      groups.push({ kind: 'text', block: block as ContentBlock & { type: 'text' } });
+    }
+    // Skip empty text blocks
+  }
+
+  // Flush remaining chain group
+  if (currentChainGroup.length > 0) {
+    groups.push({ kind: 'chain', blocks: currentChainGroup });
+  }
+
+  return groups;
+}
+
+function InterleavedContentBlocks({
+  blocks,
+  isThinking,
+  isStreaming = false,
+  onTerminalApprove,
+  onTerminalDeny,
+  onTerminalApproveRemember,
+  onTerminalKill,
+  onTerminalResize,
+  onYouTubeApprovalResponse,
+}: InlineContentBlocksProps) {
+  // Group consecutive chain blocks together
+  const groups = groupConsecutiveBlocks(blocks);
+
+  return (
+    <>
+      {groups.map((group, groupIdx) => {
+        if (group.kind === 'text') {
+          return (
+            <StreamingTextBlock
+              key={`text-${groupIdx}`}
+              content={group.block.content}
+              isStreaming={isStreaming}
+            />
+          );
+        }
+
+        // Chain group - render as collapsible section
+        return (
+          <CollapsibleChainGroup
+            key={`chain-${groupIdx}`}
+            blocks={group.blocks}
+            isThinking={isThinking}
+            isStreaming={isStreaming}
+            onTerminalApprove={onTerminalApprove}
+            onTerminalDeny={onTerminalDeny}
+            onTerminalApproveRemember={onTerminalApproveRemember}
+            onTerminalKill={onTerminalKill}
+            onTerminalResize={onTerminalResize}
+            onYouTubeApprovalResponse={onYouTubeApprovalResponse}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+// ─── Collapsible Chain Group (groups consecutive thinking/tools under one header) ─
+
+interface CollapsibleChainGroupProps {
+  blocks: ContentBlock[];
+  isThinking?: boolean;
+  isStreaming?: boolean;
+  onTerminalApprove?: (requestId: string) => void;
+  onTerminalDeny?: (requestId: string) => void;
+  onTerminalApproveRemember?: (requestId: string) => void;
+  onTerminalKill?: (requestId: string) => void;
+  onTerminalResize?: (cols: number, rows: number) => void;
+  onYouTubeApprovalResponse?: (requestId: string, approved: boolean) => void;
+}
+
+function CollapsibleChainGroup({
+  blocks,
+  isThinking,
+  // isStreaming is accepted but not used currently - kept for API consistency
+  onTerminalApprove,
+  onTerminalDeny,
+  onTerminalApproveRemember,
+  onTerminalKill,
+  onTerminalResize,
+  onYouTubeApprovalResponse,
+}: CollapsibleChainGroupProps) {
+  const toolCalls = blocks
+    .filter((b): b is { type: 'tool_call'; toolCall: ToolCall } => b.type === 'tool_call')
+    .map((b) => b.toolCall);
+  const terminalBlocks = blocks.filter(
+    (b): b is ContentBlock & { type: 'terminal_command' } => b.type === 'terminal_command',
+  );
+  const youtubeApprovalBlocks = blocks.filter(
+    (b): b is ContentBlock & { type: 'youtube_transcription_approval' } =>
+      b.type === 'youtube_transcription_approval',
+  );
+  const hasThinkingBlocks = blocks.some((b) => b.type === 'thinking');
+
+  const isAnyRunning = toolCalls.some((tc) => tc.status === 'calling' || tc.status === 'progress');
+  const isTerminalRunning = terminalBlocks.some(
+    (block) => block.terminal.status === 'pending_approval' || block.terminal.status === 'running',
+  );
+  const isYouTubeApprovalPending = youtubeApprovalBlocks.some(
+    (block) => block.approval.status === 'pending',
+  );
+  const isChainActive = isThinking || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
+  const allToolsDone = toolCalls.length > 0 && !isAnyRunning;
+  const isThinkingOnlyChain = hasThinkingBlocks
+    && toolCalls.length === 0
+    && terminalBlocks.length === 0
+    && youtubeApprovalBlocks.length === 0;
+
+  const [expanded, setExpanded] = useState(isChainActive || isThinkingOnlyChain);
+
+  // Auto-expand while active
+  useEffect(() => {
+    if (isChainActive || isThinkingOnlyChain) {
+      setExpanded(true);
+    }
+  }, [isChainActive, isThinkingOnlyChain]);
+
+  // Generate summary text
+  const summary = (() => {
+    if (toolCalls.length > 0) {
+      return getChainSummary(toolCalls);
+    }
+
+    if (terminalBlocks.length > 0) {
+      const noun = terminalBlocks.length === 1 ? 'terminal command' : 'terminal commands';
+      return isChainActive
+        ? `Running ${noun}`
+        : `Ran ${terminalBlocks.length === 1 ? 'a' : terminalBlocks.length} ${noun}`;
+    }
+
+    if (youtubeApprovalBlocks.length > 0) {
+      return isYouTubeApprovalPending
+        ? 'Waiting for YouTube transcription approval'
+        : 'Handled YouTube transcription approval';
+    }
+
+    if (hasThinkingBlocks) {
+      return isThinking ? 'Thinking...' : 'Thought process';
+    }
+
+    return 'Processing...';
+  })();
+
+  const headerIcon = isChainActive
+    ? <SpinnerIcon />
+    : (isThinkingOnlyChain ? <HourglassIcon /> : <CheckIcon />);
+
+  return (
+    <div className="tool-chain">
+      <div className="tool-chain-header" onClick={() => setExpanded((prev) => !prev)}>
+        <div className="tool-chain-header-icon">{headerIcon}</div>
+        <span className="tool-chain-summary" title={summary}>{summary}</span>
+        <ChevronIcon expanded={expanded} />
+      </div>
+
+      {expanded && (
+        <div className="tool-chain-timeline">
+          {blocks.map((block, idx) => {
+            const isLast = idx === blocks.length - 1 && allToolsDone;
+
+            // Thinking block
+            if (block.type === 'thinking' && block.content.trim()) {
+              // For thinking-only chains, render content directly without marker/dot
+              // since the outer header already has the hourglass icon
+              if (isThinkingOnlyChain) {
+                return (
+                  <div key={idx} className="chain-item chain-item-thinking-only">
+                    <div className="chain-item-body">
+                      <div className="chain-thought-content">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
+                        >
+                          {block.content}
+                        </ReactMarkdown>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+
+              // Mixed chain (thinking + tools) - use collapsible wrapper with marker
+              return (
+                <div key={idx} className="chain-item">
+                  <div className="chain-item-marker">
+                    <div className="chain-item-dot">
+                      {isThinking && idx === blocks.length - 1 ? <SpinnerIcon /> : <HourglassIcon />}
+                    </div>
+                    {!isLast && <div className="chain-item-line" />}
+                  </div>
+                  <ChainThinkingItem text={block.content} />
+                </div>
+              );
+            }
+
+            // Tool call block
+            if (block.type === 'tool_call') {
+              return (
+                <ToolCallChainItem
+                  key={idx}
+                  toolCall={block.toolCall}
+                  isLast={isLast}
+                />
+              );
+            }
+
+            // Terminal block
+            if (block.type === 'terminal_command') {
+              return (
+                <div key={idx} className="chain-item chain-item-terminal">
+                  <div className="chain-item-marker">
+                    <div className="chain-item-dot">
+                      <WrenchIcon />
+                    </div>
+                    {!isLast && <div className="chain-item-line" />}
+                  </div>
+                  <div className="chain-item-body">
+                    <InlineTerminalBlock
+                      terminal={block.terminal}
+                      onApprove={onTerminalApprove}
+                      onDeny={onTerminalDeny}
+                      onApproveRemember={onTerminalApproveRemember}
+                      onKill={onTerminalKill}
+                      onTerminalResize={onTerminalResize}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            // YouTube approval block
+            if (block.type === 'youtube_transcription_approval') {
+              return (
+                <div key={idx} className="chain-item chain-item-terminal">
+                  <div className="chain-item-marker">
+                    <div className="chain-item-dot">
+                      <WrenchIcon />
+                    </div>
+                    {!isLast && <div className="chain-item-line" />}
+                  </div>
+                  <div className="chain-item-body">
+                    <InlineYouTubeApprovalBlock
+                      approval={block.approval}
+                      onRespond={onYouTubeApprovalResponse}
+                    />
+                  </div>
+                </div>
+              );
+            }
+
+            return null;
+          })}
+
+          {/* Done indicator */}
+          {allToolsDone && (
+            <div className="chain-item">
+              <div className="chain-item-marker">
+                <div className="chain-item-dot">
+                  <CheckIcon />
+                </div>
+              </div>
+              <div className="chain-item-body chain-done-text">Done</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

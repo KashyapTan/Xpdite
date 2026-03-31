@@ -8,10 +8,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__all__ = ["McpToolManager", "mcp_manager", "init_mcp_servers", "handle_mcp_tool_calls"]
+__all__ = ["McpToolManager", "mcp_manager", "init_mcp_servers"]
 
 if TYPE_CHECKING:
-    from .handlers import handle_mcp_tool_calls
     from .manager import McpToolManager, init_mcp_servers, mcp_manager
 
 
@@ -25,8 +24,4 @@ def __getattr__(name: str) -> Any:
             "init_mcp_servers": init_mcp_servers,
         }
         return mapping[name]
-    if name == "handle_mcp_tool_calls":
-        from .handlers import handle_mcp_tool_calls
-
-        return handle_mcp_tool_calls
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

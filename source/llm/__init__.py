@@ -8,20 +8,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-__all__ = ["stream_ollama_chat", "stream_cloud_chat", "route_chat", "key_manager"]
+__all__ = ["stream_cloud_chat", "route_chat", "key_manager"]
 
 if TYPE_CHECKING:
     from .cloud_provider import stream_cloud_chat
     from .key_manager import key_manager
-    from .ollama_provider import stream_ollama_chat
     from .router import route_chat
 
 
 def __getattr__(name: str) -> Any:
-    if name == "stream_ollama_chat":
-        from .ollama_provider import stream_ollama_chat
-
-        return stream_ollama_chat
     if name == "stream_cloud_chat":
         from .cloud_provider import stream_cloud_chat
 

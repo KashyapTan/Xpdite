@@ -22,6 +22,11 @@ from pydantic import BaseModel
 from typing import Any, Awaitable, Callable, List, Optional
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
+from ..llm.provider_resolution import (
+    normalize_ollama_model_name,
+    parse_provider,
+    resolve_model_target,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +35,7 @@ router = APIRouter(prefix="/api")
 
 MODEL_CACHE_TTL_SECONDS = 10 * 60
 _MODEL_CACHE: dict[str, tuple[float, Any]] = {}
+OLLAMA_LOCAL_LIST_API_BASE = "http://127.0.0.1:11434"
 
 
 def _invalidate_model_cache(provider: str) -> None:
@@ -110,6 +116,66 @@ class OllamaModel(BaseModel):
     size: int  # in bytes
     parameter_size: str
     quantization: str
+    source: str = "installed"
+    is_local: bool = True
+
+
+def _build_custom_ollama_model_entry(model_name: str) -> dict[str, Any]:
+    """Create a minimal selectable Ollama model row for enabled custom IDs."""
+    target = resolve_model_target(model_name)
+    return {
+        "name": target.model,
+        "size": 0,
+        "parameter_size": "",
+        "quantization": "",
+        "source": "custom",
+        "is_local": target.is_local_runtime,
+    }
+
+
+def _get_enabled_ollama_model_names() -> list[str]:
+    """Return normalized Ollama model names currently enabled in settings."""
+    names: list[str] = []
+    seen: set[str] = set()
+    for model_name in _normalize_enabled_model_ids():
+        provider, parsed_model = parse_provider(model_name)
+        if provider != "ollama":
+            continue
+        normalized = normalize_ollama_model_name(parsed_model)
+        if not normalized:
+            continue
+        lowered = normalized.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        names.append(normalized)
+    return names
+
+
+def _normalize_enabled_model_ids(models: Optional[list[str]] = None) -> list[str]:
+    """Normalize enabled model IDs without changing provider semantics."""
+    from ..database import db
+
+    source_models = db.get_enabled_models() if models is None else models
+    normalized_models: list[str] = []
+    seen: set[str] = set()
+
+    for model_name in source_models:
+        provider, parsed_model = parse_provider(model_name)
+        normalized = (
+            normalize_ollama_model_name(parsed_model)
+            if provider == "ollama"
+            else (model_name or "").strip()
+        )
+        if not normalized:
+            continue
+        dedupe_key = normalized.lower() if provider == "ollama" else normalized
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        normalized_models.append(normalized)
+
+    return normalized_models
 
 
 @router.get("/models/ollama")
@@ -117,14 +183,16 @@ async def get_ollama_models(refresh: bool = False) -> Any:
     """
     Get all Ollama models installed on the user's machine.
 
-    Calls `ollama.list()` which talks to the local Ollama daemon
+    Calls `ollama.list()` against the app-managed local Ollama daemon
     and returns every model that has been pulled.
     """
 
     async def _fetch() -> Any:
+        enabled_ollama_names = _get_enabled_ollama_model_names()
         try:
-            # Use async client — no thread needed
-            async_client = OllamaAsyncClient()
+            # Listing installed models must always reflect the local daemon
+            # launched by scripts/start-ollama.mjs, not any remote Ollama base.
+            async_client = OllamaAsyncClient(host=OLLAMA_LOCAL_LIST_API_BASE)
             response = await async_client.list()
             models = []
             # The Ollama SDK returns objects with attributes, not dicts.
@@ -141,12 +209,26 @@ async def get_ollama_models(refresh: bool = False) -> Any:
                         "quantization": getattr(details, "quantization_level", "")
                         if details
                         else "",
+                        "source": "installed",
+                        "is_local": True,
                     }
                 )
+            seen = {str(model["name"]).strip().lower() for model in models}
+            for enabled_name in enabled_ollama_names:
+                if enabled_name.lower() in seen:
+                    continue
+                models.append(_build_custom_ollama_model_entry(enabled_name))
             return models
         except Exception as e:
             logger.error("Error fetching Ollama models: %s", e)
-            return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
+            custom_models = [
+                _build_custom_ollama_model_entry(model_name)
+                for model_name in enabled_ollama_names
+            ]
+            return {
+                "models": custom_models,
+                "error": f"Ollama not reachable: {str(e)[:100]}",
+            }
 
     return await _get_cached_or_fetch_models("ollama", refresh, _fetch)
 
@@ -169,9 +251,7 @@ async def get_enabled_models() -> List[str]:
 
     These are stored in the SQLite database so they persist across restarts.
     """
-    from ..database import db
-
-    return db.get_enabled_models()
+    return _normalize_enabled_model_ids()
 
 
 @router.put("/models/enabled")
@@ -183,8 +263,10 @@ async def set_enabled_models(body: EnabledModelsUpdate):
     """
     from ..database import db
 
-    db.set_enabled_models(body.models)
-    return {"status": "updated", "models": body.models}
+    normalized_models = _normalize_enabled_model_ids(body.models)
+    db.set_enabled_models(normalized_models)
+    _invalidate_model_cache("ollama")
+    return {"status": "updated", "models": normalized_models}
 
 
 # ============================================

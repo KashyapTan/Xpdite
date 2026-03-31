@@ -9,41 +9,12 @@ from unittest.mock import AsyncMock, patch
 from source.services.sub_agent import (
     _resolve_tier_model,
     _is_local_ollama,
-    _uses_ollama_client,
     _get_sub_agent_tools,
     _EXCLUDED_TOOLS,
     _run_cloud_sub_agent,
     execute_sub_agent,
     execute_sub_agents_parallel,
 )
-
-
-# ---------------------------------------------------------------------------
-# _uses_ollama_client  (routing: which provider to call)
-# ---------------------------------------------------------------------------
-
-
-class TestUsesOllamaClient:
-    def test_plain_ollama_model(self):
-        assert _uses_ollama_client("qwen3:8b") is True
-
-    def test_ollama_cloud_model(self):
-        assert _uses_ollama_client("qwen3.5:397b-cloud") is True
-
-    def test_anthropic_model(self):
-        assert _uses_ollama_client("anthropic/claude-sonnet-4-20250514") is False
-
-    def test_openai_model(self):
-        assert _uses_ollama_client("openai/gpt-4o") is False
-
-    def test_gemini_model(self):
-        assert _uses_ollama_client("gemini/gemini-2.5-flash") is False
-
-    def test_openrouter_model(self):
-        assert _uses_ollama_client("openrouter/anthropic/claude-3-5-sonnet") is False
-
-    def test_unknown_provider_uses_ollama(self):
-        assert _uses_ollama_client("custom/some-model") is True
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +334,33 @@ class TestRunCloudSubAgent:
     @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
     @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    async def test_ollama_uses_litellm_target_with_api_base_and_no_api_key(
+        self, mock_acompletion, _mock_model_info, _mock_cancelled, monkeypatch
+    ):
+        monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
+        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+        mock_acompletion.return_value = _make_streaming_chunks(
+            content="ok", prompt_tokens=5, completion_tokens=2
+        )
+
+        result = await _run_cloud_sub_agent(
+            model_name="ollama/qwen3:8b",
+            instruction="Say hi",
+            tools=None,
+        )
+
+        assert result["response"] == "ok"
+        assert result["error"] is None
+
+        call_kwargs = mock_acompletion.call_args.kwargs
+        assert call_kwargs["model"] == "ollama_chat/qwen3:8b"
+        assert call_kwargs["api_base"] == "https://ollama.example.com"
+        assert call_kwargs["num_ctx"] > 0
+        assert "api_key" not in call_kwargs
+
+    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
     @patch("source.llm.key_manager.key_manager.get_api_key", return_value="sk-test")
     async def test_cloud_sub_agent_invalid_tool_args_do_not_crash(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
@@ -415,8 +413,8 @@ class TestExecuteSubAgent:
     @patch("source.services.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.sub_agent._get_sub_agent_tools", return_value=None)
     @patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2")
-    @patch("source.services.sub_agent._run_ollama_sub_agent", new_callable=AsyncMock)
-    async def test_ollama_sub_agent_routes_to_ollama(
+    @patch("source.services.sub_agent._run_cloud_sub_agent", new_callable=AsyncMock)
+    async def test_ollama_sub_agent_uses_unified_litellm_runner(
         self, mock_run, mock_resolve, mock_tools, mock_broadcast
     ):
         mock_run.return_value = {

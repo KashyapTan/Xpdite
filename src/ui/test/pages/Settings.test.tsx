@@ -85,11 +85,13 @@ describe('Settings page', () => {
     expect(screen.getByTestId('settings-prompt')).toBeInTheDocument();
   });
 
-  test('renders placeholder and API key tabs', () => {
+  test('renders Ollama guidance and API key tabs', () => {
     render(<Settings />);
 
     fireEvent.click(screen.getByText('Ollama'));
-    expect(screen.getByText(/Ollama Settings/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ollama' })).toBeInTheDocument();
+    expect(screen.getByText(/same LiteLLM path/i)).toBeInTheDocument();
+    expect(screen.getByText(/OLLAMA_API_BASE=https:\/\/your-endpoint/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Anthropic'));
     expect(screen.getByTestId('settings-key-anthropic')).toBeInTheDocument();

@@ -69,6 +69,15 @@ export interface ProviderModel {
   context_length?: number;
 }
 
+export interface OllamaModel {
+  name: string;
+  size: number;
+  parameter_size: string;
+  quantization: string;
+  source?: 'installed' | 'custom';
+  is_local?: boolean;
+}
+
 interface RawProviderModel {
   id?: unknown;
   name?: unknown;
@@ -287,12 +296,13 @@ export const api = {
   /**
    * Fetch all Ollama models installed on the user's machine.
    * Calls GET /api/models/ollama on the Python backend,
-   * which in turn calls `ollama.list()`.
+   * which in turn lists locally installed models and merges any enabled
+   * custom Ollama IDs so env-driven cloud/remote models stay selectable.
    *
    * Returns { models, error? } — when Ollama is unreachable the backend
    * sends `{ models: [], error: "..." }` so we surface the message.
    */
-  async getOllamaModels(refresh = false): Promise<{ models: { name: string; size: number; parameter_size: string; quantization: string }[]; error?: string }> {
+  async getOllamaModels(refresh = false): Promise<{ models: OllamaModel[]; error?: string }> {
     try {
       const base = await baseUrl();
       const url = new URL(`${base}/api/models/ollama`);

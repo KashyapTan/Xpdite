@@ -9,6 +9,7 @@ import SettingsSystemPrompt from '../components/settings/SettingsSystemPrompt';
 import SettingsSkills from '../components/settings/SettingsSkills';
 import SettingsMemory from '../components/settings/SettingsMemory';
 import MeetingRecorderSettings from '../components/settings/MeetingRecorderSettings';
+import SettingsOllama from '../components/settings/SettingsOllama';
 import SettingsSubAgents from '../components/settings/SettingsSubAgents';
 import SettingsMobileChannels from '../components/settings/SettingsMobileChannels';
 import SettingsScheduledJobs from '../components/settings/SettingsScheduledJobs';
@@ -22,17 +23,6 @@ import geminiIcon from '../assets/gemini.svg';
 import openaiIcon from '../assets/openai.svg';
 import openrouterIcon from '../assets/openrouter.svg';
 import settingsIcon from '../assets/settings-icon.svg';
-
-// ============================================
-// Placeholder components for tabs that aren't
-// implemented yet. Each one is a simple card
-// so users know they're on the right page.
-// ============================================
-const Placeholder: React.FC<{ title: string }> = ({ title }) => (
-  <div style={{ padding: 20, color: 'rgba(255,255,255,0.4)', fontSize: '0.9rem' }}>
-    <strong>{title}</strong> — coming soon.
-  </div>
-);
 
 /**
  * Every tab the Settings page supports.
@@ -63,7 +53,7 @@ const Settings: React.FC = () => {
     { id: 'sub-agents', label: 'Sub-Agents', icon: settingsIcon, className: 'settings-sub-agents-tab', component: <SettingsSubAgents /> },
     { id: 'mobile', label: 'Mobile', icon: settingsIcon, className: 'settings-mobile-tab', component: <SettingsMobileChannels /> },
     { id: 'system-prompt', label: 'Prompt', icon: settingsIcon, className: 'settings-system-prompt-tab', component: <SettingsSystemPrompt /> },
-    { id: 'ollama', label: 'Ollama', icon: ollamaIcon, className: 'settings-ollama-model', component: <Placeholder title="Ollama Settings" /> },
+    { id: 'ollama', label: 'Ollama', icon: ollamaIcon, className: 'settings-ollama-model', component: <SettingsOllama /> },
     { id: 'anthropic', label: 'Anthropic', icon: anthropicIcon, className: 'settings-anthropic-api-key', component: <SettingsApiKey provider="anthropic" /> },
     { id: 'gemini', label: 'Gemini', icon: geminiIcon, className: 'settings-gemini-api-key', component: <SettingsApiKey provider="gemini" /> },
     { id: 'openai', label: 'OpenAI', icon: openaiIcon, className: 'settings-openai-api-key', component: <SettingsApiKey provider="openai" /> },

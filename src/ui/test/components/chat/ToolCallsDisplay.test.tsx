@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
 import { InlineContentBlocks, ToolCallsDisplay } from '../../../components/chat/ToolCallsDisplay';
 import type { ContentBlock, ToolCall } from '../../../types';
@@ -145,26 +145,33 @@ describe('InlineContentBlocks', () => {
 
     const { container } = render(<InlineContentBlocks blocks={blocks} expanded={true} />);
 
-    expect(screen.getByText('Running terminal command')).toBeInTheDocument();
+    // Terminal and youtube blocks are rendered
     expect(container.textContent).toContain('terminal:pwd');
     expect(container.textContent).toContain('youtube:Video Title');
   });
 
-  test('renders thinking token blocks and expandable markdown content', () => {
+  test('renders thinking blocks in a collapsible chain group', () => {
+    // For thinking-only chains, content is rendered directly (no extra nested collapsible)
+    // since the outer header already indicates it's thinking
     const blocks: ContentBlock[] = [{ type: 'thinking', content: 'I should check `tool` output.' }];
-    render(<InlineContentBlocks blocks={blocks} isThinking={false} expanded={true} />);
+    const { container } = render(<InlineContentBlocks blocks={blocks} isThinking={false} />);
 
-    const thoughtHeader = document.querySelector('.chain-thought-label');
-    expect(thoughtHeader).not.toBeNull();
-    expect(screen.queryByText('I should check')).not.toBeInTheDocument();
+    // Chain header should be present with "Thought process" summary
+    const chainHeader = container.querySelector('.tool-chain-header');
+    expect(chainHeader).not.toBeNull();
+    expect(chainHeader).toHaveTextContent('Thought process');
 
-    fireEvent.click(thoughtHeader as HTMLElement);
-    const thoughtContent = document.querySelector('.chain-thought-content');
+    // Thinking content should be visible directly (thinking-only chains auto-expand)
+    const thoughtContent = container.querySelector('.chain-thought-content');
     expect(thoughtContent).not.toBeNull();
     expect(thoughtContent).toHaveTextContent('I should check tool output.');
+
+    // No nested "Thinking..." label for thinking-only chains
+    const thinkingLabel = container.querySelector('.chain-thought-label');
+    expect(thinkingLabel).toBeNull();
   });
 
-  test('renders preamble text inside timeline and trailing text after chain', () => {
+  test('renders blocks in interleaved sequence (text, tools, thinking in order)', () => {
     const blocks: ContentBlock[] = [
       { type: 'text', content: 'Preamble before tool call' },
       {
@@ -180,12 +187,66 @@ describe('InlineContentBlocks', () => {
       { type: 'text', content: 'Final answer after tools' },
     ];
 
-    const { container } = render(<InlineContentBlocks blocks={blocks} expanded={true} />);
+    const { container } = render(<InlineContentBlocks blocks={blocks} />);
 
-    const timeline = container.querySelector('.tool-chain-timeline');
-    expect(timeline).not.toBeNull();
-    expect(within(timeline as HTMLElement).getByText('Preamble before tool call')).toBeInTheDocument();
+    // All text should be visible in the document (rendered in sequence)
+    expect(screen.getByText('Preamble before tool call')).toBeInTheDocument();
     expect(screen.getByText('Final answer after tools')).toBeInTheDocument();
+
+    // Tool call is inside a collapsed chain - expand it first
+    const chainHeader = container.querySelector('.tool-chain-header');
+    expect(chainHeader).not.toBeNull();
+    fireEvent.click(chainHeader as HTMLElement);
+
+    // Now the tool badge should be visible
+    expect(screen.getByText('SKILLS')).toBeInTheDocument();
+  });
+
+  test('renders all blocks in their actual sequence', () => {
+    // Blocks should render in order: tool1, text, tool2, text
+    // With new behavior: text blocks separate chain groups
+    const blocks: ContentBlock[] = [
+      {
+        type: 'tool_call',
+        toolCall: {
+          name: 'search_docs',
+          args: {},
+          result: 'done',
+          server: 'skills',
+          status: 'complete',
+        },
+      },
+      { type: 'text', content: 'Let me call another tool' },
+      {
+        type: 'tool_call',
+        toolCall: {
+          name: 'read_file',
+          args: {},
+          result: 'content',
+          server: 'filesystem',
+          status: 'complete',
+        },
+      },
+      { type: 'text', content: 'Final answer' },
+    ];
+
+    const { container } = render(<InlineContentBlocks blocks={blocks} />);
+
+    // All text content should be visible
+    expect(screen.getByText('Let me call another tool')).toBeInTheDocument();
+    expect(screen.getByText('Final answer')).toBeInTheDocument();
+
+    // We have two chain groups (one before each text block) - expand both
+    const chainHeaders = container.querySelectorAll('.tool-chain-header');
+    expect(chainHeaders.length).toBe(2);
+
+    // Expand first chain group
+    fireEvent.click(chainHeaders[0] as HTMLElement);
+    expect(screen.getByText('SKILLS')).toBeInTheDocument();
+
+    // Expand second chain group
+    fireEvent.click(chainHeaders[1] as HTMLElement);
+    expect(screen.getByText('FILESYSTEM')).toBeInTheDocument();
   });
 
   test('renders sub-agent running branch from partial result and complete branch from result', () => {
@@ -202,8 +263,11 @@ describe('InlineContentBlocks', () => {
       },
     ];
 
-    const runningView = render(<InlineContentBlocks blocks={runningBlocks} expanded={true} />);
-    fireEvent.click(runningView.container.querySelector('.chain-tool-header') as HTMLElement);
+    const runningView = render(<InlineContentBlocks blocks={runningBlocks} />);
+    // Chain is auto-expanded when tool is running - click the tool item header to show result
+    const runningToolHeader = runningView.container.querySelector('.chain-item .chain-tool-header');
+    expect(runningToolHeader).not.toBeNull();
+    fireEvent.click(runningToolHeader as HTMLElement);
     expect(screen.getByText('sub-agent:{"steps":["streaming"]}')).toBeInTheDocument();
     runningView.unmount();
 
@@ -221,8 +285,15 @@ describe('InlineContentBlocks', () => {
       },
     ];
 
-    const completeView = render(<InlineContentBlocks blocks={completeBlocks} expanded={true} />);
-    fireEvent.click(completeView.container.querySelector('.chain-tool-header') as HTMLElement);
+    const completeView = render(<InlineContentBlocks blocks={completeBlocks} />);
+    // Expand the chain first
+    const chainHeader = completeView.container.querySelector('.tool-chain-header');
+    expect(chainHeader).not.toBeNull();
+    fireEvent.click(chainHeader as HTMLElement);
+    // Then expand the tool item
+    const completeToolHeader = completeView.container.querySelector('.chain-item .chain-tool-header');
+    expect(completeToolHeader).not.toBeNull();
+    fireEvent.click(completeToolHeader as HTMLElement);
     expect(screen.getByText('sub-agent:{"steps":["done"]}')).toBeInTheDocument();
     expect(screen.queryByText('sub-agent:{"steps":["stale"]}')).not.toBeInTheDocument();
   });
@@ -241,8 +312,17 @@ describe('InlineContentBlocks', () => {
       },
     ];
 
-    const { container } = render(<InlineContentBlocks blocks={blocks} expanded={true} />);
-    fireEvent.click(container.querySelector('.chain-tool-header') as HTMLElement);
+    const { container } = render(<InlineContentBlocks blocks={blocks} />);
+
+    // Expand the chain first
+    const chainHeader = container.querySelector('.tool-chain-header');
+    expect(chainHeader).not.toBeNull();
+    fireEvent.click(chainHeader as HTMLElement);
+
+    // Then expand the tool item to see result
+    const toolHeader = container.querySelector('.chain-item .chain-tool-header');
+    expect(toolHeader).not.toBeNull();
+    fireEvent.click(toolHeader as HTMLElement);
 
     const pre = container.querySelector('pre.chain-tool-result');
     expect(pre).not.toBeNull();

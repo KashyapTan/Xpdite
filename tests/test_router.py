@@ -3,6 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
+from source.config import OLLAMA_CTX_SIZE
 from source.llm.router import is_local_ollama_model, parse_provider
 import source.mcp_integration.manager as mcp_manager_module
 
@@ -35,6 +36,11 @@ class TestParseProvider:
 
     def test_ollama_fallback_no_prefix(self):
         provider, model = parse_provider("qwen3-vl:8b-instruct")
+        assert provider == "ollama"
+        assert model == "qwen3-vl:8b-instruct"
+
+    def test_explicit_ollama_prefix(self):
+        provider, model = parse_provider("ollama/qwen3-vl:8b-instruct")
         assert provider == "ollama"
         assert model == "qwen3-vl:8b-instruct"
 
@@ -79,6 +85,10 @@ class TestIsLocalOllamaModel:
     def test_whitespace_around_provider_model_is_not_local_ollama(self):
         assert is_local_ollama_model("  openai/gpt-4o  ") is False
 
+    def test_remote_ollama_api_base_is_not_local_runtime(self, monkeypatch):
+        monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
+        assert is_local_ollama_model("llama3.2") is False
+
 
 # ------------------------------------------------------------------
 # route_chat — ensure correct provider dispatch
@@ -105,14 +115,16 @@ _ROUTE_PATCHES = {
 
 class TestRouteChat:
     @pytest.mark.asyncio
-    async def test_route_chat_calls_ollama_for_local_model(self):
-        """Ollama models should be dispatched to stream_ollama_chat."""
+    async def test_route_chat_calls_litellm_path_for_ollama(self, monkeypatch):
+        """Ollama models should flow through the unified LiteLLM chat path."""
+        monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
+        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
         mock_stream = AsyncMock(
             return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
         )
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
 
         with patch.dict("sys.modules", {}):
             ctx = {k: patch(k, v) for k, v in patches.items()}
@@ -123,6 +135,12 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 mock_stream.assert_awaited_once()
+                call = mock_stream.await_args
+                assert call is not None
+                assert call.args[:3] == ("ollama", "llama3:8b", None)
+                assert call.kwargs["api_base"] == "http://localhost:11434"
+                assert call.kwargs["litellm_model_override"] == "ollama_chat/llama3:8b"
+                assert call.kwargs["provider_kwargs"] == {"num_ctx": OLLAMA_CTX_SIZE}
                 assert result[0] == "reply"
             finally:
                 for p in ctx.values():
@@ -140,7 +158,7 @@ class TestRouteChat:
         mock_mcp.has_tools.return_value = True
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
         patches["source.mcp_integration.handlers.retrieve_relevant_tools"] = MagicMock(
             return_value=retrieved_tools
         )
@@ -157,7 +175,7 @@ class TestRouteChat:
                 mock_stream.assert_awaited_once()
                 call = mock_stream.await_args
                 assert call is not None
-                assert call.kwargs.get("prefiltered_tools") == retrieved_tools
+                assert call.kwargs.get("allowed_tool_names") == {"read_file"}
         finally:
             for p in ctx.values():
                 p.stop()
@@ -244,7 +262,7 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.database.db"] = mock_db
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
         patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
         patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
@@ -269,6 +287,7 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
+                assert mock_stream.await_args.kwargs["system_prompt"] == "system with profile"
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",
@@ -293,7 +312,7 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.database.db"] = mock_db
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
         patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
         patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
@@ -318,6 +337,7 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
+                assert mock_stream.await_args.kwargs["system_prompt"] == "system without profile"
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",

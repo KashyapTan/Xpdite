@@ -934,74 +934,49 @@ class MeetingAnalysisService:
     def _call_llm(prompt: str, model: str | None = None) -> str:
         """Provider-agnostic blocking LLM call — run in a thread executor.
 
-        Routes to the correct provider (Ollama, Anthropic, OpenAI, Gemini)
-        based on the model name prefix (e.g. ``anthropic/claude-...``).
+        Routes through the shared LiteLLM provider path using the same
+        model resolution rules as chat and sub-agents.
         Falls back to ``app_state.selected_model`` when *model* is ``None``.
         """
+        import litellm
+
         from ..core.state import app_state
-        from ..llm.router import parse_provider
+        from ..llm.provider_resolution import resolve_model_target
 
         use_model = model or app_state.selected_model
-        provider, bare_model = parse_provider(use_model)
+        target = resolve_model_target(use_model)
         messages = [{"role": "user", "content": prompt}]
 
-        if provider == "ollama":
-            import ollama
-
-            response = ollama.chat(model=bare_model, messages=messages)
-            return (response.message.content or "").strip()
-
-        # Cloud providers — fetch API key
-        from ..llm.key_manager import key_manager
-
-        api_key = key_manager.get_api_key(provider)
-        if not api_key:
-            raise ValueError(f"No API key configured for provider '{provider}'")
-
-        if provider == "anthropic":
-            import anthropic
-
-            client = anthropic.Anthropic(api_key=api_key)
-            resp = client.messages.create(
-                model=bare_model,
-                max_tokens=4096,
-                messages=messages,
+        if target.provider != "ollama" and not target.api_key:
+            raise ValueError(
+                f"No API key configured for provider '{target.provider}'"
             )
-            return resp.content[0].text.strip()
 
-        if provider == "openai":
-            import openai
+        completion_kwargs: dict[str, Any] = {
+            "model": target.litellm_model,
+            "messages": messages,
+            "timeout": 120,
+        }
+        try:
+            model_info = litellm.get_model_info(target.litellm_model)
+        except Exception:
+            model_info = {}
 
-            client = openai.OpenAI(api_key=api_key)
-            resp = client.chat.completions.create(
-                model=bare_model,
-                messages=messages,
-            )
-            return (resp.choices[0].message.content or "").strip()
+        max_tokens = model_info.get("max_output_tokens")
+        if max_tokens is None and target.provider == "anthropic":
+            max_tokens = 16384
+        if isinstance(max_tokens, int) and max_tokens > 0:
+            completion_kwargs["max_tokens"] = max_tokens
 
-        if provider == "gemini":
-            from google import genai
+        if target.api_key is not None:
+            completion_kwargs["api_key"] = target.api_key
+        if target.api_base:
+            completion_kwargs["api_base"] = target.api_base
+        if target.provider_kwargs:
+            completion_kwargs.update(target.provider_kwargs)
 
-            client = genai.Client(api_key=api_key)
-            resp = client.models.generate_content(
-                model=bare_model,
-                contents=prompt,
-            )
-            return (resp.text or "").strip()
-
-        if provider == "openrouter":
-            import litellm
-
-            litellm_model = f"openrouter/{bare_model}"
-            resp = litellm.completion(
-                model=litellm_model,
-                messages=messages,
-                api_key=api_key,
-                timeout=120,
-            )
-            return (resp.choices[0].message.content or "").strip()
-
-        raise ValueError(f"Unsupported provider: {provider}")
+        resp = litellm.completion(**completion_kwargs)
+        return (resp.choices[0].message.content or "").strip()
 
     def _extract_transcript_text(self, recording: dict) -> str:
         """Extract plain text from the best available transcript."""

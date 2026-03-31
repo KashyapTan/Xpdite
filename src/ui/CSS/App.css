@@ -1531,6 +1531,17 @@ textarea,
   padding: 2px 0 10px 0;
 }
 
+/* Thinking-only chains: no marker/dot, just content */
+.chain-item-thinking-only {
+  padding-left: 0;
+}
+
+.chain-item-thinking-only .chain-item-body {
+  padding-top: 0;
+  padding-bottom: 6px;
+  padding-left: 24px;
+}
+
 /* ── Icon styles ──────────────────────────────────────────────── */
 
 .chain-icon {
@@ -1539,7 +1550,8 @@ textarea,
   color: rgba(255, 255, 255, 0.35);
 }
 
-.chain-icon-check {
+.chain-icon-check,
+.chain-icon-hourglass {
   color: white;
 }
 
@@ -1680,6 +1692,96 @@ textarea,
 @keyframes subagent-cursor-blink {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* ── Inline Thinking Block (interleaved thinking in sequence) ─── */
+
+.inline-thinking-block {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.inline-thinking-marker {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.inline-thinking-content {
+  flex: 1;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.82rem;
+  line-height: 1.55;
+  font-family: 'Montserrat', sans-serif;
+}
+
+.inline-thinking-content p {
+  margin: 0 0 0.5em 0;
+}
+
+.inline-thinking-content p:last-child {
+  margin-bottom: 0;
+}
+
+.inline-thinking-content table {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  width: 100%;
+  font-size: 0.75rem;
+}
+
+.inline-thinking-content th,
+.inline-thinking-content td {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.35em 0.5em;
+  text-align: left;
+}
+
+.inline-thinking-content th {
+  font-weight: 600;
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+/* ── Inline Tool Call Block (interleaved tool calls in sequence) ─ */
+
+.inline-tool-block {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.inline-tool-marker {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  width: 16px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+
+.inline-tool-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.inline-tool-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 0.84rem;
+}
+
+.inline-tool-header.clickable {
+  cursor: pointer;
+}
+
+.inline-tool-header.clickable:hover {
+  color: rgba(255, 255, 255, 0.75);
 }
 
 /* ── Sub-Agent Transcript (structured nested view) ────────────── */

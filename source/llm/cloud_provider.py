@@ -7,14 +7,14 @@ Google Gemini, and OpenRouter. All providers share a single streaming implementa
 the tool is executed and the results are fed back — the user sees the
 entire process (text → tool → text → tool → text) as a continuous,
 transparent flow.
-
-Same return signature as stream_ollama_chat for drop-in compatibility.
 """
 
+import asyncio
 import base64
 import json
 import logging
 import os
+from urllib.parse import urlparse
 from typing import AsyncIterator, List, Dict, Any, Optional, Set, cast
 
 import litellm
@@ -22,7 +22,12 @@ import litellm
 from ..core.connection import broadcast_message
 from ..config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ..core.request_context import is_current_request_cancelled
-from ..mcp_integration.tool_args import normalize_tool_args, sanitize_tool_args
+from ..mcp_integration.tool_args import (
+    merge_streamed_tool_call_arguments,
+    normalize_tool_args,
+    sanitize_tool_args,
+    should_fallback_to_empty_args,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,10 @@ litellm.modify_params = True
 
 # Suppress litellm's internal info-level HTTP logs (very noisy).
 litellm.suppress_debug_info = True
+
+# --- Ollama debug logging ---
+# Enable debug logging for Ollama errors only
+OLLAMA_DEBUG_LOGGING = os.environ.get("OLLAMA_DEBUG_LOGGING", "0") == "1"
 
 _MAX_INLINE_IMAGE_BYTES = 50 * 1024 * 1024
 
@@ -83,6 +92,109 @@ def _truncate_tool_result(result: str) -> str:
             result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
         )
     return result_str
+
+
+def _sanitize_api_base_for_logs(api_base: Any) -> Optional[str]:
+    """Return a redacted API base safe for logs."""
+    if not api_base:
+        return None
+
+    candidate = str(api_base).strip()
+    if not candidate:
+        return None
+
+    try:
+        parsed = urlparse(candidate if "://" in candidate else f"https://{candidate}")
+        if not parsed.hostname:
+            return "[redacted]"
+
+        scheme = parsed.scheme or "https"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{scheme}://{parsed.hostname}{port}"
+    except Exception:
+        return "[redacted]"
+
+
+def _collect_spawn_agent_batch(
+    assistant_tool_calls: List[Dict[str, Any]],
+) -> tuple[List[int], List[Dict[str, Any]], Dict[int, Dict[str, Any]]]:
+    """Collect spawn_agent calls and parsed args for one tool round."""
+    from ..mcp_integration.manager import mcp_manager
+
+    spawn_agent_indices: List[int] = []
+    spawn_agent_calls: List[Dict[str, Any]] = []
+    parsed_args_by_index: Dict[int, Dict[str, Any]] = {}
+
+    for idx, tc_info in enumerate(assistant_tool_calls):
+        fn_name = tc_info["function"]["name"]
+        raw_args = tc_info["function"]["arguments"]
+        fn_args, arg_error = normalize_tool_args(raw_args)
+        if arg_error:
+            logger.warning(
+                "Skipping spawn_agent pre-batch for malformed args on %s: %s",
+                fn_name,
+                arg_error,
+            )
+            continue
+        parsed_args_by_index[idx] = fn_args
+
+        try:
+            server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
+        except Exception:
+            server_name = "unknown"
+
+        if fn_name == "spawn_agent" and server_name == "sub_agent":
+            spawn_agent_indices.append(idx)
+            spawn_agent_calls.append(
+                {
+                    "instruction": fn_args.get("instruction", ""),
+                    "model_tier": fn_args.get("model_tier", "fast"),
+                    "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+                }
+            )
+
+    return spawn_agent_indices, spawn_agent_calls, parsed_args_by_index
+
+
+async def _execute_spawn_agent_batch(
+    spawn_agent_indices: List[int],
+    spawn_agent_calls: List[Dict[str, Any]],
+) -> Dict[int, str]:
+    """Execute spawn_agent calls in parallel and map results to tool indexes."""
+    if not spawn_agent_calls:
+        return {}
+
+    from ..services.sub_agent import execute_sub_agents_parallel
+
+    try:
+        results = await execute_sub_agents_parallel(spawn_agent_calls)
+    except Exception as exc:
+        logger.warning(
+            "Sub-agent batch execution failed (%s)",
+            type(exc).__name__,
+        )
+        results = [
+            "System error: sub-agent execution failed. See server logs for details."
+        ] * len(spawn_agent_calls)
+
+    expected_count = len(spawn_agent_indices)
+    if len(results) != expected_count:
+        logger.warning(
+            "Sub-agent batch result count mismatch: expected=%d got=%d",
+            expected_count,
+            len(results),
+        )
+
+    spawn_results: Dict[int, str] = {}
+    for i, spawn_idx in enumerate(spawn_agent_indices):
+        result_str = (
+            results[i]
+            if i < len(results)
+            else "System error: sub-agent execution failed. See server logs for details."
+        )
+        spawn_results[spawn_idx] = _truncate_tool_result(str(result_str))
+
+    return spawn_results
 
 
 def _format_image(b64: str, media_type: str) -> dict:
@@ -374,13 +486,17 @@ def _get_max_tokens(
 
 async def _stream_litellm(
     provider: str,
-    api_key: str,
+    api_key: Optional[str],
     model: str,
     user_query: str,
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
+    *,
+    api_base: Optional[str] = None,
+    litellm_model_override: Optional[str] = None,
+    provider_kwargs: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from any cloud LLM provider via LiteLLM with interleaved
@@ -408,7 +524,14 @@ async def _stream_litellm(
     interleaved_blocks: List[Dict[str, Any]] = []
 
     # LiteLLM model string: "provider/model-name"
-    litellm_model = f"{provider}/{model}"
+    litellm_model = litellm_model_override or f"{provider}/{model}"
+
+    if provider == "ollama":
+        from .ollama_model_registry import (
+            register_ollama_native_function_calling_hint,
+        )
+
+        register_ollama_native_function_calling_hint(litellm_model)
 
     # Query model info once and derive all model-specific params from it.
     # This avoids redundant get_model_info() calls per round.
@@ -423,15 +546,23 @@ async def _stream_litellm(
     # satisfied automatically; others simply get their full limit.
     # For unknown Anthropic models not in the registry, use a safe fallback
     # since Anthropic's API mandates the max_tokens parameter.
-    max_tokens = _get_max_tokens(litellm_model, model_info)
-    if max_tokens is None and provider == "anthropic":
-        max_tokens = 16384
-        logger.debug(
-            "Anthropic model not in registry; using fallback max_tokens=%d", max_tokens
-        )
+    # Ollama: skip max_tokens entirely — Ollama manages its own output limits
+    # and cloud-proxied models may have different caps than the registry.
+    if provider == "ollama":
+        max_tokens = None
+    else:
+        max_tokens = _get_max_tokens(litellm_model, model_info)
+        if max_tokens is None and provider == "anthropic":
+            max_tokens = 16384
+            logger.debug(
+                "Anthropic model not in registry; using fallback max_tokens=%d",
+                max_tokens,
+            )
 
     # Reasoning params (hoisted outside the loop — model doesn't change)
-    reasoning_params = _get_reasoning_params(litellm_model, model_info)
+    reasoning_params = (
+        {} if provider == "ollama" else _get_reasoning_params(litellm_model, model_info)
+    )
 
     current_round_text: list[str] = []
     try:
@@ -490,33 +621,57 @@ async def _stream_litellm(
                 "messages": messages,
                 "stream": True,
                 "stream_options": {"include_usage": True},
-                "api_key": api_key,
                 "timeout": 300.0,
             }
 
+            if api_key is not None:
+                create_kwargs["api_key"] = api_key
+            if api_base:
+                create_kwargs["api_base"] = api_base
             if max_tokens is not None and max_tokens > 0:
                 create_kwargs["max_tokens"] = max_tokens
 
             if reasoning_params:
                 create_kwargs.update(reasoning_params)
+            if provider_kwargs:
+                create_kwargs.update(provider_kwargs)
 
             if allow_tools:
                 create_kwargs["tools"] = tools
 
             logger.debug(
-                "LiteLLM acompletion: model=%s, round=%d/%d, reasoning=%s, tools=%d, messages=%d",
+                "LiteLLM acompletion: model=%s, round=%d/%d, reasoning=%s, tools=%d, messages=%d, api_base=%s",
                 litellm_model,
                 rounds,
                 MAX_MCP_TOOL_ROUNDS,
                 "enabled" if reasoning_params else "disabled",
                 len(tools) if allow_tools and tools else 0,
                 len(messages),
+                _sanitize_api_base_for_logs(create_kwargs.get("api_base")),
             )
 
+            # Track if this is an Ollama call for error logging
+            is_ollama = litellm_model.startswith("ollama")
+
             # Stream the response
-            response = cast(
-                AsyncIterator[Any], await litellm.acompletion(**create_kwargs)
-            )
+            try:
+                response = cast(
+                    AsyncIterator[Any], await litellm.acompletion(**create_kwargs)
+                )
+            except Exception as e:
+                if is_ollama and OLLAMA_DEBUG_LOGGING:
+                    logger.error(
+                        "[OLLAMA] acompletion failed: %s",
+                        type(e).__name__,
+                    )
+                    logger.error(
+                        "[OLLAMA] Request details: model=%s, api_base=%s, tools=%d, messages=%d",
+                        litellm_model,
+                        _sanitize_api_base_for_logs(create_kwargs.get("api_base")),
+                        len(tools) if tools else 0,
+                        len(messages),
+                    )
+                raise
 
             # Accumulate tool call deltas during streaming
             pending_tool_calls: Dict[int, Dict[str, str]] = {}
@@ -579,8 +734,11 @@ async def _stream_litellm(
                             if tc_delta.function.name:
                                 pending_tool_calls[idx]["name"] = tc_delta.function.name
                             if tc_delta.function.arguments:
-                                pending_tool_calls[idx]["arguments"] += (
-                                    tc_delta.function.arguments
+                                pending_tool_calls[idx]["arguments"] = (
+                                    merge_streamed_tool_call_arguments(
+                                        pending_tool_calls[idx]["arguments"],
+                                        tc_delta.function.arguments,
+                                    )
                                 )
 
             # Add this round's usage to running totals (summed across rounds)
@@ -645,48 +803,19 @@ async def _stream_litellm(
                 cancelled_during_tool_loop = False
 
                 # ── Collect spawn_agent calls for parallel execution ──
-                spawn_agent_indices: List[int] = []
-                spawn_agent_calls: List[Dict[str, Any]] = []
-                parsed_args_by_index: Dict[int, Dict[str, Any]] = {}
-
-                for idx, tc_info in enumerate(assistant_tool_calls):
-                    fn_name = tc_info["function"]["name"]
-                    raw_args = tc_info["function"]["arguments"]
-                    fn_args, arg_error = normalize_tool_args(raw_args)
-                    if arg_error:
-                        logger.warning(
-                            "Skipping spawn_agent pre-batch for malformed args on %s: %s",
-                            fn_name,
-                            arg_error,
-                        )
-                        continue
-                    parsed_args_by_index[idx] = fn_args
-
-                    from ..mcp_integration.manager import mcp_manager as _mm
-
-                    try:
-                        sn = _mm.get_tool_server_name(fn_name) or "unknown"
-                    except Exception:
-                        sn = "unknown"
-
-                    if fn_name == "spawn_agent" and sn == "sub_agent":
-                        spawn_agent_indices.append(idx)
-                        spawn_agent_calls.append(
-                            {
-                                "instruction": fn_args.get("instruction", ""),
-                                "model_tier": fn_args.get("model_tier", "fast"),
-                                "agent_name": fn_args.get("agent_name", "Sub-Agent"),
-                            }
-                        )
+                (
+                    spawn_agent_indices,
+                    spawn_agent_calls,
+                    parsed_args_by_index,
+                ) = _collect_spawn_agent_batch(assistant_tool_calls)
 
                 # Run all spawn_agent calls in parallel (if any)
                 spawn_results: Dict[int, str] = {}
-                if spawn_agent_calls and not is_current_request_cancelled():
-                    from ..services.sub_agent import execute_sub_agents_parallel
-
-                    results = await execute_sub_agents_parallel(spawn_agent_calls)
-                    for i, result_str in enumerate(results):
-                        spawn_results[spawn_agent_indices[i]] = result_str
+                if not is_current_request_cancelled():
+                    spawn_results = await _execute_spawn_agent_batch(
+                        spawn_agent_indices,
+                        spawn_agent_calls,
+                    )
 
                 # Now iterate all tool calls — spawn_agents already have results
                 for idx, tc_info in enumerate(assistant_tool_calls):
@@ -698,6 +827,15 @@ async def _stream_litellm(
                         fn_args, arg_error = normalize_tool_args(raw_args)
                     else:
                         arg_error = None
+                    if arg_error and should_fallback_to_empty_args(fn_name):
+                        logger.info(
+                            "Falling back to empty args for %s after parse error: %s",
+                            fn_name,
+                            arg_error,
+                        )
+                        fn_args = {}
+                        arg_error = None
+                        tc_info["function"]["arguments"] = "{}"
                     if arg_error:
                         error_result = (
                             f"System error: invalid arguments for tool "
@@ -708,6 +846,10 @@ async def _stream_litellm(
                             fn_name,
                             len(raw_args or ""),
                         )
+                        # Sanitize malformed args in assistant_msg so LiteLLM can
+                        # serialize the message for the next round (Ollama transformer
+                        # parses tool call arguments and will crash on invalid JSON).
+                        tc_info["function"]["arguments"] = "{}"
                         tool_result_messages.append(
                             {
                                 "role": "tool",
@@ -818,6 +960,9 @@ async def _stream_litellm(
             interleaved_blocks or None,
         )
 
+    except asyncio.CancelledError:
+        # Re-raise cancellation to allow proper task cleanup
+        raise
     except Exception as e:
         # Keep detailed error in server logs only — exception messages
         # from LiteLLM / provider SDKs may contain API keys.
@@ -845,12 +990,16 @@ async def _stream_litellm(
 async def stream_cloud_chat(
     provider: str,
     model: str,
-    api_key: str,
+    api_key: Optional[str],
     user_query: str,
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
     allowed_tool_names: Optional[Set[str]] = None,
     system_prompt: str = "",
+    *,
+    api_base: Optional[str] = None,
+    litellm_model_override: Optional[str] = None,
+    provider_kwargs: Optional[Dict[str, Any]] = None,
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Stream a response from a cloud LLM provider with inline tool calling.
@@ -870,6 +1019,9 @@ async def stream_cloud_chat(
         chat_history,
         allowed_tool_names,
         system_prompt,
+        api_base=api_base,
+        litellm_model_override=litellm_model_override,
+        provider_kwargs=provider_kwargs,
     )
 
 

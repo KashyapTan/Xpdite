@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional
 
 import litellm
 
-from ..config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE, USER_DATA_DIR
+from ..config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, USER_DATA_DIR
 from ..core.connection import broadcast_message
 from ..core.request_context import (
     get_current_model,
@@ -29,6 +29,7 @@ from ..core.request_context import (
 )
 from ..core.thread_pool import run_in_thread
 from ..database import db
+from ..llm.provider_resolution import resolve_model_target
 from ..mcp_integration.tool_args import normalize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -172,21 +173,6 @@ def _resolve_tier_model(tier: str) -> str:
     return current_model
 
 
-def _uses_ollama_client(model_name: str) -> bool:
-    """Whether the model should be called via the Ollama AsyncClient.
-
-    Models with a known cloud provider prefix (``anthropic/``, ``openai/``,
-    ``gemini/``, ``openrouter/``) go through LiteLLM.  Everything else — including cloud-
-    hosted Ollama models like ``qwen3.5:397b-cloud`` — goes through the
-    Ollama client.
-    """
-    if "/" in model_name:
-        provider = model_name.split("/")[0]
-        if provider in ("anthropic", "openai", "gemini", "openrouter"):
-            return False
-    return True
-
-
 def _is_local_ollama(model_name: str) -> bool:
     """Whether the model runs on a **local** GPU via Ollama.
 
@@ -250,25 +236,21 @@ async def _run_cloud_sub_agent(
     agent_name: str = "Sub-Agent",
     model_tier: str = "fast",
 ) -> Dict[str, Any]:
-    """Execute a sub-agent call via LiteLLM (cloud providers) with streaming.
+    """Execute a sub-agent call via LiteLLM with streaming.
 
     Streams thinking tokens and tool execution in real-time to the UI.
     Returns {"response": str, "token_stats": dict, "error": str | None}.
     """
-    from ..llm.router import parse_provider
-    from ..llm.key_manager import key_manager
     from ..mcp_integration.manager import mcp_manager
 
-    provider, model = parse_provider(model_name)
-    api_key = key_manager.get_api_key(provider)
-    if not api_key:
+    target = resolve_model_target(model_name)
+    if target.provider != "ollama" and not target.api_key:
         return {
-            "response": f"Error: No API key for {provider}",
+            "response": f"Error: No API key for {target.provider}",
             "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
-            "error": f"No API key for {provider}",
+            "error": f"No API key for {target.provider}",
         }
 
-    litellm_model = f"{provider}/{model}"
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _SUB_AGENT_SYSTEM_PROMPT},
         {"role": "user", "content": instruction},
@@ -305,12 +287,12 @@ async def _run_cloud_sub_agent(
         )
 
     try:
-        model_info = litellm.get_model_info(litellm_model)
+        model_info = litellm.get_model_info(target.litellm_model)
     except Exception:
         model_info = {}
 
     max_tokens = model_info.get("max_output_tokens")
-    if max_tokens is None and provider == "anthropic":
+    if max_tokens is None and target.provider == "anthropic":
         max_tokens = 16384
 
     rounds = 0
@@ -325,14 +307,19 @@ async def _run_cloud_sub_agent(
         allow_tools = openai_tools is not None and rounds <= MAX_MCP_TOOL_ROUNDS
 
         create_kwargs: Dict[str, Any] = {
-            "model": litellm_model,
+            "model": target.litellm_model,
             "messages": messages,
             "stream": True,  # Enable streaming
-            "api_key": api_key,
             "timeout": _SUB_AGENT_TIMEOUT,
         }
+        if target.api_key is not None:
+            create_kwargs["api_key"] = target.api_key
+        if target.api_base:
+            create_kwargs["api_base"] = target.api_base
         if max_tokens and max_tokens > 0:
             create_kwargs["max_tokens"] = max_tokens
+        if target.provider_kwargs:
+            create_kwargs.update(target.provider_kwargs)
         if allow_tools:
             create_kwargs["tools"] = openai_tools
 
@@ -590,363 +577,6 @@ async def _run_cloud_sub_agent(
         "error": None,
     }
 
-
-# ---------------------------------------------------------------------------
-# Ollama sub-agent execution
-# ---------------------------------------------------------------------------
-
-
-async def _run_ollama_sub_agent(
-    model_name: str,
-    instruction: str,
-    tools: Optional[List[Dict[str, Any]]],
-    agent_id: str = "",
-    agent_name: str = "Sub-Agent",
-    model_tier: str = "fast",
-) -> Dict[str, Any]:
-    """Execute a sub-agent call via Ollama AsyncClient with streaming.
-
-    Streams thinking tokens and tool execution in real-time to the UI.
-    Returns {"response": str, "token_stats": dict, "error": str | None}.
-    """
-    from ollama import AsyncClient as OllamaAsyncClient
-    from ..mcp_integration.manager import mcp_manager
-
-    client = OllamaAsyncClient()
-    messages: List[Dict[str, Any]] = [
-        {"role": "system", "content": _SUB_AGENT_SYSTEM_PROMPT},
-        {"role": "user", "content": instruction},
-    ]
-
-    total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
-    accumulated_text: list[str] = []
-    transcript_steps: list[dict[str, Any]] = []
-
-    # Strip provider prefix if present (e.g., "ollama/model" → "model")
-    if "/" in model_name:
-        _, _, model_name = model_name.partition("/")
-
-    # Broadcast the instruction as the first transcript step
-    transcript_steps.append({"type": "instruction", "content": instruction})
-    if agent_id:
-        await broadcast_message(
-            "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "instruction",
-                "content": instruction,
-                "transcript": transcript_steps,
-            }),
-        )
-
-    rounds = 0
-    while True:
-        if is_current_request_cancelled():
-            break
-
-        rounds += 1
-        if rounds > MAX_MCP_TOOL_ROUNDS + 1:
-            break
-
-        allow_tools = tools is not None and rounds <= MAX_MCP_TOOL_ROUNDS
-
-        chat_kwargs: Dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-            "stream": True,  # Enable streaming
-            "options": {"num_ctx": OLLAMA_CTX_SIZE},
-        }
-        if allow_tools:
-            chat_kwargs["tools"] = tools
-            chat_kwargs["think"] = False  # Ollama bug #10976 workaround
-
-        try:
-            # Stream the response
-            round_text_chunks: list[str] = []
-            tool_calls_list: list = []
-            round_text_step_index: int | None = None
-
-            def _append_stream_text(chunk_text: str) -> None:
-                """Append streamed text and keep transcript text block in sync."""
-                nonlocal round_text_step_index
-                if not chunk_text:
-                    return
-                round_text_chunks.append(chunk_text)
-                if round_text_step_index is None:
-                    transcript_steps.append({"type": "text", "content": chunk_text})
-                    round_text_step_index = len(transcript_steps) - 1
-                    return
-                existing = str(transcript_steps[round_text_step_index].get("content", ""))
-                transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
-
-            async for chunk in await client.chat(**chat_kwargs):
-                if is_current_request_cancelled():
-                    break
-
-                # Handle dict response (streaming chunks)
-                if isinstance(chunk, dict):
-                    msg = chunk.get("message", {})
-                    done = chunk.get("done", False)
-
-                    # Accumulate token counts from final chunk
-                    if done:
-                        total_tokens["prompt_tokens"] += chunk.get("prompt_eval_count", 0) or 0
-                        total_tokens["completion_tokens"] += chunk.get("eval_count", 0) or 0
-
-                    # Stream model thinking/reasoning when available
-                    thinking = msg.get("thinking", "") or msg.get("reasoning_content", "")
-                    if thinking:
-                        _append_stream_text(thinking)
-                        if agent_id:
-                            await broadcast_message(
-                                "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": thinking,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
-                            )
-
-                    # Stream text content
-                    content = msg.get("content", "")
-                    if content:
-                        _append_stream_text(content)
-                        if agent_id:
-                            await broadcast_message(
-                                "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": content,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
-                            )
-
-                    # Collect tool calls from the message
-                    if msg.get("tool_calls"):
-                        tool_calls_list = msg["tool_calls"]
-                else:
-                    # Handle object response
-                    msg = getattr(chunk, "message", None)
-                    done = getattr(chunk, "done", False)
-
-                    if done:
-                        total_tokens["prompt_tokens"] += getattr(chunk, "prompt_eval_count", 0) or 0
-                        total_tokens["completion_tokens"] += getattr(chunk, "eval_count", 0) or 0
-
-                    if msg:
-                        thinking = (
-                            getattr(msg, "thinking", "") or
-                            getattr(msg, "reasoning_content", "")
-                        ) or ""
-                        if thinking:
-                            _append_stream_text(thinking)
-                            if agent_id:
-                                await broadcast_message(
-                                    "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": thinking,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
-                                )
-
-                        content = getattr(msg, "content", "") or ""
-                        if content:
-                            _append_stream_text(content)
-                            if agent_id:
-                                await broadcast_message(
-                                    "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": content,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
-                                )
-
-                        if getattr(msg, "tool_calls", None):
-                            tool_calls_list = msg.tool_calls
-
-            # After streaming, add collected text to accumulated
-            round_text = "".join(round_text_chunks)
-            if round_text:
-                accumulated_text.append(round_text)
-                if agent_id:
-                    await broadcast_message(
-                        "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "thinking_complete",
-                            "content": round_text,
-                            "transcript": transcript_steps,
-                        }),
-                    )
-
-            # Process tool calls if any
-            if tool_calls_list:
-                # Append assistant message
-                messages.append({"role": "assistant", "content": round_text, "tool_calls": tool_calls_list})
-
-                for tc in tool_calls_list:
-                    if isinstance(tc, dict):
-                        fn = tc.get("function", {})
-                        if not fn or not fn.get("name"):
-                            logger.warning("Skipping malformed Ollama tool call: %s", tc)
-                            continue
-                        fn_name = fn["name"]
-                        fn_args = fn.get("arguments", {})
-                    else:
-                        if not getattr(tc, "function", None) or not getattr(tc.function, "name", None):
-                            logger.warning("Skipping malformed Ollama tool call object: %s", tc)
-                            continue
-                        fn_name = tc.function.name
-                        fn_args = tc.function.arguments
-
-                    # Decode args: may be dict already or a JSON string
-                    fn_args, arg_error = normalize_tool_args(fn_args)
-                    if arg_error:
-                        result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "error", "result": result_str})
-                        if agent_id:
-                            await broadcast_message(
-                                "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_error",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
-                            )
-                        continue
-
-                    if fn_name in _EXCLUDED_TOOLS:
-                        result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "blocked", "result": result_str})
-                        if agent_id:
-                            await broadcast_message(
-                                "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_blocked",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
-                            )
-                        continue
-
-                    if is_current_request_cancelled():
-                        break
-
-                    # Broadcast tool call start
-                    step_index = len(transcript_steps)
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
-                    if agent_id:
-                        await broadcast_message(
-                            "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_call",
-                                "tool_name": fn_name,
-                                "tool_args": fn_args,
-                                "transcript": transcript_steps,
-                            }),
-                        )
-
-                    try:
-                        result = await mcp_manager.call_tool(fn_name, fn_args)
-                        result_str = str(result)
-                        if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                            result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
-                    except Exception as e:
-                        logger.warning("Ollama sub-agent tool %s failed: %s", fn_name, e)
-                        result_str = f"Tool execution error: {type(e).__name__}"
-
-                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                    result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
-                    transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
-
-                    # Broadcast tool result
-                    if agent_id:
-                        await broadcast_message(
-                            "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_result",
-                                "tool_name": fn_name,
-                                "tool_result": result_preview,
-                                "transcript": transcript_steps,
-                            }),
-                        )
-
-                # Check cancellation after tool execution loop
-                if is_current_request_cancelled():
-                    break
-            else:
-                # No tool calls — response is complete
-                break
-
-        except Exception as e:
-            logger.error("Sub-agent Ollama streaming failed: %s", e, exc_info=True)
-            return {
-                "response": f"Sub-agent error: {type(e).__name__}",
-                "token_stats": total_tokens,
-                "error": type(e).__name__,
-            }
-
-    # Broadcast final complete state
-    final_response = "".join(accumulated_text)
-    if agent_id:
-        await broadcast_message(
-            "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "final",
-                "content": final_response,
-                "transcript": transcript_steps,
-                "token_stats": total_tokens,
-            }),
-        )
-
-    return {
-        "response": final_response,
-        "token_stats": total_tokens,
-        "error": None,
-    }
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -993,22 +623,17 @@ async def execute_sub_agent(
 
     try:
         async with _concurrency_semaphore:
-            if _uses_ollama_client(model_name):
-                result = await asyncio.wait_for(
-                    _run_ollama_sub_agent(
-                        model_name, instruction, tools,
-                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
-                    ),
-                    timeout=_SUB_AGENT_TIMEOUT,
-                )
-            else:
-                result = await asyncio.wait_for(
-                    _run_cloud_sub_agent(
-                        model_name, instruction, tools,
-                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
-                    ),
-                    timeout=_SUB_AGENT_TIMEOUT,
-                )
+            result = await asyncio.wait_for(
+                _run_cloud_sub_agent(
+                    model_name,
+                    instruction,
+                    tools,
+                    agent_id=agent_id,
+                    agent_name=agent_name,
+                    model_tier=model_tier,
+                ),
+                timeout=_SUB_AGENT_TIMEOUT,
+            )
     except asyncio.TimeoutError:
         error_msg = f"Sub-agent '{agent_name}' timed out after {_SUB_AGENT_TIMEOUT}s"
         logger.warning(error_msg)

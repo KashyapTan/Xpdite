@@ -1,19 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api, type ProviderModel } from '../../services/api';
+import { api, type ProviderModel, type OllamaModel } from '../../services/api';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import '../../CSS/SettingsModels.css';
-
-interface OllamaModel {
-  name: string;
-  size: number;
-  parameter_size: string;
-  quantization: string;
-}
 
 type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
 type ProviderKey = CloudProvider | 'ollama';
 
 const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'openai', 'gemini', 'openrouter'];
+const KNOWN_CLOUD_PROVIDERS = new Set<CloudProvider>(CLOUD_PROVIDERS);
 
 const EMPTY_CLOUD_MODELS: Record<CloudProvider, ProviderModel[]> = {
   anthropic: [],
@@ -45,6 +39,71 @@ function toEnabledModelId(provider: CloudProvider, modelId: string): string {
   return modelId;
 }
 
+function normalizeOllamaModelName(modelName: string): string {
+  const trimmed = modelName.trim();
+  if (trimmed.toLowerCase().startsWith('ollama/')) {
+    return trimmed.slice('ollama/'.length).trim();
+  }
+  return trimmed;
+}
+
+function isOllamaModelId(modelName: string): boolean {
+  const trimmed = modelName.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  if (trimmed.toLowerCase().startsWith('ollama/')) {
+    return true;
+  }
+
+  const slashIndex = trimmed.indexOf('/');
+  if (slashIndex === -1) {
+    return true;
+  }
+
+  const provider = trimmed.slice(0, slashIndex).toLowerCase() as CloudProvider;
+  return !KNOWN_CLOUD_PROVIDERS.has(provider);
+}
+
+function buildCustomOllamaModel(name: string): OllamaModel {
+  const normalized = normalizeOllamaModelName(name);
+  const isCloudTagged = normalized.toLowerCase().endsWith(':cloud') || normalized.toLowerCase().endsWith('-cloud');
+  return {
+    name: normalized,
+    size: 0,
+    parameter_size: '',
+    quantization: '',
+    source: 'custom',
+    is_local: !isCloudTagged,
+  };
+}
+
+function mergeOllamaModels(models: OllamaModel[], enabledModels: string[]): OllamaModel[] {
+  const merged = new Map<string, OllamaModel>();
+
+  models.forEach((model) => {
+    const normalized = normalizeOllamaModelName(model.name);
+    if (!normalized) {
+      return;
+    }
+    merged.set(normalized.toLowerCase(), { ...model, name: normalized });
+  });
+
+  enabledModels
+    .filter((modelName) => isOllamaModelId(modelName))
+    .map((modelName) => normalizeOllamaModelName(modelName))
+    .filter(Boolean)
+    .forEach((modelName) => {
+      const key = modelName.toLowerCase();
+      if (!merged.has(key)) {
+        merged.set(key, buildCustomOllamaModel(modelName));
+      }
+    });
+
+  return Array.from(merged.values());
+}
+
 /**
  * SettingsModels — the "Models" tab inside Settings.
  *
@@ -65,6 +124,8 @@ const SettingsModels: React.FC = () => {
   const [error, setError] = useState('');
   const [providerErrors, setProviderErrors] = useState<Record<ProviderKey, string>>(EMPTY_PROVIDER_ERRORS);
   const [refreshingProviders, setRefreshingProviders] = useState<Record<ProviderKey, boolean>>(EMPTY_REFRESHING_STATE);
+  const [customOllamaModel, setCustomOllamaModel] = useState('');
+  const [customOllamaError, setCustomOllamaError] = useState('');
 
   const setProviderError = useCallback((provider: ProviderKey, message: string) => {
     setProviderErrors((prev) => ({ ...prev, [provider]: message }));
@@ -143,11 +204,15 @@ const SettingsModels: React.FC = () => {
 
   const toggleModel = useCallback(
     async (modelName: string) => {
+      const normalizedName = isOllamaModelId(modelName)
+        ? normalizeOllamaModelName(modelName)
+        : modelName;
+
       setEnabledModels((prev) => {
-        const isEnabled = prev.includes(modelName);
+        const isEnabled = prev.includes(normalizedName);
         const updated = isEnabled
-          ? prev.filter((m) => m !== modelName)
-          : [...prev, modelName];
+          ? prev.filter((m) => m !== normalizedName)
+          : [...prev, normalizedName];
 
         // Persist to backend (SQLite) — fire-and-forget
         void api.setEnabledModels(updated);
@@ -157,6 +222,32 @@ const SettingsModels: React.FC = () => {
     },
     [],
   );
+
+  const addCustomOllamaModel = useCallback(() => {
+    const normalized = normalizeOllamaModelName(customOllamaModel);
+
+    if (!normalized) {
+      setCustomOllamaError('Enter an Ollama model name.');
+      return;
+    }
+
+    if (!isOllamaModelId(customOllamaModel)) {
+      setCustomOllamaError('Use an Ollama model ID like llama3.2 or ollama/llama3.2.');
+      return;
+    }
+
+    setCustomOllamaError('');
+    setEnabledModels((prev) => {
+      if (prev.includes(normalized)) {
+        return prev;
+      }
+
+      const updated = [...prev, normalized];
+      void api.setEnabledModels(updated);
+      return updated;
+    });
+    setCustomOllamaModel('');
+  }, [customOllamaModel]);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '';
@@ -343,6 +434,8 @@ const SettingsModels: React.FC = () => {
     );
   };
 
+  const visibleOllamaModels = mergeOllamaModels(ollamaModels, enabledModels);
+
   return (
     <div className="settings-models-section">
       <div className="settings-models-header">
@@ -353,6 +446,41 @@ const SettingsModels: React.FC = () => {
         {renderSectionHeader('ollama', 'Ollama', 'ollama')}
 
         <div className="settings-models-ollama-content">
+          <div className="settings-models-ollama-custom">
+            <div className="settings-models-ollama-custom-copy">
+              Add any Ollama model ID to keep it selectable. Uses <code>OLLAMA_API_BASE</code> and <code>OLLAMA_API_KEY</code> when set, otherwise the local daemon at <code>http://localhost:11434</code>.
+            </div>
+            <div className="settings-models-ollama-custom-row">
+              <input
+                className="settings-models-ollama-input"
+                type="text"
+                value={customOllamaModel}
+                onChange={(e) => {
+                  setCustomOllamaModel(e.target.value);
+                  if (customOllamaError) {
+                    setCustomOllamaError('');
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    addCustomOllamaModel();
+                  }
+                }}
+                placeholder="llama3.2, qwen3-coder-next:cloud, or ollama/model-name"
+              />
+              <button
+                className="settings-models-refresh-btn"
+                onClick={addCustomOllamaModel}
+                disabled={loading}
+              >
+                Add
+              </button>
+            </div>
+            {customOllamaError && (
+              <div className="settings-models-ollama-custom-error">{customOllamaError}</div>
+            )}
+          </div>
+
           {loading && (
             <div className="settings-models-ollama-model settings-models-loading">
               Loading models...
@@ -368,14 +496,22 @@ const SettingsModels: React.FC = () => {
               {providerErrors.ollama}
             </div>
           )}
-          {!loading && !error && !providerErrors.ollama && ollamaModels.length === 0 && (
+          {!loading && !error && visibleOllamaModels.length === 0 && (
             <div className="settings-models-ollama-model settings-models-empty">
-              No Ollama models found. Pull one with <code>ollama pull model-name</code>
+              No Ollama models found. Pull one with <code>ollama pull model-name</code> or add a custom/env-driven model ID above.
             </div>
           )}
           {!loading &&
-            ollamaModels.map((model) => {
+            visibleOllamaModels.map((model) => {
               const isEnabled = enabledModels.includes(model.name);
+              const metaParts = [
+                model.source === 'custom'
+                  ? (model.is_local === false ? 'Custom / env-driven' : 'Custom')
+                  : '',
+                model.parameter_size,
+                model.quantization,
+                formatSize(model.size),
+              ].filter(Boolean);
               return (
                 <div
                   key={model.name}
@@ -392,9 +528,7 @@ const SettingsModels: React.FC = () => {
                   <div className="settings-model-info">
                     <span className="settings-model-name">{model.name}</span>
                     <span className="settings-model-meta">
-                      {[model.parameter_size, model.quantization, formatSize(model.size)]
-                        .filter(Boolean)
-                        .join(' · ')}
+                      {metaParts.join(' · ')}
                     </span>
                   </div>
                 </div>
