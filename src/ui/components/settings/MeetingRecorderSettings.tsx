@@ -65,8 +65,13 @@ const MeetingRecorderSettings: React.FC = () => {
             <h2 className="meeting-settings-title">Meeting Recorder</h2>
 
             {/* GPU Acceleration */}
-            <div className="meeting-settings-section">
-                <div className="meeting-settings-label">GPU Acceleration</div>
+            <div className="meeting-settings-card">
+                <div className="meeting-settings-card-info">
+                    <h3 className="meeting-settings-card-title">GPU Acceleration</h3>
+                    <p className="meeting-settings-card-description">
+                        Detected automatically. CUDA provides the fastest transcription.
+                    </p>
+                </div>
                 <div className="meeting-settings-gpu-display">
                     <span className={`gpu-badge ${computeInfo?.backend === 'cuda' ? 'gpu-cuda' : 'gpu-cpu'}`}>
                         {computeInfo?.backend === 'cuda'
@@ -75,69 +80,69 @@ const MeetingRecorderSettings: React.FC = () => {
                     </span>
                     <span className="gpu-label">{gpuLabel}</span>
                 </div>
-                <p className="meeting-settings-hint">
-                    Detected automatically. CUDA provides the fastest transcription.
-                </p>
             </div>
 
             {/* Live Transcription Model */}
-            <div className="meeting-settings-section">
-                <div className="meeting-settings-label">Live Transcription Model</div>
+            <div className="meeting-settings-card">
+                <div className="meeting-settings-card-info">
+                    <h3 className="meeting-settings-card-title">Live Transcription Model</h3>
+                    <p className="meeting-settings-card-description">
+                        Model used for live transcription during recording. Changes apply to the next recording.
+                    </p>
+                </div>
                 <select
                     className="meeting-settings-select"
                     value={settings.whisper_model}
                     onChange={(e) => updateSetting('whisper_model', e.target.value)}
                 >
-                    <option value="tiny">Tiny — Fastest, least accurate</option>
-                    <option value="base">Base — Balanced (recommended)</option>
-                    <option value="small">Small — Most accurate, slower</option>
+                    <option value="tiny">Tiny | Fastest, least accurate</option>
+                    <option value="base">Base | Balanced (recommended)</option>
+                    <option value="small">Small | Most accurate, slower</option>
                 </select>
-                <p className="meeting-settings-hint">
-                    Model used for live transcription during recording. Changes apply to the next recording.
-                </p>
             </div>
 
             {/* Speaker Diarization */}
-            <div className="meeting-settings-section">
-                <div className="meeting-settings-label">Speaker Diarization</div>
-                <label className="meeting-settings-toggle">
-                    <input
-                        type="checkbox"
-                        checked={settings.diarization_enabled === 'true'}
-                        onChange={(e) =>
-                            updateSetting('diarization_enabled', e.target.checked ? 'true' : 'false')
-                        }
-                    />
-                    <span className="toggle-slider"></span>
-                    <span className="toggle-label">
-                        {settings.diarization_enabled === 'true' ? 'Enabled' : 'Disabled'}
-                    </span>
-                </label>
-                <p className="meeting-settings-hint">
-                    Identifies different speakers in the transcript (Speaker 1, Speaker 2, etc.).
-                    Disabling speeds up post-processing.
-                </p>
+            <div className="meeting-settings-card">
+                <div className="meeting-settings-card-header">
+                    <div className="meeting-settings-card-info">
+                        <h3 className="meeting-settings-card-title">Speaker Diarization</h3>
+                        <p className="meeting-settings-card-description">
+                            Identifies different speakers in the transcript. Disabling speeds up post-processing.
+                        </p>
+                    </div>
+                    <label className="meeting-settings-toggle">
+                        <input
+                            type="checkbox"
+                            checked={settings.diarization_enabled === 'true'}
+                            onChange={(e) =>
+                                updateSetting('diarization_enabled', e.target.checked ? 'true' : 'false')
+                            }
+                        />
+                        <span className="meeting-settings-toggle-slider"></span>
+                    </label>
+                </div>
             </div>
 
             {/* Keep Raw Audio */}
-            <div className="meeting-settings-section">
-                <div className="meeting-settings-label">Keep Raw Audio</div>
-                <label className="meeting-settings-toggle">
-                    <input
-                        type="checkbox"
-                        checked={settings.keep_audio === 'true'}
-                        onChange={(e) =>
-                            updateSetting('keep_audio', e.target.checked ? 'true' : 'false')
-                        }
-                    />
-                    <span className="toggle-slider"></span>
-                    <span className="toggle-label">
-                        {settings.keep_audio === 'true' ? 'Keep files' : 'Delete after processing'}
-                    </span>
-                </label>
-                <p className="meeting-settings-hint">
-                    When disabled, audio files are deleted after post-processing to save disk space.
-                </p>
+            <div className="meeting-settings-card">
+                <div className="meeting-settings-card-header">
+                    <div className="meeting-settings-card-info">
+                        <h3 className="meeting-settings-card-title">Keep Raw Audio</h3>
+                        <p className="meeting-settings-card-description">
+                            When disabled, audio files are deleted after post-processing to save disk space.
+                        </p>
+                    </div>
+                    <label className="meeting-settings-toggle">
+                        <input
+                            type="checkbox"
+                            checked={settings.keep_audio === 'true'}
+                            onChange={(e) =>
+                                updateSetting('keep_audio', e.target.checked ? 'true' : 'false')
+                            }
+                        />
+                        <span className="meeting-settings-toggle-slider"></span>
+                    </label>
+                </div>
             </div>
 
             {saving && <div className="meeting-settings-saving">Saving...</div>}

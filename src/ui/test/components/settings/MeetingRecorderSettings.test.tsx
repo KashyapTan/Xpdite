@@ -33,7 +33,7 @@ describe('MeetingRecorderSettings', () => {
     expect(sendMock).toHaveBeenCalledWith({ type: 'meeting_get_compute_info' });
     expect(sendMock).toHaveBeenCalledWith({ type: 'meeting_get_settings' });
     expect(screen.getByText('Detecting...')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('Base — Balanced (recommended)')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('Base | Balanced (recommended)')).toBeInTheDocument();
   });
 
   test('applies websocket updates for compute info and settings', async () => {
@@ -61,9 +61,7 @@ describe('MeetingRecorderSettings', () => {
 
     await waitFor(() => {
       expect(screen.getByText('NVIDIA CUDA — RTX 4090 (24 GB)')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('Small — Most accurate, slower')).toBeInTheDocument();
-      expect(screen.getByText('Disabled')).toBeInTheDocument();
-      expect(screen.getByText('Keep files')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Small | Most accurate, slower')).toBeInTheDocument();
     });
   });
 

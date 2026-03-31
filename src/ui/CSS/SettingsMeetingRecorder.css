@@ -5,31 +5,57 @@
     max-width: 560px;
     overflow-y: auto;
     height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
 .meeting-settings-title {
     font-size: 1.5rem;
     color: rgba(255, 255, 255, 0.95);
-    margin: 0 0 24px;
+    margin: 0 0 12px;
 }
 
-/* ── Section ── */
-.meeting-settings-section {
-    margin-bottom: 15px;
+/* ── Section Card ── */
+.meeting-settings-card {
+    background-color: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.meeting-settings-card:last-child{
+    margin-bottom: 25px;
 }
 
-.meeting-settings-label {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.8);
-    margin-bottom: 8px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+.meeting-settings-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
 }
 
-.meeting-settings-hint {
-    font-size: 0.78rem;
-    color: rgba(255, 255, 255, 0.4);
-    margin: 6px 0 0;
+.meeting-settings-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.meeting-settings-card-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: rgba(255, 255, 255, 0.9);
+    margin: 0;
+}
+
+.meeting-settings-card-description {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.45);
+    margin: 0;
     line-height: 1.4;
 }
 
@@ -40,7 +66,7 @@
     gap: 10px;
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.04);
-    border-radius: 8px;
+    border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
@@ -52,6 +78,7 @@
     justify-content: center;
     border-radius: 6px;
     color: rgba(255, 255, 255, 0.78);
+    flex-shrink: 0;
 }
 
 .gpu-badge svg {
@@ -79,7 +106,7 @@
     padding: 10px 14px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
+    border-radius: 6px;
     color: rgba(255, 255, 255, 0.85);
     font-size: 0.85rem;
     cursor: pointer;
@@ -90,6 +117,7 @@
     background-repeat: no-repeat;
     background-position: right 12px center;
     transition: border-color 0.2s;
+    font-family: 'Montserrat', sans-serif;
 }
 
 .meeting-settings-select:hover {
@@ -109,61 +137,56 @@
 .meeting-settings-toggle {
     display: flex;
     align-items: center;
-    gap: 12px;
+    gap: 8px;
     cursor: pointer;
     user-select: none;
+    flex-shrink: 0;
 }
 
 .meeting-settings-toggle input[type='checkbox'] {
     display: none;
 }
 
-.toggle-slider {
-    width: 40px;
-    height: 22px;
+.meeting-settings-toggle-slider {
+    width: 36px;
+    height: 20px;
     background: rgba(255, 255, 255, 0.12);
-    border-radius: 11px;
+    border-radius: 10px;
     position: relative;
     transition: background 0.25s;
     flex-shrink: 0;
 }
 
-.toggle-slider::after {
+.meeting-settings-toggle-slider::after {
     content: '';
     position: absolute;
     top: 3px;
     left: 3px;
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     background: rgba(255, 255, 255, 0.6);
     border-radius: 50%;
     transition: transform 0.25s, background 0.25s;
 }
 
-.meeting-settings-toggle input:checked+.toggle-slider {
+.meeting-settings-toggle input:checked + .meeting-settings-toggle-slider {
     background: rgba(79, 140, 255, 0.5);
 }
 
-.meeting-settings-toggle input:checked+.toggle-slider::after {
-    transform: translateX(18px);
+.meeting-settings-toggle input:checked + .meeting-settings-toggle-slider::after {
+    transform: translateX(16px);
     background: #4f8cff;
-}
-
-.toggle-label {
-    font-size: 0.85rem;
-    color: rgba(255, 255, 255, 0.7);
 }
 
 /* ── Saving indicator ── */
 .meeting-settings-saving {
     font-size: 0.78rem;
     color: rgba(79, 140, 255, 0.7);
-    margin-top: 8px;
+    margin-top: 4px;
     animation: meetingSettingsPulse 1s ease-in-out infinite;
 }
 
 @keyframes meetingSettingsPulse {
-
     0%,
     100% {
         opacity: 0.5;

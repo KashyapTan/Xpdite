@@ -10,16 +10,24 @@
     display: none;
 }
 .settings-side-bar{
+    min-width: 140px;
     width: 140px;
     height: 100%;
-    /* background-color: lightblue; */
     display: flex;
     flex-direction: column;
-    /* background-color: red; */
     overflow-y: auto;
     gap: 5px;
     border-right: 1px solid rgba(255, 255, 255, 0.2);
     align-items: center;
+    flex-shrink: 0;
+    padding-bottom: 30px;
+}
+.settings-side-bar::-webkit-scrollbar {
+    display: none;
+}
+.settings-side-bar {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
 }
 .settings-models{
     margin-top: 10px;
@@ -30,6 +38,8 @@
 .settings-sub-agents-tab, .settings-mobile-tab, .settings-scheduled-jobs-tab, .settings-memory-tab{
     width: 130px;
     height: 30px;
+    min-height: 30px;
+    flex-shrink: 0;
     /* background-color: lightcoral; */
     display: flex;
     align-items: center;
