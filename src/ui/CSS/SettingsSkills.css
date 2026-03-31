@@ -67,7 +67,7 @@
     min-height: 0;
     padding-bottom: 16px;
     padding-right: 4px;
-    margin-bottom: 15px;
+    margin-bottom: 10px;
 }
 
 .skills-list::-webkit-scrollbar {
@@ -234,7 +234,7 @@
 
 .skill-editor {
     background-color: rgba(255, 255, 255, 0.03);
-    border: 1px solid rgba(59, 130, 246, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     padding: 16px;
     overflow-y: auto;

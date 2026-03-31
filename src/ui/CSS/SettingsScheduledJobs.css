@@ -1,46 +1,55 @@
-/* Settings Tasks (formerly Scheduled Jobs) */
+/* ── Container & Header ──────────────────────── */
+
 .settings-tasks-container {
-  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  color: #eee;
+  overflow: hidden;
 }
 
 .settings-tasks-header {
-  margin-bottom: 24px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
 }
 
 .settings-tasks-header h2 {
-  font-size: 18px;
-  font-weight: 600;
-  color: white;
-  margin: 0 0 8px 0;
+  margin: 0 0 4px 0;
+  font-size: 1.5rem;
+  color: #eee;
 }
 
 .settings-tasks-header p {
-  font-size: 13px;
-  color: rgba(255, 255, 255, 0.6);
   margin: 0;
-  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 500px;
 }
 
 .settings-tasks-loading {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 48px 16px;
+  padding: 40px;
   color: rgba(255, 255, 255, 0.5);
-  font-size: 14px;
+  font-size: 0.85rem;
 }
 
 .settings-tasks-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
-  margin-bottom: 16px;
-  background-color: rgba(239, 68, 68, 0.15);
-  border: 1px solid rgba(239, 68, 68, 0.3);
-  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 4px;
   color: #f87171;
-  font-size: 13px;
+  font-size: 0.85rem;
+  flex-shrink: 0;
 }
 
 .settings-tasks-error button {
@@ -48,13 +57,15 @@
   border: none;
   color: #f87171;
   cursor: pointer;
-  font-size: 12px;
+  font-size: 0.75rem;
   padding: 4px 8px;
 }
 
 .settings-tasks-error button:hover {
   text-decoration: underline;
 }
+
+/* ── Empty State ─────────────────────────────── */
 
 .settings-tasks-empty {
   display: flex;
@@ -80,28 +91,50 @@
 .settings-tasks-empty p {
   margin: 0;
   color: rgba(255, 255, 255, 0.5);
-  font-size: 14px;
+  font-size: 0.85rem;
 }
 
 .settings-tasks-empty-hint {
   margin-top: 8px !important;
-  font-size: 12px !important;
+  font-size: 0.75rem !important;
   color: rgba(255, 255, 255, 0.4) !important;
   max-width: 300px;
 }
 
+/* ── Tasks List ──────────────────────────────── */
+
 .settings-tasks-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
+.settings-tasks-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-tasks-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.settings-tasks-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Task Card ───────────────────────────────── */
+
 .settings-task-item {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(255, 255, 255, 0.03);
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   overflow: hidden;
   transition: border-color 0.2s;
+  flex-shrink: 0;
 }
 
 .settings-task-item:hover {
@@ -109,7 +142,7 @@
 }
 
 .settings-task-item.paused {
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 .settings-task-item.expanded {
@@ -120,8 +153,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 16px;
+  padding: 12px 14px;
   cursor: pointer;
+  transition: background 0.2s;
+}
+
+.settings-task-header:hover {
+  background: rgba(255, 255, 255, 0.02);
 }
 
 .settings-task-info {
@@ -134,65 +172,68 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 0.9rem;
+  font-weight: 600;
   color: white;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .settings-task-badge {
   display: inline-flex;
   align-items: center;
   padding: 2px 6px;
-  font-size: 10px;
+  font-size: 0.65rem;
   font-weight: 600;
-  border-radius: 4px;
+  border-radius: 12px;
   text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .settings-task-badge.one-shot {
-  background-color: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
 }
 
 .settings-task-badge.paused {
-  background-color: rgba(251, 191, 36, 0.2);
+  background-color: rgba(251, 191, 36, 0.15);
   color: #fbbf24;
 }
 
 .settings-task-badge.missed {
-  background-color: rgba(239, 68, 68, 0.2);
+  background-color: rgba(239, 68, 68, 0.15);
   color: #f87171;
 }
 
 .settings-task-badge.forwarding {
-  background-color: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
 }
 
 .settings-task-schedule {
-  font-size: 12px;
+  font-size: 0.8rem;
   color: rgba(255, 255, 255, 0.5);
 }
 
 .settings-task-toggle {
   flex-shrink: 0;
-  margin-left: 16px;
+  margin-left: 12px;
 }
+
+/* ── Toggle Switch ───────────────────────────── */
 
 .toggle-button {
   position: relative;
   width: 36px;
   height: 20px;
-  background-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.12);
   border: none;
   border-radius: 10px;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background 0.25s;
 }
 
 .toggle-button.enabled {
-  background-color: #3b82f6;
+  background: rgba(79, 140, 255, 0.5);
 }
 
 .toggle-button:disabled {
@@ -202,28 +243,31 @@
 
 .toggle-slider {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 16px;
-  height: 16px;
-  background-color: white;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: rgba(255, 255, 255, 0.6);
   border-radius: 50%;
-  transition: transform 0.2s;
+  transition: transform 0.25s, background 0.25s;
 }
 
 .toggle-button.enabled .toggle-slider {
   transform: translateX(16px);
+  background: #4f8cff;
 }
 
+/* ── Task Details ────────────────────────────── */
+
 .settings-task-details {
-  padding: 0 16px 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0 14px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .settings-task-detail-row {
   display: flex;
   padding: 8px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
 }
 
 .settings-task-detail-row:last-of-type {
@@ -232,14 +276,14 @@
 
 .settings-task-detail-label {
   flex: 0 0 100px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.4);
 }
 
 .settings-task-detail-value {
   flex: 1;
-  font-size: 12px;
-  color: white;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.8);
   word-break: break-word;
 }
 
@@ -247,26 +291,27 @@
   background-color: rgba(0, 0, 0, 0.3);
   padding: 2px 6px;
   border-radius: 4px;
-  font-family: monospace;
-  font-size: 11px;
+  font-family: 'Fira Code', monospace;
+  font-size: 0.75rem;
 }
 
-/* Forwarding Section */
+/* ── Forwarding Section ──────────────────────── */
+
 .settings-task-forwarding-section {
   margin-top: 12px;
   padding: 12px;
   background-color: rgba(0, 0, 0, 0.2);
-  border-radius: 8px;
+  border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .settings-task-forwarding-header {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .settings-task-forwarding-header .settings-task-detail-label {
   flex: none;
-  font-size: 13px;
+  font-size: 0.8rem;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.7);
 }
@@ -274,7 +319,7 @@
 .settings-task-forwarding-edit {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .settings-task-forwarding-field {
@@ -284,19 +329,20 @@
 }
 
 .settings-task-forwarding-field label {
-  font-size: 11px;
+  font-size: 0.7rem;
   color: rgba(255, 255, 255, 0.5);
   text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .settings-task-forwarding-field select,
 .settings-task-forwarding-field input {
-  background-color: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 6px;
   color: white;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: 8px;
+  font-size: 0.85rem;
   width: 100%;
 }
 
@@ -312,8 +358,8 @@
 }
 
 .settings-task-forwarding-hint {
-  font-size: 11px;
-  color: rgba(251, 191, 36, 0.8);
+  font-size: 0.7rem;
+  color: #fbbf24;
   margin-top: 4px;
 }
 
@@ -340,22 +386,22 @@
   display: inline-flex;
   align-items: center;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: 0.75rem;
   font-weight: 500;
-  border-radius: 6px;
-  background-color: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
+  border-radius: 12px;
+  background-color: rgba(16, 185, 129, 0.15);
+  color: #34d399;
 }
 
 .forwarding-recipient {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  font-family: monospace;
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  font-family: 'Fira Code', monospace;
 }
 
 .forwarding-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   margin-left: auto;
 }
 
@@ -367,27 +413,30 @@
 }
 
 .forwarding-none-text {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.4);
   font-style: italic;
 }
 
+/* ── Action Buttons ──────────────────────────── */
+
 .settings-task-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .settings-task-action {
-  padding: 8px 16px;
-  font-size: 12px;
+  padding: 6px 14px;
+  font-size: 0.8rem;
   font-weight: 500;
   border: none;
   border-radius: 6px;
   cursor: pointer;
-  transition: opacity 0.2s, background-color 0.2s;
+  transition: all 0.2s;
+  font-family: 'Montserrat', sans-serif;
 }
 
 .settings-task-action:disabled {
@@ -405,17 +454,19 @@
 }
 
 .settings-task-action.delete {
-  background-color: rgba(239, 68, 68, 0.2);
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.5);
   color: #f87171;
-  transition: background-color 0.2s, color 0.2s, transform 0.1s;
 }
 
 .settings-task-action.delete:hover:not(:disabled) {
-  background-color: rgba(239, 68, 68, 0.3);
+  background-color: rgba(239, 68, 68, 0.1);
+  border-color: #ef4444;
 }
 
 .settings-task-action.delete.confirm {
   background-color: #ef4444;
+  border-color: #ef4444;
   color: white;
   animation: pulse-delete 1s infinite;
 }
@@ -429,7 +480,7 @@
     transform: scale(1);
   }
   50% {
-    transform: scale(1.05);
+    transform: scale(1.02);
   }
 }
 
@@ -443,40 +494,47 @@
 }
 
 .settings-task-action.cancel {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.7);
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 .settings-task-action.cancel:hover:not(:disabled) {
-  background-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .settings-task-action.edit {
-  background-color: rgba(59, 130, 246, 0.2);
-  color: #60a5fa;
-  padding: 6px 12px;
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 4px 10px;
+  font-size: 0.75rem;
 }
 
 .settings-task-action.edit:hover:not(:disabled) {
-  background-color: rgba(59, 130, 246, 0.3);
+  background-color: rgba(255, 255, 255, 0.1);
 }
 
 .settings-task-action.remove {
-  background-color: rgba(239, 68, 68, 0.2);
+  background: none;
+  border: 1px solid rgba(239, 68, 68, 0.5);
   color: #f87171;
-  padding: 6px 12px;
+  padding: 4px 10px;
+  font-size: 0.75rem;
 }
 
 .settings-task-action.remove:hover:not(:disabled) {
-  background-color: rgba(239, 68, 68, 0.3);
+  background-color: rgba(239, 68, 68, 0.1);
 }
 
 .settings-task-action.add-forwarding {
-  background-color: rgba(34, 197, 94, 0.2);
-  color: #4ade80;
-  padding: 6px 12px;
+  background: none;
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  color: #34d399;
+  padding: 4px 10px;
+  font-size: 0.75rem;
 }
 
 .settings-task-action.add-forwarding:hover:not(:disabled) {
-  background-color: rgba(34, 197, 94, 0.3);
+  background-color: rgba(16, 185, 129, 0.1);
 }

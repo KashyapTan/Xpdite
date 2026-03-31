@@ -103,6 +103,7 @@ const SettingsMemory: React.FC = () => {
   const [selectedDetail, setSelectedDetail] = useState<MemoryDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [editor, setEditor] = useState<EditorState | null>(null);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');
   const [error, setError] = useState('');
   const [deletePending, setDeletePending] = useState(false);
@@ -172,6 +173,7 @@ const SettingsMemory: React.FC = () => {
       setSelectedDetail(detail);
       setEditor(detailToEditor(detail));
       setSaveStatus('idle');
+      setEditorOpen(true);
     } catch (detailError) {
       if (detailRequestIdRef.current === requestId) {
         setError(getErrorMessage(detailError, 'Failed to load memory.'));
@@ -286,6 +288,14 @@ const SettingsMemory: React.FC = () => {
     setSaveStatus('idle');
   };
 
+  const handleCloseEditor = () => {
+    setEditorOpen(false);
+    setSelectedPath(null);
+    setSelectedDetail(null);
+    setEditor(null);
+    setSaveStatus('idle');
+  };
+
   const handleSave = async () => {
     if (!editor) {
       return;
@@ -335,10 +345,7 @@ const SettingsMemory: React.FC = () => {
     try {
       setDeletePending(true);
       await api.deleteMemory(selectedPath);
-      setSelectedPath(null);
-      setSelectedDetail(null);
-      setEditor(null);
-      setSaveStatus('idle');
+      handleCloseEditor();
       await loadMemories(null);
     } catch (deleteError) {
       setError(getErrorMessage(deleteError, 'Failed to delete memory.'));
@@ -359,10 +366,7 @@ const SettingsMemory: React.FC = () => {
     try {
       setClearPending(true);
       await api.clearAllMemories();
-      setSelectedPath(null);
-      setSelectedDetail(null);
-      setEditor(null);
-      setSaveStatus('idle');
+      handleCloseEditor();
       await loadMemories(null);
     } catch (clearError) {
       setError(getErrorMessage(clearError, 'Failed to clear memories.'));
@@ -391,7 +395,7 @@ const SettingsMemory: React.FC = () => {
       <div className="settings-memory-toggle-card">
         <div>
           <h3>Profile Auto-Inject</h3>
-          <p>Inject <code>profile/user_profile.md</code> into the system prompt when it exists. That memory is sent to the active model, including cloud providers when you use them.</p>
+          <p>Inject <code>profile/user_profile.md</code> into the system prompt when it exists.</p>
         </div>
         <label className="settings-memory-toggle">
           <input
@@ -401,94 +405,86 @@ const SettingsMemory: React.FC = () => {
             disabled={settingsLoading || settingsLoadFailed || settingsSaving}
             aria-label="Profile auto-inject"
           />
-          <span>{profileAutoInject ? 'On' : 'Off'}</span>
+          <span className="settings-memory-toggle-slider" />
         </label>
       </div>
 
       {error ? <div className="settings-memory-error">{error}</div> : null}
 
-      <div className="settings-memory-body">
-        <div className="settings-memory-browser">
-          <div className="settings-memory-browser-header">
-            <h3>Memory Browser</h3>
-            <span>{memories.length} file(s)</span>
-          </div>
+      {loading ? <div className="settings-memory-empty">Loading memories...</div> : null}
 
-          {loading ? <div className="settings-memory-empty">Loading memories...</div> : null}
 
-          {!loading && folderGroups.length === 0 ? (
-            <div className="settings-memory-empty">No memories saved yet. Use chat memory tools or create <code>profile/user_profile.md</code> to get started.</div>
-          ) : null}
 
-          {!loading && folderGroups.length > 0 ? (
-            <div className="settings-memory-groups">
-              {folderGroups.map(({ folder, items }) => {
-                const expanded = expandedFolders[folder] ?? true;
-                return (
-                  <section key={folder} className="settings-memory-folder">
-                    <button
-                      type="button"
-                      className="settings-memory-folder-toggle"
-                      onClick={() => handleToggleFolder(folder)}
-                    >
-                      <span>{expanded ? '[-]' : '[+]'}</span>
-                      <span>{folder}</span>
-                      <span>{items.length}</span>
-                    </button>
+      {!loading && folderGroups.length === 0 ? (
+        <div className="settings-memory-empty">No memories saved yet. Use chat memory tools or create <code>profile/user_profile.md</code> to get started.</div>
+      ) : null}
 
-                    {expanded ? (
-                      <div className="settings-memory-list">
-                        {items.map((memory) => (
-                          <button
-                            type="button"
-                            key={memory.path}
-                            className={`settings-memory-item ${selectedPath === memory.path ? 'selected' : ''}`}
-                            onClick={() => void loadDetail(memory.path)}
-                          >
-                            <div className="settings-memory-item-top">
-                              <strong>{memory.title}</strong>
-                              <span>{memory.importance.toFixed(2)}</span>
-                            </div>
-                            <div className="settings-memory-item-path">{memory.path}</div>
-                            <div className="settings-memory-item-abstract">{memory.abstract}</div>
-                            <div className="settings-memory-item-meta">
-                              <span>Accessed {formatTimestamp(memory.last_accessed)}</span>
-                              {memory.parse_warning ? <span className="settings-memory-warning">Parse warning</span> : null}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </section>
-                );
-              })}
-            </div>
-          ) : null}
+      {!loading && folderGroups.length > 0 ? (
+        <div className="settings-memory-groups">
+          {folderGroups.map(({ folder, items }) => {
+            const expanded = expandedFolders[folder] ?? true;
+            return (
+              <section key={folder} className="settings-memory-folder">
+                <button
+                  type="button"
+                  className="settings-memory-folder-toggle"
+                  onClick={() => handleToggleFolder(folder)}
+                >
+                  <span>{expanded ? '[-]' : '[+]'}</span>
+                  <span>{folder}</span>
+                  <span>{items.length}</span>
+                </button>
 
-          <div className="settings-memory-danger">
-            <h3>Danger Zone</h3>
-            <p>Remove every saved memory file and recreate the default folder layout.</p>
-            <button
-              type="button"
-              className="settings-memory-danger-button"
-              onClick={() => void handleClearAll()}
-              disabled={clearPending}
-            >
-              {clearPending ? 'Clearing...' : 'Clear All Memories'}
-            </button>
-          </div>
+                {expanded ? (
+                  <div className="settings-memory-list">
+                    {items.map((memory) => (
+                      <button
+                        type="button"
+                        key={memory.path}
+                        className={`settings-memory-item ${selectedPath === memory.path ? 'selected' : ''}`}
+                        onClick={() => void loadDetail(memory.path)}
+                      >
+                        <div className="settings-memory-item-top">
+                          <strong>{memory.title}</strong>
+                          <span>{memory.importance.toFixed(2)}</span>
+                        </div>
+                        <div className="settings-memory-item-path">{memory.path}</div>
+                        <div className="settings-memory-item-abstract">{memory.abstract}</div>
+                        <div className="settings-memory-item-meta">
+                          <span>Accessed {formatTimestamp(memory.last_accessed)}</span>
+                          {memory.parse_warning ? <span className="settings-memory-warning">Parse warning</span> : null}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })}
         </div>
+      ) : null}
 
-        <div className="settings-memory-editor">
-          <div className="settings-memory-editor-header">
-            <h3>Memory Editor</h3>
-            {selectedDetail ? <span>Updated {formatTimestamp(selectedDetail.updated)}</span> : null}
-          </div>
+      <button
+        type="button"
+        className="settings-memory-clear-button"
+        onClick={() => void handleClearAll()}
+        disabled={clearPending || memories.length === 0}
+      >
+        {clearPending ? 'Clearing...' : 'Clear All Memories'}
+      </button>
 
-          {!editor ? (
-            <div className="settings-memory-empty">Select a memory file to inspect and edit it.</div>
-          ) : (
-            <div className="settings-memory-form">
+      {/* Modal Editor */}
+      {editorOpen && editor && (
+        <div className="settings-memory-modal-overlay" onClick={handleCloseEditor}>
+          <div className="settings-memory-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-memory-modal-header">
+              <h3>Edit Memory</h3>
+              <button type="button" className="settings-memory-modal-close" onClick={handleCloseEditor}>
+                &times;
+              </button>
+            </div>
+
+            <div className="settings-memory-modal-body">
               <div className="settings-memory-field">
                 <label htmlFor="memory-path">Path</label>
                 <input id="memory-path" value={editor.path} readOnly />
@@ -554,38 +550,39 @@ const SettingsMemory: React.FC = () => {
                   className="settings-memory-body-input"
                   value={editor.body}
                   onChange={(event) => handleEditorChange('body', event.target.value)}
-                  rows={16}
+                  rows={12}
                   disabled={detailLoading}
                 />
               </div>
 
               <div className="settings-memory-editor-meta">
                 <span>Created {formatTimestamp(selectedDetail?.created ?? '')}</span>
+                <span>Updated {formatTimestamp(selectedDetail?.updated ?? '')}</span>
                 <span>Last accessed {formatTimestamp(selectedDetail?.last_accessed ?? '')}</span>
               </div>
-
-              <div className="settings-memory-actions">
-                <button
-                  type="button"
-                  className="settings-memory-delete-button"
-                  onClick={() => void handleDelete()}
-                  disabled={detailLoading || saveStatus === 'saving' || deletePending}
-                >
-                  {deletePending ? 'Deleting...' : 'Delete'}
-                </button>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => void handleSave()}
-                  disabled={detailLoading || saveStatus === 'saving'}
-                >
-                  {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save'}
-                </button>
-              </div>
             </div>
-          )}
+
+            <div className="settings-memory-modal-footer">
+              <button
+                type="button"
+                className="settings-memory-delete-button"
+                onClick={() => void handleDelete()}
+                disabled={detailLoading || saveStatus === 'saving' || deletePending}
+              >
+                {deletePending ? 'Deleting...' : 'Delete'}
+              </button>
+              <button
+                type="button"
+                className="settings-memory-save-button"
+                onClick={() => void handleSave()}
+                disabled={detailLoading || saveStatus === 'saving'}
+              >
+                {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved' : 'Save'}
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

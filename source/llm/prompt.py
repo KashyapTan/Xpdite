@@ -194,7 +194,7 @@ def build_system_prompt(
     prompt = prompt.replace("{{user_profile_block}}", user_profile_block)
     prompt = prompt.replace("{{memory_block}}", memory_block)
     prompt = prompt.replace("{{skills_block}}", skills_block)
-    print(f'{"="*10} SYSTEM PROMPT {"="*10}')
-    print(prompt)
-    print(f'{"="*30}')
+    # print(f'{"="*10} SYSTEM PROMPT {"="*10}')
+    # print(prompt)
+    # print(f'{"="*30}')
     return prompt
