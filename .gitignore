@@ -43,3 +43,4 @@ code_review/
 coverage/
 .coverage
 backend-coverage.json
+claude-code-reference-implementations/
