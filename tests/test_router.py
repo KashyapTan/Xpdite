@@ -61,23 +61,29 @@ class TestIsLocalOllamaModel:
     def test_local_ollama_model_is_local(self):
         assert is_local_ollama_model("qwen3-vl:8b-instruct") is True
 
-    def test_cloud_ollama_model_name_is_still_local(self):
-        assert is_local_ollama_model("qwen3.5:397b-cloud") is True
+    def test_cloud_ollama_model_name_is_not_local(self):
+        """Cloud-tagged Ollama models (-cloud suffix) are not local."""
+        assert is_local_ollama_model("qwen3.5:397b-cloud") is False
 
-    def test_cloud_ollama_model_with_explicit_prefix_is_still_local(self):
-        assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is True
+    def test_cloud_ollama_model_with_explicit_prefix_is_not_local(self):
+        """Cloud-tagged Ollama models with explicit prefix are not local."""
+        assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is False
 
-    def test_cloud_ollama_colon_tag_with_explicit_prefix_is_still_local(self):
-        assert is_local_ollama_model("ollama/qwen3-coder-next:cloud") is True
+    def test_cloud_ollama_colon_tag_with_explicit_prefix_is_not_local(self):
+        """Cloud-tagged Ollama models (:cloud suffix) with prefix are not local."""
+        assert is_local_ollama_model("ollama/qwen3-coder-next:cloud") is False
 
     def test_cloud_ollama_suffix_check_is_case_insensitive(self):
-        assert is_local_ollama_model("qwen3.5:397b-CLOUD") is True
+        """Cloud suffix detection is case-insensitive."""
+        assert is_local_ollama_model("qwen3.5:397b-CLOUD") is False
 
-    def test_cloud_ollama_colon_tag_is_still_local(self):
-        assert is_local_ollama_model("qwen3-coder-next:cloud") is True
+    def test_cloud_ollama_colon_tag_is_not_local(self):
+        """Cloud-tagged Ollama models (:cloud suffix) are not local."""
+        assert is_local_ollama_model("qwen3-coder-next:cloud") is False
 
     def test_cloud_ollama_colon_tag_is_case_insensitive(self):
-        assert is_local_ollama_model("qwen3-coder-next:CLOUD") is True
+        """Cloud suffix detection (:CLOUD) is case-insensitive."""
+        assert is_local_ollama_model("qwen3-coder-next:CLOUD") is False
 
     def test_openai_model_is_not_local_ollama(self):
         assert is_local_ollama_model("openai/gpt-4o") is False

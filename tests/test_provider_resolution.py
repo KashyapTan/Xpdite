@@ -316,9 +316,13 @@ class TestIsLocalOllamaModel:
         ):
             assert is_local_ollama_model("anthropic/claude-3") is False
 
-    def test_cloud_tag_names_are_still_local_ollama(self):
-        """Cloud-like suffixes no longer alter local Ollama routing."""
+    def test_cloud_tag_names_are_not_local_ollama(self):
+        """Cloud-tagged Ollama models (:cloud, -cloud) are not local.
+
+        Cloud-hosted Ollama models can run in parallel (they don't share a
+        local GPU), so they should return False to bypass serialization.
+        """
         from source.llm.provider_resolution import is_local_ollama_model
 
-        assert is_local_ollama_model("llama3.2:cloud") is True
-        assert is_local_ollama_model("llama3.2-cloud") is True
+        assert is_local_ollama_model("llama3.2:cloud") is False
+        assert is_local_ollama_model("llama3.2-cloud") is False

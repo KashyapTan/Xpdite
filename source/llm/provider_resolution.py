@@ -55,6 +55,24 @@ def normalize_ollama_model_name(model_name: str) -> str:
     return normalized
 
 
+def _is_cloud_tagged_ollama_model(model_name: str) -> bool:
+    """Whether an Ollama model name has a cloud tag suffix.
+
+    Cloud-hosted Ollama models use ``:cloud`` or ``-cloud`` suffix convention
+    to indicate they run on remote infrastructure and can be parallelized
+    (they don't share a local GPU).
+
+    Examples:
+        "qwen3.5:cloud" -> True
+        "glm-5:cloud" -> True
+        "kimi-k2.5-cloud" -> True
+        "qwen3:8b" -> False
+        "llama3.2:latest" -> False
+    """
+    lower_name = (model_name or "").strip().lower()
+    return lower_name.endswith(":cloud") or lower_name.endswith("-cloud")
+
+
 def is_local_ollama_api_base(api_base: Optional[str]) -> bool:
     """Whether an Ollama API base points at a local daemon."""
     candidate = (api_base or DEFAULT_OLLAMA_API_BASE).strip()
@@ -83,6 +101,14 @@ def resolve_model_target(model_name: str) -> ResolvedModelTarget:
     if provider == "ollama":
         bare_model = normalize_ollama_model_name(parsed_model)
         api_base = get_ollama_api_base()
+        # Cloud-tagged models (:cloud, -cloud suffix) are remote-hosted and
+        # can be parallelized — they don't share a local GPU.
+        is_cloud_tagged = _is_cloud_tagged_ollama_model(bare_model)
+        is_local = (
+            bool(bare_model)
+            and is_local_ollama_api_base(api_base)
+            and not is_cloud_tagged
+        )
         return ResolvedModelTarget(
             raw_model_name=(model_name or "").strip(),
             provider="ollama",
@@ -91,7 +117,7 @@ def resolve_model_target(model_name: str) -> ResolvedModelTarget:
             api_key=get_ollama_api_key(),
             api_base=api_base,
             provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            is_local_runtime=(bool(bare_model) and is_local_ollama_api_base(api_base)),
+            is_local_runtime=is_local,
         )
 
     from .key_manager import key_manager
@@ -109,6 +135,16 @@ def resolve_model_target(model_name: str) -> ResolvedModelTarget:
 
 
 def is_local_ollama_model(model_name: str) -> bool:
-    """Whether a model resolves to a true local Ollama runtime."""
+    """Whether a model resolves to a true local Ollama runtime.
+
+    Rules:
+    - Non-Ollama providers (anthropic/openai/gemini/openrouter) return False.
+    - Ollama models tagged as cloud (``:cloud`` or ``-cloud`` suffix) return False.
+    - All other Ollama models pointing at localhost return True.
+
+    Local Ollama models share a single GPU — multiple concurrent calls would
+    compete for VRAM and degrade performance, so they should run sequentially.
+    Cloud-tagged Ollama models run on remote infrastructure and can be parallelized.
+    """
     target = resolve_model_target(model_name)
     return target.provider == "ollama" and target.is_local_runtime

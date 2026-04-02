@@ -30,7 +30,11 @@ from ..core.request_context import (
 from ..core.thread_pool import run_in_thread
 from ..database import db
 from ..llm.provider_resolution import resolve_model_target
-from ..mcp_integration.tool_args import normalize_tool_args
+from ..mcp_integration.tool_args import (
+    format_tool_arg_error,
+    merge_streamed_tool_call_arguments,
+    normalize_tool_args,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +167,27 @@ def _resolve_tier_model(tier: str) -> str:
         raise ValueError("No model available for sub-agent execution")
 
     if tier == "self":
+        logger.debug("Tier 'self' resolved to current model: %s", current_model)
         return current_model
 
     # Check user-configured overrides in DB
     setting_key = f"sub_agent_tier_{tier}"
     configured = db.get_setting(setting_key)
     if configured and configured.strip():
-        return configured.strip()
+        resolved = configured.strip()
+        logger.debug(
+            "Tier '%s' resolved via DB setting '%s' to: %s (current model was: %s)",
+            tier,
+            setting_key,
+            resolved,
+            current_model,
+        )
+        return resolved
 
     # Default: use current model
+    logger.debug(
+        "Tier '%s' has no DB override, using current model: %s", tier, current_model
+    )
     return current_model
 
 
@@ -437,8 +453,11 @@ async def _run_cloud_sub_agent(
                                     tc_delta.function.name
                                 )
                             if tc_delta.function.arguments:
-                                tool_calls_accum[idx]["function"]["arguments"] += (
-                                    tc_delta.function.arguments
+                                tool_calls_accum[idx]["function"]["arguments"] = (
+                                    merge_streamed_tool_call_arguments(
+                                        tool_calls_accum[idx]["function"]["arguments"],
+                                        tc_delta.function.arguments,
+                                    )
                                 )
 
             # After streaming, add collected text to accumulated
@@ -466,6 +485,11 @@ async def _run_cloud_sub_agent(
                     tool_calls_accum[i] for i in sorted(tool_calls_accum.keys())
                 ]
 
+                # Ensure all tool calls have IDs (some providers omit them)
+                for idx, tc in enumerate(sorted_tool_calls):
+                    if not tc.get("id"):
+                        tc["id"] = f"call_{rounds}_{idx}"
+
                 # Append assistant message with tool calls
                 assistant_msg: Dict[str, Any] = {
                     "role": "assistant",
@@ -480,11 +504,24 @@ async def _run_cloud_sub_agent(
                     fn_args, arg_error = normalize_tool_args(
                         tc["function"]["arguments"]
                     )
-                    tc_id = tc.get("id", "")
+                    tc_id = tc["id"]  # ID is guaranteed to be present now
+
+                    # CRITICAL: Always update the arguments in the tool call to
+                    # contain valid JSON. LiteLLM's Ollama transformer parses
+                    # tool call arguments when building follow-up requests and will
+                    # crash if they contain malformed JSON (e.g., trailing garbage).
+                    # Even when normalize_tool_args successfully repairs the JSON,
+                    # we must update the stored arguments to the repaired version.
+                    if not arg_error and fn_args is not None:
+                        tc["function"]["arguments"] = json.dumps(fn_args)
 
                     if arg_error:
-                        result_str = (
-                            f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                        # Sanitize malformed args so LiteLLM doesn't crash on follow-up
+                        tc["function"]["arguments"] = "{}"
+                        # Get tool schema for helpful error message
+                        tool_schema = mcp_manager.get_tool_schema(fn_name)
+                        result_str = format_tool_arg_error(
+                            fn_name, arg_error, tool_schema
                         )
                         messages.append(
                             {
@@ -844,7 +881,21 @@ async def execute_sub_agents_parallel(
 
     # Check if ANY call resolves to local Ollama — if so, run all sequentially
     # to avoid overwhelming the local GPU
-    any_local = any(_is_local_ollama(tier_cache[tier]) for tier in normalized_tiers)
+    local_check_results = {
+        model: _is_local_ollama(model) for model in set(tier_cache.values())
+    }
+    any_local = any(local_check_results[tier_cache[tier]] for tier in normalized_tiers)
+
+    logger.info(
+        "Sub-agent parallelization check: %d calls, tiers=%s, resolved_models=%s, "
+        "local_check=%s, any_local=%s, will_parallelize=%s",
+        len(calls),
+        normalized_tiers,
+        tier_cache,
+        local_check_results,
+        any_local,
+        not any_local and len(calls) > 1,
+    )
 
     if any_local or len(calls) == 1:
         # Sequential execution

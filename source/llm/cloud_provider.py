@@ -23,6 +23,7 @@ from ..core.connection import broadcast_message
 from ..config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ..core.request_context import is_current_request_cancelled
 from ..mcp_integration.tool_args import (
+    format_tool_arg_error,
     merge_streamed_tool_call_arguments,
     normalize_tool_args,
     sanitize_tool_args,
@@ -827,6 +828,16 @@ async def _stream_litellm(
                         fn_args, arg_error = normalize_tool_args(raw_args)
                     else:
                         arg_error = None
+
+                    # CRITICAL: Always update the arguments in the assistant message
+                    # to contain valid JSON. LiteLLM's Ollama transformer parses
+                    # tool call arguments when building follow-up requests and will
+                    # crash if they contain malformed JSON (e.g., trailing garbage).
+                    # Even when normalize_tool_args successfully repairs the JSON,
+                    # we must update the stored arguments to the repaired version.
+                    if not arg_error and fn_args is not None:
+                        tc_info["function"]["arguments"] = json.dumps(fn_args)
+
                     if arg_error and should_fallback_to_empty_args(fn_name):
                         logger.info(
                             "Falling back to empty args for %s after parse error: %s",
@@ -837,9 +848,10 @@ async def _stream_litellm(
                         arg_error = None
                         tc_info["function"]["arguments"] = "{}"
                     if arg_error:
-                        error_result = (
-                            f"System error: invalid arguments for tool "
-                            f"'{fn_name}': {arg_error}"
+                        # Get tool schema for helpful error message
+                        tool_schema = mcp_manager.get_tool_schema(fn_name)
+                        error_result = format_tool_arg_error(
+                            fn_name, arg_error, tool_schema
                         )
                         logger.warning(
                             "Malformed tool call args for %s (%d chars)",

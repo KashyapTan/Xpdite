@@ -179,7 +179,8 @@ class TestHttpApiEndpoints:
         ]
         assert result[0]["source"] == "installed"
         assert result[1]["source"] == "custom"
-        assert result[1]["is_local"] is True
+        # Cloud-tagged models are NOT local (they run on remote infrastructure)
+        assert result[1]["is_local"] is False
         mock_client_cls.assert_called_once_with(
             host=http_api.OLLAMA_LOCAL_LIST_API_BASE
         )
@@ -216,7 +217,8 @@ class TestHttpApiEndpoints:
                 "parameter_size": "",
                 "quantization": "",
                 "source": "custom",
-                "is_local": True,
+                # Cloud-tagged models are NOT local (they run on remote infrastructure)
+                "is_local": False,
             }
         ]
         mock_client_cls.assert_called_once_with(

@@ -1143,7 +1143,7 @@ class TestStreamLitellm:
         _mock_cancelled,
         _mock_mcp,
     ):
-        """memlist should recover from malformed args by calling with {}."""
+        """memlist should recover from malformed args by extracting first valid JSON object."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_mem_bad", name="memlist"),
             _tool_call_chunk(
@@ -1192,9 +1192,12 @@ class TestStreamLitellm:
         assert text == "Recovered"
         assert len(tool_calls) == 1
         assert tool_calls[0]["name"] == "memlist"
-        assert tool_calls[0]["args"] == {}
+        # JSON repair extracts the first valid JSON object from concatenated garbage
+        assert tool_calls[0]["args"] == {"folder": "procedural"}
         assert tool_calls[0]["result"] == "memory listing"
-        mock_execute.assert_awaited_once_with("memlist", {}, "memory")
+        mock_execute.assert_awaited_once_with(
+            "memlist", {"folder": "procedural"}, "memory"
+        )
 
     @pytest.mark.asyncio
     async def test_list_skills_malformed_args_fallback_to_empty_object(
@@ -1203,7 +1206,7 @@ class TestStreamLitellm:
         _mock_cancelled,
         _mock_mcp,
     ):
-        """list_skills should recover from malformed args by calling with {}."""
+        """list_skills should recover from malformed args by extracting first valid JSON object."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_skills_bad", name="list_skills"),
             _tool_call_chunk(0, arguments='{"x":1}{"y":2}', finish_reason="tool_calls"),
@@ -1244,9 +1247,10 @@ class TestStreamLitellm:
         assert text == "Skills ready"
         assert len(tool_calls) == 1
         assert tool_calls[0]["name"] == "list_skills"
-        assert tool_calls[0]["args"] == {}
+        # JSON repair extracts the first valid JSON object from concatenated garbage
+        assert tool_calls[0]["args"] == {"x": 1}
         assert "Available skills" in tool_calls[0]["result"]
-        mock_execute.assert_called_once_with("list_skills", {})
+        mock_execute.assert_called_once_with("list_skills", {"x": 1})
 
     @pytest.mark.asyncio
     async def test_thinking_tokens_broadcast(self, _mock_broadcast, _mock_cancelled):

@@ -157,7 +157,7 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
           onClick={() => isExpandable && setShowResult(!showResult)}
         >
           <span className="chain-tool-badge">{badge}</span>
-          <span className="chain-tool-text">{text}</span>
+          <span className={`chain-tool-text ${isRunning ? 'running' : ''}`}>{text}</span>
           {isExpandable && <ChevronIcon expanded={showResult} small />}
         </div>
         {showResult && isSubAgent && (
@@ -355,7 +355,7 @@ function ToolChainTimeline({
             <div className="tool-chain-header-icon">
               {headerIcon}
             </div>
-            <span className="tool-chain-summary" title={summary}>{summary}</span>
+            <span className={`tool-chain-summary ${isChainActive ? 'running' : ''}`} title={summary}>{summary}</span>
             <ChevronIcon expanded={expanded} />
           </div>
 
@@ -782,7 +782,7 @@ function CollapsibleChainGroup({
     <div className="tool-chain">
       <div className="tool-chain-header" onClick={() => setExpanded((prev) => !prev)}>
         <div className="tool-chain-header-icon">{headerIcon}</div>
-        <span className="tool-chain-summary" title={summary}>{summary}</span>
+        <span className={`tool-chain-summary ${isChainActive ? 'running' : ''}`} title={summary}>{summary}</span>
         <ChevronIcon expanded={expanded} />
       </div>
 

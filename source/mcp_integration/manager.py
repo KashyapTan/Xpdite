@@ -350,6 +350,18 @@ class McpToolManager:
             )
         return tools
 
+    def get_tool_schema(self, tool_name: str) -> Dict | None:
+        """Get the parameter schema for a specific tool by name.
+
+        Returns the tool's input_schema (JSON Schema), or None if the tool
+        is not registered.  Useful for generating helpful error messages
+        when tool arguments fail validation.
+        """
+        for t in self._raw_tools:
+            if t["name"] == tool_name:
+                return dict(t["input_schema"])
+        return None
+
     # Backward-compat aliases — code that used the old provider-specific
     # methods will keep working until fully migrated.
     get_openai_tools = get_tools

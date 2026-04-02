@@ -1958,3 +1958,43 @@ textarea,
     transform: rotate(360deg);
   }
 }
+
+/* Shimmer animation for running tool text (sweeps right to left continuously) */
+@keyframes tool-text-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+/* Running state for tool chain summary text */
+.tool-chain-summary.running {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.3) 0%,
+    rgba(255, 255, 255, 1) 50%,
+    rgba(255, 255, 255, 0.3) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tool-text-shimmer 1.5s linear infinite;
+}
+
+/* Running state for individual tool text in timeline */
+.chain-tool-text.running {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.3) 0%,
+    rgba(255, 255, 255, 1) 50%,
+    rgba(255, 255, 255, 0.3) 100%
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: tool-text-shimmer 1.5s linear infinite;
+}

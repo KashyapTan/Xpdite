@@ -208,7 +208,8 @@ class TestProcessFnRouting:
         submit_query_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_cloud_suffix_model_routes_via_global_queue(self, monkeypatch):
+    async def test_ollama_cloud_suffix_model_bypasses_global_queue(self, monkeypatch):
+        """Cloud-tagged Ollama models bypass the global queue and run concurrently."""
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-ollama-cloud")
         ollama_run_mock = AsyncMock(return_value="conv-ollama-cloud")
@@ -225,10 +226,13 @@ class TestProcessFnRouting:
         conversation_id = await manager._process_fn(query)
 
         assert conversation_id == "conv-ollama-cloud"
-        ollama_run_mock.assert_awaited_once()
+        # Cloud-tagged models should NOT use the global queue
+        ollama_run_mock.assert_not_awaited()
+        submit_query_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_cloud_colon_tag_routes_via_global_queue(self, monkeypatch):
+    async def test_ollama_cloud_colon_tag_bypasses_global_queue(self, monkeypatch):
+        """Cloud-tagged Ollama models (:cloud) bypass the global queue."""
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-ollama-cloud-colon")
         ollama_run_mock = AsyncMock(return_value="conv-ollama-cloud-colon")
@@ -245,15 +249,17 @@ class TestProcessFnRouting:
         conversation_id = await manager._process_fn(query)
 
         assert conversation_id == "conv-ollama-cloud-colon"
-        ollama_run_mock.assert_awaited_once()
+        # Cloud-tagged models should NOT use the global queue
+        ollama_run_mock.assert_not_awaited()
+        submit_query_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ollama_suffix_models_are_serialized(self, monkeypatch):
+    async def test_ollama_cloud_suffix_models_run_in_parallel(self, monkeypatch):
+        """Cloud-tagged Ollama models should run concurrently across tabs."""
         manager = init_tab_manager()
         in_flight = 0
         max_in_flight = 0
         lock = asyncio.Lock()
-        run_lock = asyncio.Lock()
 
         async def fake_submit_query(**kwargs):
             nonlocal in_flight, max_in_flight
@@ -268,13 +274,7 @@ class TestProcessFnRouting:
 
             return f"conv-{kwargs['tab_state'].tab_id}"
 
-        async def fake_ollama_run(_tab_id, fn):
-            async with run_lock:
-                return await fn()
-
-        ollama_run_mock = AsyncMock(side_effect=fake_ollama_run)
         monkeypatch.setattr(ConversationService, "submit_query", fake_submit_query)
-        monkeypatch.setattr(ollama_global_queue, "run", ollama_run_mock)
 
         query_a = QueuedQuery(
             tab_id="tab-cloud-a",
@@ -295,8 +295,8 @@ class TestProcessFnRouting:
         )
 
         assert set(results) == {"conv-tab-cloud-a", "conv-tab-cloud-b"}
-        assert max_in_flight == 1
-        assert ollama_run_mock.await_count == 2
+        # Cloud models should run in parallel (max_in_flight > 1)
+        assert max_in_flight == 2
 
     @pytest.mark.asyncio
     async def test_empty_model_uses_selected_model_and_routes_local_through_queue(
@@ -334,6 +334,7 @@ class TestProcessFnRouting:
     async def test_empty_model_uses_selected_model_and_bypasses_queue_for_cloud(
         self, monkeypatch
     ):
+        """When model is empty and selected model is cloud-tagged, bypass queue."""
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-selected-cloud")
         ollama_run_mock = AsyncMock(return_value="conv-selected-cloud")
@@ -353,7 +354,9 @@ class TestProcessFnRouting:
             conversation_id = await manager._process_fn(query)
 
             assert conversation_id == "conv-selected-cloud"
-            ollama_run_mock.assert_awaited_once()
+            # Cloud-tagged models should NOT use the global queue
+            ollama_run_mock.assert_not_awaited()
+            submit_query_mock.assert_awaited_once()
         finally:
             app_state.selected_model = saved_model
 
@@ -361,6 +364,7 @@ class TestProcessFnRouting:
     async def test_empty_model_uses_selected_model_cloud_colon_tag_bypasses_queue(
         self, monkeypatch
     ):
+        """When model is empty and selected model is cloud-tagged (:cloud), bypass queue."""
         manager = init_tab_manager()
         submit_query_mock = AsyncMock(return_value="conv-selected-cloud-colon")
         ollama_run_mock = AsyncMock(return_value="conv-selected-cloud-colon")
@@ -380,7 +384,9 @@ class TestProcessFnRouting:
             conversation_id = await manager._process_fn(query)
 
             assert conversation_id == "conv-selected-cloud-colon"
-            ollama_run_mock.assert_awaited_once()
+            # Cloud-tagged models should NOT use the global queue
+            ollama_run_mock.assert_not_awaited()
+            submit_query_mock.assert_awaited_once()
         finally:
             app_state.selected_model = saved_model
 

@@ -27,8 +27,8 @@ class TestIsLocalOllama:
         assert _is_local_ollama("qwen3:8b") is True
 
     def test_ollama_cloud_model_is_not_local(self):
-        # '-cloud' is treated as a regular local Ollama model name.
-        assert _is_local_ollama("qwen3.5:397b-cloud") is True
+        # '-cloud' suffix indicates cloud-hosted Ollama — can be parallelized.
+        assert _is_local_ollama("qwen3.5:397b-cloud") is False
 
     def test_anthropic_model_is_not_local(self):
         assert _is_local_ollama("anthropic/claude-sonnet-4-20250514") is False
@@ -44,17 +44,20 @@ class TestIsLocalOllama:
         assert _is_local_ollama("custom/some-model") is True
 
     def test_ollama_cloud_colon_tag_is_not_local(self):
-        assert _is_local_ollama("qwen3-coder-next:cloud") is True
+        # ':cloud' suffix indicates cloud-hosted Ollama — can be parallelized.
+        assert _is_local_ollama("qwen3-coder-next:cloud") is False
 
     def test_ollama_cloud_colon_tag_case_insensitive(self):
-        assert _is_local_ollama("qwen3-coder-next:CLOUD") is True
+        # Cloud suffix detection is case-insensitive.
+        assert _is_local_ollama("qwen3-coder-next:CLOUD") is False
 
     def test_no_slash_no_cloud_is_local(self):
         assert _is_local_ollama("llama3.2") is True
 
 
 class TestExecuteSubAgentsParallel:
-    async def test_ollama_suffix_models_run_sequentially(self):
+    async def test_ollama_cloud_suffix_models_run_in_parallel(self):
+        """Cloud-tagged Ollama models should run concurrently, not sequentially."""
         in_flight = 0
         max_in_flight = 0
         lock = asyncio.Lock()
@@ -90,7 +93,8 @@ class TestExecuteSubAgentsParallel:
 
             results = await execute_sub_agents_parallel(calls)
 
-        assert max_in_flight == 1
+        # Cloud models should run in parallel (max_in_flight > 1)
+        assert max_in_flight == 2
         assert len(results) == 2
         assert results[0].startswith("ok:A")
         assert results[1].startswith("ok:B")
