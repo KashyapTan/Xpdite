@@ -53,7 +53,7 @@ Spawn a **single judge sub-agent** that receives all raw reports from Stage 1 (a
 - Fix all problems found Critical first, then High, then medium, then low.
 - If any findings require human review, flag it and mention in review document.
 - After fixes, spawn a **final lightweight verification agent** to confirm the fixes are correct and didn't introduce regressions.
-- Make sure to create a code_review_[topic of review].md file after the review stating all the problems found and how they were fixed.
+- Make sure to create a code_review_[topic of review].md file in the code_review folder after the review stating all the problems found and how they were fixed.
 
 ---
 
