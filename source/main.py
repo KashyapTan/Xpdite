@@ -29,8 +29,8 @@ Architecture:
     │   └── terminal_executor.py # Terminal tool execution
     ├── llm/              # LLM integration
     │   ├── router.py       # Provider dispatch
-    │   ├── provider_resolution.py  # Provider/model normalization + Ollama env resolution
-    │   ├── cloud_provider.py   # Unified LiteLLM streaming for all providers
+    │   ├── ollama_provider.py  # Ollama streaming
+    │   ├── cloud_provider.py   # Anthropic/OpenAI/Gemini
     │   ├── key_manager.py  # API key encryption
     │   └── prompt.py       # System prompt builder
     └── services/         # Business logic

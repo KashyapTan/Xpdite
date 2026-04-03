@@ -3,7 +3,6 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from source.config import OLLAMA_CTX_SIZE
 from source.llm.router import is_local_ollama_model, parse_provider
 import source.mcp_integration.manager as mcp_manager_module
 
@@ -39,11 +38,6 @@ class TestParseProvider:
         assert provider == "ollama"
         assert model == "qwen3-vl:8b-instruct"
 
-    def test_explicit_ollama_prefix(self):
-        provider, model = parse_provider("ollama/qwen3-vl:8b-instruct")
-        assert provider == "ollama"
-        assert model == "qwen3-vl:8b-instruct"
-
     def test_unknown_prefix_falls_to_ollama(self):
         provider, model = parse_provider("mistral/mistral-7b")
         assert provider == "ollama"
@@ -61,28 +55,22 @@ class TestIsLocalOllamaModel:
     def test_local_ollama_model_is_local(self):
         assert is_local_ollama_model("qwen3-vl:8b-instruct") is True
 
-    def test_cloud_ollama_model_name_is_not_local(self):
-        """Cloud-tagged Ollama models (-cloud suffix) are not local."""
+    def test_cloud_ollama_model_is_not_local(self):
         assert is_local_ollama_model("qwen3.5:397b-cloud") is False
 
     def test_cloud_ollama_model_with_explicit_prefix_is_not_local(self):
-        """Cloud-tagged Ollama models with explicit prefix are not local."""
         assert is_local_ollama_model("ollama/qwen3.5:397b-cloud") is False
 
     def test_cloud_ollama_colon_tag_with_explicit_prefix_is_not_local(self):
-        """Cloud-tagged Ollama models (:cloud suffix) with prefix are not local."""
         assert is_local_ollama_model("ollama/qwen3-coder-next:cloud") is False
 
     def test_cloud_ollama_suffix_check_is_case_insensitive(self):
-        """Cloud suffix detection is case-insensitive."""
         assert is_local_ollama_model("qwen3.5:397b-CLOUD") is False
 
     def test_cloud_ollama_colon_tag_is_not_local(self):
-        """Cloud-tagged Ollama models (:cloud suffix) are not local."""
         assert is_local_ollama_model("qwen3-coder-next:cloud") is False
 
     def test_cloud_ollama_colon_tag_is_case_insensitive(self):
-        """Cloud suffix detection (:CLOUD) is case-insensitive."""
         assert is_local_ollama_model("qwen3-coder-next:CLOUD") is False
 
     def test_openai_model_is_not_local_ollama(self):
@@ -90,12 +78,6 @@ class TestIsLocalOllamaModel:
 
     def test_whitespace_around_provider_model_is_not_local_ollama(self):
         assert is_local_ollama_model("  openai/gpt-4o  ") is False
-
-    def test_remote_ollama_api_base_env_does_not_change_local_runtime(
-        self, monkeypatch
-    ):
-        monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
-        assert is_local_ollama_model("llama3.2") is True
 
 
 # ------------------------------------------------------------------
@@ -123,16 +105,14 @@ _ROUTE_PATCHES = {
 
 class TestRouteChat:
     @pytest.mark.asyncio
-    async def test_route_chat_calls_litellm_path_for_ollama(self, monkeypatch):
-        """Ollama models should flow through the unified LiteLLM chat path."""
-        monkeypatch.delenv("OLLAMA_API_BASE", raising=False)
-        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+    async def test_route_chat_calls_ollama_for_local_model(self):
+        """Ollama models should be dispatched to stream_ollama_chat."""
         mock_stream = AsyncMock(
             return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
         )
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
 
         with patch.dict("sys.modules", {}):
             ctx = {k: patch(k, v) for k, v in patches.items()}
@@ -143,12 +123,6 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 mock_stream.assert_awaited_once()
-                call = mock_stream.await_args
-                assert call is not None
-                assert call.args[:3] == ("ollama", "llama3:8b", None)
-                assert call.kwargs["api_base"] == "http://localhost:11434"
-                assert call.kwargs["litellm_model_override"] == "ollama_chat/llama3:8b"
-                assert call.kwargs["provider_kwargs"] == {"num_ctx": OLLAMA_CTX_SIZE}
                 assert result[0] == "reply"
             finally:
                 for p in ctx.values():
@@ -166,7 +140,7 @@ class TestRouteChat:
         mock_mcp.has_tools.return_value = True
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
         patches["source.mcp_integration.handlers.retrieve_relevant_tools"] = MagicMock(
             return_value=retrieved_tools
         )
@@ -183,7 +157,7 @@ class TestRouteChat:
                 mock_stream.assert_awaited_once()
                 call = mock_stream.await_args
                 assert call is not None
-                assert call.kwargs.get("allowed_tool_names") == {"read_file"}
+                assert call.kwargs.get("prefiltered_tools") == retrieved_tools
         finally:
             for p in ctx.values():
                 p.stop()
@@ -270,7 +244,7 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.database.db"] = mock_db
-        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
         patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
         patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
@@ -295,10 +269,6 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
-                assert (
-                    mock_stream.await_args.kwargs["system_prompt"]
-                    == "system with profile"
-                )
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",
@@ -323,7 +293,7 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.database.db"] = mock_db
-        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
         patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
         patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
@@ -348,10 +318,6 @@ class TestRouteChat:
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
-                assert (
-                    mock_stream.await_args.kwargs["system_prompt"]
-                    == "system without profile"
-                )
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",

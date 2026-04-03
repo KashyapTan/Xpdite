@@ -8,11 +8,9 @@ Covers:
 
 import json
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-from source.config import OLLAMA_CTX_SIZE
 
 
 # ---------------------------------------------------------------------------
@@ -20,7 +18,7 @@ from source.config import OLLAMA_CTX_SIZE
 # ---------------------------------------------------------------------------
 
 
-def _text_chunk(content: str | None, finish_reason=None):
+def _text_chunk(content: str, finish_reason=None):
     """A chunk carrying regular text content."""
     delta = SimpleNamespace(content=content, tool_calls=None)
     choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
@@ -34,9 +32,7 @@ def _thinking_chunk(content: str):
     return SimpleNamespace(choices=[choice], usage=None)
 
 
-def _tool_call_chunk(
-    index: int, tc_id=None, name=None, arguments=None, finish_reason=None
-):
+def _tool_call_chunk(index: int, tc_id=None, name=None, arguments=None, finish_reason=None):
     """A chunk carrying a tool call delta."""
     func = SimpleNamespace(
         name=name,
@@ -50,9 +46,7 @@ def _tool_call_chunk(
 
 def _usage_chunk(prompt_tokens: int, completion_tokens: int):
     """A usage-only final chunk (no choices)."""
-    usage = SimpleNamespace(
-        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-    )
+    usage = SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     return SimpleNamespace(choices=[], usage=usage)
 
 
@@ -60,9 +54,7 @@ def _text_chunk_with_usage(content, finish_reason, prompt_tokens, completion_tok
     """A final chunk carrying both choices and usage (Anthropic/Gemini pattern)."""
     delta = SimpleNamespace(content=content, tool_calls=None)
     choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
-    usage = SimpleNamespace(
-        prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-    )
+    usage = SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     return SimpleNamespace(choices=[choice], usage=usage)
 
 
@@ -83,10 +75,7 @@ class TestBuildMessages:
     @staticmethod
     def _build(chat_history, user_query="hello", image_paths=None, system_prompt=""):
         from source.llm.cloud_provider import _build_messages
-
-        return _build_messages(
-            chat_history, user_query, image_paths or [], system_prompt
-        )
+        return _build_messages(chat_history, user_query, image_paths or [], system_prompt)
 
     def test_plain_user_assistant_roundtrip(self):
         history = [
@@ -167,7 +156,9 @@ class TestBuildMessages:
         assert parts[-1]["text"] == "describe this"
 
     def test_nonexistent_image_paths_ignored(self):
-        messages = self._build([], "hello", image_paths=["/nonexistent/image.png"])
+        messages = self._build(
+            [], "hello", image_paths=["/nonexistent/image.png"]
+        )
         # Should fall back to plain text since image doesn't exist
         assert len(messages) == 1
         assert messages[0]["content"] == "hello"
@@ -189,7 +180,6 @@ class TestHelpers:
 
     def test_guess_media_type(self):
         from source.llm.cloud_provider import _guess_media_type
-
         assert _guess_media_type("photo.jpg") == "image/jpeg"
         assert _guess_media_type("photo.jpeg") == "image/jpeg"
         assert _guess_media_type("photo.png") == "image/png"
@@ -199,12 +189,10 @@ class TestHelpers:
 
     def test_truncate_tool_result_short(self):
         from source.llm.cloud_provider import _truncate_tool_result
-
         assert _truncate_tool_result("short") == "short"
 
     def test_truncate_tool_result_long(self):
         from source.llm.cloud_provider import _truncate_tool_result
-
         long_text = "x" * 200_000
         result = _truncate_tool_result(long_text)
         assert len(result) < len(long_text)
@@ -212,7 +200,6 @@ class TestHelpers:
 
     def test_format_image(self):
         from source.llm.cloud_provider import _format_image
-
         result = _format_image("abc123", "image/png")
         assert result["type"] == "image_url"
         assert result["image_url"]["url"] == "data:image/png;base64,abc123"
@@ -220,15 +207,11 @@ class TestHelpers:
     def test_sanitize_tool_args_redacts_sensitive_keys(self):
         from source.mcp_integration.tool_args import sanitize_tool_args
 
-        result = sanitize_tool_args(
-            "read_file",
-            "filesystem",
-            {
-                "path": "notes.txt",
-                "api_key": "secret-value",
-                "nested": {"token": "abc123", "safe": "ok"},
-            },
-        )
+        result = sanitize_tool_args("read_file", "filesystem", {
+            "path": "notes.txt",
+            "api_key": "secret-value",
+            "nested": {"token": "abc123", "safe": "ok"},
+        })
 
         assert result == {
             "path": "notes.txt",
@@ -266,75 +249,57 @@ class TestHelpers:
     def test_get_reasoning_params_supported(self):
         """Models that support reasoning should get reasoning_effort."""
         from source.llm.cloud_provider import _get_reasoning_params
-
         # Mock litellm.get_model_info to return supports_reasoning=True
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            return_value={"supports_reasoning": True},
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    return_value={"supports_reasoning": True}):
             params = _get_reasoning_params("anthropic/claude-sonnet-4-20250514")
         assert params == {"reasoning_effort": "high"}
 
     def test_get_reasoning_params_not_supported(self):
         """Models that don't support reasoning should get empty dict."""
         from source.llm.cloud_provider import _get_reasoning_params
-
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            return_value={"supports_reasoning": False},
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    return_value={"supports_reasoning": False}):
             params = _get_reasoning_params("openai/gpt-4o")
         assert params == {}
 
     def test_get_reasoning_params_unknown_model(self):
         """Unknown models (not in litellm registry) should get empty dict."""
         from source.llm.cloud_provider import _get_reasoning_params
-
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            side_effect=Exception("Model not found"),
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    side_effect=Exception("Model not found")):
             params = _get_reasoning_params("custom/my-model")
         assert params == {}
 
     def test_get_reasoning_params_missing_field(self):
         """Model info without supports_reasoning field defaults to no reasoning."""
         from source.llm.cloud_provider import _get_reasoning_params
-
-        with patch("source.llm.cloud_provider.litellm.get_model_info", return_value={}):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    return_value={}):
             params = _get_reasoning_params("openai/gpt-4o-mini")
         assert params == {}
 
     def test_get_max_tokens_supported(self):
         """Models with known max output tokens should return their limit."""
         from source.llm.cloud_provider import _get_max_tokens
-
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            return_value={"max_output_tokens": 64000},
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    return_value={"max_output_tokens": 64000}):
             result = _get_max_tokens("anthropic/claude-sonnet-4-20250514")
         assert result == 64000
 
     def test_get_max_tokens_unknown_model(self):
         """Unknown models should return None for max_tokens."""
         from source.llm.cloud_provider import _get_max_tokens
-
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            side_effect=Exception("Not found"),
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    side_effect=Exception("Not found")):
             result = _get_max_tokens("custom/my-model")
         assert result is None
 
     def test_get_max_tokens_missing_field(self):
         """Model info without max_output_tokens should return None."""
         from source.llm.cloud_provider import _get_max_tokens
-
-        with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
-            return_value={"supports_reasoning": False},
-        ):
+        with patch("source.llm.cloud_provider.litellm.get_model_info",
+                    return_value={"supports_reasoning": False}):
             result = _get_max_tokens("openai/gpt-4o")
         assert result is None
 
@@ -347,18 +312,14 @@ class TestHelpers:
 @pytest.fixture()
 def _mock_broadcast():
     """Patch broadcast_message and return the mock."""
-    with patch(
-        "source.llm.cloud_provider.broadcast_message", new_callable=AsyncMock
-    ) as m:
+    with patch("source.llm.cloud_provider.broadcast_message", new_callable=AsyncMock) as m:
         yield m
 
 
 @pytest.fixture()
 def _mock_cancelled():
     """Patch is_current_request_cancelled to always return False."""
-    with patch(
-        "source.llm.cloud_provider.is_current_request_cancelled", return_value=False
-    ) as m:
+    with patch("source.llm.cloud_provider.is_current_request_cancelled", return_value=False) as m:
         yield m
 
 
@@ -369,10 +330,8 @@ def _mock_model_info():
     Defaults to supports_reasoning=False so streaming tests behave like
     non-reasoning models.  Individual tests can override by mocking again.
     """
-    with patch(
-        "source.llm.cloud_provider.litellm.get_model_info",
-        return_value={"supports_reasoning": False},
-    ):
+    with patch("source.llm.cloud_provider.litellm.get_model_info",
+               return_value={"supports_reasoning": False}):
         yield
 
 
@@ -385,32 +344,13 @@ def _mock_mcp():
     """
     mock_mgr = MagicMock()
     mock_mgr.get_tools.return_value = [
-        {
-            "type": "function",
-            "function": {
-                "name": "read_file",
-                "description": "Read a file",
-                "parameters": {},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "run_cmd",
-                "description": "Run a command",
-                "parameters": {},
-            },
-        },
+        {"type": "function", "function": {"name": "read_file", "description": "Read a file", "parameters": {}}},
+        {"type": "function", "function": {"name": "run_cmd", "description": "Run a command", "parameters": {}}},
     ]
     mock_mgr.get_tool_server_name.return_value = "test-server"
     mock_mgr.call_tool = AsyncMock(return_value="tool output")
-    with (
-        patch("source.mcp_integration.manager.mcp_manager", mock_mgr),
-        patch(
-            "source.mcp_integration.terminal_executor.is_terminal_tool",
-            return_value=False,
-        ),
-    ):
+    with patch("source.mcp_integration.manager.mcp_manager", mock_mgr), \
+         patch("source.mcp_integration.terminal_executor.is_terminal_tool", return_value=False):
         yield mock_mgr
 
 
@@ -437,12 +377,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         assert text == "Hello world!"
@@ -453,256 +389,7 @@ class TestStreamLitellm:
         # (implementation appends current_round_text at end)
 
     @pytest.mark.asyncio
-    async def test_ollama_passes_api_base_without_empty_api_key(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        chunks = [
-            _text_chunk("Hello Ollama"),
-            _usage_chunk(9, 4),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, stats, _, _ = await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3:8b",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                api_base="https://ollama.example.com",
-                litellm_model_override="ollama_chat/qwen3:8b",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        assert text == "Hello Ollama"
-        assert stats == {"prompt_eval_count": 9, "eval_count": 4}
-        kwargs = mock_acomp.call_args.kwargs
-        assert kwargs["model"] == "ollama_chat/qwen3:8b"
-        assert kwargs["api_base"] == "https://ollama.example.com"
-        assert kwargs["num_ctx"] == OLLAMA_CTX_SIZE
-        assert "api_key" not in kwargs
-
-    @pytest.mark.asyncio
-    async def test_ollama_skips_reasoning_effort_even_if_model_registry_supports_it(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        chunks = [
-            _text_chunk("No thinking toggle"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-        with (
-            patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
-                return_value={"supports_reasoning": True},
-            ),
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                AsyncMock(return_value=_make_async_iter(chunks)),
-            ) as mock_acomp,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3:8b",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                litellm_model_override="ollama_chat/qwen3:8b",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        assert "reasoning_effort" not in mock_acomp.call_args.kwargs
-
-    @pytest.mark.asyncio
-    async def test_ollama_skips_max_tokens_even_if_model_registry_has_value(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        """Ollama should never receive max_tokens — Ollama manages its own limits."""
-        chunks = [
-            _text_chunk("No max_tokens"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-        with (
-            patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
-                return_value={"max_output_tokens": 262144},
-            ),
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                AsyncMock(return_value=_make_async_iter(chunks)),
-            ) as mock_acomp,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3.5:cloud",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                litellm_model_override="ollama_chat/qwen3.5:cloud",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        # max_tokens should NOT be in kwargs for Ollama
-        assert "max_tokens" not in mock_acomp.call_args.kwargs
-
-    @pytest.mark.asyncio
-    async def test_ollama_registers_native_function_calling_hint_before_streaming(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        chunks = [
-            _text_chunk("hinted"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-        with (
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                AsyncMock(return_value=_make_async_iter(chunks)),
-            ),
-            patch(
-                "source.llm.ollama_model_registry.register_ollama_native_function_calling_hint",
-                return_value=True,
-            ) as register_hint,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3:8b",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                litellm_model_override="ollama_chat/qwen3:8b",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        register_hint.assert_called_once_with("ollama_chat/qwen3:8b", ANY)
-
-    @pytest.mark.asyncio
-    async def test_non_ollama_does_not_register_function_calling_hint(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        chunks = [
-            _text_chunk("ok"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-        with (
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                AsyncMock(return_value=_make_async_iter(chunks)),
-            ),
-            patch(
-                "source.llm.ollama_model_registry.register_ollama_native_function_calling_hint",
-                return_value=True,
-            ) as register_hint,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-            )
-
-        register_hint.assert_not_called()
-
-    def test_ollama_debug_logging_default_is_disabled(self):
-        from source.llm import cloud_provider
-
-        assert cloud_provider.OLLAMA_DEBUG_LOGGING is False
-
-    @pytest.mark.asyncio
-    async def test_ollama_debug_logging_does_not_log_exception_message(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        with (
-            patch("source.llm.cloud_provider.OLLAMA_DEBUG_LOGGING", True),
-            patch("source.llm.cloud_provider.logger.error") as log_error,
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                side_effect=RuntimeError("token=super-secret"),
-            ),
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3:8b",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                litellm_model_override="ollama_chat/qwen3:8b",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        rendered_logs = "\n".join(
-            " ".join(str(arg) for arg in call.args) for call in log_error.call_args_list
-        )
-        assert "super-secret" not in rendered_logs
-
-    @pytest.mark.asyncio
-    async def test_ollama_debug_logging_redacts_api_base_credentials(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-    ):
-        with (
-            patch("source.llm.cloud_provider.OLLAMA_DEBUG_LOGGING", True),
-            patch("source.llm.cloud_provider.logger.error") as log_error,
-            patch(
-                "source.llm.cloud_provider.litellm.acompletion",
-                side_effect=RuntimeError("boom"),
-            ),
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3:8b",
-                api_key=None,
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
-                api_base="https://user:pass@example.com:11434/v1?token=abc",
-                litellm_model_override="ollama_chat/qwen3:8b",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        rendered_logs = "\n".join(
-            " ".join(str(arg) for arg in call.args) for call in log_error.call_args_list
-        )
-        assert "user:pass" not in rendered_logs
-        assert "token=abc" not in rendered_logs
-        assert "example.com:11434" in rendered_logs
-
-    @pytest.mark.asyncio
-    async def test_tool_call_then_text(
-        self, _mock_broadcast, _mock_cancelled, _mock_mcp
-    ):
+    async def test_tool_call_then_text(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
         """Tool call round followed by text response."""
         # Round 1: model calls read_file tool
         tool_stream = [
@@ -727,12 +414,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="read file",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="read file", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -752,192 +435,6 @@ class TestStreamLitellm:
         assert "text" in block_types
 
     @pytest.mark.asyncio
-    async def test_spawn_agent_result_is_truncated_and_not_double_broadcast(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_spawn", name="spawn_agent"),
-            _tool_call_chunk(
-                0,
-                arguments=(
-                    '{"instruction":"do work","model_tier":"fast","agent_name":"Worker"}'
-                ),
-                finish_reason="tool_calls",
-            ),
-        ]
-        text_stream = [
-            _text_chunk("Summarized"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        huge_result = "x" * 200_000
-        _mock_mcp.get_tool_server_name.side_effect = lambda name: (
-            "sub_agent" if name == "spawn_agent" else "test-server"
-        )
-
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.services.sub_agent.execute_sub_agents_parallel",
-                AsyncMock(return_value=[huge_result]),
-            ) as batch_exec,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="delegate",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"spawn_agent"},
-            )
-
-        assert text == "Summarized"
-        batch_exec.assert_awaited_once()
-        assert len(tool_calls) == 1
-        assert tool_calls[0]["name"] == "spawn_agent"
-        assert len(tool_calls[0]["result"]) < len(huge_result)
-        assert tool_calls[0]["result"].endswith("[Output truncated due to length]")
-
-        tool_call_events = [
-            call
-            for call in _mock_broadcast.call_args_list
-            if call.args[0] == "tool_call"
-        ]
-        assert len(tool_call_events) == 0
-
-    @pytest.mark.asyncio
-    async def test_spawn_agent_batch_failure_returns_system_error_result(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_spawn", name="spawn_agent"),
-            _tool_call_chunk(
-                0,
-                arguments='{"instruction":"do work"}',
-                finish_reason="tool_calls",
-            ),
-        ]
-        text_stream = [
-            _text_chunk("Recovered"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        _mock_mcp.get_tool_server_name.side_effect = lambda name: (
-            "sub_agent" if name == "spawn_agent" else "test-server"
-        )
-
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.services.sub_agent.execute_sub_agents_parallel",
-                AsyncMock(side_effect=RuntimeError("boom")),
-            ) as batch_exec,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="delegate",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"spawn_agent"},
-            )
-
-        assert text == "Recovered"
-        batch_exec.assert_awaited_once()
-        assert len(tool_calls) == 1
-        assert (
-            tool_calls[0]["result"]
-            == "System error: sub-agent execution failed. See server logs for details."
-        )
-
-    @pytest.mark.asyncio
-    async def test_spawn_agent_batch_with_missing_result_falls_back_per_call(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_a", name="spawn_agent"),
-            _tool_call_chunk(
-                0,
-                arguments='{"instruction":"one"}',
-            ),
-            _tool_call_chunk(1, tc_id="call_b", name="spawn_agent"),
-            _tool_call_chunk(
-                1,
-                arguments='{"instruction":"two"}',
-                finish_reason="tool_calls",
-            ),
-        ]
-        text_stream = [
-            _text_chunk("Recovered"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        _mock_mcp.get_tool_server_name.side_effect = lambda name: (
-            "sub_agent" if name == "spawn_agent" else "test-server"
-        )
-
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.services.sub_agent.execute_sub_agents_parallel",
-                AsyncMock(return_value=["only-one-result"]),
-            ) as batch_exec,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="delegate",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"spawn_agent"},
-            )
-
-        assert text == "Recovered"
-        batch_exec.assert_awaited_once()
-        assert len(tool_calls) == 2
-        assert tool_calls[0]["result"] == "only-one-result"
-        assert (
-            tool_calls[1]["result"]
-            == "System error: sub-agent execution failed. See server logs for details."
-        )
-
-    @pytest.mark.asyncio
     async def test_cancellation_mid_stream(self, _mock_broadcast):
         """Cancellation during streaming should stop early."""
         call_count = 0
@@ -947,10 +444,7 @@ class TestStreamLitellm:
             call_count += 1
             return call_count > 1  # cancelled on 2nd check (inside chunk loop)
 
-        with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
-            side_effect=cancel_after_one,
-        ):
+        with patch("source.llm.cloud_provider.is_current_request_cancelled", side_effect=cancel_after_one):
             chunks = [
                 _text_chunk("Hello "),
                 _text_chunk("world should not appear"),
@@ -960,12 +454,8 @@ class TestStreamLitellm:
                 from source.llm.cloud_provider import stream_cloud_chat
 
                 text, stats, tool_calls, blocks = await stream_cloud_chat(
-                    provider="openai",
-                    model="gpt-4o",
-                    api_key="sk-test",
-                    user_query="hi",
-                    image_paths=[],
-                    chat_history=[],
+                    provider="openai", model="gpt-4o", api_key="sk-test",
+                    user_query="hi", image_paths=[], chat_history=[],
                 )
 
         # Should have stopped after partial consumption
@@ -974,27 +464,19 @@ class TestStreamLitellm:
     @pytest.mark.asyncio
     async def test_cancelled_before_start(self, _mock_broadcast):
         """If cancelled before streaming starts, returns immediately."""
-        with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled", return_value=True
-        ):
+        with patch("source.llm.cloud_provider.is_current_request_cancelled", return_value=True):
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         assert text == ""
         assert blocks is None
 
     @pytest.mark.asyncio
-    async def test_malformed_tool_call_args(
-        self, _mock_broadcast, _mock_cancelled, _mock_mcp
-    ):
+    async def test_malformed_tool_call_args(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
         """Malformed JSON in tool call args reports error back to model for self-correction."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_bad", name="read_file"),
@@ -1015,12 +497,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="do it",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="do it", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -1057,12 +535,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="do it",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="do it", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -1071,186 +545,6 @@ class TestStreamLitellm:
         assert tool_calls[0]["args"] == {}
         assert "JSON object" in tool_calls[0]["result"]
         _mock_mcp.call_tool.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_tool_call_arguments_handle_cumulative_stream_snapshots(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        """Cumulative argument snapshots should replace, not double-append."""
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_mem", name="memlist"),
-            _tool_call_chunk(0, arguments='{"folder":"'),
-            _tool_call_chunk(
-                0,
-                arguments='{"folder":"procedural"}',
-                finish_reason="tool_calls",
-            ),
-        ]
-        text_stream = [
-            _text_chunk("Listed"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        _mock_mcp.get_tool_server_name.return_value = "memory"
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.mcp_integration.memory_executor.is_memory_tool",
-                return_value=True,
-            ),
-            patch(
-                "source.mcp_integration.memory_executor.execute_memory_tool",
-                new=AsyncMock(return_value="memory listing"),
-            ) as mock_execute,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3.5:cloud",
-                api_key=None,
-                user_query="list memory",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"memlist"},
-                litellm_model_override="ollama_chat/qwen3.5:cloud",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        assert text == "Listed"
-        assert len(tool_calls) == 1
-        assert tool_calls[0]["name"] == "memlist"
-        assert tool_calls[0]["args"] == {"folder": "procedural"}
-        mock_execute.assert_awaited_once_with(
-            "memlist",
-            {"folder": "procedural"},
-            "memory",
-        )
-
-    @pytest.mark.asyncio
-    async def test_memlist_malformed_args_fallback_to_empty_object(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        """memlist should recover from malformed args by extracting first valid JSON object."""
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_mem_bad", name="memlist"),
-            _tool_call_chunk(
-                0,
-                arguments='{"folder":"procedural"}{"extra":1}',
-                finish_reason="tool_calls",
-            ),
-        ]
-        text_stream = [
-            _text_chunk("Recovered"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        _mock_mcp.get_tool_server_name.return_value = "memory"
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.mcp_integration.memory_executor.is_memory_tool",
-                return_value=True,
-            ),
-            patch(
-                "source.mcp_integration.memory_executor.execute_memory_tool",
-                new=AsyncMock(return_value="memory listing"),
-            ) as mock_execute,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="ollama",
-                model="glm-5:cloud",
-                api_key=None,
-                user_query="list memory",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"memlist"},
-                litellm_model_override="ollama_chat/glm-5:cloud",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        assert text == "Recovered"
-        assert len(tool_calls) == 1
-        assert tool_calls[0]["name"] == "memlist"
-        # JSON repair extracts the first valid JSON object from concatenated garbage
-        assert tool_calls[0]["args"] == {"folder": "procedural"}
-        assert tool_calls[0]["result"] == "memory listing"
-        mock_execute.assert_awaited_once_with(
-            "memlist", {"folder": "procedural"}, "memory"
-        )
-
-    @pytest.mark.asyncio
-    async def test_list_skills_malformed_args_fallback_to_empty_object(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
-    ):
-        """list_skills should recover from malformed args by extracting first valid JSON object."""
-        tool_stream = [
-            _tool_call_chunk(0, tc_id="call_skills_bad", name="list_skills"),
-            _tool_call_chunk(0, arguments='{"x":1}{"y":2}', finish_reason="tool_calls"),
-        ]
-        text_stream = [
-            _text_chunk("Skills ready"),
-            _text_chunk(None, finish_reason="stop"),
-        ]
-
-        _mock_mcp.get_tool_server_name.return_value = "skills"
-        mock_acomp = AsyncMock()
-        mock_acomp.side_effect = [
-            _make_async_iter(tool_stream),
-            _make_async_iter(text_stream),
-        ]
-
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.mcp_integration.skills_executor.execute_skill_tool",
-                return_value="Available skills:\n- demo",
-            ) as mock_execute,
-        ):
-            from source.llm.cloud_provider import stream_cloud_chat
-
-            text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="ollama",
-                model="qwen3.5:cloud",
-                api_key=None,
-                user_query="what skills",
-                image_paths=[],
-                chat_history=[],
-                allowed_tool_names={"list_skills"},
-                litellm_model_override="ollama_chat/qwen3.5:cloud",
-                provider_kwargs={"num_ctx": OLLAMA_CTX_SIZE},
-            )
-
-        assert text == "Skills ready"
-        assert len(tool_calls) == 1
-        assert tool_calls[0]["name"] == "list_skills"
-        # JSON repair extracts the first valid JSON object from concatenated garbage
-        assert tool_calls[0]["args"] == {"x": 1}
-        assert "Available skills" in tool_calls[0]["result"]
-        mock_execute.assert_called_once_with("list_skills", {"x": 1})
 
     @pytest.mark.asyncio
     async def test_thinking_tokens_broadcast(self, _mock_broadcast, _mock_cancelled):
@@ -1265,11 +559,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, _, _ = await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-test",
-                user_query="think",
-                image_paths=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="think", image_paths=[],
                 chat_history=[],
             )
 
@@ -1277,7 +568,8 @@ class TestStreamLitellm:
 
         # Check broadcast calls
         broadcast_calls = [
-            (call.args[0], call.args[1]) for call in _mock_broadcast.call_args_list
+            (call.args[0], call.args[1])
+            for call in _mock_broadcast.call_args_list
         ]
 
         # Should have thinking chunks
@@ -1308,12 +600,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, _, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         assert text == "OK"
@@ -1321,37 +609,26 @@ class TestStreamLitellm:
     @pytest.mark.asyncio
     async def test_api_error_returns_empty(self, _mock_broadcast, _mock_cancelled):
         """An exception from litellm.acompletion should be caught and broadcast as error."""
-        with patch(
-            "source.llm.cloud_provider.litellm.acompletion",
-            side_effect=Exception("API down"),
-        ):
+        with patch("source.llm.cloud_provider.litellm.acompletion", side_effect=Exception("API down")):
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         assert text == ""
         assert blocks is None
         # Should have broadcast an error
         error_calls = [
-            c for c in _mock_broadcast.call_args_list if c.args[0] == "error"
+            c for c in _mock_broadcast.call_args_list
+            if c.args[0] == "error"
         ]
         assert len(error_calls) == 1
-        assert (
-            error_calls[0].args[1]
-            == "LLM service temporarily unavailable. See server logs for details."
-        )
+        assert error_calls[0].args[1] == "LLM service temporarily unavailable. See server logs for details."
 
     @pytest.mark.asyncio
-    async def test_multiple_tool_calls_in_single_round(
-        self, _mock_broadcast, _mock_cancelled, _mock_mcp
-    ):
+    async def test_multiple_tool_calls_in_single_round(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
         """Multiple parallel tool calls in a single streaming round."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_a", name="read_file"),
@@ -1374,12 +651,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="do both",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="do both", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file", "run_cmd"},
             )
 
@@ -1399,11 +672,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-secret-123",
-                user_query="hi",
-                image_paths=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-secret-123", user_query="hi", image_paths=[],
                 chat_history=[],
             )
 
@@ -1412,9 +682,7 @@ class TestStreamLitellm:
         assert call_kwargs["api_key"] == "sk-secret-123"
 
     @pytest.mark.asyncio
-    async def test_openrouter_api_key_passed_directly(
-        self, _mock_broadcast, _mock_cancelled
-    ):
+    async def test_openrouter_api_key_passed_directly(self, _mock_broadcast, _mock_cancelled):
         """OpenRouter should use explicit api_key kwargs like other cloud providers."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
@@ -1422,11 +690,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="openrouter",
-                model="anthropic/claude-3-5-sonnet",
-                api_key="or-secret-key",
-                user_query="hi",
-                image_paths=[],
+                provider="openrouter", model="anthropic/claude-3-5-sonnet",
+                api_key="or-secret-key", user_query="hi", image_paths=[],
                 chat_history=[],
             )
 
@@ -1439,21 +704,14 @@ class TestStreamLitellm:
         """reasoning_effort should be passed to acompletion for reasoning models."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
-                return_value={"supports_reasoning": True},
-            ),
-        ):
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp), \
+             patch("source.llm.cloud_provider.litellm.get_model_info",
+                   return_value={"supports_reasoning": True}):
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-test",
-                user_query="think",
-                image_paths=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="think", image_paths=[],
                 chat_history=[],
             )
 
@@ -1461,9 +719,7 @@ class TestStreamLitellm:
         assert call_kwargs.get("reasoning_effort") == "high"
 
     @pytest.mark.asyncio
-    async def test_no_reasoning_for_non_reasoning_model(
-        self, _mock_broadcast, _mock_cancelled
-    ):
+    async def test_no_reasoning_for_non_reasoning_model(self, _mock_broadcast, _mock_cancelled):
         """Non-reasoning models should not get reasoning_effort in kwargs."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
@@ -1471,12 +727,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         call_kwargs = mock_acomp.call_args.kwargs
@@ -1487,21 +739,14 @@ class TestStreamLitellm:
         """max_tokens should be set dynamically from model info, not hardcoded."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
-                return_value={"supports_reasoning": False, "max_output_tokens": 64000},
-            ),
-        ):
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp), \
+             patch("source.llm.cloud_provider.litellm.get_model_info",
+                   return_value={"supports_reasoning": False, "max_output_tokens": 64000}):
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="hi", image_paths=[],
                 chat_history=[],
             )
 
@@ -1517,40 +762,26 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         call_kwargs = mock_acomp.call_args.kwargs
         assert "max_tokens" not in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_max_tokens_zero_not_forwarded(
-        self, _mock_broadcast, _mock_cancelled
-    ):
+    async def test_max_tokens_zero_not_forwarded(self, _mock_broadcast, _mock_cancelled):
         """A zero max_output_tokens value should not be forwarded to LiteLLM."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
-            patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
-                return_value={"supports_reasoning": False, "max_output_tokens": 0},
-            ),
-        ):
+        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp), \
+             patch("source.llm.cloud_provider.litellm.get_model_info",
+                   return_value={"supports_reasoning": False, "max_output_tokens": 0}):
             from source.llm.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         call_kwargs = mock_acomp.call_args.kwargs
@@ -1558,10 +789,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_tool_resolution_failure_falls_back_to_no_tools(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Tool schema lookup failures should not crash the request."""
         chunks = [_text_chunk("No tools needed", finish_reason="stop")]
@@ -1571,12 +799,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hello",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hello", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -1587,9 +811,7 @@ class TestStreamLitellm:
         assert blocks is None or all(block["type"] != "tool_call" for block in blocks)
 
     @pytest.mark.asyncio
-    async def test_unauthorized_tool_call_rejected(
-        self, _mock_broadcast, _mock_cancelled, _mock_mcp
-    ):
+    async def test_unauthorized_tool_call_rejected(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
         """A tool outside the allowed set should be rejected and not executed."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_forbidden", name="run_cmd"),
@@ -1610,12 +832,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="run something",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="run something", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -1626,15 +844,11 @@ class TestStreamLitellm:
         _mock_mcp.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_tool_execution_errors_are_sanitized(
-        self, _mock_broadcast, _mock_cancelled, _mock_mcp
-    ):
+    async def test_tool_execution_errors_are_sanitized(self, _mock_broadcast, _mock_cancelled, _mock_mcp):
         """Tool execution failures should not leak raw exception details."""
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_1", name="read_file"),
-            _tool_call_chunk(
-                0, arguments='{"path": "secret.txt", "api_key": "secret-token-value"}'
-            ),
+            _tool_call_chunk(0, arguments='{"path": "secret.txt", "api_key": "secret-token-value"}'),
             _tool_call_chunk(0, finish_reason="tool_calls"),
         ]
         text_stream = [
@@ -1652,22 +866,15 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="read it",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="read it", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
         assert text == "Handled"
         assert len(tool_calls) == 1
         assert tool_calls[0]["args"] == {"path": "secret.txt", "api_key": "[REDACTED]"}
-        assert (
-            tool_calls[0]["result"]
-            == "System error: tool execution failed. See server logs for details."
-        )
+        assert tool_calls[0]["result"] == "System error: tool execution failed. See server logs for details."
         assert "secret-token-value" not in tool_calls[0]["result"]
         _mock_mcp.call_tool.assert_awaited_once_with(
             "read_file",
@@ -1679,17 +886,11 @@ class TestStreamLitellm:
             for call in _mock_broadcast.call_args_list
             if call.args[0] == "tool_call"
         ]
-        assert any(
-            payload["args"].get("api_key") == "[REDACTED]"
-            for payload in tool_call_payloads
-        )
+        assert any(payload["args"].get("api_key") == "[REDACTED]" for payload in tool_call_payloads)
 
     @pytest.mark.asyncio
     async def test_memory_tool_execution_is_intercepted(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Memory tools should be handled by the inline memory executor."""
         tool_stream = [
@@ -1723,12 +924,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="read memory",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="read memory", image_paths=[], chat_history=[],
                 allowed_tool_names={"memread"},
             )
 
@@ -1745,10 +942,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_memcommit_args_are_redacted_in_persisted_tool_calls(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Memory commit args should be redacted before UI/persistence surfaces."""
         tool_stream = [
@@ -1783,20 +977,14 @@ class TestStreamLitellm:
             ),
             patch(
                 "source.mcp_integration.memory_executor.execute_memory_tool",
-                new=AsyncMock(
-                    return_value="Created memory at 'profile/user_profile.md'."
-                ),
+                new=AsyncMock(return_value="Created memory at 'profile/user_profile.md'."),
             ),
         ):
             from source.llm.cloud_provider import stream_cloud_chat
 
             _, _, tool_calls, _ = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="commit memory",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="commit memory", image_paths=[], chat_history=[],
                 allowed_tool_names={"memcommit"},
             )
 
@@ -1823,9 +1011,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_cancellation_during_tool_execution_stops_loop(
-        self,
-        _mock_broadcast,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_mcp,
     ):
         """Cancellation during tool execution should exit both inner and outer loops."""
         cancel_calls = 0
@@ -1842,22 +1028,16 @@ class TestStreamLitellm:
             _tool_call_chunk(0, arguments='{"path": "a.py"}'),
             _tool_call_chunk(0, finish_reason="tool_calls"),
         ]
-        with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
-            side_effect=cancel_on_tool,
-        ):
+        with patch("source.llm.cloud_provider.is_current_request_cancelled",
+                    side_effect=cancel_on_tool):
             mock_acomp = AsyncMock()
             mock_acomp.side_effect = [_make_async_iter(tool_stream)]
             with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
                 from source.llm.cloud_provider import stream_cloud_chat
 
                 text, _, tool_calls, _ = await stream_cloud_chat(
-                    provider="openai",
-                    model="gpt-4o",
-                    api_key="sk-test",
-                    user_query="do it",
-                    image_paths=[],
-                    chat_history=[],
+                    provider="openai", model="gpt-4o", api_key="sk-test",
+                    user_query="do it", image_paths=[], chat_history=[],
                     allowed_tool_names={"read_file"},
                 )
 
@@ -1868,9 +1048,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_cancellation_mid_tool_batch_keeps_message_history_consistent(
-        self,
-        _mock_broadcast,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_mcp,
     ):
         """Cancellation mid-batch should not append orphaned assistant tool_calls."""
         cancel_calls = 0
@@ -1888,38 +1066,27 @@ class TestStreamLitellm:
             _tool_call_chunk(0, finish_reason="tool_calls"),
         ]
 
-        with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
-            side_effect=cancel_after_first_tool,
-        ):
+        with patch("source.llm.cloud_provider.is_current_request_cancelled",
+                    side_effect=cancel_after_first_tool):
             mock_acomp = AsyncMock(return_value=_make_async_iter(tool_stream))
             with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
                 from source.llm.cloud_provider import stream_cloud_chat
 
                 await stream_cloud_chat(
-                    provider="openai",
-                    model="gpt-4o",
-                    api_key="sk-test",
-                    user_query="do both",
-                    image_paths=[],
-                    chat_history=[],
+                    provider="openai", model="gpt-4o", api_key="sk-test",
+                    user_query="do both", image_paths=[], chat_history=[],
                     allowed_tool_names={"read_file", "run_cmd"},
                 )
 
         first_round_messages = mock_acomp.call_args.kwargs["messages"]
-        assistant_messages = [
-            m for m in first_round_messages if m.get("role") == "assistant"
-        ]
+        assistant_messages = [m for m in first_round_messages if m.get("role") == "assistant"]
         tool_messages = [m for m in first_round_messages if m.get("role") == "tool"]
         assert assistant_messages == []
         assert tool_messages == []
 
     @pytest.mark.asyncio
     async def test_api_error_preserves_partial_data(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Exception after partial streaming should preserve accumulated data."""
         # Round 1: model streams text + tool call
@@ -1939,12 +1106,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -1954,10 +1117,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_fallback_tool_call_id(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Providers that omit tool_call IDs should get synthetic fallback IDs."""
         # Tool call with no ID (tc_id=None)
@@ -1980,12 +1140,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
-                provider="gemini",
-                model="gemini-2.5-flash",
-                api_key="key",
-                user_query="do it",
-                image_paths=[],
-                chat_history=[],
+                provider="gemini", model="gemini-2.5-flash", api_key="key",
+                user_query="do it", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -2000,10 +1156,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_thinking_reset_between_rounds(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Thinking state should reset per-round so round 2 thinking is broadcast."""
         # Round 1: thinking + tool call
@@ -2029,19 +1182,17 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, _, _, _ = await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-test",
-                user_query="think and use tools",
-                image_paths=[],
-                chat_history=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="think and use tools",
+                image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
         assert text == "Final answer"
 
         broadcast_calls = [
-            (call.args[0], call.args[1]) for call in _mock_broadcast.call_args_list
+            (call.args[0], call.args[1])
+            for call in _mock_broadcast.call_args_list
         ]
 
         # Should have thinking chunks from BOTH rounds
@@ -2066,12 +1217,9 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="anthropic",
-                model="claude-sonnet-4-20250514",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="anthropic", model="claude-sonnet-4-20250514",
+                api_key="sk-test", user_query="hi",
+                image_paths=[], chat_history=[],
             )
 
         assert text == "Hello world!"
@@ -2080,10 +1228,7 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_token_usage_summed_across_tool_rounds(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Token usage from multiple acompletion rounds is summed correctly."""
         # Round 1: tool call with usage on final chunk
@@ -2107,12 +1252,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="gemini",
-                model="gemini-2.5-flash",
-                api_key="key",
-                user_query="read file",
-                image_paths=[],
-                chat_history=[],
+                provider="gemini", model="gemini-2.5-flash", api_key="key",
+                user_query="read file", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -2122,19 +1263,14 @@ class TestStreamLitellm:
 
     @pytest.mark.asyncio
     async def test_tool_calls_with_non_standard_finish_reason(
-        self,
-        _mock_broadcast,
-        _mock_cancelled,
-        _mock_mcp,
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp,
     ):
         """Tool calls execute even when finish_reason != 'tool_calls' (Gemini uses 'stop')."""
         # Round 1: model returns tool calls but finish_reason is "stop" (Gemini behavior)
         tool_stream = [
             _tool_call_chunk(0, tc_id="call_1", name="read_file"),
             _tool_call_chunk(0, arguments='{"path": "test.py"}'),
-            _text_chunk(
-                None, finish_reason="stop"
-            ),  # Gemini: "stop" instead of "tool_calls"
+            _text_chunk(None, finish_reason="stop"),  # Gemini: "stop" instead of "tool_calls"
         ]
         # Round 2: model responds with text after seeing tool result
         text_stream = [
@@ -2151,12 +1287,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="gemini",
-                model="gemini-2.5-flash",
-                api_key="key",
-                user_query="read file",
-                image_paths=[],
-                chat_history=[],
+                provider="gemini", model="gemini-2.5-flash", api_key="key",
+                user_query="read file", image_paths=[], chat_history=[],
                 allowed_tool_names={"read_file"},
             )
 
@@ -2186,12 +1318,8 @@ class TestStreamLitellm:
             from source.llm.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
-                provider="openai",
-                model="gpt-4o",
-                api_key="sk-test",
-                user_query="hi",
-                image_paths=[],
-                chat_history=[],
+                provider="openai", model="gpt-4o", api_key="sk-test",
+                user_query="hi", image_paths=[], chat_history=[],
             )
 
         assert text == "Hi"

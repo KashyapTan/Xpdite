@@ -149,7 +149,7 @@ uv run <file_name>                            # run python files for testing
 
 **New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
 
-**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `manager.py`). Add interception in `cloud_provider.py` (`_execute_and_broadcast_tool`) because chat now uses one unified LiteLLM tool path for OpenAI, Anthropic, Gemini, OpenRouter, and Ollama. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, and `skills`.
+**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `manager.py`). Add interception in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, and `skills`.
 
 **YouTube analysis flow (`watch_youtube_video`)** → The `video_watcher` inline tool first tries native YouTube captions; if captions are unavailable it emits a `youtube_transcription_approval` content block in chat, waits for `youtube_transcription_approval_response`, then (if approved) downloads audio and transcribes with Whisper using detected compute backend (`cuda`/`cpu`) and estimated timing metadata.
 

@@ -9,12 +9,41 @@ from unittest.mock import AsyncMock, patch
 from source.services.sub_agent import (
     _resolve_tier_model,
     _is_local_ollama,
+    _uses_ollama_client,
     _get_sub_agent_tools,
     _EXCLUDED_TOOLS,
     _run_cloud_sub_agent,
     execute_sub_agent,
     execute_sub_agents_parallel,
 )
+
+
+# ---------------------------------------------------------------------------
+# _uses_ollama_client  (routing: which provider to call)
+# ---------------------------------------------------------------------------
+
+
+class TestUsesOllamaClient:
+    def test_plain_ollama_model(self):
+        assert _uses_ollama_client("qwen3:8b") is True
+
+    def test_ollama_cloud_model(self):
+        assert _uses_ollama_client("qwen3.5:397b-cloud") is True
+
+    def test_anthropic_model(self):
+        assert _uses_ollama_client("anthropic/claude-sonnet-4-20250514") is False
+
+    def test_openai_model(self):
+        assert _uses_ollama_client("openai/gpt-4o") is False
+
+    def test_gemini_model(self):
+        assert _uses_ollama_client("gemini/gemini-2.5-flash") is False
+
+    def test_openrouter_model(self):
+        assert _uses_ollama_client("openrouter/anthropic/claude-3-5-sonnet") is False
+
+    def test_unknown_provider_uses_ollama(self):
+        assert _uses_ollama_client("custom/some-model") is True
 
 
 # ---------------------------------------------------------------------------
@@ -27,7 +56,7 @@ class TestIsLocalOllama:
         assert _is_local_ollama("qwen3:8b") is True
 
     def test_ollama_cloud_model_is_not_local(self):
-        # '-cloud' suffix indicates cloud-hosted Ollama — can be parallelized.
+        # -cloud suffix means cloud-hosted Ollama — safe to parallelise
         assert _is_local_ollama("qwen3.5:397b-cloud") is False
 
     def test_anthropic_model_is_not_local(self):
@@ -44,27 +73,21 @@ class TestIsLocalOllama:
         assert _is_local_ollama("custom/some-model") is True
 
     def test_ollama_cloud_colon_tag_is_not_local(self):
-        # ':cloud' suffix indicates cloud-hosted Ollama — can be parallelized.
         assert _is_local_ollama("qwen3-coder-next:cloud") is False
 
     def test_ollama_cloud_colon_tag_case_insensitive(self):
-        # Cloud suffix detection is case-insensitive.
         assert _is_local_ollama("qwen3-coder-next:CLOUD") is False
 
     def test_no_slash_no_cloud_is_local(self):
         assert _is_local_ollama("llama3.2") is True
 
-
 class TestExecuteSubAgentsParallel:
-    async def test_ollama_cloud_suffix_models_run_in_parallel(self):
-        """Cloud-tagged Ollama models should run concurrently, not sequentially."""
+    async def test_cloud_tagged_ollama_models_run_in_parallel(self):
         in_flight = 0
         max_in_flight = 0
         lock = asyncio.Lock()
 
-        async def fake_execute_sub_agent(
-            instruction: str, model_tier: str, agent_name: str
-        ):
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
             nonlocal in_flight, max_in_flight
             async with lock:
                 in_flight += 1
@@ -74,12 +97,9 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with (
-            patch("source.services.sub_agent._resolve_tier_model") as mock_resolve,
-            patch(
-                "source.services.sub_agent.execute_sub_agent",
-                side_effect=fake_execute_sub_agent,
-            ),
+        with patch("source.services.sub_agent._resolve_tier_model") as mock_resolve, patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
         ):
             mock_resolve.side_effect = lambda tier: {
                 "fast": "qwen3-coder-next:cloud",
@@ -93,7 +113,6 @@ class TestExecuteSubAgentsParallel:
 
             results = await execute_sub_agents_parallel(calls)
 
-        # Cloud models should run in parallel (max_in_flight > 1)
         assert max_in_flight == 2
         assert len(results) == 2
         assert results[0].startswith("ok:A")
@@ -104,9 +123,7 @@ class TestExecuteSubAgentsParallel:
         max_in_flight = 0
         lock = asyncio.Lock()
 
-        async def fake_execute_sub_agent(
-            instruction: str, model_tier: str, agent_name: str
-        ):
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
             nonlocal in_flight, max_in_flight
             async with lock:
                 in_flight += 1
@@ -116,14 +133,9 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with (
-            patch(
-                "source.services.sub_agent._resolve_tier_model", return_value="llama3.2"
-            ),
-            patch(
-                "source.services.sub_agent.execute_sub_agent",
-                side_effect=fake_execute_sub_agent,
-            ),
+        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
         ):
             calls = [
                 {"instruction": "task one", "model_tier": "fast", "agent_name": "A"},
@@ -140,9 +152,7 @@ class TestExecuteSubAgentsParallel:
         max_in_flight = 0
         lock = asyncio.Lock()
 
-        async def fake_execute_sub_agent(
-            instruction: str, model_tier: str, agent_name: str
-        ):
+        async def fake_execute_sub_agent(instruction: str, model_tier: str, agent_name: str):
             nonlocal in_flight, max_in_flight
             async with lock:
                 in_flight += 1
@@ -152,14 +162,9 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with (
-            patch(
-                "source.services.sub_agent._resolve_tier_model", return_value="llama3.2"
-            ),
-            patch(
-                "source.services.sub_agent.execute_sub_agent",
-                side_effect=fake_execute_sub_agent,
-            ),
+        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.sub_agent.execute_sub_agent",
+            side_effect=fake_execute_sub_agent,
         ):
             calls = [
                 {"instruction": "task one", "model_tier": "unknown", "agent_name": "A"},
@@ -178,10 +183,7 @@ class TestExecuteSubAgentsParallel:
 
 
 class TestResolveTierModel:
-    @patch(
-        "source.services.sub_agent.get_current_model",
-        return_value="anthropic/claude-sonnet-4-20250514",
-    )
+    @patch("source.services.sub_agent.get_current_model", return_value="anthropic/claude-sonnet-4-20250514")
     @patch("source.services.sub_agent.db")
     def test_self_tier_returns_current_model(self, mock_db, mock_model):
         result = _resolve_tier_model("self")
@@ -268,14 +270,9 @@ class TestGetSubAgentTools:
 class TestExcludedTools:
     def test_contains_all_terminal_tools(self):
         terminal_tools = {
-            "run_command",
-            "request_session_mode",
-            "end_session_mode",
-            "send_input",
-            "read_output",
-            "kill_process",
-            "get_environment",
-            "find_files",
+            "run_command", "request_session_mode", "end_session_mode",
+            "send_input", "read_output", "kill_process",
+            "get_environment", "find_files",
         }
         assert terminal_tools.issubset(_EXCLUDED_TOOLS)
 
@@ -288,63 +285,50 @@ class TestExcludedTools:
 # ---------------------------------------------------------------------------
 
 
-def _make_streaming_chunks(
-    content: str, tool_calls=None, prompt_tokens=0, completion_tokens=0
-):
+def _make_streaming_chunks(content: str, tool_calls=None, prompt_tokens=0, completion_tokens=0):
     """Create a list of streaming chunks that mimic LiteLLM's streaming response.
 
     Returns an async generator that yields streaming chunks.
     """
-
     async def generator():
         # First chunk: content delta
         if content:
             yield SimpleNamespace(
-                choices=[
-                    SimpleNamespace(
-                        delta=SimpleNamespace(content=content, tool_calls=None),
-                        finish_reason=None,
-                    )
-                ],
-                usage=None,
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content=content, tool_calls=None),
+                    finish_reason=None
+                )],
+                usage=None
             )
 
         # Tool calls chunks (if any)
         if tool_calls:
             for i, tc in enumerate(tool_calls):
                 yield SimpleNamespace(
-                    choices=[
-                        SimpleNamespace(
-                            delta=SimpleNamespace(
-                                content=None,
-                                tool_calls=[
-                                    SimpleNamespace(
-                                        index=i,
-                                        id=tc.id,
-                                        function=SimpleNamespace(
-                                            name=tc.function.name,
-                                            arguments=tc.function.arguments,
-                                        ),
-                                    )
-                                ],
-                            ),
-                            finish_reason=None,
-                        )
-                    ],
-                    usage=None,
+                    choices=[SimpleNamespace(
+                        delta=SimpleNamespace(
+                            content=None,
+                            tool_calls=[SimpleNamespace(
+                                index=i,
+                                id=tc.id,
+                                function=SimpleNamespace(
+                                    name=tc.function.name,
+                                    arguments=tc.function.arguments
+                                )
+                            )]
+                        ),
+                        finish_reason=None
+                    )],
+                    usage=None
                 )
 
         # Final chunk with usage and finish_reason
         yield SimpleNamespace(
-            choices=[
-                SimpleNamespace(
-                    delta=SimpleNamespace(content=None, tool_calls=None),
-                    finish_reason="stop" if not tool_calls else "tool_calls",
-                )
-            ],
-            usage=SimpleNamespace(
-                prompt_tokens=prompt_tokens, completion_tokens=completion_tokens
-            ),
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=None, tool_calls=None),
+                finish_reason="stop" if not tool_calls else "tool_calls"
+            )],
+            usage=SimpleNamespace(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
         )
 
     return generator()
@@ -379,33 +363,6 @@ class TestRunCloudSubAgent:
     @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
     @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
-    async def test_ollama_uses_litellm_target_with_api_base_and_no_api_key(
-        self, mock_acompletion, _mock_model_info, _mock_cancelled, monkeypatch
-    ):
-        monkeypatch.setenv("OLLAMA_API_BASE", "https://ollama.example.com")
-        monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
-        mock_acompletion.return_value = _make_streaming_chunks(
-            content="ok", prompt_tokens=5, completion_tokens=2
-        )
-
-        result = await _run_cloud_sub_agent(
-            model_name="ollama/qwen3:8b",
-            instruction="Say hi",
-            tools=None,
-        )
-
-        assert result["response"] == "ok"
-        assert result["error"] is None
-
-        call_kwargs = mock_acompletion.call_args.kwargs
-        assert call_kwargs["model"] == "ollama_chat/qwen3:8b"
-        assert call_kwargs["api_base"] == "http://localhost:11434"
-        assert call_kwargs["num_ctx"] > 0
-        assert "api_key" not in call_kwargs
-
-    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
-    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
-    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
     @patch("source.llm.key_manager.key_manager.get_api_key", return_value="sk-test")
     async def test_cloud_sub_agent_invalid_tool_args_do_not_crash(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
@@ -425,16 +382,7 @@ class TestRunCloudSubAgent:
         result = await _run_cloud_sub_agent(
             model_name="openai/gpt-4o",
             instruction="Read file",
-            tools=[
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "read_file",
-                        "description": "",
-                        "parameters": {},
-                    },
-                }
-            ],
+            tools=[{"type": "function", "function": {"name": "read_file", "description": "", "parameters": {}}}],
         )
 
         assert result["error"] is None
@@ -449,10 +397,7 @@ class TestRunCloudSubAgent:
 class TestExecuteSubAgent:
     @patch("source.services.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.sub_agent._get_sub_agent_tools", return_value=None)
-    @patch(
-        "source.services.sub_agent._resolve_tier_model",
-        return_value="anthropic/claude-sonnet-4-20250514",
-    )
+    @patch("source.services.sub_agent._resolve_tier_model", return_value="anthropic/claude-sonnet-4-20250514")
     @patch("source.services.sub_agent._run_cloud_sub_agent", new_callable=AsyncMock)
     async def test_cloud_sub_agent_returns_response(
         self, mock_run, mock_resolve, mock_tools, mock_broadcast
@@ -470,8 +415,8 @@ class TestExecuteSubAgent:
     @patch("source.services.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.sub_agent._get_sub_agent_tools", return_value=None)
     @patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2")
-    @patch("source.services.sub_agent._run_cloud_sub_agent", new_callable=AsyncMock)
-    async def test_ollama_sub_agent_uses_unified_litellm_runner(
+    @patch("source.services.sub_agent._run_ollama_sub_agent", new_callable=AsyncMock)
+    async def test_ollama_sub_agent_routes_to_ollama(
         self, mock_run, mock_resolve, mock_tools, mock_broadcast
     ):
         mock_run.return_value = {

@@ -109,121 +109,12 @@ class TestHttpApiEndpoints:
     @pytest.mark.asyncio
     async def test_set_enabled_models_persists_and_returns_payload(self):
         db_mock = MagicMock()
-        with (
-            patch("source.database.db", db_mock),
-            patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
-        ):
+        with patch("source.database.db", db_mock):
             body = http_api.EnabledModelsUpdate(models=["m1", "m2"])
             result = await http_api.set_enabled_models(body)
 
         db_mock.set_enabled_models.assert_called_once_with(["m1", "m2"])
-        invalidate_mock.assert_called_once_with("ollama")
         assert result == {"status": "updated", "models": ["m1", "m2"]}
-
-    @pytest.mark.asyncio
-    async def test_set_enabled_models_normalizes_ollama_prefixes(self):
-        db_mock = MagicMock()
-        with (
-            patch("source.database.db", db_mock),
-            patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
-        ):
-            body = http_api.EnabledModelsUpdate(
-                models=[
-                    "ollama/llama3.2",
-                    "openai/gpt-4o",
-                    "ollama/llama3.2",
-                    "qwen3-coder-next:cloud",
-                ]
-            )
-            result = await http_api.set_enabled_models(body)
-
-        db_mock.set_enabled_models.assert_called_once_with(
-            ["llama3.2", "openai/gpt-4o", "qwen3-coder-next:cloud"]
-        )
-        invalidate_mock.assert_called_once_with("ollama")
-        assert result == {
-            "status": "updated",
-            "models": ["llama3.2", "openai/gpt-4o", "qwen3-coder-next:cloud"],
-        }
-
-    @pytest.mark.asyncio
-    async def test_get_ollama_models_merges_enabled_custom_entries(self):
-        details = SimpleNamespace(parameter_size="8B", quantization_level="Q4_K_M")
-        response = SimpleNamespace(
-            models=[
-                SimpleNamespace(model="llama3.2", size=10, details=details),
-            ]
-        )
-        async_client = SimpleNamespace(list=AsyncMock(return_value=response))
-        db_mock = MagicMock(
-            get_enabled_models=MagicMock(
-                return_value=[
-                    "ollama/qwen3-coder-next:cloud",
-                    "openai/gpt-4o",
-                ]
-            )
-        )
-
-        with (
-            patch("source.database.db", db_mock),
-            patch.object(http_api, "_MODEL_CACHE", {}),
-            patch.object(
-                http_api, "OllamaAsyncClient", return_value=async_client
-            ) as mock_client_cls,
-        ):
-            result = await http_api.get_ollama_models(refresh=True)
-
-        assert [model["name"] for model in result] == [
-            "llama3.2",
-            "qwen3-coder-next:cloud",
-        ]
-        assert result[0]["source"] == "installed"
-        assert result[1]["source"] == "custom"
-        # Cloud-tagged models are NOT local (they run on remote infrastructure)
-        assert result[1]["is_local"] is False
-        mock_client_cls.assert_called_once_with(
-            host=http_api.OLLAMA_LOCAL_LIST_API_BASE
-        )
-
-    @pytest.mark.asyncio
-    async def test_get_ollama_models_returns_custom_entries_when_local_ollama_unreachable(
-        self,
-    ):
-        db_mock = MagicMock(
-            get_enabled_models=MagicMock(
-                return_value=[
-                    "ollama/gpt-oss:120b-cloud",
-                ]
-            )
-        )
-        async_client = SimpleNamespace(
-            list=AsyncMock(side_effect=RuntimeError("offline"))
-        )
-
-        with (
-            patch("source.database.db", db_mock),
-            patch.object(http_api, "_MODEL_CACHE", {}),
-            patch.object(
-                http_api, "OllamaAsyncClient", return_value=async_client
-            ) as mock_client_cls,
-        ):
-            result = await http_api.get_ollama_models(refresh=True)
-
-        assert result["error"].startswith("Ollama not reachable:")
-        assert result["models"] == [
-            {
-                "name": "gpt-oss:120b-cloud",
-                "size": 0,
-                "parameter_size": "",
-                "quantization": "",
-                "source": "custom",
-                # Cloud-tagged models are NOT local (they run on remote infrastructure)
-                "is_local": False,
-            }
-        ]
-        mock_client_cls.assert_called_once_with(
-            host=http_api.OLLAMA_LOCAL_LIST_API_BASE
-        )
 
     @pytest.mark.asyncio
     async def test_get_api_key_status_delegates_to_key_manager(self):
