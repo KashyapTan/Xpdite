@@ -3,6 +3,7 @@ WebSocket endpoint for real-time communication.
 
 Handles bidirectional WebSocket connections with the frontend.
 """
+
 import json
 import logging
 
@@ -62,6 +63,8 @@ async def websocket_endpoint(websocket: WebSocket):
       - meeting_update_settings: Update meeting recorder settings
       - meeting_generate_analysis: Generate AI summary and action suggestions (optional: model)
       - meeting_execute_action: Execute a suggested action via MCP tools
+      - ollama_pull_model: Pull an Ollama model with streaming progress
+      - ollama_cancel_pull: Cancel an active Ollama model pull
 
     Server -> Client broadcast messages (JSON):
       - ready: Server is ready to receive queries
@@ -113,55 +116,77 @@ async def websocket_endpoint(websocket: WebSocket):
       - meeting_analysis_complete: AI summary and actions ready
       - meeting_analysis_error: AI analysis generation failed
       - meeting_action_result: MCP action execution result
+      - ollama_pull_progress: Ollama model pull progress update
+      - ollama_pull_complete: Ollama model pull finished successfully
+      - ollama_pull_error: Ollama model pull failed
+      - ollama_pull_cancelled: Ollama model pull was cancelled
     """
     await manager.connect(websocket)
-    
+
     # Notify client that server is ready
-    await websocket.send_text(json.dumps({
-        "type": "ready", 
-        "content": "Server ready. You can start chatting or take a screenshot (Alt+.)"
-    }))
-    
+    await websocket.send_text(
+        json.dumps(
+            {
+                "type": "ready",
+                "content": "Server ready. You can start chatting or take a screenshot (Alt+.)",
+            }
+        )
+    )
+
     # Send any existing screenshots to newly connected client.
     # Screenshots now live per-tab; send each tab's screenshots tagged
     # with the tab_id so the frontend can route them correctly.
     try:
-        from ..services.tab_manager_instance import _adopt_global_screenshots, tab_manager
+        from ..services.tab_manager_instance import (
+            _adopt_global_screenshots,
+            tab_manager,
+        )
+
         if tab_manager is not None:
             if app_state.screenshot_list:
-                active_session = tab_manager.get_or_create(app_state.active_tab_id or "default")
+                active_session = tab_manager.get_or_create(
+                    app_state.active_tab_id or "default"
+                )
                 _adopt_global_screenshots(active_session)
 
             for tid in tab_manager.get_all_tab_ids():
                 ts = tab_manager.get_state(tid)
                 if ts is not None:
                     for ss in ts.screenshot_list:
-                        await websocket.send_text(json.dumps({
-                            "type": "screenshot_added",
-                            "tab_id": tid,
-                            "content": {
-                                "id": ss["id"],
-                                "name": ss["name"],
-                                "thumbnail": ss["thumbnail"]
-                            }
-                        }))
+                        await websocket.send_text(
+                            json.dumps(
+                                {
+                                    "type": "screenshot_added",
+                                    "tab_id": tid,
+                                    "content": {
+                                        "id": ss["id"],
+                                        "name": ss["name"],
+                                        "thumbnail": ss["thumbnail"],
+                                    },
+                                }
+                            )
+                        )
     except Exception:
         pass  # tab_manager may not be initialized yet on first connect
 
     # Fallback: also send any global screenshots (startup edge case)
     for ss in app_state.screenshot_list:
-        await websocket.send_text(json.dumps({
-            "type": "screenshot_added",
-            "tab_id": app_state.active_tab_id or "default",
-            "content": {
-                "id": ss["id"],
-                "name": ss["name"],
-                "thumbnail": ss["thumbnail"]
-            }
-        }))
-    
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "type": "screenshot_added",
+                    "tab_id": app_state.active_tab_id or "default",
+                    "content": {
+                        "id": ss["id"],
+                        "name": ss["name"],
+                        "thumbnail": ss["thumbnail"],
+                    },
+                }
+            )
+        )
+
     handler = MessageHandler(websocket)
-    
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -170,18 +195,27 @@ async def websocket_endpoint(websocket: WebSocket):
             except Exception:
                 logger.warning("Ignoring malformed message: %s", raw[:200])
                 continue
-            
+
             try:
                 await handler.handle(data)
             except Exception as e:
-                logger.error("Error handling message type '%s': %s", data.get('type'), e, exc_info=True)
+                logger.error(
+                    "Error handling message type '%s': %s",
+                    data.get("type"),
+                    e,
+                    exc_info=True,
+                )
                 try:
-                    await websocket.send_text(json.dumps({
-                        "type": "error",
-                        "content": f"Internal error: {str(e)[:200]}"
-                    }))
+                    await websocket.send_text(
+                        json.dumps(
+                            {
+                                "type": "error",
+                                "content": f"Internal error: {str(e)[:200]}",
+                            }
+                        )
+                    )
                 except Exception:
                     pass
-            
+
     except WebSocketDisconnect:
         manager.disconnect(websocket)

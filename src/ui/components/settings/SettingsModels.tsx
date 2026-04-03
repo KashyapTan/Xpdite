@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { api, type ProviderModel, type OllamaModel } from '../../services/api';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import '../../CSS/SettingsModels.css';
 
@@ -115,6 +116,7 @@ function mergeOllamaModels(models: OllamaModel[], enabledModels: string[]): Olla
  * 6. Allow cache-busting refresh for each provider section.
  */
 const SettingsModels: React.FC = () => {
+  const { send, subscribe } = useWebSocket();
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [cloudModels, setCloudModels] = useState<Record<CloudProvider, ProviderModel[]>>(EMPTY_CLOUD_MODELS);
   const [keyStatus, setKeyStatus] = useState<Record<string, { has_key: boolean; masked: string | null }>>({});
@@ -125,6 +127,20 @@ const SettingsModels: React.FC = () => {
   const [refreshingProviders, setRefreshingProviders] = useState<Record<ProviderKey, boolean>>(EMPTY_REFRESHING_STATE);
   const [customOllamaModel, setCustomOllamaModel] = useState('');
   const [customOllamaError, setCustomOllamaError] = useState('');
+
+  // Model pull modal state
+  const [pullModalOpen, setPullModalOpen] = useState(false);
+  const [pullModelName, setPullModelName] = useState('');
+  const [pullInProgress, setPullInProgress] = useState(false);
+  const [pullProgress, setPullProgress] = useState<{
+    status: string;
+    percent: number;
+    completed: number;
+    total: number;
+  } | null>(null);
+  const [pullComplete, setPullComplete] = useState(false);
+  const [pullError, setPullError] = useState('');
+  const [pullConfirmChecked, setPullConfirmChecked] = useState(false);
 
   const setProviderError = useCallback((provider: ProviderKey, message: string) => {
     setProviderErrors((prev) => ({ ...prev, [provider]: message }));
@@ -222,7 +238,102 @@ const SettingsModels: React.FC = () => {
     [],
   );
 
-  const addCustomOllamaModel = useCallback(() => {
+  const buildPullErrorMessage = useCallback((rawError: string, modelName: string) => {
+    const message = rawError.trim();
+    const lowered = message.toLowerCase();
+
+    if (
+      lowered.includes('not found')
+      || lowered.includes('pull model manifest')
+      || lowered.includes('manifest')
+    ) {
+      return `Could not find model "${modelName}". Check the model name/tag, verify it exists in Ollama, or update Ollama and try again.`;
+    }
+
+    if (lowered.includes('connect') || lowered.includes('connection')) {
+      return 'Cannot connect to Ollama at http://localhost:11434. Make sure Ollama is running and try again.';
+    }
+
+    return message || 'Failed to pull model.';
+  }, []);
+
+  // Subscribe to WebSocket messages for pull progress
+  useEffect(() => {
+    let isMounted = true;
+
+    const unsubscribe = subscribe((data) => {
+      const type = data.type as string;
+      if (!['ollama_pull_progress', 'ollama_pull_complete', 'ollama_pull_error', 'ollama_pull_cancelled'].includes(type)) {
+        return;
+      }
+
+      const content = data.content as Record<string, unknown>;
+      const messageModelName = normalizeOllamaModelName(String(content.model_name ?? ''));
+
+      // Ignore pull events from other model names
+      if (pullModelName && messageModelName && messageModelName !== pullModelName) {
+        return;
+      }
+
+      if (!isMounted) {
+        return;
+      }
+
+      switch (type) {
+        case 'ollama_pull_progress': {
+          setPullProgress({
+            status: String(content.status ?? 'Downloading...'),
+            percent: Number(content.percent ?? 0),
+            completed: Number(content.completed ?? 0),
+            total: Number(content.total ?? 0),
+          });
+          break;
+        }
+        case 'ollama_pull_complete': {
+          setPullInProgress(false);
+          setPullComplete(true);
+          setPullProgress(null);
+          setPullError('');
+
+          const modelName = messageModelName || pullModelName;
+          if (modelName) {
+            setEnabledModels((prev) => {
+              if (prev.includes(modelName)) {
+                return prev;
+              }
+              const updated = [...prev, modelName];
+              void api.setEnabledModels(updated);
+              return updated;
+            });
+          }
+
+          void loadOllamaModels(true);
+          break;
+        }
+        case 'ollama_pull_error': {
+          setPullInProgress(false);
+          setPullProgress(null);
+          const rawError = String(content.error ?? 'Failed to pull model');
+          setPullError(buildPullErrorMessage(rawError, pullModelName || messageModelName || 'this model'));
+          break;
+        }
+        case 'ollama_pull_cancelled': {
+          setPullInProgress(false);
+          setPullProgress(null);
+          setPullError('Model pull cancelled.');
+          break;
+        }
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+    };
+  }, [subscribe, loadOllamaModels, pullModelName, buildPullErrorMessage]);
+
+  // Handler for the "Add" button - opens pull confirmation modal
+  const handleAddCustomModel = useCallback(() => {
     const normalized = normalizeOllamaModelName(customOllamaModel);
 
     if (!normalized) {
@@ -236,17 +347,71 @@ const SettingsModels: React.FC = () => {
     }
 
     setCustomOllamaError('');
-    setEnabledModels((prev) => {
-      if (prev.includes(normalized)) {
-        return prev;
-      }
 
-      const updated = [...prev, normalized];
-      void api.setEnabledModels(updated);
-      return updated;
-    });
-    setCustomOllamaModel('');
-  }, [customOllamaModel]);
+    // Check if model is already installed locally
+    const existingModel = ollamaModels.find(
+      m => m.name.toLowerCase() === normalized.toLowerCase()
+    );
+
+    if (existingModel) {
+      // Already installed, just add to enabled list
+      setEnabledModels((prev) => {
+        if (prev.includes(normalized)) return prev;
+        const updated = [...prev, normalized];
+        void api.setEnabledModels(updated);
+        return updated;
+      });
+      setCustomOllamaModel('');
+      return;
+    }
+
+    // Open pull confirmation modal
+    setPullModalOpen(true);
+    setPullModelName(normalized);
+    setPullComplete(false);
+    setPullError('');
+    setPullProgress(null);
+    setPullConfirmChecked(false);
+  }, [customOllamaModel, ollamaModels]);
+
+  // Start pulling the model
+  const startPullModel = useCallback(() => {
+    if (!pullModelName || !pullConfirmChecked) {
+      return;
+    }
+
+    setPullInProgress(true);
+    setPullComplete(false);
+    setPullError('');
+    setPullProgress({ status: 'Starting download...', percent: 0, completed: 0, total: 0 });
+
+    send({ type: 'ollama_pull_model', model_name: pullModelName });
+  }, [pullModelName, pullConfirmChecked, send]);
+
+  const cancelPullModel = useCallback(() => {
+    if (!pullInProgress || !pullModelName) {
+      return;
+    }
+    send({ type: 'ollama_cancel_pull', model_name: pullModelName });
+  }, [pullInProgress, pullModelName, send]);
+
+  // Close the modal
+  const closePullModal = useCallback(() => {
+    if (pullInProgress) {
+      return;
+    }
+
+    setPullModalOpen(false);
+    setPullModelName('');
+    setPullComplete(false);
+    setPullError('');
+    setPullProgress(null);
+    setPullConfirmChecked(false);
+
+    if (pullComplete) {
+      setCustomOllamaModel('');
+    }
+  }, [pullInProgress, pullComplete]);
 
   const formatSize = (bytes: number) => {
     if (bytes === 0) return '';
@@ -462,14 +627,14 @@ const SettingsModels: React.FC = () => {
                 }}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
-                    addCustomOllamaModel();
+                    void handleAddCustomModel();
                   }
                 }}
                 placeholder="llama3.2 or ollama/model-name"
               />
               <button
                 className="settings-models-refresh-btn"
-                onClick={addCustomOllamaModel}
+                onClick={() => void handleAddCustomModel()}
                 disabled={loading}
               >
                 Add
@@ -540,6 +705,147 @@ const SettingsModels: React.FC = () => {
         {renderCloudModels('gemini', 'gemini')}
         {renderOpenRouterModels()}
       </div>
+
+      {/* Model Pull Confirmation Modal */}
+      {pullModalOpen && pullModelName && (
+        <div className="settings-models-modal-overlay" onClick={closePullModal}>
+          <div className="settings-models-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-models-modal-header">
+              <h3>{pullComplete ? 'Model Ready' : pullInProgress ? 'Pulling Model' : 'Confirm Pull'}</h3>
+              {!pullInProgress && (
+                <button className="settings-models-modal-close" onClick={closePullModal}>
+                  {pullComplete ? 'Done' : 'Cancel'}
+                </button>
+              )}
+            </div>
+            <div className="settings-models-modal-body">
+              {/* Confirmation state */}
+              {!pullInProgress && !pullComplete && !pullError && (
+                <>
+                  <div className="settings-models-modal-info">
+                    <div className="settings-models-modal-row">
+                      <span className="settings-models-modal-label">Model</span>
+                      <span className="settings-models-modal-value">{pullModelName}</span>
+                    </div>
+                  </div>
+                  <div className="settings-models-modal-warning">
+                    Pulling this model will start a local Ollama download. For cloud-tagged models,
+                    Ollama may only pull the manifest first and stream layer progress as needed.
+                  </div>
+                  <label className="settings-models-modal-confirm">
+                    <input
+                      type="checkbox"
+                      checked={pullConfirmChecked}
+                      onChange={(e) => setPullConfirmChecked(e.target.checked)}
+                    />
+                    <span>I understand this will download model data via Ollama.</span>
+                  </label>
+                  <div className="settings-models-modal-note">
+                    If pull fails, it may mean the model name/tag is incorrect, the model doesn't exist,
+                    or your Ollama version needs updating.
+                  </div>
+                </>
+              )}
+
+              {/* Pull Progress */}
+              {pullInProgress && pullProgress && (
+                <div className="settings-models-pull-progress">
+                  <div className="settings-models-pull-status">
+                    {pullProgress.status}
+                  </div>
+                  <div className="settings-models-pull-bar-container">
+                    <div
+                      className="settings-models-pull-bar"
+                      style={{ width: `${pullProgress.percent}%` }}
+                    />
+                  </div>
+                  <div className="settings-models-pull-percent">
+                    {pullProgress.percent > 0 ? `${pullProgress.percent}%` : 'Starting...'}
+                  </div>
+                </div>
+              )}
+
+              {/* Pull Complete */}
+              {pullComplete && (
+                <div className="settings-models-pull-complete">
+                  <div className="settings-models-pull-complete-icon">✓</div>
+                  <div className="settings-models-pull-complete-text">
+                    Model is ready to use
+                  </div>
+                </div>
+              )}
+
+              {/* Pull Error */}
+              {pullError && (
+                <div className="settings-models-modal-error">
+                  {pullError}
+                </div>
+              )}
+            </div>
+
+            {/* Footer buttons */}
+            {!pullComplete && !pullInProgress && !pullError && (
+              <div className="settings-models-modal-footer">
+                <button
+                  className="settings-models-modal-btn"
+                  onClick={closePullModal}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="settings-models-modal-btn settings-models-modal-btn-primary"
+                  onClick={startPullModel}
+                  disabled={!pullConfirmChecked}
+                >
+                  Confirm & Pull
+                </button>
+              </div>
+            )}
+
+            {pullComplete && (
+              <div className="settings-models-modal-footer">
+                <button
+                  className="settings-models-modal-btn settings-models-modal-btn-primary"
+                  onClick={closePullModal}
+                >
+                  Done
+                </button>
+              </div>
+            )}
+
+            {pullInProgress && (
+              <div className="settings-models-modal-footer">
+                <button
+                  className="settings-models-modal-btn"
+                  onClick={cancelPullModel}
+                >
+                  Cancel Pull
+                </button>
+              </div>
+            )}
+
+            {pullError && !pullInProgress && (
+              <div className="settings-models-modal-footer">
+                <button
+                  className="settings-models-modal-btn"
+                  onClick={closePullModal}
+                >
+                  Close
+                </button>
+                <button
+                  className="settings-models-modal-btn settings-models-modal-btn-primary"
+                  onClick={() => {
+                    setPullError('');
+                    setPullConfirmChecked(false);
+                  }}
+                >
+                  Try Again
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

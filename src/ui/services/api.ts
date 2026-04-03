@@ -170,6 +170,8 @@ export interface ApiService {
   searchMeetingRecordings: (query: string) => void;
   deleteMeetingRecording: (id: string) => void;
   getMeetingRecordingStatus: () => void;
+  // Ollama model management
+  pullOllamaModel: (modelName: string) => void;
 }
 
 /**
@@ -265,6 +267,11 @@ export function createApiService(
 
     getMeetingRecordingStatus() {
       send({ type: 'meeting_get_status' });
+    },
+
+    // Ollama model management
+    pullOllamaModel(modelName: string) {
+      send({ type: 'ollama_pull_model', model_name: modelName });
     },
 
     // HTTP API examples (uncomment and implement as needed):

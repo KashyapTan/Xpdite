@@ -275,3 +275,247 @@
 .settings-tab-active {
     background-color: rgba(255, 255, 255, 0.12) !important;
 }
+
+/* ====== Model Pull Modal ====== */
+.settings-models-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.settings-models-modal {
+    background-color: rgba(25, 25, 30, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+}
+
+.settings-models-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-models-modal-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: #fff;
+    font-weight: 600;
+}
+
+.settings-models-modal-close {
+    background-color: rgba(255, 255, 255, 0.08);
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: background-color 0.2s;
+}
+
+.settings-models-modal-close:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #fff;
+}
+
+.settings-models-modal-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.settings-models-modal-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-models-modal-loading {
+    padding: 20px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.85rem;
+}
+
+.settings-models-modal-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.settings-models-modal-label {
+    color: rgba(255, 255, 255, 0.5);
+}
+
+.settings-models-modal-value {
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
+}
+
+.settings-models-modal-detail {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
+.settings-models-modal-capability {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.settings-models-modal-warning {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    line-height: 1.4;
+    padding: 10px;
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-models-modal-confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: rgba(255, 255, 255, 0.84);
+}
+
+.settings-models-modal-confirm input {
+    margin: 0;
+}
+
+.settings-models-modal-note {
+    font-size: 0.73rem;
+    color: rgba(255, 255, 255, 0.56);
+    line-height: 1.35;
+}
+
+.settings-models-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.settings-models-modal-btn {
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(255, 255, 255, 0.85);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.settings-models-modal-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.settings-models-modal-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.settings-models-modal-btn-primary {
+    background: #22c55e;
+    border-color: #22c55e;
+    color: #fff;
+}
+
+.settings-models-modal-btn-primary:hover:not(:disabled) {
+    background: #16a34a;
+    border-color: #16a34a;
+}
+
+/* ====== Pull Progress ====== */
+.settings-models-pull-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.settings-models-pull-status {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.7);
+    text-align: center;
+}
+
+.settings-models-pull-bar-container {
+    width: 100%;
+    height: 6px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.settings-models-pull-bar {
+    height: 100%;
+    background: #22c55e;
+    border-radius: 3px;
+    transition: width 0.3s ease-out;
+}
+
+.settings-models-pull-percent {
+    font-size: 0.75rem;
+    color: rgba(255, 255, 255, 0.5);
+    text-align: center;
+}
+
+.settings-models-pull-complete {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+}
+
+.settings-models-pull-complete-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+}
+
+.settings-models-pull-complete-text {
+    font-size: 0.85rem;
+    color: rgba(255, 255, 255, 0.9);
+    font-weight: 500;
+}
+
+.settings-models-modal-error {
+    padding: 10px;
+    background: rgba(239, 83, 80, 0.1);
+    border: 1px solid rgba(239, 83, 80, 0.3);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #ef5350;
+}

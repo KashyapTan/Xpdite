@@ -54,6 +54,9 @@ class MessageHandler:
 
     def __init__(self, websocket: WebSocket):
         self.websocket = websocket
+        self._ollama_pull_task = None
+        self._ollama_pull_model_name = ""
+        self._ollama_pull_cancel_requested = False
 
     async def handle(self, data: Dict[str, Any]):
         """Route a message to the appropriate handler."""
@@ -78,6 +81,7 @@ class MessageHandler:
 
     def _get_tab_manager(self):
         from ..services.tab_manager_instance import tab_manager
+
         return tab_manager
 
     @staticmethod
@@ -150,12 +154,17 @@ class MessageHandler:
 
         if not query_text:
             await self.websocket.send_text(
-                json.dumps({"type": "error", "content": "Empty query", "tab_id": tab_id})
+                json.dumps(
+                    {"type": "error", "content": "Empty query", "tab_id": tab_id}
+                )
             )
             return
 
         # Parse slash commands from the query text
-        forced_skills, cleaned_query = await self._conversation_service().extract_skill_slash_commands(query_text)
+        (
+            forced_skills,
+            cleaned_query,
+        ) = await self._conversation_service().extract_skill_slash_commands(query_text)
 
         if forced_skills:
             logger.debug("Slash commands matched: %s", [s.name for s in forced_skills])
@@ -174,7 +183,9 @@ class MessageHandler:
         ):
             token = set_current_tab_id(tab_id)
             try:
-                await self._screenshot_handler().capture_fullscreen(tab_state=session.state)
+                await self._screenshot_handler().capture_fullscreen(
+                    tab_state=session.state
+                )
             finally:
                 reset_current_tab_id(token)
 
@@ -230,7 +241,9 @@ class MessageHandler:
         turn_messages = db.get_turn_messages(
             target_message["conversation_id"], target_message["turn_id"]
         )
-        user_message = next((msg for msg in turn_messages if msg["role"] == "user"), None)
+        user_message = next(
+            (msg for msg in turn_messages if msg["role"] == "user"), None
+        )
         assistant_message = next(
             (msg for msg in turn_messages if msg["role"] == "assistant"), None
         )
@@ -274,9 +287,10 @@ class MessageHandler:
             )
             return
 
-        forced_skills, cleaned_query = await self._conversation_service().extract_skill_slash_commands(
-            query_text
-        )
+        (
+            forced_skills,
+            cleaned_query,
+        ) = await self._conversation_service().extract_skill_slash_commands(query_text)
         llm_query = cleaned_query.strip() if cleaned_query.strip() else query_text
 
         session = self._get_tab_manager().get_or_create(tab_id)
@@ -396,7 +410,9 @@ class MessageHandler:
             session = self._get_tab_manager().get_or_create(tab_id)
             token = set_current_tab_id(tab_id)
             try:
-                await self._conversation_service().resume_conversation(conv_id, tab_state=session.state)
+                await self._conversation_service().resume_conversation(
+                    conv_id, tab_state=session.state
+                )
                 # Update the queue's resolved conversation_id
                 session.queue.resolved_conversation_id = conv_id
             finally:
@@ -408,7 +424,9 @@ class MessageHandler:
         if screenshot_id:
             tab_id = self._get_tab_id(data)
             tab_state = self._get_tab_manager().get_state(tab_id)
-            await self._screenshot_handler().remove_screenshot(screenshot_id, tab_state=tab_state)
+            await self._screenshot_handler().remove_screenshot(
+                screenshot_id, tab_state=tab_state
+            )
 
     async def _handle_set_capture_mode(self, data: Dict[str, Any]):
         """Handle capture mode change."""
@@ -427,9 +445,7 @@ class MessageHandler:
         # TODO(frontend): content is now a native object, not a JSON string.
         # Remove any extra JSON.parse() calls on the frontend for this message type.
         await self.websocket.send_text(
-            json.dumps(
-                {"type": "conversations_list", "content": conversations}
-            )
+            json.dumps({"type": "conversations_list", "content": conversations})
         )
 
     async def _handle_load_conversation(self, data: Dict[str, Any]):
@@ -548,9 +564,7 @@ class MessageHandler:
         if recording_id:
             recording = db.get_meeting_recording(recording_id)
             await self.websocket.send_text(
-                json.dumps(
-                    {"type": "meeting_recording_loaded", "content": recording}
-                )
+                json.dumps({"type": "meeting_recording_loaded", "content": recording})
             )
 
     async def _handle_delete_meeting_recording(self, data: Dict[str, Any]):
@@ -561,6 +575,7 @@ class MessageHandler:
             recording = db.get_meeting_recording(recording_id)
             if recording and recording.get("audio_file_path"):
                 import os
+
                 try:
                     os.remove(recording["audio_file_path"])
                 except OSError:
@@ -609,7 +624,8 @@ class MessageHandler:
         settings = {
             "whisper_model": db.get_setting("meeting_whisper_model") or "base",
             "keep_audio": db.get_setting("meeting_keep_audio") or "false",
-            "diarization_enabled": db.get_setting("meeting_diarization_enabled") or "true",
+            "diarization_enabled": db.get_setting("meeting_diarization_enabled")
+            or "true",
         }
         await self.websocket.send_text(
             json.dumps({"type": "meeting_settings", "content": settings})
@@ -628,13 +644,16 @@ class MessageHandler:
         if "keep_audio" in settings:
             db.set_setting("meeting_keep_audio", settings["keep_audio"])
         if "diarization_enabled" in settings:
-            db.set_setting("meeting_diarization_enabled", settings["diarization_enabled"])
+            db.set_setting(
+                "meeting_diarization_enabled", settings["diarization_enabled"]
+            )
 
         # Return updated settings
         updated = {
             "whisper_model": db.get_setting("meeting_whisper_model") or "base",
             "keep_audio": db.get_setting("meeting_keep_audio") or "false",
-            "diarization_enabled": db.get_setting("meeting_diarization_enabled") or "true",
+            "diarization_enabled": db.get_setting("meeting_diarization_enabled")
+            or "true",
         }
         await self.websocket.send_text(
             json.dumps({"type": "meeting_settings", "content": updated})
@@ -649,38 +668,59 @@ class MessageHandler:
         model = data.get("model")  # Optional model override from frontend
         if not recording_id:
             await self.websocket.send_text(
-                json.dumps({"type": "meeting_analysis_error", "content": {"error": "Missing recording_id"}})
+                json.dumps(
+                    {
+                        "type": "meeting_analysis_error",
+                        "content": {"error": "Missing recording_id"},
+                    }
+                )
             )
             return
 
         # Run in background to avoid blocking WS
         async def _run_analysis():
             try:
-                result = await meeting_analysis_service.generate_analysis(recording_id, model=model)
+                result = await meeting_analysis_service.generate_analysis(
+                    recording_id, model=model
+                )
                 if "error" in result and result.get("summary") is None:
-                    await broadcast_message("meeting_analysis_error", {
-                        "recording_id": recording_id,
-                        "error": result["error"],
-                    })
+                    await broadcast_message(
+                        "meeting_analysis_error",
+                        {
+                            "recording_id": recording_id,
+                            "error": result["error"],
+                        },
+                    )
                 else:
-                    await broadcast_message("meeting_analysis_complete", {
-                        "recording_id": recording_id,
-                        "summary": result.get("summary"),
-                        "actions": result.get("actions", []),
-                        "parse_error": result.get("parse_error", False),
-                    })
+                    await broadcast_message(
+                        "meeting_analysis_complete",
+                        {
+                            "recording_id": recording_id,
+                            "summary": result.get("summary"),
+                            "actions": result.get("actions", []),
+                            "parse_error": result.get("parse_error", False),
+                        },
+                    )
             except Exception as e:
                 logger.error("Analysis handler error: %s", e)
-                await broadcast_message("meeting_analysis_error", {
-                    "recording_id": recording_id,
-                    "error": str(e),
-                })
+                await broadcast_message(
+                    "meeting_analysis_error",
+                    {
+                        "recording_id": recording_id,
+                        "error": str(e),
+                    },
+                )
 
         asyncio.create_task(_run_analysis())
 
         # Acknowledge request was received
         await self.websocket.send_text(
-            json.dumps({"type": "meeting_analysis_started", "content": {"recording_id": recording_id}})
+            json.dumps(
+                {
+                    "type": "meeting_analysis_started",
+                    "content": {"recording_id": recording_id},
+                }
+            )
         )
 
     async def _handle_meeting_execute_action(self, data: Dict[str, Any]):
@@ -699,24 +739,30 @@ class MessageHandler:
             if action_type == "calendar_event":
                 # Map to Google Calendar MCP tool
                 # Server signature: create_event(title, start, end, description, location, attendees)
-                result = await mcp_manager.call_tool("create_event", {
-                    "title": action.get("title", "Meeting Follow-up"),
-                    "start": f"{action.get('date', '')}T{action.get('time', '09:00')}:00",
-                    "end": self._calc_end_time(
-                        action.get("date", ""),
-                        action.get("time", "09:00"),
-                        action.get("duration_minutes", 30),
-                    ),
-                    "description": action.get("description", ""),
-                })
+                result = await mcp_manager.call_tool(
+                    "create_event",
+                    {
+                        "title": action.get("title", "Meeting Follow-up"),
+                        "start": f"{action.get('date', '')}T{action.get('time', '09:00')}:00",
+                        "end": self._calc_end_time(
+                            action.get("date", ""),
+                            action.get("time", "09:00"),
+                            action.get("duration_minutes", 30),
+                        ),
+                        "description": action.get("description", ""),
+                    },
+                )
 
             elif action_type == "email":
                 # Map to Gmail MCP tool
-                result = await mcp_manager.call_tool("create_draft", {
-                    "to": action.get("to", ""),
-                    "subject": action.get("subject", ""),
-                    "body": action.get("body", ""),
-                })
+                result = await mcp_manager.call_tool(
+                    "create_draft",
+                    {
+                        "to": action.get("to", ""),
+                        "subject": action.get("subject", ""),
+                        "body": action.get("body", ""),
+                    },
+                )
 
             else:
                 result = f"Action type '{action_type}' is not executable via MCP"
@@ -727,25 +773,35 @@ class MessageHandler:
                 success = False
 
             await self.websocket.send_text(
-                json.dumps({"type": "meeting_action_result", "content": {
-                    "recording_id": recording_id,
-                    "action_type": action_type,
-                    "action_index": action_index,
-                    "success": success,
-                    "result": result,
-                }})
+                json.dumps(
+                    {
+                        "type": "meeting_action_result",
+                        "content": {
+                            "recording_id": recording_id,
+                            "action_type": action_type,
+                            "action_index": action_index,
+                            "success": success,
+                            "result": result,
+                        },
+                    }
+                )
             )
 
         except Exception as e:
             logger.error("Action execution failed: %s", e)
             await self.websocket.send_text(
-                json.dumps({"type": "meeting_action_result", "content": {
-                    "recording_id": recording_id,
-                    "action_type": action_type,
-                    "action_index": action_index,
-                    "success": False,
-                    "result": str(e),
-                }})
+                json.dumps(
+                    {
+                        "type": "meeting_action_result",
+                        "content": {
+                            "recording_id": recording_id,
+                            "action_type": action_type,
+                            "action_index": action_index,
+                            "success": False,
+                            "result": str(e),
+                        },
+                    }
+                )
             )
 
     @staticmethod
@@ -753,12 +809,206 @@ class MessageHandler:
         """Calculate end time from start date/time + duration."""
         try:
             from datetime import datetime, timedelta
+
             dt = datetime.fromisoformat(f"{date}T{time}:00")
             end = dt + timedelta(minutes=duration_minutes)
             return end.isoformat()
         except Exception:
             return f"{date}T{time}:00"
 
+    # ── Ollama Model Pull ─────────────────────────────────────────
+
+    async def _handle_ollama_pull_model(self, data: Dict[str, Any]):
+        """Start pulling an Ollama model in a background task."""
+        import asyncio
+
+        model_name = str(data.get("model_name", "")).strip()
+        if not model_name:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "ollama_pull_error",
+                        "content": {"error": "Model name is required"},
+                    }
+                )
+            )
+            return
+
+        if self._ollama_pull_task and not self._ollama_pull_task.done():
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "ollama_pull_error",
+                        "content": {
+                            "model_name": model_name,
+                            "error": "Another model pull is already in progress. Cancel it first.",
+                        },
+                    }
+                )
+            )
+            return
+
+        self._ollama_pull_model_name = model_name
+        self._ollama_pull_cancel_requested = False
+
+        async def _runner():
+            try:
+                await self._run_ollama_pull(model_name)
+            finally:
+                self._ollama_pull_task = None
+                self._ollama_pull_model_name = ""
+                self._ollama_pull_cancel_requested = False
+
+        self._ollama_pull_task = asyncio.create_task(_runner())
+
+    async def _handle_ollama_cancel_pull(self, data: Dict[str, Any]):
+        """Cancel an active Ollama pull task (if any)."""
+        import asyncio
+
+        if not self._ollama_pull_task or self._ollama_pull_task.done():
+            return
+
+        model_name = (
+            str(data.get("model_name", "")).strip() or self._ollama_pull_model_name
+        )
+        self._ollama_pull_cancel_requested = True
+        self._ollama_pull_task.cancel()
+
+        try:
+            await self._ollama_pull_task
+        except asyncio.CancelledError:
+            pass
+        except Exception:
+            # _run_ollama_pull may already have emitted an error.
+            pass
+
+        try:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "ollama_pull_cancelled",
+                        "content": {
+                            "model_name": model_name,
+                            "message": "Model pull cancelled.",
+                        },
+                    }
+                )
+            )
+        except Exception:
+            pass
+
+    async def _run_ollama_pull(self, model_name: str) -> None:
+        """Run the Ollama pull stream and emit progress events."""
+        import asyncio
+
+        from ollama import AsyncClient as OllamaAsyncClient
+
+        async def send_progress(msg_type: str, content: dict):
+            try:
+                await self.websocket.send_text(
+                    json.dumps({"type": msg_type, "content": content})
+                )
+            except Exception:
+                # WebSocket likely closed; stop this task.
+                raise asyncio.CancelledError("WebSocket closed")
+
+        try:
+            async_client = OllamaAsyncClient()
+
+            # Stream the pull progress with a 2-hour timeout for very large models.
+            async with asyncio.timeout(7200):
+                async for progress in await async_client.pull(model_name, stream=True):
+                    status = progress.get("status", "")
+                    total = progress.get("total") or 0
+                    completed = progress.get("completed") or 0
+                    digest = progress.get("digest", "")
+
+                    percent = 0
+                    if total and total > 0 and completed is not None:
+                        percent = int((completed / total) * 100)
+
+                    await send_progress(
+                        "ollama_pull_progress",
+                        {
+                            "model_name": model_name,
+                            "status": status,
+                            "total": total,
+                            "completed": completed,
+                            "percent": percent,
+                            "digest": digest,
+                        },
+                    )
+
+            await send_progress(
+                "ollama_pull_complete",
+                {
+                    "model_name": model_name,
+                    "success": True,
+                },
+            )
+
+        except asyncio.TimeoutError:
+            logger.error("Ollama pull timed out for %s", model_name)
+            try:
+                await self.websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "ollama_pull_error",
+                            "content": {
+                                "model_name": model_name,
+                                "error": "Download timed out after 2 hours",
+                            },
+                        }
+                    )
+                )
+            except Exception:
+                pass
+
+        except asyncio.CancelledError:
+            if self._ollama_pull_cancel_requested:
+                logger.info("Ollama pull cancelled by user for %s", model_name)
+            else:
+                logger.info(
+                    "Ollama pull cancelled for %s (connection closed)", model_name
+                )
+            raise
+
+        except Exception as e:
+            error_str = str(e)
+            logger.error("Ollama pull failed for %s: %s", model_name, error_str)
+            lowered = error_str.lower()
+
+            user_error = error_str[:300]
+            if (
+                "not found" in lowered
+                or "pull model manifest" in lowered
+                or "manifest" in lowered
+            ):
+                user_error = (
+                    f'Could not find model "{model_name}". '
+                    "Check the model name/tag, verify it exists in Ollama, "
+                    "or update Ollama and try again."
+                )
+            elif "connect" in lowered or "connection" in lowered:
+                user_error = (
+                    "Cannot connect to Ollama at http://localhost:11434. "
+                    "Make sure Ollama is running and try again."
+                )
+
+            try:
+                await self.websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "ollama_pull_error",
+                            "content": {
+                                "model_name": model_name,
+                                "error": user_error,
+                            },
+                        }
+                    )
+                )
+            except Exception:
+                pass
 
     async def _handle_terminal_approval_response(self, data: Dict[str, Any]):
         """Handle user's response to a terminal approval request."""
@@ -779,7 +1029,9 @@ class MessageHandler:
         """Handle user's response to a YouTube transcription approval request."""
         request_id = data.get("request_id", "")
         approved = data.get("approved", False)
-        self._video_watcher_service().resolve_transcription_approval(request_id, approved)
+        self._video_watcher_service().resolve_transcription_approval(
+            request_id, approved
+        )
 
     async def _handle_terminal_stop_session(self, data: Dict[str, Any]):
         """Handle user clicking the Stop button on an active session."""

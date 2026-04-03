@@ -3,6 +3,18 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import SettingsModels from '../../../components/settings/SettingsModels'
 
+// Mock the WebSocket context
+const sendMock = vi.fn();
+const subscribeMock = vi.fn();
+const unsubscribeMock = vi.fn();
+
+vi.mock('../../../contexts/WebSocketContext', () => ({
+  useWebSocket: () => ({
+    send: sendMock,
+    subscribe: subscribeMock,
+  }),
+}));
+
 // Mock the api module
 vi.mock('../../../services/api', () => ({
   api: {
@@ -75,6 +87,8 @@ const mockKeyStatusNoKeys = {
 describe('SettingsModels', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // Set up subscribe mock to return unsubscribe function
+    subscribeMock.mockImplementation(() => unsubscribeMock)
   })
 
   afterEach(() => {
