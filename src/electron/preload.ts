@@ -27,6 +27,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     retryBoot: () => {
         return ipcRenderer.invoke('retry-boot');
     },
+    perfLog: (message: string) => {
+        return ipcRenderer.invoke('perf-log', message);
+    },
     // Channel Bridge IPC methods
     getChannelBridgePort: () => {
         return ipcRenderer.invoke('get-channel-bridge-port');

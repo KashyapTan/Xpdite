@@ -670,6 +670,12 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     // Model menu takes priority when /model is detected
     const showModelMenu = filteredModels.length > 0;
     const showSlashMenu = filteredSkills.length > 0 && !showModelMenu;
+    const menuActive = showSlashMenu || showModelMenu;
+    const hasChipSegments = useMemo(
+      () => segments.some((segment) => segment.type === 'chip'),
+      [segments],
+    );
+    const needsSelectionTracking = hasChipSegments || menuActive || serializedQuery.includes('/');
 
     const renderedSegmentsSignature = useMemo(
       () =>
@@ -685,6 +691,10 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     renderedSegmentsRef.current = segments;
 
     const updateMenuPosition = useCallback(() => {
+      if (!menuActive) {
+        return;
+      }
+
       const editor = editorRef.current;
       const container = containerRef.current;
       const selection = window.getSelection();
@@ -713,9 +723,13 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         Math.min(rect.left - containerRect.left, containerRect.width - SLASH_MENU_WIDTH - 8),
       );
 
-      setMenuPosition({ top: 0, left: nextLeft });
-      setModelMenuPosition({ top: 0, left: nextLeft });
-    }, []);
+      setMenuPosition((previous) => (
+        previous.left === nextLeft ? previous : { top: 0, left: nextLeft }
+      ));
+      setModelMenuPosition((previous) => (
+        previous.left === nextLeft ? previous : { top: 0, left: nextLeft }
+      ));
+    }, [menuActive]);
 
     useEffect(() => {
       setSelectedIndex(0);
@@ -732,8 +746,12 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         return;
       }
 
+      if (!needsSelectionTracking) {
+        return;
+      }
+
       setSelectionOffset(query.length);
-    }, [query]);
+    }, [needsSelectionTracking, query]);
 
     useLayoutEffect(() => {
       const editor = editorRef.current;
@@ -741,8 +759,15 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         return;
       }
 
+      if (!hasChipSegments) {
+        const currentText = (editor.textContent ?? '').replace(/\u00a0/g, ' ');
+        if (currentText === serializedQuery) {
+          return;
+        }
+      }
+
       syncEditorContent(editor, renderedSegmentsRef.current);
-    }, [renderedSegmentsSignature]);
+    }, [hasChipSegments, renderedSegmentsSignature, serializedQuery]);
 
     useLayoutEffect(() => {
       const editor = editorRef.current;
@@ -750,14 +775,22 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         return;
       }
 
+      if (!needsSelectionTracking) {
+        return;
+      }
+
       restoreSelectionOffset(editor, selectionOffset);
-      updateMenuPosition();
-    }, [isFocused, selectionOffset, segments, updateMenuPosition]);
+      if (menuActive) {
+        updateMenuPosition();
+      }
+    }, [isFocused, menuActive, needsSelectionTracking, selectionOffset, updateMenuPosition]);
 
     const updateQueryValue = useCallback(
-      (nextValue: string, nextOffset: number) => {
-        internalUpdateRef.current = true;
-        setSelectionOffset(nextOffset);
+      (nextValue: string, nextOffset: number, trackSelection: boolean = true) => {
+        internalUpdateRef.current = trackSelection;
+        if (trackSelection) {
+          setSelectionOffset(nextOffset);
+        }
         setDismissedTriggerKey(null);
         setDismissedModelTriggerKey(null);
         onQueryChange(nextValue);
@@ -775,9 +808,16 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         return;
       }
 
-      setSelectionOffset(getSelectionOffset(editor));
-      updateMenuPosition();
-    }, [updateMenuPosition]);
+      if (!needsSelectionTracking) {
+        return;
+      }
+
+      const nextOffset = getSelectionOffset(editor);
+      setSelectionOffset((previous) => (previous === nextOffset ? previous : nextOffset));
+      if (menuActive) {
+        updateMenuPosition();
+      }
+    }, [menuActive, needsSelectionTracking, updateMenuPosition]);
 
     const handleSelectCommand = useCallback(
       (skill: Skill) => {
@@ -873,8 +913,9 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
       const nextValue = (editor.textContent ?? '').replace(/\u00a0/g, ' ');
       const nextOffset = getSelectionOffset(editor);
-      updateQueryValue(nextValue, nextOffset);
-    }, [updateQueryValue]);
+      const trackSelection = hasChipSegments || nextValue.includes('/');
+      updateQueryValue(nextValue, nextOffset, trackSelection);
+    }, [hasChipSegments, updateQueryValue]);
 
     const handleEditorMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
       const target = event.target;

@@ -82,7 +82,7 @@ type StreamPerfStats = {
   chunkChars: number;
   maxChunkIntervalMs: number;
   model: string;
-  queryPreview: string;
+  queryChars: number;
 };
 
 const STREAM_PERF_DEBUG_FLAG = 'xpdite_stream_debug';
@@ -183,6 +183,71 @@ function mapYouTubeApprovalToBlock(approvalData: YouTubeTranscriptionApprovalReq
   };
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isQueueUpdatedPayload(
+  payload: unknown,
+): payload is { tab_id: string; items: { item_id: string; preview: string; position: number }[] } {
+  if (!isRecord(payload) || typeof payload.tab_id !== 'string' || !Array.isArray(payload.items)) {
+    return false;
+  }
+
+  return payload.items.every((item) => (
+    isRecord(item)
+    && typeof item.item_id === 'string'
+    && typeof item.preview === 'string'
+    && typeof item.position === 'number'
+  ));
+}
+
+function isConversationResumedPayload(payload: unknown): payload is ConversationResumedContent {
+  return isRecord(payload)
+    && typeof payload.conversation_id === 'string'
+    && Array.isArray(payload.messages);
+}
+
+function parseWsPayload<T>(
+  data: WebSocketMessage,
+  context: string,
+): T | null {
+  if (typeof data.content !== 'string') {
+    if (data.content !== null && typeof data.content === 'object') {
+      return data.content as T;
+    }
+
+    console.warn(`[ws] Ignoring malformed payload for ${context}`);
+    return null;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(data.content);
+    if (parsed !== null && typeof parsed === 'object') {
+      return parsed as T;
+    }
+
+    console.warn(`[ws] Ignoring malformed payload for ${context}`);
+    return null;
+  } catch (error) {
+    console.warn(`[ws] Ignoring malformed payload for ${context}`, error);
+    return null;
+  }
+}
+
+function parseWsPayloadWithGuard<T>(
+  data: WebSocketMessage,
+  context: string,
+  isPayload: (payload: unknown) => payload is T,
+): T | null {
+  const payload = parseWsPayload<unknown>(data, context);
+  if (!isPayload(payload)) {
+    console.warn(`[ws] Ignoring malformed payload for ${context}`);
+    return null;
+  }
+  return payload;
+}
+
 
 function App() {
   // ============================================
@@ -239,7 +304,7 @@ function App() {
       chunkChars: 0,
       maxChunkIntervalMs: 0,
       model: modelName,
-      queryPreview: queryText.slice(0, 120),
+      queryChars: queryText.length,
     };
   }, []);
 
@@ -287,7 +352,7 @@ function App() {
       : Math.round(finishedAt - stats.firstChunkAtMs);
 
     console.debug(
-      `[stream-perf] ${reason}: model=${stats.model} submit_to_first_chunk_ms=${submitToFirstChunk ?? 'n/a'} stream_duration_ms=${streamDuration ?? 'n/a'} chunks=${stats.chunkCount} chars=${stats.chunkChars} max_chunk_interval_ms=${Math.round(stats.maxChunkIntervalMs)} query="${stats.queryPreview}"`,
+      `[stream-perf] ${reason}: model=${stats.model} submit_to_first_chunk_ms=${submitToFirstChunk ?? 'n/a'} stream_duration_ms=${streamDuration ?? 'n/a'} chunks=${stats.chunkCount} chars=${stats.chunkChars} max_chunk_interval_ms=${Math.round(stats.maxChunkIntervalMs)} query_chars=${stats.queryChars}`,
     );
 
     streamPerfStatsRef.current = null;
@@ -646,74 +711,97 @@ function App() {
 
       case 'conversation_saved': {
         const { applySavedTurnToHistory } = await loadConversationMessageTransforms();
-        const sd = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as ConversationSavedContent;
-        chat.conversationId = sd.conversation_id;
-        if (pendingTurnAction && !sd.turn) {
-          chat.response = '';
-          chat.thinking = '';
-          chat.currentQuery = '';
-          chat.isThinking = false;
-          chat.toolCalls = [];
-          chat.contentBlocks = [];
-          chat.canSubmit = true;
-          chat.status = 'Ready for follow-up question.';
-          pendingTurnActionsRef.current.delete(tabId);
-          break;
+        const sd = parseWsPayload<ConversationSavedContent>(data, 'background:conversation_saved');
+        if (!sd) {
+          return;
         }
+
+        const latestSnap = getTabSnapshot(tabId) ?? freshSnapshot();
+        const latestChat = { ...latestSnap.chat };
+        const latestPendingTurnAction = pendingTurnActionsRef.current.get(tabId);
+
+        latestChat.conversationId = sd.conversation_id;
+        if (latestPendingTurnAction && !sd.turn) {
+          latestChat.response = '';
+          latestChat.thinking = '';
+          latestChat.currentQuery = '';
+          latestChat.isThinking = false;
+          latestChat.toolCalls = [];
+          latestChat.contentBlocks = [];
+          latestChat.canSubmit = true;
+          latestChat.status = 'Ready for follow-up question.';
+          pendingTurnActionsRef.current.delete(tabId);
+          setTabSnapshot(tabId, { ...latestSnap, chat: latestChat });
+          return;
+        }
+
         if (sd.turn) {
-          chat.chatHistory = applySavedTurnToHistory(
-            chat.chatHistory,
+          latestChat.chatHistory = applySavedTurnToHistory(
+            latestChat.chatHistory,
             sd.turn,
-            sd.operation ?? pendingTurnAction?.type ?? 'submit',
+            sd.operation ?? latestPendingTurnAction?.type ?? 'submit',
             buildPendingTurnLocalPatch(
-              chat.chatHistory,
+              latestChat.chatHistory,
               sd.turn,
-              pendingTurnAction,
-              pendingTurnAction
+              latestPendingTurnAction,
+              latestPendingTurnAction
                 ? {
                     role: 'assistant',
-                    content: chat.response,
-                    thinking: chat.thinking || undefined,
-                    toolCalls: chat.toolCalls.length > 0 ? [...chat.toolCalls] : undefined,
-                    contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
-                    model: snap.generatingModel || undefined,
+                    content: latestChat.response,
+                    thinking: latestChat.thinking || undefined,
+                    toolCalls: latestChat.toolCalls.length > 0 ? [...latestChat.toolCalls] : undefined,
+                    contentBlocks: latestChat.contentBlocks.length > 0 ? [...latestChat.contentBlocks] : undefined,
+                    model: latestSnap.generatingModel || undefined,
                     timestamp: Date.now(),
                   }
                 : undefined,
             ),
           );
         }
-        if (pendingTurnAction) {
-          chat.response = '';
-          chat.thinking = '';
-          chat.currentQuery = '';
-          chat.isThinking = false;
-          chat.toolCalls = [];
-          chat.contentBlocks = [];
-          chat.canSubmit = true;
-          chat.status = 'Ready for follow-up question.';
+
+        if (latestPendingTurnAction) {
+          latestChat.response = '';
+          latestChat.thinking = '';
+          latestChat.currentQuery = '';
+          latestChat.isThinking = false;
+          latestChat.toolCalls = [];
+          latestChat.contentBlocks = [];
+          latestChat.canSubmit = true;
+          latestChat.status = 'Ready for follow-up question.';
           pendingTurnActionsRef.current.delete(tabId);
         }
-        break;
+
+        setTabSnapshot(tabId, { ...latestSnap, chat: latestChat });
+        return;
       }
 
       case 'conversation_resumed': {
         const { mapConversationMessagePayload } = await loadConversationMessageTransforms();
-        const resumeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as ConversationResumedContent;
-        chat.chatHistory = resumeData.messages.map(mapConversationMessagePayload);
-        chat.conversationId = resumeData.conversation_id;
-        chat.response = '';
-        chat.thinking = '';
-        chat.currentQuery = '';
-        chat.isThinking = false;
-        chat.toolCalls = [];
-        chat.contentBlocks = [];
-        chat.canSubmit = true;
-        chat.status = 'Conversation loaded. Ask a follow-up question.';
+        const resumeData = parseWsPayloadWithGuard<ConversationResumedContent>(
+          data,
+          'background:conversation_resumed',
+          isConversationResumedPayload,
+        );
+        if (!resumeData) {
+          return;
+        }
+
+        const latestSnap = getTabSnapshot(tabId) ?? freshSnapshot();
+        const latestChat = { ...latestSnap.chat };
+
+        latestChat.chatHistory = resumeData.messages.map(mapConversationMessagePayload);
+        latestChat.conversationId = resumeData.conversation_id;
+        latestChat.response = '';
+        latestChat.thinking = '';
+        latestChat.currentQuery = '';
+        latestChat.isThinking = false;
+        latestChat.toolCalls = [];
+        latestChat.contentBlocks = [];
+        latestChat.canSubmit = true;
+        latestChat.status = 'Conversation loaded. Ask a follow-up question.';
         pendingTurnActionsRef.current.delete(tabId);
-        break;
+        setTabSnapshot(tabId, { ...latestSnap, chat: latestChat });
+        return;
       }
 
       case 'error':
@@ -735,7 +823,10 @@ function App() {
         break;
 
       case 'tool_call': {
-        const tc = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as ToolCallContent;
+        const tc = parseWsPayload<ToolCallContent>(data, 'background:tool_call');
+        if (!tc) {
+          return;
+        }
         // Terminal tool calls: create/update inline terminal blocks
         if (tc.server === 'terminal' && tc.name === 'run_command') {
           if (tc.status === 'calling') {
@@ -780,13 +871,19 @@ function App() {
       }
 
       case 'terminal_output': {
-        const to = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalOutput;
+        const to = parseWsPayload<TerminalOutput>(data, 'background:terminal_output');
+        if (!to) {
+          return;
+        }
+
+        let linkedUnassignedTerminalBlock = false;
         chat.contentBlocks = chat.contentBlocks.map(b => {
           if (b.type === 'terminal_command' && b.terminal.requestId === to.request_id) {
             return { ...b, terminal: { ...b.terminal, output: b.terminal.output + to.text + (to.raw ? '' : '\n'), outputChunks: [...b.terminal.outputChunks, { text: to.text, raw: !!to.raw }], isPty: b.terminal.isPty || !!to.raw } };
           }
           // Also match by empty requestId (created from tool_call before real id arrived)
-          if (b.type === 'terminal_command' && !b.terminal.requestId) {
+          if (b.type === 'terminal_command' && !b.terminal.requestId && !linkedUnassignedTerminalBlock) {
+            linkedUnassignedTerminalBlock = true;
             return { ...b, terminal: { ...b.terminal, requestId: to.request_id, output: b.terminal.output + to.text + (to.raw ? '' : '\n'), outputChunks: [...b.terminal.outputChunks, { text: to.text, raw: !!to.raw }], isPty: b.terminal.isPty || !!to.raw } };
           }
           return b;
@@ -795,7 +892,10 @@ function App() {
       }
 
       case 'terminal_command_complete': {
-        const tc2 = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalCommandComplete;
+        const tc2 = parseWsPayload<TerminalCommandComplete>(data, 'background:terminal_command_complete');
+        if (!tc2) {
+          return;
+        }
         chat.contentBlocks = chat.contentBlocks.map(b =>
           b.type === 'terminal_command' && b.terminal.requestId === tc2.request_id
             ? { ...b, terminal: { ...b.terminal, status: 'completed', exitCode: tc2.exit_code, durationMs: tc2.duration_ms } }
@@ -805,7 +905,10 @@ function App() {
       }
 
       case 'terminal_approval_request': {
-        const ar = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as unknown as TerminalApprovalRequest;
+        const ar = parseWsPayload<TerminalApprovalRequest>(data, 'background:terminal_approval_request');
+        if (!ar) {
+          return;
+        }
         chat.contentBlocks = [...chat.contentBlocks, {
           type: 'terminal_command',
           terminal: { requestId: ar.request_id, command: ar.command, cwd: ar.cwd, status: 'pending_approval', output: '', outputChunks: [], isPty: false },
@@ -814,9 +917,13 @@ function App() {
       }
 
       case 'youtube_transcription_approval': {
-        const approvalData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as YouTubeTranscriptionApprovalRequest;
+        const approvalData = parseWsPayload<YouTubeTranscriptionApprovalRequest>(
+          data,
+          'background:youtube_transcription_approval',
+        );
+        if (!approvalData) {
+          return;
+        }
         chat.contentBlocks = [
           ...chat.contentBlocks,
           {
@@ -828,9 +935,10 @@ function App() {
       }
 
       case 'token_usage': {
-        const stats = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TokenUsageContent;
+        const stats = parseWsPayload<TokenUsageContent>(data, 'background:token_usage');
+        if (!stats) {
+          return;
+        }
         const input = stats.prompt_eval_count || 0;
         const output = stats.eval_count || 0;
         const tu = { ...snap.tokens.tokenUsage };
@@ -842,16 +950,24 @@ function App() {
       }
 
       case 'queue_updated': {
-        const qData = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as { tab_id: string; items: { item_id: string; preview: string; position: number }[] };
+        const qData = parseWsPayloadWithGuard<{ tab_id: string; items: { item_id: string; preview: string; position: number }[] }>(
+          data,
+          'background:queue_updated',
+          isQueueUpdatedPayload,
+        );
+        if (!qData) {
+          return;
+        }
         setQueueItems(qData.tab_id, qData.items);
         return; // Don't update chat snapshot
       }
 
       // ── Screenshot messages for background tabs ──────────────
       case 'screenshot_added': {
-        const ssData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotAddedContent;
+        const ssData = parseWsPayload<ScreenshotAddedContent>(data, 'background:screenshot_added');
+        if (!ssData) {
+          return;
+        }
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = [...screenshots.screenshots, ssData as unknown as Screenshot];
         setTabSnapshot(tabId, { ...snap, chat, screenshots });
@@ -859,9 +975,10 @@ function App() {
       }
 
       case 'screenshot_removed': {
-        const removeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotRemovedContent;
+        const removeData = parseWsPayload<ScreenshotRemovedContent>(data, 'background:screenshot_removed');
+        if (!removeData) {
+          return;
+        }
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = screenshots.screenshots.filter(ss => ss.id !== removeData.id);
         setTabSnapshot(tabId, { ...snap, chat, screenshots });
@@ -904,7 +1021,11 @@ function App() {
         setSelectedModel(models[0]);
       }
     };
-    fetchEnabledModels();
+
+    void fetchEnabledModels().catch((error) => {
+      console.warn('[models] Failed to fetch enabled models', error);
+      setEnabledModels([]);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]); // re-fetch when user navigates back from Settings
 
@@ -979,7 +1100,14 @@ function App() {
         return true;
 
       case 'queue_updated': {
-        const qData = (typeof data.content === 'string' ? JSON.parse(data.content) : data.content) as { tab_id: string; items: { item_id: string; preview: string; position: number }[] };
+        const qData = parseWsPayloadWithGuard<{ tab_id: string; items: { item_id: string; preview: string; position: number }[] }>(
+          data,
+          'global:queue_updated',
+          isQueueUpdatedPayload,
+        );
+        if (!qData) {
+          return true;
+        }
         setQueueItems(qData.tab_id, qData.items);
         return true;
       }
@@ -1031,9 +1159,10 @@ function App() {
 
       // ── Screenshot messages (tab-scoped) ──────────────────
       case 'screenshot_added': {
-        const ssData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotAddedContent;
+        const ssData = parseWsPayload<ScreenshotAddedContent>(data, 'active:screenshot_added');
+        if (!ssData) {
+          break;
+        }
         screenshotState.addScreenshot(ssData);
         chatState.setStatus('Screenshot added to context.');
         setIsHidden(false);
@@ -1041,9 +1170,10 @@ function App() {
       }
 
       case 'screenshot_removed': {
-        const removeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ScreenshotRemovedContent;
+        const removeData = parseWsPayload<ScreenshotRemovedContent>(data, 'active:screenshot_removed');
+        if (!removeData) {
+          break;
+        }
         screenshotState.removeScreenshot(removeData.id);
         break;
       }
@@ -1064,9 +1194,10 @@ function App() {
       }
 
       case 'tool_call': {
-        const tc = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ToolCallContent;
+        const tc = parseWsPayload<ToolCallContent>(data, 'active:tool_call');
+        if (!tc) {
+          break;
+        }
 
         if (tc.server === 'terminal' && tc.name === 'run_command') {
           if (tc.status === 'calling') {
@@ -1115,9 +1246,13 @@ function App() {
       }
 
       case 'sub_agent_stream': {
-        const stream = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as SubAgentStreamContent & { accumulated?: string };
+        const stream = parseWsPayload<SubAgentStreamContent & { accumulated?: string }>(
+          data,
+          'active:sub_agent_stream',
+        );
+        if (!stream) {
+          break;
+        }
 
         const safeAgentId = typeof stream.agent_id === 'string' && stream.agent_id ? stream.agent_id : undefined;
         if (!safeAgentId) {
@@ -1184,9 +1319,10 @@ function App() {
       }
 
       case 'tool_calls_summary': {
-        const calls = typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content;
+        const calls = parseWsPayload<unknown>(data, 'active:tool_calls_summary');
+        if (!calls) {
+          break;
+        }
         if (Array.isArray(calls) && calls.length > 0) {
           chatState.toolCallsRef.current = calls;
         }
@@ -1221,9 +1357,10 @@ function App() {
         break;
 
       case 'token_usage': {
-        const stats = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TokenUsageContent;
+        const stats = parseWsPayload<TokenUsageContent>(data, 'active:token_usage');
+        if (!stats) {
+          break;
+        }
         const input = stats.prompt_eval_count || 0;
         const output = stats.eval_count || 0;
         tokenState.addTokens(input, output);
@@ -1232,9 +1369,10 @@ function App() {
 
       case 'conversation_saved': {
         const { applySavedTurnToHistory } = await loadConversationMessageTransforms();
-        const saveData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ConversationSavedContent;
+        const saveData = parseWsPayload<ConversationSavedContent>(data, 'active:conversation_saved');
+        if (!saveData) {
+          break;
+        }
         chatState.setConversationId(saveData.conversation_id);
 
         if (activePendingTurnAction && !saveData.turn) {
@@ -1290,9 +1428,14 @@ function App() {
 
       case 'conversation_resumed': {
         const { mapConversationMessagePayload } = await loadConversationMessageTransforms();
-        const resumeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as ConversationResumedContent;
+        const resumeData = parseWsPayloadWithGuard<ConversationResumedContent>(
+          data,
+          'active:conversation_resumed',
+          isConversationResumedPayload,
+        );
+        if (!resumeData) {
+          break;
+        }
 
         const msgs: ChatMessage[] = resumeData.messages.map(mapConversationMessagePayload);
 
@@ -1326,9 +1469,10 @@ function App() {
 
       // ── Terminal messages ──────────────────────────────
       case 'terminal_approval_request': {
-        const approvalData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TerminalApprovalRequest;
+        const approvalData = parseWsPayload<TerminalApprovalRequest>(data, 'active:terminal_approval_request');
+        if (!approvalData) {
+          break;
+        }
         chatState.addTerminalBlock({
           requestId: approvalData.request_id,
           command: approvalData.command,
@@ -1342,17 +1486,22 @@ function App() {
       }
 
       case 'youtube_transcription_approval': {
-        const approvalData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as YouTubeTranscriptionApprovalRequest;
+        const approvalData = parseWsPayload<YouTubeTranscriptionApprovalRequest>(
+          data,
+          'active:youtube_transcription_approval',
+        );
+        if (!approvalData) {
+          break;
+        }
         chatState.addYouTubeApprovalBlock(mapYouTubeApprovalToBlock(approvalData));
         break;
       }
 
       case 'terminal_session_request': {
-        const sessionData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TerminalSessionRequest;
+        const sessionData = parseWsPayload<TerminalSessionRequest>(data, 'active:terminal_session_request');
+        if (!sessionData) {
+          break;
+        }
         setTerminalSessionRequest(sessionData);
         break;
       }
@@ -1367,9 +1516,10 @@ function App() {
         break;
 
       case 'terminal_output': {
-        const outputData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TerminalOutput;
+        const outputData = parseWsPayload<TerminalOutput>(data, 'active:terminal_output');
+        if (!outputData) {
+          break;
+        }
         const hasBlock = chatState.contentBlocksRef.current.some(
           b => b.type === 'terminal_command' && b.terminal.requestId === outputData.request_id
         );
@@ -1393,9 +1543,13 @@ function App() {
       }
 
       case 'terminal_command_complete': {
-        const completeData = (typeof data.content === 'string'
-          ? JSON.parse(data.content)
-          : data.content) as unknown as TerminalCommandComplete;
+        const completeData = parseWsPayload<TerminalCommandComplete>(
+          data,
+          'active:terminal_command_complete',
+        );
+        if (!completeData) {
+          break;
+        }
         chatState.updateTerminalBlock(completeData.request_id, {
           status: 'completed',
           exitCode: completeData.exit_code,
@@ -1433,9 +1587,13 @@ function App() {
       : 'default';
 
     if (messageTabId === activeTabIdRef.current) {
-      void handleActiveTabMessage(data);
+      void handleActiveTabMessage(data).catch((error) => {
+        console.warn('[ws] Active tab message handling failed', error);
+      });
     } else {
-      void applyToBackgroundTab(messageTabId, data);
+      void applyToBackgroundTab(messageTabId, data).catch((error) => {
+        console.warn('[ws] Background tab message handling failed', error);
+      });
     }
   }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab]);
 
@@ -1536,17 +1694,74 @@ function App() {
   const scrollToBottom = useCallback(() => {
     responseAreaRef.current?.scrollTo({
       top: responseAreaRef.current.scrollHeight,
-      behavior: 'smooth',
+      behavior: 'auto',
     });
   }, []);
 
-  const handleScroll = () => {
+  const updateScrollBottomVisibility = useCallback(() => {
     if (responseAreaRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = responseAreaRef.current;
       const isNearBottom = scrollHeight - scrollTop - clientHeight < 50;
       setShowScrollBottom(!isNearBottom);
     }
-  };
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    updateScrollBottomVisibility();
+  }, [updateScrollBottomVisibility]);
+
+  useEffect(() => {
+    const container = responseAreaRef.current;
+    if (!container) {
+      return;
+    }
+
+    let frameId: number | null = null;
+    const scheduleVisibilityUpdate = () => {
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        updateScrollBottomVisibility();
+      });
+    };
+
+    scheduleVisibilityUpdate();
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => scheduleVisibilityUpdate());
+      resizeObserver.observe(container);
+    }
+
+    let mutationObserver: MutationObserver | null = null;
+    if (typeof MutationObserver !== 'undefined') {
+      mutationObserver = new MutationObserver(() => scheduleVisibilityUpdate());
+      mutationObserver.observe(container, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: ['style'],
+      });
+    }
+
+    return () => {
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      if (frameId !== null) {
+        cancelAnimationFrame(frameId);
+      }
+    };
+  }, [updateScrollBottomVisibility]);
+
+  const thinkingCollapsed = chatState.thinkingCollapsed;
+  const setThinkingCollapsed = chatState.setThinkingCollapsed;
+
+  const handleToggleThinking = useCallback(() => {
+    setThinkingCollapsed(!thinkingCollapsed);
+  }, [setThinkingCollapsed, thinkingCollapsed]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -1664,6 +1879,8 @@ function App() {
     });
   }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
 
+  const setChatHistory = chatState.setChatHistory;
+
   const handleSetActiveResponse = useCallback(async (message: ChatMessage, responseIndex: number) => {
     if (!message.messageId || !message.responseVersions) {
       return;
@@ -1675,7 +1892,7 @@ function App() {
       return;
     }
 
-    chatState.setChatHistory((prev) =>
+    setChatHistory((prev) =>
       prev.map((entry) =>
         entry.messageId === message.messageId
           ? nextMessage
@@ -1688,7 +1905,7 @@ function App() {
       message_id: message.messageId,
       response_index: responseIndex,
     });
-  }, [chatState, wsSend]);
+  }, [setChatHistory, wsSend]);
 
   const handleStopStreaming = () => {
     wsSend({ type: 'stop_streaming' });
@@ -1889,7 +2106,7 @@ function App() {
         onRetryMessage={handleRetryMessage}
         onEditMessage={handleEditMessage}
         onSetActiveResponse={handleSetActiveResponse}
-        onToggleThinking={() => chatState.setThinkingCollapsed(!chatState.thinkingCollapsed)}
+        onToggleThinking={handleToggleThinking}
         onScroll={handleScroll}
         onScrollToBottom={scrollToBottom}
         responseAreaRef={responseAreaRef}

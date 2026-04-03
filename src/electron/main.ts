@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
+import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
@@ -52,6 +52,90 @@ const DEV_RENDERER_SHELL_PROBE_URLS = [
     `${DEV_RENDERER_URL}/src/ui/components/input/ScreenshotChips.tsx`,
     DEV_RENDERER_URL,
 ];
+const PERF_LOG_MAX_CHARS = 2000;
+const PERF_LOG_WINDOW_MS = 1500;
+const PERF_LOG_MAX_PER_WINDOW = 140;
+const PERF_LOG_MUTE_MS = 2500;
+
+type PerfLogRateState = {
+    windowStartedAt: number;
+    countInWindow: number;
+    mutedUntil: number;
+    lastMessage: string;
+    lastAt: number;
+};
+
+const perfLogRateStateBySender = new Map<number, PerfLogRateState>();
+
+function isTrustedPerfLogSender(event: IpcMainInvokeEvent): boolean {
+    const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
+
+    if (isDev()) {
+        return senderUrl.startsWith(DEV_RENDERER_URL);
+    }
+
+    return senderUrl.startsWith('file://');
+}
+
+function isTrustedIpcSender(event: IpcMainInvokeEvent): boolean {
+    return isTrustedPerfLogSender(event);
+}
+
+function shouldDropPerfLog(senderId: number, safeMessage: string): boolean {
+    const now = Date.now();
+    const existing = perfLogRateStateBySender.get(senderId);
+    const state: PerfLogRateState = existing ?? {
+        windowStartedAt: now,
+        countInWindow: 0,
+        mutedUntil: 0,
+        lastMessage: '',
+        lastAt: 0,
+    };
+
+    if (state.mutedUntil > now) {
+        perfLogRateStateBySender.set(senderId, state);
+        return true;
+    }
+
+    if (now - state.windowStartedAt >= PERF_LOG_WINDOW_MS) {
+        state.windowStartedAt = now;
+        state.countInWindow = 0;
+    }
+
+    state.countInWindow += 1;
+    if (state.countInWindow > PERF_LOG_MAX_PER_WINDOW) {
+        state.mutedUntil = now + PERF_LOG_MUTE_MS;
+        perfLogRateStateBySender.set(senderId, state);
+        return true;
+    }
+
+    const duplicateBurst = state.lastMessage === safeMessage && now - state.lastAt < 60;
+    state.lastMessage = safeMessage;
+    state.lastAt = now;
+    perfLogRateStateBySender.set(senderId, state);
+    return duplicateBurst;
+}
+
+function sanitizePerfLogMessage(input: string): string {
+    let normalized = '';
+
+    for (let index = 0; index < input.length; index += 1) {
+        const char = input[index];
+        const code = input.charCodeAt(index);
+
+        if (char === '\n' || char === '\r' || char === '\t') {
+            normalized += ' ';
+        } else if (code >= 0x20 && code !== 0x7f) {
+            normalized += char;
+        }
+
+        if (normalized.length >= PERF_LOG_MAX_CHARS) {
+            break;
+        }
+    }
+
+    return normalized;
+}
 
 function bootProfile(event: string, details: Record<string, unknown> = {}) {
     if (!bootProfileEnabled) {
@@ -355,9 +439,18 @@ app.on('ready', async () => {
     mainWindow.loadURL(createBootShellDataUrl());
 
     // ── IPC handlers ───────────────────────────────────────────────
-    ipcMain.handle('get-boot-state', () => currentBootState);
+    ipcMain.handle('get-boot-state', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return null;
+        }
+        return currentBootState;
+    });
 
-    ipcMain.handle('retry-boot', async () => {
+    ipcMain.handle('retry-boot', async (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return;
+        }
+
         if (currentBootState.phase === 'error' && !bootSequenceInProgress) {
             publishBootState({ phase: 'starting', message: 'Retrying...', progress: 5 });
             await stopPythonServer();
@@ -365,7 +458,28 @@ app.on('ready', async () => {
         }
     });
 
-    ipcMain.handle('set-mini-mode', (_event, mini: boolean) => {
+    ipcMain.handle('perf-log', (event, message: string) => {
+        if (!isTrustedPerfLogSender(event)) {
+            return;
+        }
+
+        const safeMessage = sanitizePerfLogMessage(String(message));
+        if (!safeMessage) {
+            return;
+        }
+
+        if (shouldDropPerfLog(event.sender.id, safeMessage)) {
+            return;
+        }
+
+        console.log(`[renderer-perf] ${safeMessage}`);
+    });
+
+    ipcMain.handle('set-mini-mode', (event, mini: boolean) => {
+        if (!isTrustedIpcSender(event)) {
+            return;
+        }
+
         if (!mainWindow) {
             console.log('mainWindow is null');
             return;
@@ -389,21 +503,37 @@ app.on('ready', async () => {
         }
     });
 
-    ipcMain.handle('focus-window', () => {
+    ipcMain.handle('focus-window', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return;
+        }
+
         if (!mainWindow) return;
         mainWindow.focus();
     });
 
-    ipcMain.handle('get-server-port', () => {
+    ipcMain.handle('get-server-port', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return null;
+        }
+
         return getServerPort();
     });
 
     // Channel Bridge IPC handlers
-    ipcMain.handle('get-channel-bridge-port', () => {
+    ipcMain.handle('get-channel-bridge-port', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return null;
+        }
+
         return getChannelBridgePort();
     });
 
-    ipcMain.handle('get-channel-bridge-status', async () => {
+    ipcMain.handle('get-channel-bridge-status', async (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return { platforms: [] };
+        }
+
         return getChannelBridgeStatus();
     });
 
@@ -427,6 +557,7 @@ app.on('window-all-closed', () => {
 // before the window closes and before `will-quit`, so one handler is enough.
 app.on('before-quit', async () => {
     console.log('App is quitting, cleaning up processes...');
+    perfLogRateStateBySender.clear();
     await stopChannelBridge();
     await stopPythonServer();
     channelBridgeStarted = false;

@@ -398,6 +398,39 @@ describe('App websocket-driven behavior', () => {
     });
   });
 
+  test('ignores malformed websocket payloads without crashing handlers', () => {
+    render(<App />);
+
+    expect(() => {
+      emitWebSocketEvent({
+        type: 'tool_call',
+        tab_id: 'tab-1',
+        content: '{bad json',
+      });
+    }).not.toThrow();
+
+    expect(chatStateMock.addToolCall).not.toHaveBeenCalled();
+  });
+
+  test('ignores malformed conversation_resumed payload shape safely', () => {
+    render(<App />);
+
+    chatStateMock.loadConversation.mockClear();
+
+    expect(() => {
+      emitWebSocketEvent({
+        type: 'conversation_resumed',
+        tab_id: 'tab-1',
+        content: {
+          conversation_id: 'conv-invalid',
+          messages: { nope: true },
+        },
+      });
+    }).not.toThrow();
+
+    expect(chatStateMock.loadConversation).not.toHaveBeenCalled();
+  });
+
   test('links first terminal output to pending run_command metadata', () => {
     render(<App />);
     chatStateMock.contentBlocksRef.current = [];
@@ -433,6 +466,83 @@ describe('App websocket-driven behavior', () => {
       }),
     );
     expect(chatStateMock.appendTerminalOutput).toHaveBeenCalledWith('req-1', 'line 1', false);
+  });
+
+  test('background terminal output links only one pending placeholder block', async () => {
+    tabSnapshots.set('tab-2', {
+      chat: {
+        chatHistory: [],
+        currentQuery: '',
+        response: '',
+        thinking: '',
+        isThinking: false,
+        thinkingCollapsed: true,
+        toolCalls: [],
+        contentBlocks: [
+          {
+            type: 'terminal_command',
+            terminal: {
+              requestId: '',
+              command: 'cmd-a',
+              cwd: '/tmp',
+              status: 'running',
+              output: '',
+              outputChunks: [],
+              isPty: false,
+            },
+          },
+          {
+            type: 'terminal_command',
+            terminal: {
+              requestId: '',
+              command: 'cmd-b',
+              cwd: '/tmp',
+              status: 'running',
+              output: '',
+              outputChunks: [],
+              isPty: false,
+            },
+          },
+        ],
+        conversationId: null,
+        query: '',
+        canSubmit: true,
+        status: 'Ready',
+        error: '',
+      },
+      screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      terminal: { terminalSessionActive: false, terminalSessionRequest: null },
+      generatingModel: 'openai/gpt-4o',
+    });
+
+    render(<App />);
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'terminal_output',
+      tab_id: 'tab-2',
+      content: { request_id: 'req-bg', text: 'hello', raw: false },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    const latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    const nextSnapshot = latestCall?.[1] as {
+      chat: {
+        contentBlocks: Array<{
+          type: string;
+          terminal?: { requestId?: string; output?: string };
+        }>;
+      };
+    };
+
+    const terminalBlocks = nextSnapshot.chat.contentBlocks.filter((block) => block.type === 'terminal_command');
+    expect(terminalBlocks[0]?.terminal?.requestId).toBe('req-bg');
+    expect(terminalBlocks[0]?.terminal?.output).toContain('hello');
+    expect(terminalBlocks[1]?.terminal?.requestId).toBe('');
   });
 
   test('handles youtube approval message and approval action callback', async () => {

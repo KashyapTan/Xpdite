@@ -137,4 +137,51 @@ describe('QueryInput', () => {
 
     expect(onQueryChange).toHaveBeenCalledWith('/terminal ');
   });
+
+  test('keeps plain text typing path lightweight without rebuilding editor DOM', () => {
+    const onQueryChange = vi.fn();
+
+    const { rerender } = render(
+      <QueryInput
+        {...props}
+        query=""
+        onQueryChange={onQueryChange}
+      />,
+    );
+
+    const textbox = screen.getByRole('textbox', { name: 'Query input' });
+    fireEvent.focus(textbox);
+    fireEvent.input(textbox, { target: { textContent: 'hello world' } });
+
+    rerender(
+      <QueryInput
+        {...props}
+        query="hello world"
+        onQueryChange={onQueryChange}
+      />,
+    );
+
+    expect(textbox.textContent).toBe('hello world');
+  });
+
+  test('tracks selection offset only after slash trigger appears', () => {
+    const onQueryChange = vi.fn();
+
+    render(
+      <QueryInput
+        {...props}
+        query=""
+        onQueryChange={onQueryChange}
+      />,
+    );
+
+    const textbox = screen.getByRole('textbox', { name: 'Query input' });
+    fireEvent.focus(textbox);
+
+    fireEvent.input(textbox, { target: { textContent: 'plain text' } });
+    expect(onQueryChange).toHaveBeenLastCalledWith('plain text');
+
+    fireEvent.input(textbox, { target: { textContent: '/te' } });
+    expect(onQueryChange).toHaveBeenLastCalledWith('/te');
+  });
 });

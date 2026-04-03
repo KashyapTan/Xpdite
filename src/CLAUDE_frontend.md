@@ -40,11 +40,12 @@ src/
     │   │   ├── InlineTerminalBlock.tsx  # Inline terminal (xterm.js PTY or ansi-to-html); approval buttons
     │   │   ├── InlineYouTubeApprovalBlock.tsx  # Inline approval UI for fallback YouTube transcription
     │   │   ├── LoadingDots.tsx          # Three-dot loading animation
-    │   │   ├── ResponseArea.tsx         # Scrollable message list; computes topInset/bottomInset offsets
+    │   │   ├── ResponseArea.tsx         # Scrollable message list; renders streaming + historical blocks and passes scroll container refs
     │   │   ├── SlashCommandMenu.tsx     # Autocomplete skill menu (used by QueryInput)
     │   │   ├── SubAgentTranscript.tsx   # Structured sub-agent transcript renderer
     │   │   ├── ThinkingSection.tsx      # Collapsible thinking/reasoning block
     │   │   ├── ToolCallsDisplay.tsx     # ToolChainTimeline (primary) + legacy flat ToolCallsDisplay
+    │   │   ├── DeferredChatHistory.tsx  # Virtualized history renderer (pretext estimate + measured correction)
     │   │   ├── toolCallUtils.ts         # getHumanReadableDescription() for tool calls
     │   │   └── index.ts
     │   ├── input/
@@ -86,7 +87,7 @@ src/
     │   ├── portDiscovery.ts   # Dynamic server port discovery (IPC-first, then probe 8000–8009)
     │   └── index.ts
     ├── types/
-    │   └── index.ts           # ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant…
+    │   └── index.ts           # ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant, Electron API bridge types…
     ├── CSS/                   # Per-component stylesheets
     ├── assets/                # App icons, provider SVGs, logos
     ├── test/                  # Vitest frontend behavioral & unit tests (matches ui structure)
@@ -94,6 +95,8 @@ src/
         ├── chatMessages.ts    # Message mapping, merging, retry/edit reconciliation utilities
         ├── clipboard.ts       # copyToClipboard helper
         ├── modelDisplay.ts    # Model name formatting tools for UI display
+        ├── perfLogger.ts      # Renderer perf logger; forwards metrics to Electron terminal via IPC
+        ├── pretextMessageLayout.ts # pretext-based message height estimation + cache utilities for virtualization
         ├── providerLogos.ts   # Resolves logos based on API provider string
         └── index.ts
 ```
@@ -133,6 +136,13 @@ Retry/edit flows are different from brand-new submits: `response_complete` still
 `useChatState` holds every field in both `useState` (drives re-renders) **and** `useRef` (for mutation inside async callbacks mid-stream). The refs are the source of truth during a stream; state is synced from them. On response complete, refs are read to commit to `chatHistory`, then both are reset.
 
 This is intentional: mutating React state inside a streaming callback causes stale-closure bugs. The refs guarantee you always read the latest accumulated text regardless of how many renders have fired.
+
+### Chat history virtualization (pretext + measured correction)
+- `DeferredChatHistory.tsx` virtualizes when history length passes a threshold (currently 20 rows).
+- Row heights are estimated up front by `utils/pretextMessageLayout.ts` using `@chenglou/pretext`, then corrected with real DOM measurements via `ResizeObserver`.
+- The list uses top/bottom spacer divs plus overscan to render only the visible window.
+- Cache reset rules are explicit: width changes and large conversation swaps trigger estimate/measured cache rebuilds.
+- Performance telemetry is emitted from the renderer (`[chat-performance] ...`) and includes DOM reduction and cycle timing fields.
 
 ### Content blocks — interleaved rendering
 The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, `{ type: 'terminal_command' }`, `{ type: 'thinking' }`, and `{ type: 'youtube_transcription_approval' }` entries to render tool calls and approval UI inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
@@ -277,6 +287,7 @@ Several key methods are exposed via `contextBridge`:
 - `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
 - `window.electronAPI.getBootState()` / `onBootState` — Boot initialization communication
 - `window.electronAPI.retryBoot()`
+- `window.electronAPI.perfLog(message)` — writes renderer-side perf metrics into Electron main-process terminal output
 - `window.electronAPI.getChannelBridgePort()` / `getChannelBridgeStatus` / `onChannelBridgeStatus` — Channel Bridge daemon RPC
 - `window.electronAPI.onWhatsAppPairingCode` — Receives Baileys WhatsApp OTP codes
 

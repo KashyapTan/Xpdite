@@ -434,6 +434,7 @@ declare global {
       getBootState: () => Promise<ElectronBootState>;
       onBootState: (callback: (state: ElectronBootState) => void) => () => void;
       retryBoot: () => Promise<void>;
+      perfLog?: (message: string) => Promise<void>;
       // Channel Bridge methods
       getChannelBridgePort: () => Promise<number>;
       getChannelBridgeStatus: () => Promise<{ platforms: Array<{ platform: string; status: string; error?: string }> }>;

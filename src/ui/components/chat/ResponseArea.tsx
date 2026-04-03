@@ -3,7 +3,7 @@
  * 
  * Container for chat history and current streaming response.
  */
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useMemo } from 'react';
 import { LoadingDots } from './LoadingDots';
 import {
   DeferredChatHistory,
@@ -60,7 +60,7 @@ interface ResponseAreaProps {
   scrollButtonBottom: number;
 }
 
-export function ResponseArea({
+function ResponseAreaComponent({
   chatHistory,
   currentQuery,
   thinking,
@@ -90,11 +90,13 @@ export function ResponseArea({
   bottomInset,
   scrollButtonBottom,
 }: ResponseAreaProps) {
-  const liveBlocks = buildRenderableContentBlocks({
-    content: '',
-    thinking,
-    contentBlocks,
-  });
+  const liveBlocks = useMemo(() => {
+    return buildRenderableContentBlocks({
+      content: '',
+      thinking,
+      contentBlocks,
+    });
+  }, [contentBlocks, thinking]);
   const hasContentBlocks = !!liveBlocks && liveBlocks.length > 0;
   const isSingleThinkingTimeline = !!liveBlocks
     && liveBlocks.length === 1
@@ -147,6 +149,7 @@ export function ResponseArea({
               onRetryMessage={onRetryMessage}
               onEditMessage={onEditMessage}
               onSetActiveResponse={onSetActiveResponse}
+              containerRef={responseAreaRef}
             />
           </Suspense>
         )}
@@ -204,3 +207,5 @@ export function ResponseArea({
     </>
   );
 }
+
+export const ResponseArea = React.memo(ResponseAreaComponent);

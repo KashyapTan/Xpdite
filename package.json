@@ -38,6 +38,7 @@
     "@chat-adapter/discord": "^4.20.2",
     "@chat-adapter/state-memory": "^4.20.2",
     "@chat-adapter/telegram": "^4.20.2",
+    "@chenglou/pretext": "^0.0.4",
     "@types/react-router-dom": "^5.3.3",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
