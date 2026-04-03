@@ -78,6 +78,39 @@ export interface OllamaModel {
   is_local?: boolean;
 }
 
+export interface OllamaRegistryLayerInfo {
+  media_type: string;
+  digest?: string;
+  size: number;
+  type: string;
+}
+
+export interface OllamaRegistryModelInfo {
+  name: string;
+  tag: string;
+  full_name: string;
+  family: string;
+  families: string[];
+  parameter_size: string;
+  quantization: string;
+  format: string;
+  architecture: string;
+  os: string;
+  total_size_bytes: number;
+  total_size_human: string;
+  config_size_bytes: number;
+  layers: OllamaRegistryLayerInfo[];
+  manifest_url: string;
+  config_url: string;
+  is_installed: boolean;
+}
+
+export interface OllamaRegistryModelInfoResponse {
+  success: boolean;
+  data?: OllamaRegistryModelInfo;
+  error?: string;
+}
+
 interface RawProviderModel {
   id?: unknown;
   name?: unknown;
@@ -606,6 +639,35 @@ export const api = {
     });
     if (!response.ok) {
       throw new Error('Failed to save memory settings');
+    }
+  },
+
+  /**
+   * Fetch registry metadata for an Ollama model without pulling full weights.
+   */
+  async getOllamaModelInfo(modelName: string): Promise<OllamaRegistryModelInfoResponse> {
+    try {
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/models/ollama/info/${encodeURIComponent(modelName)}`);
+      if (!response.ok) {
+        return {
+          success: false,
+          error: 'Failed to fetch model info',
+        };
+      }
+      const data = await response.json();
+      if (typeof data?.success === 'boolean') {
+        return data as OllamaRegistryModelInfoResponse;
+      }
+      return {
+        success: false,
+        error: 'Invalid model info response',
+      };
+    } catch {
+      return {
+        success: false,
+        error: 'Failed to fetch model info',
+      };
     }
   },
 

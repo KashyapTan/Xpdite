@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { api, type ProviderModel, type OllamaModel } from '../../services/api';
+import {
+  api,
+  type ProviderModel,
+  type OllamaModel,
+  type OllamaRegistryModelInfo,
+} from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import '../../CSS/SettingsModels.css';
@@ -131,6 +136,8 @@ const SettingsModels: React.FC = () => {
   // Model pull modal state
   const [pullModalOpen, setPullModalOpen] = useState(false);
   const [pullModelName, setPullModelName] = useState('');
+  const [pullModelInfo, setPullModelInfo] = useState<OllamaRegistryModelInfo | null>(null);
+  const [pullInfoLoading, setPullInfoLoading] = useState(false);
   const [pullInProgress, setPullInProgress] = useState(false);
   const [pullProgress, setPullProgress] = useState<{
     status: string;
@@ -332,8 +339,40 @@ const SettingsModels: React.FC = () => {
     };
   }, [subscribe, loadOllamaModels, pullModelName, buildPullErrorMessage]);
 
+  const loadPullModelInfo = useCallback(async (normalized: string) => {
+    setPullInfoLoading(true);
+    setPullError('');
+
+    const result = await api.getOllamaModelInfo(normalized);
+    if (result.success && result.data) {
+      setPullModelInfo(result.data);
+
+      if (result.data.is_installed) {
+        setEnabledModels((prev) => {
+          if (prev.includes(normalized)) return prev;
+          const updated = [...prev, normalized];
+          void api.setEnabledModels(updated);
+          return updated;
+        });
+
+        setCustomOllamaModel('');
+        setPullModalOpen(false);
+        setPullModelName('');
+        setPullModelInfo(null);
+        setPullInfoLoading(false);
+        void loadOllamaModels(true);
+        return;
+      }
+    } else {
+      setPullModelInfo(null);
+      setPullError(result.error || 'Failed to fetch model info');
+    }
+
+    setPullInfoLoading(false);
+  }, [loadOllamaModels]);
+
   // Handler for the "Add" button - opens pull confirmation modal
-  const handleAddCustomModel = useCallback(() => {
+  const handleAddCustomModel = useCallback(async () => {
     const normalized = normalizeOllamaModelName(customOllamaModel);
 
     if (!normalized) {
@@ -368,11 +407,15 @@ const SettingsModels: React.FC = () => {
     // Open pull confirmation modal
     setPullModalOpen(true);
     setPullModelName(normalized);
+    setPullModelInfo(null);
+    setPullInfoLoading(true);
     setPullComplete(false);
     setPullError('');
     setPullProgress(null);
     setPullConfirmChecked(false);
-  }, [customOllamaModel, ollamaModels]);
+
+    await loadPullModelInfo(normalized);
+  }, [customOllamaModel, ollamaModels, loadPullModelInfo]);
 
   // Start pulling the model
   const startPullModel = useCallback(() => {
@@ -403,6 +446,8 @@ const SettingsModels: React.FC = () => {
 
     setPullModalOpen(false);
     setPullModelName('');
+    setPullModelInfo(null);
+    setPullInfoLoading(false);
     setPullComplete(false);
     setPullError('');
     setPullProgress(null);
@@ -720,30 +765,95 @@ const SettingsModels: React.FC = () => {
             </div>
             <div className="settings-models-modal-body">
               {/* Confirmation state */}
-              {!pullInProgress && !pullComplete && !pullError && (
+              {!pullInProgress && !pullComplete && (
                 <>
-                  <div className="settings-models-modal-info">
-                    <div className="settings-models-modal-row">
-                      <span className="settings-models-modal-label">Model</span>
-                      <span className="settings-models-modal-value">{pullModelName}</span>
-                    </div>
-                  </div>
-                  <div className="settings-models-modal-warning">
-                    Pulling this model will start a local Ollama download. For cloud-tagged models,
-                    Ollama may only pull the manifest first and stream layer progress as needed.
-                  </div>
-                  <label className="settings-models-modal-confirm">
-                    <input
-                      type="checkbox"
-                      checked={pullConfirmChecked}
-                      onChange={(e) => setPullConfirmChecked(e.target.checked)}
-                    />
-                    <span>I understand this will download model data via Ollama.</span>
-                  </label>
-                  <div className="settings-models-modal-note">
-                    If pull fails, it may mean the model name/tag is incorrect, the model doesn't exist,
-                    or your Ollama version needs updating.
-                  </div>
+                  {pullInfoLoading && (
+                    <div className="settings-models-modal-loading">Fetching model info from Ollama registry...</div>
+                  )}
+
+                  {!pullInfoLoading && !pullError && (
+                    <>
+                      <div className="settings-models-modal-info">
+                        <div className="settings-models-modal-row">
+                          <span className="settings-models-modal-label">Model</span>
+                          <span className="settings-models-modal-value">{pullModelInfo?.full_name || pullModelName}</span>
+                        </div>
+
+                        {!!pullModelInfo?.family && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Family</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.family}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.parameter_size && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Parameters</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.parameter_size}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.quantization && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Quantization</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.quantization}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.format && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Format</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.format}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.architecture && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Architecture</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.architecture}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.os && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">OS</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.os}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.total_size_human && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Download Size</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.total_size_human}</span>
+                          </div>
+                        )}
+
+                        {!!pullModelInfo?.layers?.length && (
+                          <div className="settings-models-modal-row">
+                            <span className="settings-models-modal-label">Layers</span>
+                            <span className="settings-models-modal-value">{pullModelInfo.layers.length}</span>
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="settings-models-modal-warning">
+                        Pulling this model will start a local Ollama download. For cloud-tagged models,
+                        Ollama may only pull the manifest first and stream layer progress as needed.
+                      </div>
+                      <label className="settings-models-modal-confirm">
+                        <input
+                          type="checkbox"
+                          checked={pullConfirmChecked}
+                          onChange={(e) => setPullConfirmChecked(e.target.checked)}
+                        />
+                        <span>I understand this will download model data via Ollama.</span>
+                      </label>
+                      <div className="settings-models-modal-note">
+                        If pull fails, it may mean the model name/tag is incorrect, the model doesn't exist,
+                        or your Ollama version needs updating.
+                      </div>
+                    </>
+                  )}
                 </>
               )}
 
@@ -784,7 +894,7 @@ const SettingsModels: React.FC = () => {
             </div>
 
             {/* Footer buttons */}
-            {!pullComplete && !pullInProgress && !pullError && (
+            {!pullComplete && !pullInProgress && !pullError && !pullInfoLoading && (
               <div className="settings-models-modal-footer">
                 <button
                   className="settings-models-modal-btn"
@@ -837,6 +947,7 @@ const SettingsModels: React.FC = () => {
                   onClick={() => {
                     setPullError('');
                     setPullConfirmChecked(false);
+                    void loadPullModelInfo(pullModelName);
                   }}
                 >
                   Try Again

@@ -19,6 +19,7 @@ vi.mock('../../../contexts/WebSocketContext', () => ({
 vi.mock('../../../services/api', () => ({
   api: {
     getOllamaModels: vi.fn(),
+    getOllamaModelInfo: vi.fn(),
     getEnabledModels: vi.fn(),
     setEnabledModels: vi.fn(),
     getApiKeyStatus: vi.fn(),
@@ -89,6 +90,28 @@ describe('SettingsModels', () => {
     vi.clearAllMocks()
     // Set up subscribe mock to return unsubscribe function
     subscribeMock.mockImplementation(() => unsubscribeMock)
+    mockedApi.getOllamaModelInfo.mockResolvedValue({
+      success: true,
+      data: {
+        name: 'llama3.2',
+        tag: 'latest',
+        full_name: 'llama3.2:latest',
+        family: 'llama',
+        families: ['llama'],
+        parameter_size: '8B',
+        quantization: 'Q4_0',
+        format: 'gguf',
+        architecture: 'amd64',
+        os: 'linux',
+        total_size_bytes: 4294967296,
+        total_size_human: '4.00 GB',
+        config_size_bytes: 512,
+        layers: [],
+        manifest_url: 'https://registry.ollama.ai/v2/library/llama3.2/manifests/latest',
+        config_url: 'https://registry.ollama.ai/v2/library/llama3.2/blobs/sha256:abc',
+        is_installed: false,
+      },
+    })
   })
 
   afterEach(() => {

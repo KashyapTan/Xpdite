@@ -30,6 +30,17 @@ router = APIRouter(prefix="/api")
 
 MODEL_CACHE_TTL_SECONDS = 10 * 60
 _MODEL_CACHE: dict[str, tuple[float, Any]] = {}
+_OLLAMA_REGISTRY_BASE = "https://registry.ollama.ai/v2"
+
+_OLLAMA_LAYER_TYPE_MAP = {
+    "application/vnd.ollama.image.model": "model_weights",
+    "application/vnd.ollama.image.template": "template",
+    "application/vnd.ollama.image.license": "license",
+    "application/vnd.ollama.image.params": "params",
+    "application/vnd.ollama.image.system": "system",
+    "application/vnd.ollama.image.adapter": "adapter",
+    "application/vnd.ollama.image.projector": "projector",
+}
 
 
 def _invalidate_model_cache(provider: str) -> None:
@@ -63,6 +74,50 @@ def _extract_openrouter_error(response: requests.Response) -> str:
         return body[:200]
 
     return f"HTTP {response.status_code}"
+
+
+def _parse_ollama_model_ref(model_ref: str) -> tuple[str, str]:
+    """Parse model reference into (name, tag)."""
+    ref = model_ref.strip()
+    if ref.lower().startswith("ollama/"):
+        ref = ref[len("ollama/") :].strip()
+
+    if ":" in ref:
+        name_part, tag = ref.rsplit(":", 1)
+        if "/" in tag:
+            return ref.strip("/"), "latest"
+        return name_part.strip("/"), tag or "latest"
+
+    return ref.strip("/"), "latest"
+
+
+def _build_ollama_manifest_url(name: str, tag: str) -> str:
+    """Build Ollama registry manifest URL."""
+    if "/" in name:
+        return f"{_OLLAMA_REGISTRY_BASE}/{name}/manifests/{tag}"
+    return f"{_OLLAMA_REGISTRY_BASE}/library/{name}/manifests/{tag}"
+
+
+def _build_ollama_blob_url(name: str, digest: str) -> str:
+    """Build Ollama registry blob URL."""
+    if "/" in name:
+        return f"{_OLLAMA_REGISTRY_BASE}/{name}/blobs/{digest}"
+    return f"{_OLLAMA_REGISTRY_BASE}/library/{name}/blobs/{digest}"
+
+
+def _human_readable_size(size_bytes: int) -> str:
+    """Convert bytes to human-readable value."""
+    value = float(max(size_bytes, 0))
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if value < 1024.0:
+            return f"{value:.2f} {unit}"
+        value /= 1024.0
+    return f"{value:.2f} PB"
+
+
+def _parse_ollama_layer_type(media_type: str) -> str:
+    """Map media type to layer type."""
+    return _OLLAMA_LAYER_TYPE_MAP.get(media_type, "unknown")
 
 
 async def _get_cached_or_fetch_models(
@@ -149,6 +204,152 @@ async def get_ollama_models(refresh: bool = False) -> Any:
             return {"models": [], "error": f"Ollama not reachable: {str(e)[:100]}"}
 
     return await _get_cached_or_fetch_models("ollama", refresh, _fetch)
+
+
+@router.get("/models/ollama/info/{model_name:path}")
+async def get_ollama_model_info(model_name: str) -> Any:
+    """
+    Fetch model metadata from Ollama registry without pulling full model.
+
+    Uses the registry manifest + config blob flow to fetch model stats for
+    not-yet-installed models.
+    """
+
+    model_ref = (model_name or "").strip()
+    if not model_ref:
+        return {
+            "success": False,
+            "error": "Model name is required",
+        }
+
+    name, tag = _parse_ollama_model_ref(model_ref)
+    full_name = f"{name}:{tag}" if tag else name
+
+    if not name:
+        return {
+            "success": False,
+            "error": "Model name is required",
+        }
+
+    manifest_url = _build_ollama_manifest_url(name, tag)
+
+    try:
+        manifest_response = await _run_in_thread(
+            lambda: requests.get(manifest_url, timeout=30)
+        )
+
+        if manifest_response.status_code == 404:
+            return {
+                "success": False,
+                "error": f"Model '{full_name}' not found in Ollama registry",
+            }
+
+        manifest_response.raise_for_status()
+        manifest = manifest_response.json()
+
+        config = manifest.get("config", {})
+        config_digest = config.get("digest")
+        config_size = int(config.get("size", 0) or 0)
+
+        if not config_digest:
+            return {
+                "success": False,
+                "error": f"No config digest found for '{full_name}'",
+            }
+
+        config_url = _build_ollama_blob_url(name, config_digest)
+        config_response = await _run_in_thread(
+            lambda: requests.get(config_url, timeout=30)
+        )
+        config_response.raise_for_status()
+        config_data = config_response.json()
+
+        layers = manifest.get("layers", [])
+        total_size = int(
+            sum(
+                int(layer.get("size", 0) or 0)
+                for layer in layers
+                if isinstance(layer, dict)
+            )
+        )
+
+        layer_info = []
+        for layer in layers:
+            if not isinstance(layer, dict):
+                continue
+            media_type = str(layer.get("mediaType", ""))
+            layer_info.append(
+                {
+                    "media_type": media_type,
+                    "digest": layer.get("digest"),
+                    "size": int(layer.get("size", 0) or 0),
+                    "type": _parse_ollama_layer_type(media_type),
+                }
+            )
+
+        # Check local install status
+        is_installed = False
+        try:
+            async_client = OllamaAsyncClient()
+            list_response = await async_client.list()
+
+            normalized_target = full_name.lower()
+            if ":" not in normalized_target:
+                normalized_target = f"{normalized_target}:latest"
+
+            for model in list_response.models:
+                model_id = (model.model or "").lower().strip()
+                if model_id and ":" not in model_id:
+                    model_id = f"{model_id}:latest"
+                if model_id == normalized_target:
+                    is_installed = True
+                    break
+        except Exception:
+            # Keep API resilient even if local daemon is unavailable.
+            is_installed = False
+
+        return {
+            "success": True,
+            "data": {
+                "name": name,
+                "tag": tag,
+                "full_name": full_name,
+                "family": config_data.get("model_family", ""),
+                "families": config_data.get("model_families", []),
+                "parameter_size": config_data.get("model_type", ""),
+                "quantization": config_data.get("file_type", ""),
+                "format": config_data.get("model_format", ""),
+                "architecture": config_data.get("architecture", ""),
+                "os": config_data.get("os", ""),
+                "total_size_bytes": total_size,
+                "total_size_human": _human_readable_size(total_size),
+                "config_size_bytes": config_size,
+                "layers": layer_info,
+                "manifest_url": manifest_url,
+                "config_url": config_url,
+                "is_installed": is_installed,
+            },
+        }
+
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else None
+        if status == 404:
+            return {
+                "success": False,
+                "error": f"Model '{full_name}' not found in Ollama registry",
+            }
+        logger.error("HTTP error fetching Ollama model info for %s: %s", full_name, e)
+        return {
+            "success": False,
+            "error": f"Error fetching model info: {str(e)[:160]}",
+        }
+
+    except Exception as e:
+        logger.error("Error fetching Ollama model info for %s: %s", full_name, e)
+        return {
+            "success": False,
+            "error": f"Error fetching model info: {str(e)[:160]}",
+        }
 
 
 # ============================================
