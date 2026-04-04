@@ -204,6 +204,60 @@ class ImageResult:
         }
 
 
+@dataclass
+class FileInfo:
+    """File metadata returned on the first chunk (offset=0) of read_file."""
+
+    format: str
+    file_size_bytes: int
+    page_count: int | None = None
+    title: str | None = None
+    author: str | None = None
+    extracted_images: list[dict[str, Any]] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "format": self.format,
+            "file_size_bytes": self.file_size_bytes,
+            "page_count": self.page_count,
+            "title": self.title,
+            "author": self.author,
+            "extracted_images": self.extracted_images,
+            "warnings": self.warnings,
+        }
+
+
+@dataclass
+class PaginatedResult:
+    """Result of a paginated read_file call."""
+
+    content: str
+    total_chars: int
+    offset: int
+    chars_returned: int
+    has_more: bool
+    next_offset: int | None
+    chunk_summary: str
+    file_info: FileInfo | None = None  # Only on first chunk (offset=0)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        result = {
+            "content": self.content,
+            "total_chars": self.total_chars,
+            "offset": self.offset,
+            "chars_returned": self.chars_returned,
+            "has_more": self.has_more,
+            "next_offset": self.next_offset,
+            "chunk_summary": self.chunk_summary,
+        }
+        if self.file_info is not None:
+            result["file_info"] = self.file_info.to_dict()
+        return result
+
+
 # ------------------------------------------------------------------------------
 # Main Extractor Class
 # ------------------------------------------------------------------------------
@@ -267,25 +321,231 @@ class FileExtractor:
         return await run_in_thread(self._try_text_read, path)
 
     def format_result_for_tool(self, result: ExtractionResult) -> str:
-        """Format an ExtractionResult as a string for the tool response."""
-        parts = [result.text]
+        """Format an ExtractionResult for tool responses.
 
-        if result.extracted_images:
-            parts.append("\n---")
-            parts.append(f"EXTRACTED IMAGES ({len(result.extracted_images)} total):")
-            parts.append("To view an image, call read_file with the path below.\n")
-            for img in result.extracted_images:
-                parts.append(
-                    f"{img.description}: {img.path} ({img.width}x{img.height})"
-                )
+        Image markers are inserted inline during extraction, and warnings are
+        surfaced through file_info on paginated responses.
+        """
+        return result.text
 
-        if result.warnings:
-            parts.append("\n---")
-            parts.append("WARNINGS:")
-            for warning in result.warnings:
-                parts.append(f"- {warning}")
+    def build_file_info(self, result: ExtractionResult) -> FileInfo:
+        """Build a FileInfo object from an ExtractionResult."""
+        # Convert ExtractedImage objects to dicts for JSON serialization
+        extracted_images_dicts = [
+            {
+                "path": img.path,
+                "page": img.page,
+                "index": img.index,
+                "description": img.description,
+                "width": img.width,
+                "height": img.height,
+            }
+            for img in result.extracted_images
+        ]
 
-        return "\n".join(parts)
+        return FileInfo(
+            format=result.metadata.format if result.metadata else "unknown",
+            file_size_bytes=result.metadata.file_size_bytes if result.metadata else 0,
+            page_count=result.page_count,
+            title=result.metadata.title if result.metadata else None,
+            author=result.metadata.author if result.metadata else None,
+            extracted_images=extracted_images_dicts,
+            warnings=result.warnings,
+        )
+
+    def paginate_extraction(
+        self,
+        result: ExtractionResult,
+        offset: int = 0,
+        max_chars: int = 8000,
+    ) -> PaginatedResult:
+        """Paginate an ExtractionResult with the given offset and max_chars.
+
+        Args:
+            result: The full extraction result
+            offset: Character position to start reading from (0-indexed)
+            max_chars: Maximum characters to return
+
+        Returns:
+            PaginatedResult with the sliced content and pagination metadata
+        """
+        # Import here to avoid circular import
+        from ..config import DEFAULT_READ_FILE_MAX_CHARS, MAX_TOOL_RESULT_LENGTH
+
+        # Normalize parameters
+        if offset < 0:
+            offset = 0
+        if max_chars <= 0:
+            max_chars = DEFAULT_READ_FILE_MAX_CHARS
+        # Cap at MAX_TOOL_RESULT_LENGTH
+        max_chars = min(max_chars, MAX_TOOL_RESULT_LENGTH)
+
+        # Get the formatted text (with inline image markers)
+        full_text = self.format_result_for_tool(result)
+        total_chars = len(full_text)
+
+        # Handle empty files
+        if total_chars == 0 and offset == 0:
+            return PaginatedResult(
+                content="",
+                total_chars=0,
+                offset=0,
+                chars_returned=0,
+                has_more=False,
+                next_offset=None,
+                chunk_summary="Showing characters 0-0 of 0 (100%)",
+                file_info=self.build_file_info(result) if offset == 0 else None,
+            )
+
+        # Handle offset beyond EOF
+        if offset >= total_chars:
+            return PaginatedResult(
+                content="",
+                total_chars=total_chars,
+                offset=offset,
+                chars_returned=0,
+                has_more=False,
+                next_offset=None,
+                chunk_summary=f"Offset {offset:,} is beyond end of file ({total_chars:,} chars)",
+                file_info=None,  # No file_info since offset > 0
+            )
+
+        # Slice the content
+        end_offset = min(offset + max_chars, total_chars)
+        content = full_text[offset:end_offset]
+        chars_returned = len(content)
+        has_more = end_offset < total_chars
+
+        # Calculate percentage
+        if total_chars > 0:
+            end_percent = int((end_offset / total_chars) * 100)
+        else:
+            end_percent = 100
+
+        chunk_summary = f"Showing characters {offset:,}-{end_offset:,} of {total_chars:,} ({end_percent}%)"
+
+        # Only include file_info on the first chunk
+        file_info = self.build_file_info(result) if offset == 0 else None
+
+        return PaginatedResult(
+            content=content,
+            total_chars=total_chars,
+            offset=offset,
+            chars_returned=chars_returned,
+            has_more=has_more,
+            next_offset=end_offset if has_more else None,
+            chunk_summary=chunk_summary,
+            file_info=file_info,
+        )
+
+    def paginate_text(
+        self,
+        text: str,
+        file_size_bytes: int,
+        file_format: str,
+        offset: int = 0,
+        max_chars: int = 8000,
+    ) -> PaginatedResult:
+        """Paginate raw text content (for text-native files).
+
+        Args:
+            text: The full text content
+            file_size_bytes: Size of the original file in bytes
+            file_format: File extension without dot (e.g., "py", "txt")
+            offset: Character position to start reading from (0-indexed)
+            max_chars: Maximum characters to return
+
+        Returns:
+            PaginatedResult with the sliced content and pagination metadata
+        """
+        # Import here to avoid circular import
+        from ..config import DEFAULT_READ_FILE_MAX_CHARS, MAX_TOOL_RESULT_LENGTH
+
+        # Normalize parameters
+        if offset < 0:
+            offset = 0
+        if max_chars <= 0:
+            max_chars = DEFAULT_READ_FILE_MAX_CHARS
+        # Cap at MAX_TOOL_RESULT_LENGTH
+        max_chars = min(max_chars, MAX_TOOL_RESULT_LENGTH)
+
+        total_chars = len(text)
+
+        # Handle empty files
+        if total_chars == 0 and offset == 0:
+            return PaginatedResult(
+                content="",
+                total_chars=0,
+                offset=0,
+                chars_returned=0,
+                has_more=False,
+                next_offset=None,
+                chunk_summary="Showing characters 0-0 of 0 (100%)",
+                file_info=(
+                    FileInfo(
+                        format=file_format,
+                        file_size_bytes=file_size_bytes,
+                        page_count=None,
+                        title=None,
+                        author=None,
+                        extracted_images=[],
+                        warnings=[],
+                    )
+                    if offset == 0
+                    else None
+                ),
+            )
+
+        # Handle offset beyond EOF
+        if offset >= total_chars:
+            return PaginatedResult(
+                content="",
+                total_chars=total_chars,
+                offset=offset,
+                chars_returned=0,
+                has_more=False,
+                next_offset=None,
+                chunk_summary=f"Offset {offset:,} is beyond end of file ({total_chars:,} chars)",
+                file_info=None,
+            )
+
+        # Slice the content
+        end_offset = min(offset + max_chars, total_chars)
+        content = text[offset:end_offset]
+        chars_returned = len(content)
+        has_more = end_offset < total_chars
+
+        # Calculate percentage
+        if total_chars > 0:
+            end_percent = int((end_offset / total_chars) * 100)
+        else:
+            end_percent = 100
+
+        chunk_summary = f"Showing characters {offset:,}-{end_offset:,} of {total_chars:,} ({end_percent}%)"
+
+        # Only include file_info on the first chunk
+        file_info = None
+        if offset == 0:
+            file_info = FileInfo(
+                format=file_format,
+                file_size_bytes=file_size_bytes,
+                page_count=None,
+                title=None,
+                author=None,
+                extracted_images=[],
+                warnings=[],
+            )
+
+        return PaginatedResult(
+            content=content,
+            total_chars=total_chars,
+            offset=offset,
+            chars_returned=chars_returned,
+            has_more=has_more,
+            next_offset=end_offset if has_more else None,
+            chunk_summary=chunk_summary,
+            file_info=file_info,
+        )
 
     @staticmethod
     def is_image_file(path: str) -> bool:
@@ -302,6 +562,17 @@ class FileExtractor:
     def is_extractable(path: str) -> bool:
         """Check if a file requires extraction."""
         return Path(path).suffix.lower() in EXTRACTION_EXTENSIONS
+
+    @staticmethod
+    def _format_inline_image_marker(img: ExtractedImage) -> str:
+        """Format an inline image marker for insertion into extracted text.
+
+        Example output:
+        [IMAGE: /abs/path/extracted_report_p15_i1_a1b2.png (1200x800) - call read_file to view]
+        """
+        return (
+            f"[IMAGE: {img.path} ({img.width}x{img.height}) - call read_file to view]"
+        )
 
     # --------------------------------------------------------------------------
     # Image Loading
@@ -475,7 +746,7 @@ class FileExtractor:
                 else:
                     text_parts.append("[No text content on this page]")
 
-                # Extract images
+                # Extract images and add inline markers
                 image_list = page.get_images(full=True)
                 for img_index, img_info in enumerate(image_list, start=1):
                     try:
@@ -507,6 +778,9 @@ class FileExtractor:
                             )
                             if saved:
                                 extracted_images.append(saved)
+                                # Add inline marker for the image
+                                marker = self._format_inline_image_marker(saved)
+                                text_parts.append(marker)
 
                     except Exception as e:
                         warnings.append(
@@ -562,20 +836,8 @@ class FileExtractor:
         para_lookup = {para._element: para for para in doc.paragraphs}
         table_lookup = {table._element: table for table in doc.tables}
 
-        # Extract paragraphs and tables in document order
-        for element in doc.element.body:
-            if element.tag.endswith("p"):
-                # Paragraph - O(1) lookup
-                para = para_lookup.get(element)
-                if para and para.text.strip():
-                    text_parts.append(para.text)
-            elif element.tag.endswith("tbl"):
-                # Table - O(1) lookup
-                table = table_lookup.get(element)
-                if table:
-                    text_parts.append(self._format_table(table))
-
-        # Extract images from relationships
+        # Extract images from relationships first, preserving relationship order.
+        saved_images: list[ExtractedImage] = []
         img_index = 0
         for rel_id, rel in doc.part.rels.items():
             if "image" in rel.reltype:
@@ -598,9 +860,53 @@ class FileExtractor:
                         )
                         if saved:
                             extracted_images.append(saved)
+                            saved_images.append(saved)
 
                 except Exception as e:
                     warnings.append(f"Image {img_index}: extraction failed - {e}")
+
+        # Extract paragraphs/tables in document order, injecting image markers
+        # where inline drawings appear in paragraphs.
+        image_cursor = 0
+        for element in doc.element.body:
+            if element.tag.endswith("p"):
+                # Paragraph - O(1) lookup
+                para = para_lookup.get(element)
+                para_text = ""
+                if para and para.text.strip():
+                    para_text = para.text
+                    text_parts.append(para_text)
+
+                drawing_count = 0
+                if para is not None:
+                    try:
+                        drawing_count = len(
+                            para._element.xpath(
+                                ".//*[local-name()='drawing' or local-name()='pict']"
+                            )
+                        )
+                    except Exception:
+                        drawing_count = 0
+
+                for _ in range(drawing_count):
+                    if image_cursor >= len(saved_images):
+                        break
+                    text_parts.append(
+                        self._format_inline_image_marker(saved_images[image_cursor])
+                    )
+                    image_cursor += 1
+            elif element.tag.endswith("tbl"):
+                # Table - O(1) lookup
+                table = table_lookup.get(element)
+                if table:
+                    text_parts.append(self._format_table(table))
+
+        # If any extracted images could not be mapped to a paragraph drawing,
+        # append them at the end so they are still discoverable.
+        if image_cursor < len(saved_images):
+            text_parts.append("")
+            for img in saved_images[image_cursor:]:
+                text_parts.append(self._format_inline_image_marker(img))
 
         full_text = "\n\n".join(text_parts)
         metadata = ExtractionMetadata(
@@ -668,7 +974,7 @@ class FileExtractor:
             header += " ---"
             text_parts.append(header)
 
-            slide_text: list[str] = []
+            slide_flow_parts: list[str] = []
             img_index = 0
 
             for shape in slide.shapes:
@@ -677,7 +983,7 @@ class FileExtractor:
                     for para in shape.text_frame.paragraphs:
                         text = para.text.strip()
                         if text and text != slide_title:
-                            slide_text.append(text)
+                            slide_flow_parts.append(text)
 
                 # Extract images
                 if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
@@ -697,14 +1003,17 @@ class FileExtractor:
                             )
                             if saved:
                                 extracted_images.append(saved)
+                                # Add inline marker for the image
+                                marker = self._format_inline_image_marker(saved)
+                                slide_flow_parts.append(marker)
 
                     except Exception as e:
                         warnings.append(
                             f"Slide {slide_num}, Image {img_index}: extraction failed - {e}"
                         )
 
-            if slide_text:
-                text_parts.append("\n".join(slide_text))
+            if slide_flow_parts:
+                text_parts.append("\n".join(slide_flow_parts))
             else:
                 text_parts.append("[No text content on this slide]")
 

@@ -27,24 +27,30 @@ LIST_DIRECTORY_DESCRIPTION = build_tool_description(
 )
 
 READ_FILE_DESCRIPTION = build_tool_description(
-    purpose="Read the content of a file inside the filesystem sandbox, supporting text, documents, and images.",
+    purpose="Read the content of a file inside the filesystem sandbox, supporting text, documents, and images with pagination for large files.",
     use_when=(
         "You need to inspect a text file, extract content from documents (PDF, DOCX, PPTX, XLSX, etc.), "
         "or view an image file."
     ),
-    inputs=f"path = the exact absolute, relative, or home-relative file path inside {BASE_PATH}.",
+    inputs=(
+        f"path = the exact absolute, relative, or home-relative file path inside {BASE_PATH}; "
+        "offset = optional character position to start reading from (default 0); "
+        "max_chars = optional maximum characters to return (default 8000, max 100000)."
+    ),
     returns=(
-        "For text files: the file content as UTF-8 text. "
-        "For documents (PDF, DOCX, PPTX, XLSX, XLS, ODT, ODP, ODS, RTF): extracted text with structure markers, "
-        "plus a list of extracted image paths. "
-        "For images (PNG, JPG, JPEG, WEBP, GIF, BMP, TIFF): base64-encoded image data for vision. "
-        "For ZIP archives: a listing of contained files. "
+        "A JSON envelope with: content (the text slice), total_chars (full document size), offset, "
+        "chars_returned, has_more (boolean), next_offset (for continuation), chunk_summary. "
+        "On the first call (offset=0), also includes file_info with format, page_count, title, author, "
+        "extracted_images (paths/dimensions for all embedded images), and warnings. "
+        "For images (PNG, JPG, etc.): returns base64-encoded image data directly (no pagination). "
         "Returns an error string for unsupported formats (.doc, .ppt)."
     ),
     notes=(
-        "Call list_directory first to confirm the exact path. "
-        "For documents with embedded images, images are extracted and their paths listed at the end of the text. "
-        "Call read_file again on an extracted image path to view it."
+        "For large files, check has_more - if true, call again with the provided next_offset to continue reading. "
+        "Stop reading once you have found what you need. "
+        "Embedded images appear as inline markers [IMAGE: absolute_path (WxH) - call read_file to view] in the text flow. "
+        "Call read_file on an extracted image path to view it. "
+        "Images cannot be paginated - passing offset > 0 for an image file returns an error."
     ),
 )
 

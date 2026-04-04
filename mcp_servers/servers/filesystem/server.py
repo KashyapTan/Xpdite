@@ -240,20 +240,41 @@ def list_directory(path: str) -> list[str]:
 
 
 @mcp.tool(description=READ_FILE_DESCRIPTION)
-def read_file(path: str) -> str | dict[str, Any]:
+def read_file(
+    path: str, offset: int = 0, max_chars: int = 8000
+) -> str | dict[str, Any]:
     """
-    Read file content with support for multiple formats.
+    Read file content with support for multiple formats and pagination.
+
+    Args:
+        path: File path to read
+        offset: Character position to start reading from (0-indexed)
+        max_chars: Maximum characters to return (default 8000, max 100000)
 
     Returns:
-        - str: For text files, extracted document content, or error messages
+        - dict: Paginated result envelope with content, total_chars, has_more, etc.
         - dict: For image files, returns {"type": "image", "media_type": ..., "data": ..., ...}
+        - str: Error messages only
     """
+    from source.config import DEFAULT_READ_FILE_MAX_CHARS, MAX_TOOL_RESULT_LENGTH
+
+    # Normalize parameters
+    if offset < 0:
+        offset = 0
+    if max_chars <= 0:
+        max_chars = DEFAULT_READ_FILE_MAX_CHARS
+    max_chars = min(max_chars, MAX_TOOL_RESULT_LENGTH)
+
     try:
         clean_path = _get_safe_path(path)
         ext = Path(clean_path).suffix.lower()
+        file_size = os.path.getsize(clean_path)
 
         # Image files - return dict for LLM image content block
+        # Images cannot be paginated - they are always returned whole
         if ext in _IMAGE_EXTENSIONS:
+            if offset > 0:
+                return "Error: Image files cannot be paginated. Remove the offset parameter to read the full image."
             extractor = _get_file_extractor()
             result = extractor._load_image_file(clean_path)
             if result.data:
@@ -270,18 +291,44 @@ def read_file(path: str) -> str | dict[str, Any]:
         # Document formats requiring extraction
         if ext in _EXTRACTION_EXTENSIONS:
             extractor = _get_file_extractor()
-            result = extractor._extract_document(clean_path, ext)
-            return extractor.format_result_for_tool(result)
+            extraction_result = extractor._extract_document(clean_path, ext)
+            paginated = extractor.paginate_extraction(
+                extraction_result, offset=offset, max_chars=max_chars
+            )
+            return paginated.to_dict()
 
-        # Archive files - list contents
+        # Archive files - list contents (also paginated)
         if ext in _ARCHIVE_EXTENSIONS:
             extractor = _get_file_extractor()
-            result = extractor._extract_zip(clean_path)
-            return extractor.format_result_for_tool(result)
+            extraction_result = extractor._extract_zip(clean_path)
+            paginated = extractor.paginate_extraction(
+                extraction_result, offset=offset, max_chars=max_chars
+            )
+            return paginated.to_dict()
 
-        # Text-native files and unknown formats - read as UTF-8
-        with open(clean_path, "r", encoding="utf-8", errors="replace") as f:
-            return f.read()
+        # Text-native and unknown formats
+        extractor = _get_file_extractor()
+        if extractor.is_text_native(clean_path):
+            with open(clean_path, "r", encoding="utf-8", errors="replace") as f:
+                text_result = f.read()
+        else:
+            with open(clean_path, "r", encoding="utf-8", errors="replace") as f:
+                content = f.read()
+            text_result = (
+                f"[Warning: Unknown file format, attempting text read]\n\n{content}"
+            )
+
+        # Determine file format from extension
+        file_format = ext.lstrip(".") if ext else "txt"
+
+        paginated = extractor.paginate_text(
+            text=text_result,
+            file_size_bytes=file_size,
+            file_format=file_format,
+            offset=offset,
+            max_chars=max_chars,
+        )
+        return paginated.to_dict()
 
     except FileNotFoundError:
         return f"Error: The file '{path}' was not found. Please check the path using list_directory."

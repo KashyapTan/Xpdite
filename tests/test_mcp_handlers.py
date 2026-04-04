@@ -656,3 +656,77 @@ class TestHandleMcpToolCalls:
         assert calls[0]["result"] == (
             "System error: tool execution failed. See server logs for details."
         )
+
+    @pytest.mark.asyncio
+    async def test_dict_tool_result_is_serialized_as_json(self, handlers_module):
+        tool = SimpleNamespace(
+            function=SimpleNamespace(name="read_file", arguments='{"path":"app.py"}')
+        )
+        detection = SimpleNamespace(
+            message=SimpleNamespace(content="Need file", tool_calls=[tool])
+        )
+        fake_client = SimpleNamespace(chat=AsyncMock(return_value=detection))
+
+        dict_result = {
+            "content": "abcd",
+            "total_chars": 10,
+            "offset": 0,
+            "chars_returned": 4,
+            "has_more": True,
+            "next_offset": 4,
+            "chunk_summary": "Showing characters 0-4 of 10 (40%)",
+        }
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module,
+                "retrieve_relevant_tools",
+                return_value=[{"function": {"name": "read_file"}}],
+            ),
+            patch.object(
+                handlers_module,
+                "is_current_request_cancelled",
+                side_effect=[False] * 10,
+            ),
+            patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
+            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
+            patch.object(
+                handlers_module,
+                "_stream_tool_follow_up",
+                new=AsyncMock(
+                    return_value=(
+                        "",
+                        [],
+                        {"prompt_eval_count": 0, "eval_count": 0},
+                        "",
+                    )
+                ),
+            ),
+            patch.object(
+                handlers_module.mcp_manager,
+                "get_tool_server_name",
+                return_value="filesystem",
+            ),
+            patch.object(handlers_module, "is_terminal_tool", return_value=False),
+            patch.object(handlers_module, "is_video_watcher_tool", return_value=False),
+            patch.object(handlers_module, "is_memory_tool", return_value=False),
+            patch.object(
+                handlers_module.mcp_manager,
+                "call_tool",
+                new=AsyncMock(return_value=dict_result),
+            ),
+            patch.object(handlers_module, "broadcast_message", new=AsyncMock()),
+        ):
+            _, calls, _ = await handlers_module.handle_mcp_tool_calls(
+                [{"role": "user", "content": "read file"}],
+                image_paths=[],
+                client=fake_client,
+            )
+
+        assert len(calls) == 1
+        assert calls[0]["name"] == "read_file"
+        parsed = json.loads(calls[0]["result"])
+        assert parsed["content"] == "abcd"
+        assert parsed["has_more"] is True
+        assert parsed["next_offset"] == 4

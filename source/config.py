@@ -68,6 +68,9 @@ OLLAMA_CTX_SIZE = 32768
 # Tool result truncation
 MAX_TOOL_RESULT_LENGTH = 100_000
 
+# read_file pagination default chunk size (characters)
+DEFAULT_READ_FILE_MAX_CHARS = 10_000
+
 # Thread pool
 THREAD_POOL_SIZE = int(os.environ.get("XPDITE_THREAD_POOL_SIZE", "4"))
 

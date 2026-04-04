@@ -454,7 +454,13 @@ async def handle_mcp_tool_calls(
                     # For broadcast and storage, use a summary
                     result_str = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
                 else:
-                    result_str = _truncate_result(str(result))
+                    if isinstance(result, dict):
+                        serialized_result = json.dumps(
+                            result, ensure_ascii=False, default=str
+                        )
+                    else:
+                        serialized_result = str(result)
+                    result_str = _truncate_result(serialized_result)
                 logger.debug("Tool result:\n%s...", result_str[:100])
 
                 await broadcast_message(

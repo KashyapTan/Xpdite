@@ -313,8 +313,12 @@ async def _execute_and_broadcast_tool(
         )
         return result  # Return the image dict
 
-    # Normal string result
-    result_str = _truncate_tool_result(str(result))
+    # Normal result: preserve structured dict payloads as JSON
+    if isinstance(result, dict):
+        serialized_result = json.dumps(result, ensure_ascii=False, default=str)
+    else:
+        serialized_result = str(result)
+    result_str = _truncate_tool_result(serialized_result)
     await broadcast_message(
         "tool_call",
         json.dumps(
@@ -670,7 +674,7 @@ async def _stream_litellm(
                     current_round_text.clear()
 
                 # Execute each tool and append results
-                tool_result_messages: List[Dict[str, str]] = []
+                tool_result_messages: List[Dict[str, Any]] = []
                 cancelled_during_tool_loop = False
 
                 # ── Collect spawn_agent calls for parallel execution ──

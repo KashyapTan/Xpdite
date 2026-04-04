@@ -12,10 +12,12 @@ from source.services.file_extractor import (
     ARCHIVE_EXTENSIONS,
     EXTRACTED_IMAGE_PREFIX,
     EXTRACTION_EXTENSIONS,
+    FileInfo,
     IMAGE_EXTENSIONS,
     LEGACY_UNSUPPORTED,
     MAX_EXCEL_ROWS,
     MIN_IMAGE_SIZE,
+    PaginatedResult,
     TEXT_NATIVE_EXTENSIONS,
     ExtractedImage,
     ExtractionMetadata,
@@ -269,6 +271,45 @@ class TestImageResult:
         assert result.file_size_bytes == 0
 
 
+class TestPaginationDataClasses:
+    """Tests for pagination-related dataclasses."""
+
+    def test_file_info_to_dict(self):
+        info = FileInfo(
+            format="pdf",
+            file_size_bytes=1234,
+            page_count=2,
+            title="Doc",
+            author="Author",
+            extracted_images=[{"path": "/tmp/img.png"}],
+            warnings=["warning"],
+        )
+        payload = info.to_dict()
+        assert payload["format"] == "pdf"
+        assert payload["file_size_bytes"] == 1234
+        assert payload["page_count"] == 2
+        assert payload["title"] == "Doc"
+        assert payload["author"] == "Author"
+        assert payload["extracted_images"] == [{"path": "/tmp/img.png"}]
+        assert payload["warnings"] == ["warning"]
+
+    def test_paginated_result_to_dict_omits_file_info_when_none(self):
+        paginated = PaginatedResult(
+            content="abc",
+            total_chars=3,
+            offset=0,
+            chars_returned=3,
+            has_more=False,
+            next_offset=None,
+            chunk_summary="Showing characters 0-3 of 3 (100%)",
+            file_info=None,
+        )
+        payload = paginated.to_dict()
+        assert payload["content"] == "abc"
+        assert payload["has_more"] is False
+        assert "file_info" not in payload
+
+
 # ------------------------------------------------------------------------------
 # Test FileExtractor Static Methods
 # ------------------------------------------------------------------------------
@@ -470,11 +511,7 @@ class TestFileExtractorFormatResult:
             extracted_images=[img],
         )
         formatted = extractor.format_result_for_tool(result)
-        assert "Document text" in formatted
-        assert "EXTRACTED IMAGES (1 total)" in formatted
-        assert "Page 1, Image 1" in formatted
-        assert "/path/to/img.png" in formatted
-        assert "100x200" in formatted
+        assert formatted == "Document text"
 
     def test_format_result_with_warnings(self, extractor):
         result = ExtractionResult(
@@ -484,9 +521,7 @@ class TestFileExtractorFormatResult:
             warnings=["Warning 1", "Warning 2"],
         )
         formatted = extractor.format_result_for_tool(result)
-        assert "WARNINGS:" in formatted
-        assert "- Warning 1" in formatted
-        assert "- Warning 2" in formatted
+        assert formatted == "Text"
 
 
 # ------------------------------------------------------------------------------
@@ -538,6 +573,221 @@ class TestFileExtractorDocumentDispatch:
             assert "Error extracting content" in result.text
 
 
+class TestFileExtractorPagination:
+    """Tests for pagination helpers."""
+
+    def test_build_file_info_maps_images_and_metadata(self, extractor):
+        img = ExtractedImage(
+            path="/tmp/extracted_img.png",
+            page=2,
+            index=1,
+            width=120,
+            height=80,
+            description="Page 2, Image 1",
+        )
+        result = ExtractionResult(
+            text="Body",
+            total_chars=4,
+            page_count=3,
+            extracted_images=[img],
+            metadata=ExtractionMetadata(
+                format="pdf",
+                file_size_bytes=2048,
+                title="Quarterly Report",
+                author="Finance Team",
+            ),
+            warnings=["minor warning"],
+        )
+
+        info = extractor.build_file_info(result)
+        payload = info.to_dict()
+        assert payload["format"] == "pdf"
+        assert payload["file_size_bytes"] == 2048
+        assert payload["page_count"] == 3
+        assert payload["title"] == "Quarterly Report"
+        assert payload["author"] == "Finance Team"
+        assert payload["warnings"] == ["minor warning"]
+        assert payload["extracted_images"][0]["path"] == "/tmp/extracted_img.png"
+        assert payload["extracted_images"][0]["page"] == 2
+        assert payload["extracted_images"][0]["width"] == 120
+
+    def test_paginate_extraction_first_chunk_includes_file_info(self, extractor):
+        result = ExtractionResult(
+            text="abcdefghij",
+            total_chars=10,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=10),
+        )
+
+        page = extractor.paginate_extraction(result, offset=0, max_chars=4)
+        assert page.content == "abcd"
+        assert page.total_chars == 10
+        assert page.offset == 0
+        assert page.chars_returned == 4
+        assert page.has_more is True
+        assert page.next_offset == 4
+        assert page.chunk_summary == "Showing characters 0-4 of 10 (40%)"
+        assert page.file_info is not None
+        assert page.file_info.format == "txt"
+
+    def test_paginate_extraction_middle_chunk_omits_file_info(self, extractor):
+        result = ExtractionResult(
+            text="abcdefghij",
+            total_chars=10,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=10),
+        )
+
+        page = extractor.paginate_extraction(result, offset=4, max_chars=4)
+        assert page.content == "efgh"
+        assert page.offset == 4
+        assert page.chars_returned == 4
+        assert page.has_more is True
+        assert page.next_offset == 8
+        assert page.file_info is None
+
+    def test_paginate_extraction_final_chunk(self, extractor):
+        result = ExtractionResult(
+            text="abcdefghij",
+            total_chars=10,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=10),
+        )
+
+        page = extractor.paginate_extraction(result, offset=8, max_chars=4)
+        assert page.content == "ij"
+        assert page.chars_returned == 2
+        assert page.has_more is False
+        assert page.next_offset is None
+        assert page.chunk_summary == "Showing characters 8-10 of 10 (100%)"
+
+    def test_paginate_extraction_offset_beyond_eof(self, extractor):
+        result = ExtractionResult(
+            text="abc",
+            total_chars=3,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=3),
+        )
+
+        page = extractor.paginate_extraction(result, offset=10, max_chars=4)
+        assert page.content == ""
+        assert page.chars_returned == 0
+        assert page.has_more is False
+        assert page.next_offset is None
+        assert "beyond end of file" in page.chunk_summary
+
+    def test_paginate_extraction_negative_offset_treated_as_zero(self, extractor):
+        result = ExtractionResult(
+            text="abcdef",
+            total_chars=6,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=6),
+        )
+
+        page = extractor.paginate_extraction(result, offset=-5, max_chars=2)
+        assert page.offset == 0
+        assert page.content == "ab"
+
+    def test_paginate_extraction_non_positive_max_chars_uses_default(self, extractor):
+        result = ExtractionResult(
+            text="abcdefghij",
+            total_chars=10,
+            page_count=1,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=10),
+        )
+        page = extractor.paginate_extraction(result, offset=0, max_chars=0)
+
+        assert page.content == "abcdefghij"
+        assert page.chars_returned == 10
+
+    def test_paginate_extraction_empty_file(self, extractor):
+        result = ExtractionResult(
+            text="",
+            total_chars=0,
+            page_count=0,
+            metadata=ExtractionMetadata(format="txt", file_size_bytes=0),
+        )
+
+        page = extractor.paginate_extraction(result, offset=0, max_chars=100)
+        assert page.content == ""
+        assert page.total_chars == 0
+        assert page.chars_returned == 0
+        assert page.has_more is False
+        assert page.next_offset is None
+        assert page.chunk_summary == "Showing characters 0-0 of 0 (100%)"
+        assert page.file_info is not None
+
+    def test_paginate_text_first_chunk_has_file_info(self, extractor):
+        page = extractor.paginate_text(
+            text="0123456789",
+            file_size_bytes=10,
+            file_format="py",
+            offset=0,
+            max_chars=4,
+        )
+        assert page.content == "0123"
+        assert page.total_chars == 10
+        assert page.has_more is True
+        assert page.next_offset == 4
+        assert page.file_info is not None
+        assert page.file_info.format == "py"
+        assert page.file_info.file_size_bytes == 10
+
+    def test_paginate_text_later_chunk_omits_file_info(self, extractor):
+        page = extractor.paginate_text(
+            text="0123456789",
+            file_size_bytes=10,
+            file_format="py",
+            offset=4,
+            max_chars=4,
+        )
+        assert page.content == "4567"
+        assert page.file_info is None
+
+    def test_paginate_text_offset_beyond_eof(self, extractor):
+        page = extractor.paginate_text(
+            text="abc",
+            file_size_bytes=3,
+            file_format="txt",
+            offset=9,
+            max_chars=4,
+        )
+        assert page.content == ""
+        assert page.has_more is False
+        assert page.next_offset is None
+        assert "beyond end of file" in page.chunk_summary
+
+    def test_paginate_text_empty_file(self, extractor):
+        page = extractor.paginate_text(
+            text="",
+            file_size_bytes=0,
+            file_format="txt",
+            offset=0,
+            max_chars=4,
+        )
+        assert page.content == ""
+        assert page.total_chars == 0
+        assert page.has_more is False
+        assert page.chunk_summary == "Showing characters 0-0 of 0 (100%)"
+        assert page.file_info is not None
+
+    def test_inline_image_marker_uses_absolute_path(self, extractor):
+        img = ExtractedImage(
+            path="/tmp/extracted_report_p15_i1_a1b2.png",
+            page=15,
+            index=1,
+            width=1200,
+            height=800,
+            description="Page 15, Image 1",
+        )
+
+        marker = extractor._format_inline_image_marker(img)
+        assert marker == (
+            "[IMAGE: /tmp/extracted_report_p15_i1_a1b2.png "
+            "(1200x800) - call read_file to view]"
+        )
+
+
 class TestFileExtractorRTF:
     """Tests for RTF extraction."""
 
@@ -549,6 +799,7 @@ class TestFileExtractorRTF:
 
         result = extractor._extract_rtf(rtf_path)
         assert isinstance(result, ExtractionResult)
+        assert result.metadata is not None
         assert result.metadata.format == "rtf"
         assert result.metadata.file_size_bytes > 0
 
@@ -566,6 +817,7 @@ class TestFileExtractorZIP:
 
         result = extractor._extract_zip(zip_path)
         assert isinstance(result, ExtractionResult)
+        assert result.metadata is not None
         assert "ZIP Archive Contents" in result.text
         assert "file1.txt" in result.text
         assert "subdir/file2.txt" in result.text
