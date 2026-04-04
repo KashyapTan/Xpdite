@@ -3,6 +3,51 @@ import { fireEvent, render, screen } from '@testing-library/react';
 
 import { QueryInput } from '../../../components/input/QueryInput';
 
+vi.mock('../../../components/input/FilePickerMenu', () => ({
+  default: ({
+    onSelect,
+    onEntriesChange,
+  }: {
+    onSelect: (entry: {
+      name: string;
+      path: string;
+      relative_path: string;
+      is_directory: boolean;
+      size: number | null;
+      extension: string | null;
+    }) => void;
+    onEntriesChange?: (entries: Array<{
+      name: string;
+      path: string;
+      relative_path: string;
+      is_directory: boolean;
+      size: number | null;
+      extension: string | null;
+    }>) => void;
+  }) => {
+    const entry = {
+      name: 'project notes.md',
+      path: '/tmp/project notes.md',
+      relative_path: 'docs/project notes.md',
+      is_directory: false,
+      size: 128,
+      extension: 'md',
+    };
+
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          onEntriesChange?.([entry]);
+          onSelect(entry);
+        }}
+      >
+        Pick mock file
+      </button>
+    );
+  },
+}));
+
 vi.mock('../../../services/api', () => ({
   api: {
     skillsApi: {
@@ -183,5 +228,50 @@ describe('QueryInput', () => {
 
     fireEvent.input(textbox, { target: { textContent: '/te' } });
     expect(onQueryChange).toHaveBeenLastCalledWith('/te');
+  });
+
+  test('creates and removes file chip for filenames with spaces', async () => {
+    const onQueryChange = vi.fn();
+    const onAttachedFilesChange = vi.fn();
+
+    const { rerender } = render(
+      <QueryInput
+        {...props}
+        query="@pro"
+        onQueryChange={onQueryChange}
+        onAttachedFilesChange={onAttachedFilesChange}
+      />,
+    );
+
+    const textbox = screen.getByRole('textbox', { name: 'Query input' });
+    fireEvent.focus(textbox);
+
+    const pickerButton = await screen.findByRole('button', { name: 'Pick mock file' });
+    fireEvent.click(pickerButton);
+
+    expect(onQueryChange).toHaveBeenLastCalledWith('@project notes.md ');
+
+    rerender(
+      <QueryInput
+        {...props}
+        query="@project notes.md "
+        onQueryChange={onQueryChange}
+        onAttachedFilesChange={onAttachedFilesChange}
+      />,
+    );
+
+    expect(screen.getByText('@project notes.md')).toBeTruthy();
+    expect(onAttachedFilesChange).toHaveBeenCalledWith([
+      { name: 'project notes.md', path: '/tmp/project notes.md' },
+    ]);
+
+    const removeButton = screen.getByRole('button', {
+      name: 'Remove @project notes.md',
+    });
+    const removeIconPath = removeButton.querySelector('path');
+    expect(removeIconPath).toBeTruthy();
+
+    fireEvent.click(removeIconPath as SVGPathElement);
+    expect(onQueryChange).toHaveBeenLastCalledWith('');
   });
 });

@@ -144,6 +144,18 @@ export interface ConnectExternalConnectorResponse {
   error?: string;
 }
 
+/**
+ * File entry from the file browser API.
+ */
+export interface FileEntry {
+  name: string;
+  path: string;
+  relative_path: string;
+  is_directory: boolean;
+  size: number | null;
+  extension: string | null;
+}
+
 function normalizeProviderModel(provider: string, rawModel: RawProviderModel): ProviderModel | null {
   const id = typeof rawModel.id === 'string'
     ? rawModel.id
@@ -1242,6 +1254,33 @@ export const api = {
     const base = await baseUrl();
     const response = await fetch(`${base}/api/scheduled-jobs/${jobId}/conversations`);
     if (!response.ok) throw new Error('Failed to fetch job conversations');
+    return response.json();
+  },
+
+  // ============================================
+  // File Browser API (for @ file attachments)
+  // ============================================
+
+  /**
+   * Search files globally for @ attachments.
+   *
+   * Returns relevance-ranked matches from the user's home subtree.
+   */
+  async browseFiles(query?: string): Promise<{
+    entries: FileEntry[];
+    current_path: string;
+    parent_path: string | null;
+  }> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/files/browse`);
+    if (query) {
+      url.searchParams.set('query', query);
+    }
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to browse files');
+      throw new Error(detail);
+    }
     return response.json();
   },
 };

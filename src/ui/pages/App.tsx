@@ -28,6 +28,7 @@ import TabBar from '../components/TabBar';
 import { BoltIcon } from '../components/icons/AppIcons';
 import { ResponseArea } from '../components/chat/ResponseArea.tsx';
 import { QueryInput } from '../components/input/QueryInput';
+import type { QueryInputAttachedFile } from '../components/input/QueryInput';
 import { QueueDropdown } from '../components/input/QueueDropdown';
 import { ModeSelector } from '../components/input/ModeSelector';
 import { TokenUsagePopup } from '../components/input/TokenUsagePopup';
@@ -284,6 +285,7 @@ function App() {
   const hasNormalizedCaptureModeRef = useRef(false);
   // Stash run_command args so we can create terminal blocks when output arrives (auto-approved)
   const pendingTerminalCommandRef = useRef<{ command: string; cwd: string } | null>(null);
+  const attachedFilesRef = useRef<QueryInputAttachedFile[]>([]);
   const streamPerfStatsRef = useRef<StreamPerfStats | null>(null);
   const streamPerfEnabledRef = useRef(false);
 
@@ -1770,6 +1772,8 @@ function App() {
     const queryText = chatState.query.trim();
     if (!queryText) return;
 
+    const attachedFiles = attachedFilesRef.current;
+
     // Handle /new command - create a new tab
     if (queryText === '/new' || queryText.startsWith('/new ')) {
       // Clear query state and the input DOM immediately
@@ -1812,6 +1816,7 @@ function App() {
               content: initialMessage,
               capture_mode: screenshotState.captureMode,
               model: selectedModel,
+              attached_files: attachedFiles,
             });
           }, 0);
         }
@@ -1838,6 +1843,7 @@ function App() {
       content: queryText,
       capture_mode: screenshotState.captureMode,
       model: selectedModel,
+      attached_files: attachedFiles,
     });
   };
 
@@ -2157,6 +2163,9 @@ function App() {
             placeholder={getPlaceholder()}
             canSubmit={chatState.canSubmit}
             enabledModels={enabledModels}
+            onAttachedFilesChange={(files) => {
+              attachedFilesRef.current = files;
+            }}
             onQueryChange={chatState.setQuery}
             onSubmit={handleSubmit}
             onStopStreaming={handleStopStreaming}

@@ -147,6 +147,17 @@ class MessageHandler:
         query_text = data.get("content", "").strip()
         capture_mode = data.get("capture_mode", "none")
         model = data.get("model", "")
+        attached_files_raw = data.get("attached_files", [])
+        attached_files: list[dict[str, str]] = []
+        if isinstance(attached_files_raw, list):
+            for item in attached_files_raw[:10]:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path", "")).strip()
+                name = str(item.get("name", "")).strip()
+                if not path or not name:
+                    continue
+                attached_files.append({"path": path, "name": name})
 
         # Update the selected model in global state
         if model:
@@ -194,6 +205,7 @@ class MessageHandler:
             content=query_text,
             model=model or app_state.selected_model,
             capture_mode=capture_mode,
+            attached_files=attached_files,
             forced_skills=forced_skills,
             llm_query=llm_query,
         )
@@ -769,7 +781,7 @@ class MessageHandler:
                 success = False
 
             # MCP call_tool returns "Error: ..." on failure
-            if result.startswith("Error:"):
+            if isinstance(result, str) and result.startswith("Error:"):
                 success = False
 
             await self.websocket.send_text(

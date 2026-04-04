@@ -50,6 +50,7 @@ source/
 │
 └── services/
     ├── conversations.py # ConversationService.submit_query — orchestrates the full turn
+    ├── file_browser.py  # @ file picker browse/search + SQLite index + background refresh
     ├── skills.py        # SkillManager — filesystem-backed skill loading, caching, CRUD
     ├── screenshots.py   # ScreenshotHandler — manage screenshot lifecycle + state
     ├── terminal.py      # TerminalService — PTY sessions, approval queue, history
@@ -92,6 +93,7 @@ source/
 - **`services/meeting_recorder.py`** — `MeetingRecorderService` manages one active recording at a time. Audio arrives as base64 PCM chunks via WS, written to `user_data/meeting_audio/<recording_id>.wav` (16kHz, mono, 16-bit). Live Tier 1 transcription runs via `faster-whisper` in a background thread with 5-second chunks and 1-second overlap. Silence detection uses RMS < 50 threshold. `recover_interrupted_recordings()` is called at startup for crash recovery. `PostProcessingPipeline` runs a sequential worker thread with steps: `transcribing → aligning → diarizing → merging → generating_title → saving`, using `faster-whisper large-v3`, WhisperX for alignment, and SpeechBrain for diarization.
 - **`services/gpu_detector.py`** — `detect_compute_backend()` returns `'cuda'` or `'cpu'`. `get_compute_info()` returns `{backend, device_name, vram_gb, compute_type}` — `float16` if VRAM ≥ 4 GB, else `int8`. `get_estimated_processing_time(audio_duration_seconds)` returns `0.15×` for CUDA, `1.5×` for CPU. Results are cached in a module-level `_cached_backend` singleton.
 - **`services/google_auth.py`** — `GoogleAuthService` manages Google OAuth 2.0 lifecycle. `start_oauth_flow()` runs `InstalledAppFlow.run_local_server(port=0)`, saves `token.json` to `user_data/google/`. `disconnect()` attempts token revocation then deletes the file. `get_status()` returns `{connected, email, auth_in_progress}`. The OAuth client credentials are embedded in `config.py` — this is the Google-recommended pattern for native desktop apps (client_secret is not confidential for installed apps).
+- **`services/file_browser.py`** — `FileBrowserService` powers the `@` attachment picker. Search reads from a persisted SQLite index (`user_data/file_browser_index.db`) keyed by root path; when an index is missing it falls back to a bounded recursive scan and schedules background indexing. Ranking uses command-palette heuristics (exact > starts-with > contains > compact subsequence) so best matches appear first. File changes are tracked with an event-driven watchdog observer (with queue coalescing) so index refreshes are incremental. The app starts/stops the file indexer + observer from `app.py` startup/shutdown events.
 - **`services/skills.py`** — `SkillManager` caches skill content lazily on `Skill` instances; `invalidate_content_cache()` clears it. `_validate_safe_name(value, label)` enforces `^[a-zA-Z0-9_-]+$` pattern to prevent path traversal. `add_reference_file(name, filename, content)` writes a `.md` file to `skill_folder/references/` (enforces `.md` extension). Skills with `references/` subdirectories have their reference files available to inject as additional context. `get_all_skills_with_overrides()` returns overridden builtins first (greyed out) followed by all active skills.
 - **`services/video_watcher.py`** — `VideoWatcherService` handles `watch_youtube_video`: normalize URL, extract metadata, prefer native YouTube captions, and fallback to Whisper transcription when captions are unavailable. Fallback path emits a `youtube_transcription_approval` request, waits up to 180s for user approval (`resolve_transcription_approval`), then runs download/transcription in thread pool. Output is bounded to `MAX_TOOL_RESULT_LENGTH` with truncation metadata.
 - **`mcp_integration/skills_executor.py`** — inline executor for `list_skills` and `use_skill` tools. `list_skills` returns active skill catalog and usage guidance; `use_skill` resolves one skill and returns full prompt content without spawning MCP subprocesses.
@@ -312,6 +314,7 @@ All endpoints are in `source/api/http.py` unless noted.
 | `DELETE` | `/internal/mobile/devices/{device_id}` | Revoke device | `source/api/mobile_internal.py` |
 | `POST` | `/internal/mobile/whatsapp/connection` | Update WhatsApp conn status | `source/api/mobile_internal.py` |
 | `GET` | `/internal/mobile/sessions` | List active sessions | `source/api/mobile_internal.py` |
+| `GET` | `/api/files/browse` | Browse/search files for `@` attachments | `source/api/http.py` |
 
 **Model filtering rules:**
 - **Gemini**: Skips models containing `"embedding"`, `"aqa"`, `"bison"`, `"gecko"`; strips `"models/"` prefix from names.

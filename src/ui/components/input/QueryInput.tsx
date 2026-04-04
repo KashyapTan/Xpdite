@@ -3,6 +3,11 @@
  *
  * Uses a chip-aware contenteditable composer so valid slash commands can
  * render inline without the old overlay/highlight workaround.
+ * 
+ * Supports:
+ * - Slash commands (/) - skills
+ * - Model selection (/model)
+ * - File attachments (@) - files from filesystem
  */
 import React, {
   forwardRef,
@@ -18,10 +23,12 @@ import React, {
 import type { FormEvent, KeyboardEvent } from 'react';
 import { X_ICON_PATHS } from '../icons/iconPaths';
 import type { Skill } from '../../types';
+import type { FileEntry } from '../../services/api';
 import '../../CSS/SlashCommandChips.css';
 
 const SlashCommandMenu = lazy(() => import('../chat/SlashCommandMenu'));
 const ModelCommandMenu = lazy(() => import('../chat/ModelCommandMenu'));
+const FilePickerMenu = lazy(() => import('./FilePickerMenu'));
 let queryInputMenusWarmupPromise: Promise<unknown> | null = null;
 
 function warmQueryInputMenus() {
@@ -29,6 +36,7 @@ function warmQueryInputMenus() {
     queryInputMenusWarmupPromise = Promise.all([
       import('../chat/SlashCommandMenu'),
       import('../chat/ModelCommandMenu'),
+      import('./FilePickerMenu'),
     ]);
   }
 
@@ -40,15 +48,22 @@ interface QueryInputProps {
   placeholder: string;
   canSubmit: boolean;
   enabledModels: string[];
+  onAttachedFilesChange?: (files: QueryInputAttachedFile[]) => void;
   onQueryChange: (value: string) => void;
   onSubmit: (e: FormEvent) => void;
   onStopStreaming: () => void;
   onSelectModel: (model: string) => void;
 }
 
+export type QueryInputAttachedFile = {
+  name: string;
+  path: string;
+};
+
 type QuerySegment =
   | { type: 'text'; text: string }
-  | { type: 'chip'; command: string; skillName: string };
+  | { type: 'chip'; command: string; skillName: string }
+  | { type: 'file_chip'; name: string; path: string };
 
 type SlashTrigger = {
   start: number;
@@ -62,8 +77,15 @@ type ModelTrigger = {
   searchTerm: string;
 };
 
-const COMMAND_TOKEN_PATTERN = /(?<!\S)\/([a-zA-Z0-9_-]+)(?=\s|$)/g;
+type FileTrigger = {
+  start: number;
+  end: number;
+  searchTerm: string;
+};
+
 const COMMAND_BODY_PATTERN = /^[a-zA-Z0-9_-]*$/;
+const FILE_TRIGGER_BODY_PATTERN = /^[^\s@]*$/;
+const FILE_MENU_WIDTH = 320;
 const SLASH_MENU_WIDTH = 250;
 
 function normalizeDomLabel(value: string): string {
@@ -103,9 +125,15 @@ function mergeTextSegments(segments: QuerySegment[]): QuerySegment[] {
 
 function serializeSegments(segments: QuerySegment[]): string {
   return segments
-    .map((segment) =>
-      segment.type === 'chip' ? `/${segment.command}` : segment.text,
-    )
+    .map((segment) => {
+      if (segment.type === 'chip') {
+        return `/${segment.command}`;
+      }
+      if (segment.type === 'file_chip') {
+        return `@${segment.name}`;
+      }
+      return segment.text;
+    })
     .join('');
 }
 
@@ -117,7 +145,9 @@ function getSegmentOffset(segments: QuerySegment[], targetIndex: number): number
     offset +=
       segment.type === 'chip'
         ? segment.command.length + 1
-        : segment.text.length;
+        : segment.type === 'file_chip'
+          ? segment.name.length + 1
+          : segment.text.length;
   }
 
   return offset;
@@ -130,8 +160,9 @@ function isOffsetAtChipBoundary(
   let currentOffset = 0;
 
   for (const segment of segments) {
-    if (segment.type === 'chip') {
-      const chipEnd = currentOffset + segment.command.length + 1;
+    if (segment.type === 'chip' || segment.type === 'file_chip') {
+      const chipLength = segment.type === 'chip' ? segment.command.length + 1 : segment.name.length + 1;
+      const chipEnd = currentOffset + chipLength;
       if (offset > currentOffset && offset <= chipEnd) {
         return true;
       }
@@ -139,7 +170,9 @@ function isOffsetAtChipBoundary(
       continue;
     }
 
-    currentOffset += segment.text.length;
+    if (segment.type === 'text') {
+      currentOffset += segment.text.length;
+    }
   }
 
   return false;
@@ -149,51 +182,130 @@ function normalizeQuerySegments(
   query: string,
   commandMap: Map<string, Skill>,
   commandsWithLongerMatches: Set<string>,
+  attachedFileMap: Map<string, string>,
   cursorOffset: number,
   allowEditingToken: boolean,
 ): QuerySegment[] {
   const segments: QuerySegment[] = [];
-  let lastIndex = 0;
-  COMMAND_TOKEN_PATTERN.lastIndex = 0;
-  const matcher = COMMAND_TOKEN_PATTERN;
-  let match: RegExpExecArray | null = null;
+  const attachedNames = Array.from(attachedFileMap.keys()).sort(
+    (left, right) => right.length - left.length,
+  );
 
-  while ((match = matcher.exec(query)) !== null) {
-    const token = match[0];
-    const start = match.index;
-    const end = start + token.length;
-    const command = match[1].toLowerCase();
-    const skill = commandMap.get(command);
+  let cursor = 0;
+  while (cursor < query.length) {
+    let tokenStart = -1;
+    for (let index = cursor; index < query.length; index += 1) {
+      const character = query[index];
+      if (character !== '/' && character !== '@') {
+        continue;
+      }
+      if (index > 0 && !/\s/.test(query[index - 1])) {
+        continue;
+      }
+      tokenStart = index;
+      break;
+    }
 
-    if (!skill) {
+    if (tokenStart === -1) {
+      segments.push({ type: 'text', text: query.slice(cursor) });
+      break;
+    }
+
+    if (tokenStart > cursor) {
+      segments.push({ type: 'text', text: query.slice(cursor, tokenStart) });
+    }
+
+    const prefix = query[tokenStart];
+
+    if (prefix === '/') {
+      let tokenEnd = tokenStart + 1;
+      while (tokenEnd < query.length && !/\s/.test(query[tokenEnd])) {
+        tokenEnd += 1;
+      }
+
+      const body = query.slice(tokenStart + 1, tokenEnd);
+      const token = `/${body}`;
+      const command = body.toLowerCase();
+      const skill = commandMap.get(command);
+      const editingThisToken =
+        allowEditingToken &&
+        cursorOffset > tokenStart &&
+        (cursorOffset < tokenEnd ||
+          (cursorOffset === tokenEnd && commandsWithLongerMatches.has(command)));
+
+      if (
+        body &&
+        COMMAND_BODY_PATTERN.test(body) &&
+        !editingThisToken &&
+        skill
+      ) {
+        segments.push({
+          type: 'chip',
+          command: skill.slash_command ?? command,
+          skillName: skill.name,
+        });
+      } else {
+        segments.push({ type: 'text', text: token });
+      }
+
+      cursor = tokenEnd;
       continue;
     }
 
-    const editingThisToken =
-      allowEditingToken &&
-      cursorOffset > start &&
-      (cursorOffset < end ||
-        (cursorOffset === end &&
-          commandsWithLongerMatches.has(command)));
+    let matchedFileName: string | null = null;
+    let matchedFileEnd = tokenStart + 1;
 
-    if (editingThisToken) {
+    for (const name of attachedNames) {
+      if (!name) {
+        continue;
+      }
+      if (!query.startsWith(name, tokenStart + 1)) {
+        continue;
+      }
+
+      const candidateEnd = tokenStart + 1 + name.length;
+      if (candidateEnd < query.length && !/\s/.test(query[candidateEnd])) {
+        continue;
+      }
+
+      matchedFileName = name;
+      matchedFileEnd = candidateEnd;
+      break;
+    }
+
+    if (matchedFileName) {
+      const attachedPath = attachedFileMap.get(matchedFileName);
+      const editingThisToken =
+        allowEditingToken &&
+        cursorOffset > tokenStart &&
+        cursorOffset <= matchedFileEnd;
+
+      if (!editingThisToken && attachedPath) {
+        segments.push({
+          type: 'file_chip',
+          name: matchedFileName,
+          path: attachedPath,
+        });
+      } else {
+        segments.push({
+          type: 'text',
+          text: query.slice(tokenStart, matchedFileEnd),
+        });
+      }
+
+      cursor = matchedFileEnd;
       continue;
     }
 
-    if (start > lastIndex) {
-      segments.push({ type: 'text', text: query.slice(lastIndex, start) });
+    let fallbackEnd = tokenStart + 1;
+    while (fallbackEnd < query.length && !/\s/.test(query[fallbackEnd])) {
+      fallbackEnd += 1;
     }
-
     segments.push({
-      type: 'chip',
-      command: skill.slash_command ?? command,
-      skillName: skill.name,
+      type: 'text',
+      text: query.slice(tokenStart, fallbackEnd),
     });
-    lastIndex = end;
-  }
-
-  if (lastIndex < query.length) {
-    segments.push({ type: 'text', text: query.slice(lastIndex) });
+    cursor = fallbackEnd;
   }
 
   return mergeTextSegments(segments);
@@ -444,6 +556,65 @@ function buildChipNode(segment: Extract<QuerySegment, { type: 'chip' }>, index: 
   return chipNode;
 }
 
+function getFileTrigger(query: string, cursorOffset: number): FileTrigger | null {
+  if (cursorOffset < 0 || cursorOffset > query.length) {
+    return null;
+  }
+
+  let start = cursorOffset;
+  while (start > 0 && !/\s/.test(query[start - 1])) {
+    start -= 1;
+  }
+
+  let end = cursorOffset;
+  while (end < query.length && !/\s/.test(query[end])) {
+    end += 1;
+  }
+
+  const token = query.slice(start, end);
+  const typedToken = query.slice(start, cursorOffset);
+  if (
+    !token.startsWith('@') ||
+    !typedToken.startsWith('@') ||
+    !FILE_TRIGGER_BODY_PATTERN.test(token.slice(1)) ||
+    !FILE_TRIGGER_BODY_PATTERN.test(typedToken.slice(1))
+  ) {
+    return null;
+  }
+
+  return {
+    start,
+    end,
+    searchTerm: typedToken.slice(1).toLowerCase(),
+  };
+}
+
+function buildFileChipNode(segment: Extract<QuerySegment, { type: 'file_chip' }>, index: number): HTMLSpanElement {
+  const chipNode = document.createElement('span');
+  chipNode.className = 'slash-command-chip query-input-chip';
+  chipNode.contentEditable = 'false';
+  chipNode.dataset.slashChip = 'true';
+  chipNode.dataset.plainTextLength = String(`@${segment.name}`.length);
+  chipNode.dataset.chipIndex = String(index);
+  chipNode.title = normalizeDomLabel(segment.path);
+
+  const chipTextNode = document.createElement('span');
+  chipTextNode.className = 'chip-text';
+  chipTextNode.textContent = `@${segment.name}`;
+
+  const removeButton = document.createElement('button');
+  removeButton.type = 'button';
+  removeButton.className = 'chip-remove-btn';
+  removeButton.ariaLabel = `Remove @${normalizeDomLabel(segment.name)}`;
+  removeButton.dataset.chipRemove = 'true';
+  removeButton.dataset.chipIndex = String(index);
+  removeButton.tabIndex = -1;
+  removeButton.append(buildChipRemoveIcon());
+
+  chipNode.append(chipTextNode, removeButton);
+  return chipNode;
+}
+
 function syncEditorContent(editor: HTMLDivElement, segments: QuerySegment[]): void {
   const fragment = document.createDocumentFragment();
 
@@ -454,7 +625,12 @@ function syncEditorContent(editor: HTMLDivElement, segments: QuerySegment[]): vo
       continue;
     }
 
-    if (segment.text) {
+    if (segment.type === 'file_chip') {
+      fragment.append(buildFileChipNode(segment, index));
+      continue;
+    }
+
+    if (segment.type === 'text' && segment.text) {
       fragment.append(document.createTextNode(segment.text));
     }
   }
@@ -469,6 +645,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       placeholder,
       canSubmit,
       enabledModels,
+      onAttachedFilesChange,
       onQueryChange,
       onSubmit,
       onStopStreaming,
@@ -486,6 +663,11 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     const [modelSelectedIndex, setModelSelectedIndex] = useState(0);
     const [modelMenuPosition, setModelMenuPosition] = useState({ top: 0, left: 8 });
     const [dismissedModelTriggerKey, setDismissedModelTriggerKey] = useState<string | null>(null);
+    const [fileSelectedIndex, setFileSelectedIndex] = useState(0);
+    const [fileMenuPosition, setFileMenuPosition] = useState({ top: 0, left: 8 });
+    const [dismissedFileTriggerKey, setDismissedFileTriggerKey] = useState<string | null>(null);
+    const [pickerEntries, setPickerEntries] = useState<FileEntry[]>([]);
+    const attachedFileMapRef = useRef<Map<string, string>>(new Map());
 
     const containerRef = useRef<HTMLDivElement>(null);
     const formRef = useRef<HTMLFormElement>(null);
@@ -585,6 +767,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           query,
           commandMap,
           commandsWithLongerMatches,
+          attachedFileMapRef.current,
           selectionOffset,
           isFocused,
         ),
@@ -666,16 +849,41 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       );
     }, [activeModelTrigger, enabledModels]);
 
+    const detectedFileTrigger = useMemo(
+      () =>
+        isFocused && !isOffsetAtChipBoundary(segments, selectionOffset)
+          ? getFileTrigger(serializedQuery, selectionOffset)
+          : null,
+      [isFocused, segments, selectionOffset, serializedQuery],
+    );
+
+    const detectedFileTriggerKey = useMemo(
+      () =>
+        detectedFileTrigger
+          ? `file:${detectedFileTrigger.start}:${detectedFileTrigger.end}:${detectedFileTrigger.searchTerm}:${serializedQuery}`
+          : null,
+      [detectedFileTrigger, serializedQuery],
+    );
+
+    const activeFileTrigger = useMemo(
+      () =>
+        detectedFileTriggerKey !== null && detectedFileTriggerKey === dismissedFileTriggerKey
+          ? null
+          : detectedFileTrigger,
+      [detectedFileTrigger, detectedFileTriggerKey, dismissedFileTriggerKey],
+    );
+
     // Check if model menu should take priority over slash command menu
     // Model menu takes priority when /model is detected
     const showModelMenu = filteredModels.length > 0;
-    const showSlashMenu = filteredSkills.length > 0 && !showModelMenu;
-    const menuActive = showSlashMenu || showModelMenu;
+    const showFileMenu = activeFileTrigger !== null && !showModelMenu;
+    const showSlashMenu = filteredSkills.length > 0 && !showModelMenu && !showFileMenu;
+    const menuActive = showSlashMenu || showModelMenu || showFileMenu;
     const hasChipSegments = useMemo(
-      () => segments.some((segment) => segment.type === 'chip'),
+      () => segments.some((segment) => segment.type === 'chip' || segment.type === 'file_chip'),
       [segments],
     );
-    const needsSelectionTracking = hasChipSegments || menuActive || serializedQuery.includes('/');
+    const needsSelectionTracking = hasChipSegments || menuActive || serializedQuery.includes('/') || serializedQuery.includes('@');
 
     const renderedSegmentsSignature = useMemo(
       () =>
@@ -683,7 +891,9 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           .map((segment) =>
             segment.type === 'chip'
               ? `chip:${segment.command}:${segment.skillName}`
-              : `text:${segment.text}`,
+              : segment.type === 'file_chip'
+                ? `file:${segment.name}:${segment.path}`
+                : `text:${segment.text}`,
           )
           .join('\u0001'),
       [segments],
@@ -722,12 +932,19 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         8,
         Math.min(rect.left - containerRect.left, containerRect.width - SLASH_MENU_WIDTH - 8),
       );
+      const nextFileLeft = Math.max(
+        8,
+        Math.min(rect.left - containerRect.left, containerRect.width - FILE_MENU_WIDTH - 8),
+      );
 
       setMenuPosition((previous) => (
         previous.left === nextLeft ? previous : { top: 0, left: nextLeft }
       ));
       setModelMenuPosition((previous) => (
         previous.left === nextLeft ? previous : { top: 0, left: nextLeft }
+      ));
+      setFileMenuPosition((previous) => (
+        previous.left === nextFileLeft ? previous : { top: 0, left: nextFileLeft }
       ));
     }, [menuActive]);
 
@@ -739,6 +956,23 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     useEffect(() => {
       setModelSelectedIndex(0);
     }, [activeModelTrigger?.searchTerm, filteredModels.length]);
+
+    useEffect(() => {
+      setFileSelectedIndex(0);
+    }, [activeFileTrigger?.searchTerm]);
+
+    useEffect(() => {
+      const files = segments
+        .filter((segment): segment is Extract<QuerySegment, { type: 'file_chip' }> => segment.type === 'file_chip')
+        .map((segment) => ({ name: segment.name, path: segment.path }));
+      onAttachedFilesChange?.(files);
+    }, [onAttachedFilesChange, segments]);
+
+    useEffect(() => {
+      if (query.trim().length === 0) {
+        attachedFileMapRef.current.clear();
+      }
+    }, [query]);
 
     useEffect(() => {
       if (internalUpdateRef.current) {
@@ -793,6 +1027,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         }
         setDismissedTriggerKey(null);
         setDismissedModelTriggerKey(null);
+        setDismissedFileTriggerKey(null);
         onQueryChange(nextValue);
       },
       [onQueryChange],
@@ -878,13 +1113,20 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     const handleRemoveCommand = useCallback(
       (index: number) => {
         const commandSegment = segments[index];
-        if (!commandSegment || commandSegment.type !== 'chip') {
+        if (!commandSegment || (commandSegment.type !== 'chip' && commandSegment.type !== 'file_chip')) {
           return;
+        }
+
+        if (commandSegment.type === 'file_chip') {
+          attachedFileMapRef.current.delete(commandSegment.name);
         }
 
         const commandStart = getSegmentOffset(segments, index);
         let removalStart = commandStart;
-        let removalEnd = commandStart + commandSegment.command.length + 1;
+        const chipLength = commandSegment.type === 'chip'
+          ? commandSegment.command.length + 1
+          : commandSegment.name.length + 1;
+        let removalEnd = commandStart + chipLength;
         const fullQuery = serializeSegments(segments);
 
         if (fullQuery[removalEnd] === ' ') {
@@ -913,13 +1155,46 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
       const nextValue = (editor.textContent ?? '').replace(/\u00a0/g, ' ');
       const nextOffset = getSelectionOffset(editor);
-      const trackSelection = hasChipSegments || nextValue.includes('/');
+      const trackSelection = hasChipSegments || nextValue.includes('/') || nextValue.includes('@');
       updateQueryValue(nextValue, nextOffset, trackSelection);
     }, [hasChipSegments, updateQueryValue]);
 
+    const handleSelectFile = useCallback((entry: FileEntry) => {
+      if (!activeFileTrigger || entry.is_directory) {
+        return;
+      }
+
+      const currentFiles = segments.filter((segment): segment is Extract<QuerySegment, { type: 'file_chip' }> => segment.type === 'file_chip');
+      if (currentFiles.length >= 10) {
+        return;
+      }
+      if (currentFiles.some((file) => file.path === entry.path || file.name === entry.name)) {
+        return;
+      }
+
+      attachedFileMapRef.current.set(entry.name, entry.path);
+      const replacement = `@${entry.name} `;
+      const nextValue =
+        serializedQuery.slice(0, activeFileTrigger.start) +
+        replacement +
+        serializedQuery.slice(activeFileTrigger.end);
+      const nextOffset = activeFileTrigger.start + replacement.length;
+      updateQueryValue(nextValue, nextOffset);
+      requestAnimationFrame(() => {
+        editorRef.current?.focus();
+      });
+    }, [activeFileTrigger, segments, serializedQuery, updateQueryValue]);
+
+    const handleFileEntriesChange = useCallback(
+      (entries: FileEntry[]) => {
+        setPickerEntries(entries);
+      },
+      [],
+    );
+
     const handleEditorMouseDown = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) {
+      if (!(target instanceof Element)) {
         return;
       }
 
@@ -930,7 +1205,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
     const handleEditorClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
       const target = event.target;
-      if (!(target instanceof HTMLElement)) {
+      if (!(target instanceof Element)) {
         return;
       }
 
@@ -992,6 +1267,47 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           e.preventDefault();
           if (detectedModelTriggerKey) {
             setDismissedModelTriggerKey(detectedModelTriggerKey);
+          }
+          return;
+        }
+      }
+
+      if (showFileMenu) {
+        if (pickerEntries.length === 0) {
+          if (e.key === 'Escape') {
+            e.preventDefault();
+            if (detectedFileTriggerKey) {
+              setDismissedFileTriggerKey(detectedFileTriggerKey);
+            }
+          }
+          return;
+        }
+
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          setFileSelectedIndex((previous) => (previous + 1) % pickerEntries.length);
+          return;
+        }
+
+        if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          setFileSelectedIndex((previous) => (previous - 1 + pickerEntries.length) % pickerEntries.length);
+          return;
+        }
+
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          const safeIndex = Math.min(fileSelectedIndex, pickerEntries.length - 1);
+          if (safeIndex >= 0) {
+            handleSelectFile(pickerEntries[safeIndex]);
+          }
+          return;
+        }
+
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          if (detectedFileTriggerKey) {
+            setDismissedFileTriggerKey(detectedFileTriggerKey);
           }
           return;
         }
@@ -1073,6 +1389,24 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           </Suspense>
         )}
 
+        {showFileMenu && activeFileTrigger && (
+          <Suspense fallback={null}>
+            <FilePickerMenu
+              searchQuery={activeFileTrigger.searchTerm}
+              selectedIndex={fileSelectedIndex}
+              position={fileMenuPosition}
+              onSelect={handleSelectFile}
+              onClose={() => {
+                if (detectedFileTriggerKey) {
+                  setDismissedFileTriggerKey(detectedFileTriggerKey);
+                }
+              }}
+              onSelectedIndexChange={setFileSelectedIndex}
+              onEntriesChange={handleFileEntriesChange}
+            />
+          </Suspense>
+        )}
+
         <form ref={formRef} onSubmit={handleSubmit} className="query-input-form">
           <div
             ref={setEditorRefs}
@@ -1097,6 +1431,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
               setIsFocused(false);
               setDismissedTriggerKey(null);
               setDismissedModelTriggerKey(null);
+              setDismissedFileTriggerKey(null);
             }}
           />
         </form>

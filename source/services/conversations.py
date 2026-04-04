@@ -10,8 +10,10 @@ import json
 import logging
 import re
 import uuid
+import asyncio
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from ..config import MAX_TOOL_RESULT_LENGTH
 from ..core.connection import broadcast_message
 from ..core.request_context import RequestContext
 from ..core.state import app_state
@@ -23,6 +25,7 @@ from .screenshots import ScreenshotHandler
 logger = logging.getLogger(__name__)
 
 _SLASH_COMMAND_PATTERN = re.compile(r"(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)")
+_ATTACHMENT_READ_FILE_MAX_CHARS = 8000
 if TYPE_CHECKING:
     from .tab_manager import TabState
     from .query_queue import ConversationQueue
@@ -48,9 +51,7 @@ def _extract_skill_slash_commands_sync(message: str) -> tuple[list, str]:
 
     manager = get_skill_manager()
     all_skills = manager.get_all_skills()
-    slash_map = {
-        s.slash_command.lower(): s for s in all_skills if s.slash_command
-    }
+    slash_map = {s.slash_command.lower(): s for s in all_skills if s.slash_command}
 
     matched_skills: list = []
     seen_commands: set[str] = set()
@@ -75,6 +76,20 @@ def _extract_skill_slash_commands_sync(message: str) -> tuple[list, str]:
     cleaned_parts.append(message[last_index:])
     cleaned_message = " ".join("".join(cleaned_parts).split())
     return matched_skills, cleaned_message
+
+
+def _truncate_attachment_tool_result(result: str) -> str:
+    """Mirror tool-loop truncation behavior for large textual payloads."""
+    if len(result) > MAX_TOOL_RESULT_LENGTH:
+        return result[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
+    return result
+
+
+async def _run_read_file_for_attachment(path: str) -> str | dict[str, Any]:
+    """Execute filesystem read_file with the same defaults as tool calls."""
+    from mcp_servers.servers.filesystem.server import read_file
+
+    return await run_in_thread(read_file, path, 0, _ATTACHMENT_READ_FILE_MAX_CHARS)
 
 
 class ConversationService:
@@ -140,9 +155,9 @@ class ConversationService:
             "user": await ConversationService._hydrate_message_images(turn["user"]),
         }
         if turn.get("assistant") is not None:
-            hydrated_turn["assistant"] = await ConversationService._hydrate_message_images(
-                turn["assistant"]
-            )
+            hydrated_turn[
+                "assistant"
+            ] = await ConversationService._hydrate_message_images(turn["assistant"])
         return hydrated_turn
 
     @staticmethod
@@ -197,7 +212,9 @@ class ConversationService:
         conversation_id = target_message["conversation_id"]
         turn_id = target_message["turn_id"]
         turn_messages = db.get_turn_messages(conversation_id, turn_id)
-        user_message = next((msg for msg in turn_messages if msg["role"] == "user"), None)
+        user_message = next(
+            (msg for msg in turn_messages if msg["role"] == "user"), None
+        )
         assistant_message = next(
             (msg for msg in turn_messages if msg["role"] == "assistant"), None
         )
@@ -254,14 +271,18 @@ class ConversationService:
         )
 
     @staticmethod
-    async def resume_conversation(conversation_id: str, tab_state: Optional["TabState"] = None):
+    async def resume_conversation(
+        conversation_id: str, tab_state: Optional["TabState"] = None
+    ):
         """Resume a previously saved conversation.
 
         If *tab_state* is provided, loads into per-tab state.
         """
 
         # Resolve state target
-        chat_history_target = tab_state.chat_history if tab_state else app_state.chat_history
+        chat_history_target = (
+            tab_state.chat_history if tab_state else app_state.chat_history
+        )
 
         # Clear current state
         chat_history_target.clear()
@@ -289,10 +310,13 @@ class ConversationService:
                 entry["images"] = msg["images"]
             chat_history_target.append(entry)
 
-        chat_history_len = len(tab_state.chat_history) if tab_state else len(app_state.chat_history)
+        chat_history_len = (
+            len(tab_state.chat_history) if tab_state else len(app_state.chat_history)
+        )
         logger.info(
             "Resumed conversation %s with %d messages",
-            conversation_id, chat_history_len
+            conversation_id,
+            chat_history_len,
         )
 
         # Notify client
@@ -312,6 +336,7 @@ class ConversationService:
     async def submit_query(
         user_query: str,
         capture_mode: str = "none",
+        attached_files: list[dict[str, str]] | None = None,
         forced_skills: list | None = None,
         llm_query: str | None = None,
         tab_state: Optional["TabState"] = None,
@@ -339,7 +364,9 @@ class ConversationService:
         """
 
         if action not in {"submit", "retry", "edit"}:
-            await broadcast_message("error", f"Unsupported conversation action: {action}")
+            await broadcast_message(
+                "error", f"Unsupported conversation action: {action}"
+            )
             return None
 
         def _get_conv_id() -> Optional[str]:
@@ -357,19 +384,28 @@ class ConversationService:
             assert cid is not None, "conversation_id should be set by this point"
             return cid
 
-        _screenshot_list = tab_state.screenshot_list if tab_state else app_state.screenshot_list
-        _request_lock = tab_state._request_lock if tab_state else app_state._request_lock
+        _screenshot_list = (
+            tab_state.screenshot_list if tab_state else app_state.screenshot_list
+        )
+        _request_lock = (
+            tab_state._request_lock if tab_state else app_state._request_lock
+        )
 
         current_model = model or app_state.selected_model
 
         logger.debug(
             "submit_query: action=%s, model=%s, capture_mode=%s, screenshots=%d",
-            action, current_model, capture_mode, len(_screenshot_list)
+            action,
+            current_model,
+            capture_mode,
+            len(_screenshot_list),
         )
 
         # ── Request lifecycle: create context ─────────────────────────
         async with _request_lock:
-            current_req = tab_state.current_request if tab_state else app_state.current_request
+            current_req = (
+                tab_state.current_request if tab_state else app_state.current_request
+            )
             if current_req is not None and not current_req.is_done:
                 await broadcast_message("error", "Already streaming. Please wait.")
                 return None
@@ -386,6 +422,7 @@ class ConversationService:
 
         # Set contextvars so LLM layer gets per-task request + model
         from ..core.request_context import set_current_request, set_current_model
+
         _ctx_token = set_current_request(ctx)
         _model_token = set_current_model(current_model)
 
@@ -432,15 +469,126 @@ class ConversationService:
                 )
 
             query_for_llm = llm_query if llm_query else display_query
+            tool_retrieval_query = query_for_llm
+
+            if action == "submit" and attached_files:
+                attachment_blocks: list[str] = []
+                attachment_warnings: list[str] = []
+
+                async def _extract_one(
+                    attached: dict[str, str],
+                ) -> tuple[str | None, str | None, str | None]:
+                    file_path = str(attached.get("path", "")).strip()
+                    file_name = str(
+                        attached.get("name", "")
+                    ).strip() or os.path.basename(file_path)
+                    if not file_path:
+                        return None, None, "Skipped empty attachment path."
+                    if not os.path.exists(file_path):
+                        return None, None, f"Attachment missing: {file_name}"
+
+                    relative_path = file_path
+                    try:
+                        relative_path = os.path.relpath(
+                            file_path, os.path.expanduser("~")
+                        )
+                    except Exception:
+                        pass
+
+                    try:
+                        result = await _run_read_file_for_attachment(file_path)
+
+                        if isinstance(result, str):
+                            if result.startswith("Error:"):
+                                return (
+                                    None,
+                                    None,
+                                    f"Attachment skipped ({file_name}): {result}",
+                                )
+                            block_text = _truncate_attachment_tool_result(result)
+                            block = (
+                                f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                                f"{block_text}\n"
+                                f"--- End: {file_name} ---"
+                            )
+                            return block, None, None
+
+                        if not isinstance(result, dict):
+                            return (
+                                None,
+                                None,
+                                f"Attachment skipped ({file_name}): unexpected read_file result type.",
+                            )
+
+                        if result.get("type") == "image":
+                            width = result.get("width", "?")
+                            height = result.get("height", "?")
+                            file_size = int(result.get("file_size_bytes", 0) or 0)
+                            block = (
+                                f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                                f"Image: {width}x{height}, {file_size:,} bytes\n"
+                                "[This image was auto-attached as multimodal context from the @ attachment.]\n"
+                                f"--- End: {file_name} ---"
+                            )
+                            return block, file_path, None
+
+                        serialized_result = json.dumps(
+                            result,
+                            ensure_ascii=False,
+                            default=str,
+                            indent=2,
+                        )
+                        block_text = _truncate_attachment_tool_result(serialized_result)
+
+                        block = (
+                            f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                            f"{block_text}\n"
+                            f"--- End: {file_name} ---"
+                        )
+                        return block, None, None
+                    except Exception as exc:
+                        return (
+                            None,
+                            None,
+                            f"Attachment read_file failed for {file_name}: {exc}",
+                        )
+
+                extraction_results = await asyncio.gather(
+                    *[_extract_one(attached) for attached in attached_files[:10]],
+                    return_exceptions=False,
+                )
+
+                for block, image_path, warning in extraction_results:
+                    if block:
+                        attachment_blocks.append(block)
+                    if image_path:
+                        image_paths.append(image_path)
+                    if warning:
+                        attachment_warnings.append(warning)
+
+                if attachment_blocks:
+                    query_for_llm = "\n\n".join([*attachment_blocks, query_for_llm])
+                if attachment_warnings:
+                    warning_block = "\n".join(
+                        f"[Attachment warning] {warning}"
+                        for warning in attachment_warnings
+                    )
+                    query_for_llm = f"{warning_block}\n\n{query_for_llm}"
 
             await broadcast_message("query", display_query)
 
-            response_text, token_stats, tool_calls, interleaved_blocks_from_llm = await route_chat(
+            (
+                response_text,
+                token_stats,
+                tool_calls,
+                interleaved_blocks_from_llm,
+            ) = await route_chat(
                 current_model,
                 query_for_llm,
                 image_paths,
                 history_for_llm,
                 forced_skills=ctx.forced_skills,
+                tool_retrieval_query=tool_retrieval_query,
             )
 
             interrupted = ctx.cancelled
@@ -451,7 +599,11 @@ class ConversationService:
                     response_text = "[Response interrupted]"
 
             if _get_conv_id() is None:
-                _set_conv_id(db.start_new_conversation(ConversationService._conversation_title(display_query)))
+                _set_conv_id(
+                    db.start_new_conversation(
+                        ConversationService._conversation_title(display_query)
+                    )
+                )
                 logger.info("Created conversation: %s", _require_conv_id())
 
                 from .terminal import terminal_service
@@ -470,7 +622,9 @@ class ConversationService:
                 await broadcast_message("tool_calls_summary", json.dumps(tool_calls))
 
             if not response_text.strip() and tool_calls:
-                response_text = "[Tool calls completed but model returned empty response]"
+                response_text = (
+                    "[Tool calls completed but model returned empty response]"
+                )
                 logger.warning(
                     "Empty response after tool calls — saved fallback message"
                 )
@@ -491,10 +645,16 @@ class ConversationService:
                 mobile_origin = None
                 if tab_state is not None:
                     from .mobile_channel import mobile_channel_service
-                    mobile_info = mobile_channel_service.get_mobile_tab_info(tab_state.tab_id)
+
+                    mobile_info = mobile_channel_service.get_mobile_tab_info(
+                        tab_state.tab_id
+                    )
                     if mobile_info:
                         platform_name, _sender_id, _thread_id = mobile_info
-                        mobile_origin = {"platform": platform_name, "display_name": platform_name.title()}
+                        mobile_origin = {
+                            "platform": platform_name,
+                            "display_name": platform_name.title(),
+                        }
 
                 db.add_message(
                     _require_conv_id(),
@@ -506,7 +666,11 @@ class ConversationService:
                 )
 
                 if response_text.strip() or tool_calls:
-                    save_text = response_text if response_text.strip() else "[Tool calls completed]"
+                    save_text = (
+                        response_text
+                        if response_text.strip()
+                        else "[Tool calls completed]"
+                    )
                     assistant_message = db.add_message(
                         _require_conv_id(),
                         "assistant",
@@ -552,7 +716,11 @@ class ConversationService:
                     if updated_user_message is None:
                         raise ValueError("Selected turn could not be updated.")
 
-                save_text = response_text if response_text.strip() else "[Model returned empty response]"
+                save_text = (
+                    response_text
+                    if response_text.strip()
+                    else "[Model returned empty response]"
+                )
                 db.save_response_version(
                     turn_context["conversation_id"],
                     turn_context["assistant_message"]["message_id"],
@@ -566,7 +734,9 @@ class ConversationService:
                     turn_context["conversation_id"], turn_context["turn_id"]
                 )
 
-            ConversationService._set_chat_history(_require_conv_id(), tab_state=tab_state)
+            ConversationService._set_chat_history(
+                _require_conv_id(), tab_state=tab_state
+            )
             saved_turn = await ConversationService._hydrate_turn_payload(saved_turn)
 
             await broadcast_message(
@@ -579,7 +749,10 @@ class ConversationService:
                 },
             )
 
-            logger.debug("Chat history: %d messages", len(tab_state.chat_history if tab_state else app_state.chat_history))
+            logger.debug(
+                "Chat history: %d messages",
+                len(tab_state.chat_history if tab_state else app_state.chat_history),
+            )
 
             return _require_conv_id()
 

@@ -72,6 +72,7 @@ def init_tab_manager() -> TabManager:
                 return await ConversationService.submit_query(
                     user_query=query.content,
                     capture_mode=query.capture_mode,
+                    attached_files=query.attached_files,
                     forced_skills=query.forced_skills,
                     llm_query=query.llm_query,
                     tab_state=session.state,

@@ -223,11 +223,12 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 - **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. Handles QR pairing.
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`.
-- **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 
 ### `createApiService` vs `api` singleton
 - `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.
 - `api` singleton in `api.ts` — plain `fetch` calls for one-shot HTTP operations. Import `api` directly; don't create new instances.
+
+`QueryInput` uses `api.browseFiles(query?)` for the `@` file picker. Backend responses are relevance-ranked globally from the home subtree (no folder navigation), so the top suggestion is the closest match for the typed token.
 
 **`api` HTTP methods** (partial list — see `api.ts` for full surface):
 ```ts

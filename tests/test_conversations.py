@@ -37,7 +37,9 @@ class TestExtractSkillSlashCommands:
     def _call(self, message, skills):
         mock_manager = MagicMock()
         mock_manager.get_all_skills.return_value = skills
-        with patch("source.services.skills.get_skill_manager", return_value=mock_manager):
+        with patch(
+            "source.services.skills.get_skill_manager", return_value=mock_manager
+        ):
             return _extract_skill_slash_commands_sync(message)
 
     def test_no_slash_commands(self):
@@ -115,7 +117,9 @@ class TestExtractSkillSlashCommands:
 
 
 class TestConversationBranching:
-    def _seed_turn(self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"):
+    def _seed_turn(
+        self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"
+    ):
         user_message = db_manager.add_message(conversation_id, "user", user_content)
         assistant_message = db_manager.add_message(
             conversation_id,
@@ -155,7 +159,9 @@ class TestConversationBranching:
                 )
             ),
         )
-        monkeypatch.setattr("source.services.conversations.broadcast_message", AsyncMock())
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", AsyncMock()
+        )
 
         conversation_id = await ConversationService.submit_query(
             user_query="Fresh question",
@@ -179,10 +185,16 @@ class TestConversationBranching:
     ):
         cid = db_manager.start_new_conversation("Retry this")
         first_user, first_assistant = self._seed_turn(
-            db_manager, cid, user_content="First question", assistant_content="First answer"
+            db_manager,
+            cid,
+            user_content="First question",
+            assistant_content="First answer",
         )
         self._seed_turn(
-            db_manager, cid, user_content="Second question", assistant_content="Second answer"
+            db_manager,
+            cid,
+            user_content="Second question",
+            assistant_content="Second answer",
         )
 
         tab_state = TabState(tab_id="default")
@@ -202,7 +214,9 @@ class TestConversationBranching:
             ),
         )
         broadcast_mock = AsyncMock()
-        monkeypatch.setattr("source.services.conversations.broadcast_message", broadcast_mock)
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", broadcast_mock
+        )
 
         conversation_id = await ConversationService.submit_query(
             user_query="First question",
@@ -241,7 +255,10 @@ class TestConversationBranching:
     ):
         cid = db_manager.start_new_conversation("Original prompt")
         first_user, first_assistant = self._seed_turn(
-            db_manager, cid, user_content="Original prompt", assistant_content="Original answer"
+            db_manager,
+            cid,
+            user_content="Original prompt",
+            assistant_content="Original answer",
         )
         db_manager.save_response_version(
             cid,
@@ -251,7 +268,10 @@ class TestConversationBranching:
             content_blocks=[{"type": "text", "content": "Alternate original answer"}],
         )
         self._seed_turn(
-            db_manager, cid, user_content="Follow up", assistant_content="Follow up answer"
+            db_manager,
+            cid,
+            user_content="Follow up",
+            assistant_content="Follow up answer",
         )
 
         tab_state = TabState(tab_id="default")
@@ -291,7 +311,9 @@ class TestConversationBranching:
         ]
         assert len(messages[1]["response_variants"]) == 1
         assert messages[1]["response_variants"][0]["content"] == "Edited answer"
-        assert db_manager.get_recent_conversations(limit=1)[0]["title"] == "Edited prompt"
+        assert (
+            db_manager.get_recent_conversations(limit=1)[0]["title"] == "Edited prompt"
+        )
         assert tab_state.chat_history[0]["content"] == "Edited prompt"
 
     @pytest.mark.asyncio
@@ -306,7 +328,9 @@ class TestConversationBranching:
         tab_state = TabState(tab_id="default")
         broadcast_mock = AsyncMock()
         monkeypatch.setattr("source.services.conversations.db", db_manager)
-        monkeypatch.setattr("source.services.conversations.broadcast_message", broadcast_mock)
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", broadcast_mock
+        )
         monkeypatch.setattr(
             "source.services.conversations.run_in_thread",
             AsyncMock(return_value="thumb-data"),
@@ -324,3 +348,168 @@ class TestConversationBranching:
         assert resume_payload["messages"][0]["images"] == [
             {"name": "image.png", "thumbnail": "thumb-data"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_submit_query_injects_and_truncates_attached_text(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        cid = db_manager.start_new_conversation("Attach")
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = []
+
+        text_path = tmp_path / "long.txt"
+        text_path.write_text("a" * 12000, encoding="utf-8")
+
+        route_mock = AsyncMock(
+            return_value=(
+                "ok",
+                {"prompt_eval_count": 1, "eval_count": 1},
+                [],
+                [{"type": "text", "content": "ok"}],
+            )
+        )
+        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", AsyncMock()
+        )
+
+        await ConversationService.submit_query(
+            user_query="Summarize",
+            llm_query="Summarize",
+            tab_state=tab_state,
+            model="model-a",
+            attached_files=[{"name": "long.txt", "path": str(text_path)}],
+        )
+
+        await_args = route_mock.await_args
+        assert await_args is not None
+        llm_query_sent = await_args.args[1]
+        assert "--- Attached via read_file: long.txt" in llm_query_sent
+        assert '"content"' in llm_query_sent
+        assert '"has_more": true' in llm_query_sent
+        assert "Summarize" in llm_query_sent
+        assert await_args.kwargs["tool_retrieval_query"] == "Summarize"
+
+    @pytest.mark.asyncio
+    async def test_submit_query_routes_image_attachment_to_image_paths(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        cid = db_manager.start_new_conversation("Attach image")
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = []
+
+        image_path = tmp_path / "photo.png"
+        from PIL import Image
+
+        Image.new("RGB", (20, 20), color="red").save(image_path)
+
+        route_mock = AsyncMock(
+            return_value=(
+                "ok",
+                {"prompt_eval_count": 1, "eval_count": 1},
+                [],
+                [{"type": "text", "content": "ok"}],
+            )
+        )
+        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", AsyncMock()
+        )
+
+        await ConversationService.submit_query(
+            user_query="Describe",
+            llm_query="Describe",
+            tab_state=tab_state,
+            model="model-a",
+            attached_files=[{"name": "photo.png", "path": str(image_path)}],
+        )
+
+        await_args = route_mock.await_args
+        assert await_args is not None
+        llm_query_sent = await_args.args[1]
+        image_paths_sent = await_args.args[2]
+        assert "[This image was auto-attached as multimodal context" in llm_query_sent
+        assert str(image_path) in image_paths_sent
+        assert await_args.kwargs["tool_retrieval_query"] == "Describe"
+
+    @pytest.mark.asyncio
+    async def test_submit_query_includes_read_file_payload_for_document_attachment(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        cid = db_manager.start_new_conversation("Attach deck")
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = []
+
+        deck_path = tmp_path / "deck.pptx"
+        deck_path.write_text("fake", encoding="utf-8")
+
+        extracted_image_path = tmp_path / "slideshot.png"
+        extracted_image_path.write_bytes(b"png")
+
+        read_file_payload = {
+            "content": f"Slide 1 agenda\n[IMAGE: {extracted_image_path} (1280x720) - call read_file to view]",
+            "total_chars": 96,
+            "offset": 0,
+            "chars_returned": 96,
+            "has_more": False,
+            "next_offset": None,
+            "chunk_summary": "Showing characters 0-96 of 96 (100%)",
+            "file_info": {
+                "format": "pptx",
+                "file_size_bytes": 1234,
+                "page_count": 1,
+                "title": None,
+                "author": None,
+                "extracted_images": [
+                    {
+                        "path": str(extracted_image_path),
+                        "page": 1,
+                        "index": 1,
+                        "description": "",
+                        "width": 1280,
+                        "height": 720,
+                    }
+                ],
+                "warnings": [],
+            },
+        }
+
+        route_mock = AsyncMock(
+            return_value=(
+                "ok",
+                {"prompt_eval_count": 1, "eval_count": 1},
+                [],
+                [{"type": "text", "content": "ok"}],
+            )
+        )
+
+        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr(
+            "source.services.conversations.broadcast_message", AsyncMock()
+        )
+        monkeypatch.setattr(
+            "source.services.conversations._run_read_file_for_attachment",
+            AsyncMock(return_value=read_file_payload),
+        )
+
+        await ConversationService.submit_query(
+            user_query="What is on slide 1 image?",
+            llm_query="What is on slide 1 image?",
+            tab_state=tab_state,
+            model="model-a",
+            attached_files=[{"name": "deck.pptx", "path": str(deck_path)}],
+        )
+
+        await_args = route_mock.await_args
+        assert await_args is not None
+        llm_query_sent = await_args.args[1]
+        assert "--- Attached via read_file: deck.pptx" in llm_query_sent
+        assert '"extracted_images"' in llm_query_sent
+        assert str(extracted_image_path).replace("\\", "\\\\") in llm_query_sent
+        assert await_args.kwargs["tool_retrieval_query"] == "What is on slide 1 image?"

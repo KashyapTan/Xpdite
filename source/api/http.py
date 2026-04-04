@@ -1918,3 +1918,46 @@ async def dismiss_all_notifications():
 
     count = await notification_service.dismiss_all()
     return {"success": True, "dismissed_count": count}
+
+
+# ============================================
+# File Browser API (for @ file attachments)
+# ============================================
+
+
+@router.get("/files/browse")
+async def browse_files(query: Optional[str] = None):
+    """
+    Search the filesystem for file attachments.
+
+    Search is global (from home), relevance-ranked, and does not support
+    interactive folder navigation.
+
+    Returns:
+        entries: list of file/folder entries
+        current_path: absolute home/search root path
+        parent_path: always null (navigation disabled)
+    """
+    from ..services.file_browser import file_browser_service
+
+    try:
+        result = await _run_in_thread(file_browser_service.search, query or "", None)
+
+        return {
+            "entries": [e.to_dict() for e in result.entries],
+            "current_path": result.current_path,
+            "parent_path": result.parent_path,
+        }
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("File browse error: %s", e)
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to browse files. See server logs.",
+        )

@@ -55,6 +55,7 @@ dependencies = [
     "xlrd>=2.0.2",
     "odfpy>=1.4.1",
     "striprtf>=0.0.29",
+    "watchdog>=6.0.0",
 ]
 
 [dependency-groups]

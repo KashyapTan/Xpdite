@@ -24,7 +24,7 @@ async def websocket_endpoint(websocket: WebSocket):
     via the contextvar in ``connection.py``.
 
     Client -> Server messages (JSON):
-      - submit_query: Submit a query with optional capture mode
+      - submit_query: Submit a query with optional capture mode and attached_files
       - retry_message: Retry a saved user/assistant turn by message_id
       - edit_message: Edit a saved user message and resubmit that turn
       - set_active_response: Switch the active assistant response variant

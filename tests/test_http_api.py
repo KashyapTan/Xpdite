@@ -67,6 +67,51 @@ class TestHttpApiHelpers:
 
 
 class TestHttpApiEndpoints:
+    @pytest.mark.asyncio
+    async def test_browse_files_lists_directory(self):
+        fake_result = SimpleNamespace(
+            entries=[SimpleNamespace(to_dict=lambda: {"name": "a.txt"})],
+            current_path="/home/user",
+            parent_path=None,
+        )
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        service = MagicMock()
+        service.search.return_value = fake_result
+
+        with (
+            patch("source.services.file_browser.file_browser_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.browse_files()
+
+        assert result == {
+            "entries": [{"name": "a.txt"}],
+            "current_path": "/home/user",
+            "parent_path": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_browse_files_search_mode_uses_query(self):
+        fake_result = SimpleNamespace(entries=[], current_path="/h", parent_path="/")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        service = MagicMock()
+        service.search.return_value = fake_result
+
+        with (
+            patch("source.services.file_browser.file_browser_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.browse_files(query="foo")
+
+        assert result["entries"] == []
+        service.search.assert_called_once_with("foo", None)
+
     def test_scheduled_job_conversations_route_returns_job_conversations(self):
         app = FastAPI()
         app.include_router(http_api.router)

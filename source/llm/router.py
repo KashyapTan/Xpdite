@@ -61,6 +61,7 @@ async def route_chat(
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
     forced_skills: list | None = None,  # List[Skill] at runtime
+    tool_retrieval_query: Optional[str] = None,
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Route a chat request to the correct LLM provider.
@@ -90,23 +91,28 @@ async def route_chat(
     from ..mcp_integration.manager import mcp_manager
     from ..core.request_context import is_current_request_cancelled
 
+    # Retrieve relevant MCP tools using a compact query string.
+    # This prevents large attachment payload injections from overflowing
+    # embedding models used by the tool retriever.
+    retrieval_query = tool_retrieval_query or user_query
+
     # Retrieve relevant MCP tools for this query
     retrieved_tools: list = []
     if mcp_manager.has_tools():
         from ..mcp_integration.handlers import retrieve_relevant_tools
 
-        retrieved_tools = retrieve_relevant_tools(user_query)
+        retrieved_tools = retrieve_relevant_tools(retrieval_query)
 
     if retrieved_tools:
         tool_names = [t["function"]["name"] for t in retrieved_tools]
         logger.info(
             "Retrieved %d tool(s) for query '%s...': %s",
             len(tool_names),
-            user_query[:40],
+            retrieval_query[:40],
             tool_names,
         )
     else:
-        logger.info("No tools retrieved for query '%s...'", user_query[:40])
+        logger.info("No tools retrieved for query '%s...'", retrieval_query[:40])
 
     # Skill injection: only inject when forced via slash commands or YouTube URL
     # For on-demand discovery, the LLM uses list_skills/use_skill tools

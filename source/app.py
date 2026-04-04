@@ -79,6 +79,25 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning("Failed to sync mobile channels config on startup: %s", e)
 
+    # ── File browser indexer lifecycle ────────────────────────────────
+    @app.on_event("startup")
+    async def _start_file_browser_indexer():
+        from .services.file_browser import file_browser_service
+
+        try:
+            file_browser_service.start()
+        except Exception as e:
+            logger.warning("Failed to start file browser indexer: %s", e)
+
+    @app.on_event("shutdown")
+    async def _stop_file_browser_indexer():
+        from .services.file_browser import file_browser_service
+
+        try:
+            file_browser_service.shutdown()
+        except Exception as e:
+            logger.warning("Failed to stop file browser indexer: %s", e)
+
     return app
 
 

@@ -29,6 +29,8 @@ class TestCreateApp:
 
         startup_handlers = app.router.on_startup
         assert startup_handlers, "Expected startup handlers to be registered"
+        shutdown_handlers = app.router.on_shutdown
+        assert shutdown_handlers, "Expected shutdown handlers to be registered"
 
         init_handler = next(
             handler
@@ -67,3 +69,35 @@ class TestCreateApp:
             asyncio.run(sync_handler())
 
         assert sync_calls == ["called"]
+
+        file_browser_start_handler = next(
+            handler
+            for handler in startup_handlers
+            if getattr(handler, "__name__", "") == "_start_file_browser_indexer"
+        )
+        assert inspect.iscoroutinefunction(file_browser_start_handler)
+
+        with patch(
+            "source.services.file_browser.file_browser_service"
+        ) as browser_service:
+            import asyncio
+
+            asyncio.run(file_browser_start_handler())
+
+        browser_service.start.assert_called_once_with()
+
+        file_browser_shutdown_handler = next(
+            handler
+            for handler in shutdown_handlers
+            if getattr(handler, "__name__", "") == "_stop_file_browser_indexer"
+        )
+        assert inspect.iscoroutinefunction(file_browser_shutdown_handler)
+
+        with patch(
+            "source.services.file_browser.file_browser_service"
+        ) as browser_service:
+            import asyncio
+
+            asyncio.run(file_browser_shutdown_handler())
+
+        browser_service.shutdown.assert_called_once_with()
