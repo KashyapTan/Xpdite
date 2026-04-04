@@ -5,9 +5,10 @@ Manages MCP server connections and tool routing for the main app.
 """
 
 import asyncio
+import json
+import logging
 import os
 import sys
-import logging
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
@@ -251,8 +252,13 @@ class McpToolManager:
             # retriever and stale description keys are removed there.
             self.refresh_tool_embeddings()
 
-    async def call_tool(self, tool_name: str, arguments: dict) -> str:
-        """Route a tool call to the correct MCP server."""
+    async def call_tool(self, tool_name: str, arguments: dict) -> str | dict:
+        """Route a tool call to the correct MCP server.
+
+        Returns:
+            str: For normal tool results (text output)
+            dict: For special results like images ({"type": "image", ...})
+        """
         if tool_name not in self._tool_registry:
             return f"Error: Unknown tool '{tool_name}'"
 
@@ -294,7 +300,17 @@ class McpToolManager:
         output_parts = []
         for block in result.content:
             if hasattr(block, "text"):
-                output_parts.append(block.text)
+                text_content = block.text
+                # Check if this is a JSON dict with special type (e.g., image result)
+                if text_content.strip().startswith("{"):
+                    try:
+                        parsed = json.loads(text_content)
+                        if isinstance(parsed, dict) and parsed.get("type") == "image":
+                            # Return the image dict directly for special handling
+                            return parsed
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                output_parts.append(text_content)
             else:
                 output_parts.append(str(block))
 

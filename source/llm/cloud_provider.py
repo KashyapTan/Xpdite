@@ -202,13 +202,15 @@ async def _execute_and_broadcast_tool(
     provider_label: str,
     tool_calls_list: List[Dict[str, Any]],
     interleaved_blocks: List[Dict[str, Any]],
-) -> str:
+) -> str | Dict[str, Any]:
     """Execute a single MCP tool call, broadcast progress, and record results.
 
     This is the common core shared by all cloud providers.  The caller
     is responsible for appending the tool result message to the conversation.
 
-    Returns the (possibly truncated) result string.
+    Returns:
+        str: The (possibly truncated) result string for normal tools
+        dict: An image result dict {"type": "image", ...} for image tools
     """
     from ..mcp_integration.manager import mcp_manager
     from ..mcp_integration.terminal_executor import (
@@ -285,6 +287,33 @@ async def _execute_and_broadcast_tool(
         )
         result = "System error: tool execution failed. See server logs for details."
 
+    # Handle image results specially - return dict directly
+    if isinstance(result, dict) and result.get("type") == "image":
+        # For broadcast, use a summary instead of base64 data
+        result_summary = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
+        await broadcast_message(
+            "tool_call",
+            json.dumps(
+                {
+                    "name": fn_name,
+                    "args": safe_args,
+                    "result": result_summary,
+                    "server": server_name,
+                    "status": "complete",
+                }
+            ),
+        )
+        _append_tool_result(
+            fn_name,
+            fn_args,
+            result_summary,
+            server_name,
+            tool_calls_list,
+            interleaved_blocks,
+        )
+        return result  # Return the image dict
+
+    # Normal string result
     result_str = _truncate_tool_result(str(result))
     await broadcast_message(
         "tool_call",
@@ -769,8 +798,9 @@ async def _stream_litellm(
                             tool_calls_list,
                             interleaved_blocks,
                         )
+                        tool_result = result_str
                     else:
-                        result_str = await _execute_and_broadcast_tool(
+                        tool_result = await _execute_and_broadcast_tool(
                             fn_name,
                             fn_args,
                             provider.capitalize(),
@@ -779,13 +809,45 @@ async def _stream_litellm(
                         )
 
                     # Append tool result in OpenAI format (LiteLLM translates)
-                    tool_result_messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc_info["id"],
-                            "content": result_str,
-                        }
-                    )
+                    # Handle image results specially - construct image content block
+                    if (
+                        isinstance(tool_result, dict)
+                        and tool_result.get("type") == "image"
+                    ):
+                        # Build multipart content with image and text description
+                        image_content = [
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:{tool_result.get('media_type', 'image/png')};base64,{tool_result.get('data', '')}"
+                                },
+                            },
+                            {
+                                "type": "text",
+                                "text": f"Image: {tool_result.get('width', '?')}x{tool_result.get('height', '?')}, {tool_result.get('file_size_bytes', 0):,} bytes",
+                            },
+                        ]
+                        tool_result_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_info["id"],
+                                "content": image_content,
+                            }
+                        )
+                    else:
+                        # Normal string result
+                        result_str = (
+                            tool_result
+                            if isinstance(tool_result, str)
+                            else str(tool_result)
+                        )
+                        tool_result_messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_info["id"],
+                                "content": result_str,
+                            }
+                        )
 
                 if not cancelled_during_tool_loop:
                     messages.append(assistant_msg)

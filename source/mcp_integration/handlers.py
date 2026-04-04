@@ -92,6 +92,71 @@ def _truncate_result(result: str) -> str:
     return result_str
 
 
+async def _save_temp_image_for_ollama(image_result: Dict[str, Any]) -> Optional[str]:
+    """
+    Save a base64 image result to a temp file for Ollama's native image format.
+
+    Ollama expects image paths in the 'images' key of messages, not base64 data.
+    This saves the image to the screenshots folder with a temp prefix.
+
+    Returns the file path if successful, None otherwise.
+    """
+    import base64
+    import os
+    import re
+    import uuid
+    from ..config import SCREENSHOT_FOLDER
+
+    # Max 50MB for image data (base64 is ~33% larger than binary)
+    MAX_BASE64_LENGTH = 70 * 1024 * 1024  # ~50MB decoded
+
+    try:
+        data = image_result.get("data", "")
+        if not data:
+            return None
+
+        # Validate base64 data size before decoding
+        if len(data) > MAX_BASE64_LENGTH:
+            logger.warning(
+                "Image data too large for Ollama temp file: %d bytes", len(data)
+            )
+            return None
+
+        media_type = image_result.get("media_type", "image/png")
+        raw_ext = media_type.split("/")[-1] if "/" in media_type else "png"
+        # Sanitize extension
+        safe_ext = re.sub(r"[^a-zA-Z0-9]", "", raw_ext.lower())[:10]
+        if not safe_ext or safe_ext not in ("png", "jpg", "jpeg", "webp", "gif", "bmp"):
+            safe_ext = "png"
+        if safe_ext == "jpeg":
+            safe_ext = "jpg"
+
+        # Generate unique filename
+        filename = f"ollama_tool_img_{uuid.uuid4().hex[:8]}.{safe_ext}"
+        filepath = os.path.join(SCREENSHOT_FOLDER, filename)
+
+        # Validate the final path stays within SCREENSHOT_FOLDER (defense in depth)
+        real_folder = os.path.realpath(SCREENSHOT_FOLDER)
+        real_filepath = os.path.realpath(filepath)
+        if (
+            not real_filepath.startswith(real_folder + os.sep)
+            and real_filepath != real_folder
+        ):
+            logger.error("Path traversal detected in temp image save")
+            return None
+
+        # Decode and save
+        image_bytes = base64.b64decode(data)
+        with open(real_filepath, "wb") as f:
+            f.write(image_bytes)
+
+        return real_filepath
+
+    except Exception as e:
+        logger.warning("Failed to save temp image for Ollama: %s", e)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Ollama tool call handler with interleaved streaming
 # ---------------------------------------------------------------------------
@@ -296,6 +361,10 @@ async def handle_mcp_tool_calls(
             if is_current_request_cancelled():
                 break
 
+            # Initialize result tracking
+            result: Any = None
+            is_image_result = False
+
             # spawn_agent results already computed in parallel — skip outer broadcast
             if idx in spawn_results:
                 result_str = _truncate_result(spawn_results[idx])
@@ -377,7 +446,15 @@ async def handle_mcp_tool_calls(
                     )
                     result = "System error: tool execution failed. See server logs for details."
 
-                result_str = _truncate_result(str(result))
+                # Handle image results specially for Ollama
+                is_image_result = (
+                    isinstance(result, dict) and result.get("type") == "image"
+                )
+                if is_image_result and isinstance(result, dict):
+                    # For broadcast and storage, use a summary
+                    result_str = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
+                else:
+                    result_str = _truncate_result(str(result))
                 logger.debug("Tool result:\n%s...", result_str[:100])
 
                 await broadcast_message(
@@ -410,7 +487,29 @@ async def handle_mcp_tool_calls(
                 }
             )
 
-            messages.append({"role": "tool", "content": result_str, "name": fn_name})
+            # For Ollama, we need to save image to temp file and use images key
+            # is_image_result is only True when result is a dict (set in else block)
+            if is_image_result and isinstance(result, dict):
+                # Save base64 image to temp file for Ollama
+                temp_path = await _save_temp_image_for_ollama(result)
+                if temp_path:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "content": result_str,
+                            "name": fn_name,
+                            "images": [temp_path],
+                        }
+                    )
+                else:
+                    # Fallback to text-only if save failed
+                    messages.append(
+                        {"role": "tool", "content": result_str, "name": fn_name}
+                    )
+            else:
+                messages.append(
+                    {"role": "tool", "content": result_str, "name": fn_name}
+                )
 
         if is_current_request_cancelled():
             break

@@ -48,6 +48,13 @@ dependencies = [
     "youtube-transcript-api>=1.2.4",
     "yt-dlp>=2026.3.17",
     "apscheduler>=3.11.2",
+    "pymupdf>=1.27.2.2",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+    "openpyxl>=3.1.5",
+    "xlrd>=2.0.2",
+    "odfpy>=1.4.1",
+    "striprtf>=0.0.29",
 ]
 
 [dependency-groups]

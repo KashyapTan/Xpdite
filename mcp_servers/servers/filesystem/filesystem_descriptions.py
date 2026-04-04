@@ -27,14 +27,25 @@ LIST_DIRECTORY_DESCRIPTION = build_tool_description(
 )
 
 READ_FILE_DESCRIPTION = build_tool_description(
-    purpose="Read the full text content of a file inside the filesystem sandbox.",
+    purpose="Read the content of a file inside the filesystem sandbox, supporting text, documents, and images.",
     use_when=(
-        "You need to inspect a text file, verify the current contents before an "
-        "edit, or gather source material for an answer."
+        "You need to inspect a text file, extract content from documents (PDF, DOCX, PPTX, XLSX, etc.), "
+        "or view an image file."
     ),
     inputs=f"path = the exact absolute, relative, or home-relative file path inside {BASE_PATH}.",
-    returns="The file text, decoded as UTF-8 with replacement for invalid bytes, or an error string.",
-    notes="Call list_directory first to confirm the exact path. This tool is for files, not directories.",
+    returns=(
+        "For text files: the file content as UTF-8 text. "
+        "For documents (PDF, DOCX, PPTX, XLSX, XLS, ODT, ODP, ODS, RTF): extracted text with structure markers, "
+        "plus a list of extracted image paths. "
+        "For images (PNG, JPG, JPEG, WEBP, GIF, BMP, TIFF): base64-encoded image data for vision. "
+        "For ZIP archives: a listing of contained files. "
+        "Returns an error string for unsupported formats (.doc, .ppt)."
+    ),
+    notes=(
+        "Call list_directory first to confirm the exact path. "
+        "For documents with embedded images, images are extracted and their paths listed at the end of the text. "
+        "Call read_file again on an extracted image path to view it."
+    ),
 )
 
 WRITE_FILE_DESCRIPTION = build_tool_description(
@@ -108,9 +119,7 @@ GLOB_FILES_DESCRIPTION = build_tool_description(
         "(defaults to the current directory); include_hidden = optional boolean "
         "for dotfiles and hidden directories."
     ),
-    returns=(
-        "A JSON string with matches (relative paths), total, and truncated."
-    ),
+    returns=("A JSON string with matches (relative paths), total, and truncated."),
     notes=(
         "Results are capped at 500 matches. If truncated is true, narrow the "
         "pattern or base_path and try again. This tool is sandboxed to "

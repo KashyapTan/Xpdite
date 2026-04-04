@@ -21,6 +21,53 @@ from mcp_servers.servers.filesystem.filesystem_descriptions import (
     WRITE_FILE_DESCRIPTION,
 )
 
+# File extraction imports (lazy loaded to avoid import overhead if not used)
+_file_extractor = None
+
+
+def _get_file_extractor():
+    """Lazy-load the file extractor to avoid import overhead."""
+    global _file_extractor
+    if _file_extractor is None:
+        from source.services.file_extractor import FileExtractor
+
+        _file_extractor = FileExtractor()
+    return _file_extractor
+
+
+# File extension sets for routing
+_IMAGE_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".webp",
+        ".gif",
+        ".bmp",
+        ".tiff",
+        ".tif",
+    }
+)
+
+_EXTRACTION_EXTENSIONS = frozenset(
+    {
+        ".pdf",
+        ".docx",
+        ".pptx",
+        ".xlsx",
+        ".xlsm",
+        ".xls",
+        ".odt",
+        ".odp",
+        ".ods",
+        ".rtf",
+    }
+)
+
+_ARCHIVE_EXTENSIONS = frozenset({".zip"})
+
+_LEGACY_UNSUPPORTED = frozenset({".doc", ".ppt"})
+
 mcp = FastMCP("Filesystem Tools")
 
 _GLOB_RESULTS_CAP = 500
@@ -74,7 +121,11 @@ def _to_display_path(relative_path: str | Path) -> str:
 
 
 def _has_hidden_part(relative_path: str | Path) -> bool:
-    parts = relative_path.parts if isinstance(relative_path, Path) else Path(relative_path).parts
+    parts = (
+        relative_path.parts
+        if isinstance(relative_path, Path)
+        else Path(relative_path).parts
+    )
     return any(part.startswith(".") for part in parts if part not in ("", ".", ".."))
 
 
@@ -90,7 +141,9 @@ def _is_within_search_root(candidate_path: str, search_root: str) -> bool:
 def _validate_relative_glob_pattern(pattern: str, field_name: str) -> str | None:
     normalized = pattern.replace("\\", "/")
     if os.path.isabs(pattern):
-        return f"{field_name} must be relative to the search root, not an absolute path."
+        return (
+            f"{field_name} must be relative to the search root, not an absolute path."
+        )
     if _WINDOWS_DRIVE_PATTERN.match(normalized):
         return f"{field_name} must not be drive-qualified."
 
@@ -178,16 +231,55 @@ def list_directory(path: str) -> list[str]:
         return [f"Error: {str(e)}"]
 
     except NotADirectoryError:
-        return [f"Error: '{path}' is a file, not a directory. Use read_file to view it."]
+        return [
+            f"Error: '{path}' is a file, not a directory. Use read_file to view it."
+        ]
 
     except Exception as e:
         return [f"Error: An unexpected error occurred: {str(e)}"]
 
 
 @mcp.tool(description=READ_FILE_DESCRIPTION)
-def read_file(path: str) -> str:
+def read_file(path: str) -> str | dict[str, Any]:
+    """
+    Read file content with support for multiple formats.
+
+    Returns:
+        - str: For text files, extracted document content, or error messages
+        - dict: For image files, returns {"type": "image", "media_type": ..., "data": ..., ...}
+    """
     try:
         clean_path = _get_safe_path(path)
+        ext = Path(clean_path).suffix.lower()
+
+        # Image files - return dict for LLM image content block
+        if ext in _IMAGE_EXTENSIONS:
+            extractor = _get_file_extractor()
+            result = extractor._load_image_file(clean_path)
+            if result.data:
+                return result.to_dict()
+            return f"Error: Failed to load image '{path}'"
+
+        # Legacy unsupported formats - return actionable error
+        if ext in _LEGACY_UNSUPPORTED:
+            return (
+                f"Error: Legacy format '{ext}' is not supported. "
+                "Please resave as .docx or .pptx for Word/PowerPoint documents."
+            )
+
+        # Document formats requiring extraction
+        if ext in _EXTRACTION_EXTENSIONS:
+            extractor = _get_file_extractor()
+            result = extractor._extract_document(clean_path, ext)
+            return extractor.format_result_for_tool(result)
+
+        # Archive files - list contents
+        if ext in _ARCHIVE_EXTENSIONS:
+            extractor = _get_file_extractor()
+            result = extractor._extract_zip(clean_path)
+            return extractor.format_result_for_tool(result)
+
+        # Text-native files and unknown formats - read as UTF-8
         with open(clean_path, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
 
@@ -344,7 +436,9 @@ def glob_files(
             return _glob_payload(
                 [],
                 truncated=False,
-                error=_build_error("path_not_found", f"base_path '{base_path}' does not exist."),
+                error=_build_error(
+                    "path_not_found", f"base_path '{base_path}' does not exist."
+                ),
             )
         if not os.path.isdir(clean_base):
             return _glob_payload(
@@ -475,9 +569,7 @@ def grep_files(
     effective_max_results = min(max_results, _GREP_MAX_RESULTS)
     effective_file_glob = file_glob or "**/*"
 
-    file_glob_error = _validate_relative_glob_pattern(
-        effective_file_glob, "file_glob"
-    )
+    file_glob_error = _validate_relative_glob_pattern(effective_file_glob, "file_glob")
     if file_glob_error is not None:
         return _grep_payload(
             [],
@@ -521,7 +613,9 @@ def grep_files(
                 skipped_binary_files=0,
                 skipped_large_files=0,
                 skipped_permission_denied_files=0,
-                error=_build_error("not_a_directory", f"path '{path}' is not a directory."),
+                error=_build_error(
+                    "not_a_directory", f"path '{path}' is not a directory."
+                ),
             )
 
         if is_regex:
@@ -650,7 +744,7 @@ def grep_files(
                         "file": display_path,
                         "line": line_number,
                         "match": line,
-                        "context_before": lines[start_index: line_number - 1],
+                        "context_before": lines[start_index : line_number - 1],
                         "context_after": lines[line_number:end_index],
                     }
                 )

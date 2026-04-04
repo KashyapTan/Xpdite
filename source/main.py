@@ -218,6 +218,18 @@ def main():
     # Register signal handlers for graceful shutdown
     register_signal_handlers()
 
+    # Cleanup old extracted images from previous sessions (>24 hours old)
+    try:
+        from .services.file_extractor import FileExtractor
+
+        removed = FileExtractor.cleanup_extracted_images(max_age_hours=24)
+        if removed > 0:
+            logger.info(
+                "Cleaned up %d old extracted images from previous sessions", removed
+            )
+    except Exception as e:
+        logger.warning("Failed to cleanup old extracted images (non-fatal): %s", e)
+
     logger.info("=" * 50)
     logger.info("  XPDITE - AI Desktop Assistant")
     logger.info("=" * 50)

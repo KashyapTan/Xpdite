@@ -75,6 +75,16 @@ def cleanup_resources():
     except Exception as e:
         logger.error("Error cleaning screenshots folder: %s", e)
 
+    # Clean up extracted document images (all of them on shutdown)
+    try:
+        from ..services.file_extractor import FileExtractor
+
+        removed = FileExtractor.cleanup_extracted_images(max_age_hours=0)
+        if removed > 0:
+            logger.info("Cleaned up %d extracted document images", removed)
+    except Exception as e:
+        logger.error("Error cleaning extracted images: %s", e)
+
     # Shut down the thread pool so worker threads don't block exit
     try:
         from .thread_pool import shutdown_thread_pool
