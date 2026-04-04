@@ -15,7 +15,7 @@ We take the security of Xpdite seriously. If you believe you have found a securi
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please send an email to [security@xpdite.ai](mailto:security@xpdite.ai) (placeholder). 
+Instead, please send an email to [contact@kashyaptan.com](mailto:contact@kashyaptan.com) (placeholder). 
 
 ### What to include in your report
 
