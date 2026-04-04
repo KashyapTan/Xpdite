@@ -3,7 +3,7 @@ Unified terminal tool execution.
 
 Single source of truth for executing terminal tools (run_command,
 request_session_mode, end_session_mode, send_input, read_output,
-kill_process, find_files) with approval, PTY, streaming, and DB persistence.
+kill_process) with approval, PTY, streaming, and DB persistence.
 
 Both handlers.py (Ollama) and cloud_tool_handlers.py (Anthropic/OpenAI/Gemini)
 import from here to avoid duplicating the approval + execution + notice + DB
@@ -29,7 +29,7 @@ TERMINAL_TOOLS = {
     "read_output",
     "kill_process",
     "get_environment",
-    "find_files",
+    # "find_files",
 }
 
 
@@ -67,8 +67,8 @@ async def execute_terminal_tool(
         return await _handle_kill_process(fn_args)
     elif fn_name == "get_environment":
         return await run_in_thread(_handle_get_environment)
-    elif fn_name == "find_files":
-        return await run_in_thread(_handle_find_files, fn_args)
+    # elif fn_name == "find_files":
+    #     return await run_in_thread(_handle_find_files, fn_args)
     return f"Unknown terminal tool: {fn_name}"
 
 
@@ -264,34 +264,34 @@ def _handle_get_environment() -> str:
     )
 
 
-def _handle_find_files(fn_args: dict) -> str:
-    """Find files matching a glob pattern — executed inline."""
-    pattern = fn_args.get("pattern", "")
-    directory = fn_args.get("directory", "") or os.getcwd()
+# def _handle_find_files(fn_args: dict) -> str:
+#     """Find files matching a glob pattern — executed inline."""
+#     pattern = fn_args.get("pattern", "")
+#     directory = fn_args.get("directory", "") or os.getcwd()
 
-    if not os.path.isabs(directory):
-        directory = os.path.abspath(directory)
-    if not os.path.isdir(directory):
-        return f"Error: Directory does not exist: {directory}"
+#     if not os.path.isabs(directory):
+#         directory = os.path.abspath(directory)
+#     if not os.path.isdir(directory):
+#         return f"Error: Directory does not exist: {directory}"
 
-    # Path traversal protection: restrict to CWD subtree
-    resolved = os.path.realpath(directory)
-    cwd = os.path.realpath(os.getcwd())
-    if not resolved.startswith(cwd):
-        return "Error: find_files is restricted to the current working directory tree."
+#     # Path traversal protection: restrict to CWD subtree
+#     resolved = os.path.realpath(directory)
+#     cwd = os.path.realpath(os.getcwd())
+#     if not resolved.startswith(cwd):
+#         return "Error: find_files is restricted to the current working directory tree."
 
-    search_pattern = os.path.join(directory, pattern)
-    try:
-        matches = glob.glob(search_pattern, recursive=True)
-        if not matches:
-            return f"No files found matching '{pattern}' in {directory}"
-        if len(matches) > 200:
-            return f"Found {len(matches)} files. Showing first 200:\n" + "\n".join(
-                matches[:200]
-            )
-        return f"Found {len(matches)} file(s):\n" + "\n".join(matches)
-    except Exception as e:
-        return f"Error searching for files: {e}"
+#     search_pattern = os.path.join(directory, pattern)
+#     try:
+#         matches = glob.glob(search_pattern, recursive=True)
+#         if not matches:
+#             return f"No files found matching '{pattern}' in {directory}"
+#         if len(matches) > 200:
+#             return f"Found {len(matches)} files. Showing first 200:\n" + "\n".join(
+#                 matches[:200]
+#             )
+#         return f"Found {len(matches)} file(s):\n" + "\n".join(matches)
+#     except Exception as e:
+#         return f"Error searching for files: {e}"
 
 
 # ─── DB persistence helper ──────────────────────────────────────────────
