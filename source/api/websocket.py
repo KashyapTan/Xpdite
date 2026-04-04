@@ -9,7 +9,6 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 from ..core.connection import manager
-from ..core.state import app_state
 from .handlers import MessageHandler
 
 logger = logging.getLogger(__name__)
@@ -134,21 +133,12 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     # Send any existing screenshots to newly connected client.
-    # Screenshots now live per-tab; send each tab's screenshots tagged
-    # with the tab_id so the frontend can route them correctly.
+    # Screenshots are per-tab; send each tab's screenshots tagged with tab_id
+    # so the frontend can route them correctly.
     try:
-        from ..services.tab_manager_instance import (
-            _adopt_global_screenshots,
-            tab_manager,
-        )
+        from ..services.tab_manager_instance import tab_manager
 
         if tab_manager is not None:
-            if app_state.screenshot_list:
-                active_session = tab_manager.get_or_create(
-                    app_state.active_tab_id or "default"
-                )
-                _adopt_global_screenshots(active_session)
-
             for tid in tab_manager.get_all_tab_ids():
                 ts = tab_manager.get_state(tid)
                 if ts is not None:
@@ -168,22 +158,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
     except Exception:
         pass  # tab_manager may not be initialized yet on first connect
-
-    # Fallback: also send any global screenshots (startup edge case)
-    for ss in app_state.screenshot_list:
-        await websocket.send_text(
-            json.dumps(
-                {
-                    "type": "screenshot_added",
-                    "tab_id": app_state.active_tab_id or "default",
-                    "content": {
-                        "id": ss["id"],
-                        "name": ss["name"],
-                        "thumbnail": ss["thumbnail"],
-                    },
-                }
-            )
-        )
 
     handler = MessageHandler(websocket)
 
@@ -210,7 +184,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         json.dumps(
                             {
                                 "type": "error",
-                                "content": f"Internal error: {str(e)[:200]}",
+                                "content": "Internal error processing request.",
                             }
                         )
                     )

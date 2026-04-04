@@ -7,7 +7,6 @@ import pytest
 from fastapi import WebSocketDisconnect
 
 import source.api.websocket as websocket_api
-from source.core.state import app_state
 
 
 class _FakeWebSocket:
@@ -47,7 +46,6 @@ class TestWebsocketEndpoint:
     async def test_endpoint_sends_ready_and_routes_messages(self, monkeypatch):
         manager = _FakeManager()
         handled_messages: list[dict] = []
-        adopted_sessions = []
 
         class _Handler:
             def __init__(self, websocket):
@@ -60,47 +58,29 @@ class TestWebsocketEndpoint:
             screenshot_list=[{"id": "ss-tab", "name": "tab.png", "thumbnail": "thumb"}]
         )
         fake_tab_manager = SimpleNamespace(
-            get_or_create=lambda _tab_id: SimpleNamespace(state=SimpleNamespace(screenshot_list=[])),
             get_all_tab_ids=lambda: ["tab-1"],
             get_state=lambda _tab_id: fake_tab_state,
         )
 
-        saved_screenshots = list(app_state.screenshot_list)
-        saved_active_tab = app_state.active_tab_id
-        app_state.screenshot_list = [
-            {"id": "ss-global", "name": "global.png", "thumbnail": "global-thumb"}
-        ]
-        app_state.active_tab_id = "tab-1"
-
-        def _adopt_global(session):
-            adopted_sessions.append(session)
-            app_state.screenshot_list = []
-            return 1
-
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.tab_manager", fake_tab_manager, raising=False
-        )
-        monkeypatch.setattr(
-            "source.services.tab_manager_instance._adopt_global_screenshots",
-            _adopt_global,
+            "source.services.tab_manager_instance.tab_manager",
+            fake_tab_manager,
             raising=False,
         )
 
         ws = _FakeWebSocket(
-            incoming=[json.dumps({"type": "tab_activated", "tab_id": "tab-1"}), WebSocketDisconnect()]
+            incoming=[
+                json.dumps({"type": "tab_activated", "tab_id": "tab-1"}),
+                WebSocketDisconnect(),
+            ]
         )
-        try:
-            await websocket_api.websocket_endpoint(ws)
-        finally:
-            app_state.screenshot_list = saved_screenshots
-            app_state.active_tab_id = saved_active_tab
+        await websocket_api.websocket_endpoint(ws)  # type: ignore[arg-type]
 
         assert manager.connected == [ws]
         assert manager.disconnected == [ws]
         assert handled_messages == [{"type": "tab_activated", "tab_id": "tab-1"}]
-        assert len(adopted_sessions) == 1
 
         decoded = [json.loads(msg) for msg in ws.sent]
         assert decoded[0]["type"] == "ready"
@@ -108,6 +88,41 @@ class TestWebsocketEndpoint:
             msg["type"] == "screenshot_added" and msg["tab_id"] == "tab-1"
             for msg in decoded
         )
+
+    @pytest.mark.asyncio
+    async def test_endpoint_does_not_emit_global_screenshot_fallback(self, monkeypatch):
+        manager = _FakeManager()
+
+        class _Handler:
+            def __init__(self, websocket):
+                self.websocket = websocket
+
+            async def handle(self, _data):
+                return None
+
+        fake_tab_manager = SimpleNamespace(
+            get_all_tab_ids=lambda: [],
+            get_state=lambda _tab_id: None,
+        )
+
+        monkeypatch.setattr(websocket_api, "manager", manager)
+        monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
+        monkeypatch.setattr(
+            "source.services.tab_manager_instance.tab_manager",
+            fake_tab_manager,
+            raising=False,
+        )
+
+        ws = _FakeWebSocket(incoming=[WebSocketDisconnect()])
+        await websocket_api.websocket_endpoint(ws)  # type: ignore[arg-type]
+
+        decoded = [json.loads(msg) for msg in ws.sent]
+        assert decoded == [
+            {
+                "type": "ready",
+                "content": "Server ready. You can start chatting or take a screenshot (Alt+.)",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_endpoint_ignores_malformed_and_sends_error_on_handler_exception(
@@ -124,7 +139,9 @@ class TestWebsocketEndpoint:
 
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
-        monkeypatch.setattr("source.services.tab_manager_instance.tab_manager", None, raising=False)
+        monkeypatch.setattr(
+            "source.services.tab_manager_instance.tab_manager", None, raising=False
+        )
 
         ws = _FakeWebSocket(
             incoming=[
@@ -134,18 +151,21 @@ class TestWebsocketEndpoint:
             ]
         )
 
-        await websocket_api.websocket_endpoint(ws)
+        await websocket_api.websocket_endpoint(ws)  # type: ignore[arg-type]
 
         decoded = [json.loads(msg) for msg in ws.sent]
         assert decoded[0]["type"] == "ready"
         assert any(
-            msg["type"] == "error" and "Internal error: boom: submit_query" in msg["content"]
+            msg["type"] == "error"
+            and msg["content"] == "Internal error processing request."
             for msg in decoded
         )
         assert manager.disconnected == [ws]
 
     @pytest.mark.asyncio
-    async def test_endpoint_swallows_send_error_during_error_reporting(self, monkeypatch):
+    async def test_endpoint_swallows_send_error_during_error_reporting(
+        self, monkeypatch
+    ):
         manager = _FakeManager()
 
         class _Handler:
@@ -157,7 +177,9 @@ class TestWebsocketEndpoint:
 
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
-        monkeypatch.setattr("source.services.tab_manager_instance.tab_manager", None, raising=False)
+        monkeypatch.setattr(
+            "source.services.tab_manager_instance.tab_manager", None, raising=False
+        )
 
         ws = _FakeWebSocket(
             incoming=[json.dumps({"type": "x"}), WebSocketDisconnect()],
@@ -165,6 +187,5 @@ class TestWebsocketEndpoint:
         )
 
         # Should complete without raising despite send failure in nested error handler.
-        await websocket_api.websocket_endpoint(ws)
+        await websocket_api.websocket_endpoint(ws)  # type: ignore[arg-type]
         assert manager.disconnected == [ws]
-

@@ -8,7 +8,7 @@ Tab-scoped operations are routed through the ``TabManager`` singleton.
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from fastapi import WebSocket
 from ..core.connection import (
@@ -60,14 +60,15 @@ class MessageHandler:
 
     async def handle(self, data: Dict[str, Any]):
         """Route a message to the appropriate handler."""
-        # Track the active tab — every WS message comes from the tab the
-        # user is currently interacting with.  Used by ScreenshotHandler to
-        # route hotkey-captured screenshots to the correct tab.
+        msg_type = data.get("type")
         tab_id = data.get("tab_id")
-        if tab_id:
+
+        # Keep active_tab_id in sync for hotkey screenshot routing, but do not
+        # overwrite it when closing a background tab. `tab_closed.tab_id` is
+        # the tab being closed, not necessarily the tab the user is working in.
+        if tab_id and msg_type != "tab_closed":
             app_state.active_tab_id = tab_id
 
-        msg_type = data.get("type")
         handler = getattr(self, f"_handle_{msg_type}", None)
 
         if handler:
@@ -80,9 +81,13 @@ class MessageHandler:
         return data.get("tab_id", "default")
 
     def _get_tab_manager(self):
-        from ..services.tab_manager_instance import tab_manager
+        from ..services.tab_manager import TabManager
+        from ..services.tab_manager_instance import init_tab_manager, tab_manager
 
-        return tab_manager
+        manager = tab_manager
+        if manager is None:
+            manager = init_tab_manager()
+        return cast(TabManager, manager)
 
     @staticmethod
     def _conversation_service():
@@ -123,7 +128,20 @@ class MessageHandler:
     async def _handle_tab_closed(self, data: Dict[str, Any]):
         """Handle tab close from frontend."""
         tab_id = self._get_tab_id(data)
-        await self._get_tab_manager().close_tab(tab_id)
+        tab_manager = self._get_tab_manager()
+        await tab_manager.close_tab(tab_id)
+
+        # If the active tab was closed, immediately fall back to a valid tab
+        # so background hotkey screenshot capture never targets a dead tab ID.
+        if app_state.active_tab_id == tab_id:
+            remaining_tab_ids = tab_manager.get_all_tab_ids()
+            app_state.active_tab_id = (
+                remaining_tab_ids[0] if remaining_tab_ids else "default"
+            )
+            logger.debug(
+                "Active tab closed; switched active_tab_id to: %s",
+                app_state.active_tab_id,
+            )
 
     async def _handle_tab_activated(self, data: Dict[str, Any]):
         """Handle tab switch from frontend — updates active_tab_id."""
@@ -436,9 +454,21 @@ class MessageHandler:
         if screenshot_id:
             tab_id = self._get_tab_id(data)
             tab_state = self._get_tab_manager().get_state(tab_id)
-            await self._screenshot_handler().remove_screenshot(
-                screenshot_id, tab_state=tab_state
-            )
+            if tab_state is None:
+                logger.warning(
+                    "Ignoring remove_screenshot for unknown tab '%s' (id=%s)",
+                    tab_id,
+                    screenshot_id,
+                )
+                return
+
+            token = set_current_tab_id(tab_id)
+            try:
+                await self._screenshot_handler().remove_screenshot(
+                    screenshot_id, tab_state=tab_state
+                )
+            finally:
+                reset_current_tab_id(token)
 
     async def _handle_set_capture_mode(self, data: Dict[str, Any]):
         """Handle capture mode change."""

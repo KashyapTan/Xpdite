@@ -384,9 +384,12 @@ class ConversationService:
             assert cid is not None, "conversation_id should be set by this point"
             return cid
 
-        _screenshot_list = (
-            tab_state.screenshot_list if tab_state else app_state.screenshot_list
-        )
+        if tab_state is None:
+            raise RuntimeError(
+                "submit_query requires tab_state; global screenshot state is no longer supported"
+            )
+
+        _screenshot_list = tab_state.screenshot_list
         _request_lock = (
             tab_state._request_lock if tab_state else app_state._request_lock
         )
@@ -438,12 +441,8 @@ class ConversationService:
             # (_handle_submit_query) BEFORE enqueuing, so screenshots are
             # taken immediately without being blocked by the Ollama queue.
             if action == "submit":
-                if tab_state:
-                    image_paths = tab_state.get_image_paths()
-                    history_for_llm = copy.deepcopy(tab_state.chat_history)
-                else:
-                    image_paths = app_state.get_image_paths()
-                    history_for_llm = copy.deepcopy(app_state.chat_history)
+                image_paths = tab_state.get_image_paths()
+                history_for_llm = copy.deepcopy(tab_state.chat_history)
                 display_query = user_query
             else:
                 if not target_message_id:

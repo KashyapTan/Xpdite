@@ -34,19 +34,23 @@ def _make_session():
 
 
 class _FakeTabManager:
-    def __init__(self, session=None):
+    def __init__(self, session=None, tab_ids=None):
         self.session = session or _make_session()
         self.created: list[str] = []
         self.closed: list[str] = []
+        self.tab_ids = list(tab_ids or ["default", "tab-1", "tab-2"])
 
     def create_tab(self, tab_id: str):
         if tab_id == "boom":
             raise ValueError("Tab exploded")
         self.created.append(tab_id)
+        if tab_id not in self.tab_ids:
+            self.tab_ids.append(tab_id)
         return self.session
 
     async def close_tab(self, tab_id: str):
         self.closed.append(tab_id)
+        self.tab_ids = [existing for existing in self.tab_ids if existing != tab_id]
 
     def get_or_create(self, _tab_id: str):
         return self.session
@@ -56,6 +60,9 @@ class _FakeTabManager:
 
     def get_state(self, _tab_id: str):
         return self.session.state
+
+    def get_all_tab_ids(self):
+        return list(self.tab_ids)
 
 
 @pytest.fixture(autouse=True)
@@ -97,6 +104,17 @@ class TestRoutingAndTabs:
         assert handler.websocket.sent == []
 
     @pytest.mark.asyncio
+    async def test_handle_tab_closed_keeps_current_active_tab(self, handler):
+        manager = _FakeTabManager(tab_ids=["default", "tab-active", "tab-background"])
+        handler._get_tab_manager = lambda: manager
+        app_state.active_tab_id = "tab-active"
+
+        await handler.handle({"type": "tab_closed", "tab_id": "tab-background"})
+
+        assert manager.closed == ["tab-background"]
+        assert app_state.active_tab_id == "tab-active"
+
+    @pytest.mark.asyncio
     async def test_tab_created_success_and_value_error(self, handler, websocket):
         manager = _FakeTabManager()
         handler._get_tab_manager = lambda: manager
@@ -118,6 +136,17 @@ class TestRoutingAndTabs:
 
         assert manager.closed == ["tab-2"]
         assert app_state.active_tab_id == "tab-2"
+
+    @pytest.mark.asyncio
+    async def test_tab_closed_switches_active_when_closed_tab_was_active(self, handler):
+        manager = _FakeTabManager(tab_ids=["default", "tab-2"])
+        handler._get_tab_manager = lambda: manager
+        app_state.active_tab_id = "tab-2"
+
+        await handler._handle_tab_closed({"tab_id": "tab-2"})
+
+        assert manager.closed == ["tab-2"]
+        assert app_state.active_tab_id == "default"
 
 
 class TestSubmitQuery:
@@ -465,6 +494,21 @@ class TestScreenshotAndCaptureMode:
             await handler._handle_remove_screenshot({"tab_id": "t", "id": "ss-1"})
 
         mock_remove.assert_awaited_once_with("ss-1", tab_state=session.state)
+
+    @pytest.mark.asyncio
+    async def test_remove_screenshot_unknown_tab_fails_closed(self, handler):
+        manager = _FakeTabManager()
+        manager.get_state = lambda _tab_id: None
+        handler._get_tab_manager = lambda: manager
+
+        with patch.object(
+            handlers.ScreenshotHandler,
+            "remove_screenshot",
+            new=AsyncMock(),
+        ) as mock_remove:
+            await handler._handle_remove_screenshot({"tab_id": "missing", "id": "ss-1"})
+
+        mock_remove.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_set_capture_mode_allows_known_values_only(self, handler):

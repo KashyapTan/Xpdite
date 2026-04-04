@@ -1,7 +1,6 @@
 """Tests for source/services/tab_manager_instance.py."""
 
 import asyncio
-from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,29 +9,9 @@ from source.core import connection
 from source.core.state import app_state
 from source.services.conversations import ConversationService
 from source.services.ollama_global_queue import ollama_global_queue
-from source.services.query_queue import ConversationQueue, QueuedQuery
-from source.services.tab_manager import TabSession, TabState
+from source.services.query_queue import QueuedQuery
 from source.services import tab_manager_instance
-from source.services.tab_manager_instance import (
-    _adopt_global_screenshots,
-    init_tab_manager,
-)
-
-
-async def _noop_process(_query: QueuedQuery):
-    return None
-
-
-async def _noop_broadcast(_tab_id: str, _message_type: str, _content: Any):
-    return None
-
-
-def _make_dummy_queue(tab_id: str) -> ConversationQueue:
-    return ConversationQueue(
-        tab_id,
-        process_fn=_noop_process,
-        broadcast_fn=_noop_broadcast,
-    )
+from source.services.tab_manager_instance import init_tab_manager
 
 
 @pytest.fixture(autouse=True)
@@ -45,73 +24,6 @@ def reset_tab_manager_singleton():
     tab_manager_instance.tab_manager = saved_singleton
 
 
-class TestAdoptGlobalScreenshots:
-    """Verify legacy global screenshots are absorbed into a tab session."""
-
-    def test_moves_global_screenshots_into_target_session(self):
-        session = TabSession(
-            tab_id="default",
-            state=TabState(tab_id="default"),
-            queue=_make_dummy_queue("default"),
-        )
-        saved_global_screenshots = list(app_state.screenshot_list)
-
-        try:
-            app_state.screenshot_list = [
-                {
-                    "id": "ss_1",
-                    "path": "/tmp/a.png",
-                    "name": "a.png",
-                    "thumbnail": "thumb-a",
-                },
-                {
-                    "id": "ss_2",
-                    "path": "/tmp/b.png",
-                    "name": "b.png",
-                    "thumbnail": "thumb-b",
-                },
-            ]
-
-            adopted_count = _adopt_global_screenshots(session)
-
-            assert adopted_count == 2
-            assert app_state.screenshot_list == []
-            assert session.state.screenshot_list == [
-                {
-                    "id": "ss_1",
-                    "path": "/tmp/a.png",
-                    "name": "a.png",
-                    "thumbnail": "thumb-a",
-                },
-                {
-                    "id": "ss_2",
-                    "path": "/tmp/b.png",
-                    "name": "b.png",
-                    "thumbnail": "thumb-b",
-                },
-            ]
-        finally:
-            app_state.screenshot_list = saved_global_screenshots
-
-    def test_noop_when_global_list_is_empty(self):
-        session = TabSession(
-            tab_id="default",
-            state=TabState(tab_id="default"),
-            queue=_make_dummy_queue("default"),
-        )
-        saved_global_screenshots = list(app_state.screenshot_list)
-
-        try:
-            app_state.screenshot_list = []
-
-            adopted_count = _adopt_global_screenshots(session)
-
-            assert adopted_count == 0
-            assert session.state.screenshot_list == []
-        finally:
-            app_state.screenshot_list = saved_global_screenshots
-
-
 class TestInitTabManager:
     def test_returns_existing_singleton_without_reinitializing(self):
         existing_singleton = object()
@@ -121,35 +33,13 @@ class TestInitTabManager:
 
         assert result is existing_singleton
 
-    def test_initializes_default_tab_and_adopts_global_screenshots(self):
-        saved_global_screenshots = list(app_state.screenshot_list)
+    def test_initializes_default_tab(self):
+        manager = init_tab_manager()
 
-        try:
-            app_state.screenshot_list = [
-                {
-                    "id": "ss_legacy",
-                    "path": "/tmp/legacy.png",
-                    "name": "legacy.png",
-                    "thumbnail": "legacy-thumb",
-                }
-            ]
-
-            manager = init_tab_manager()
-
-            default_session = manager.get_session("default")
-            assert default_session is not None
-            assert app_state.screenshot_list == []
-            assert default_session.state.screenshot_list == [
-                {
-                    "id": "ss_legacy",
-                    "path": "/tmp/legacy.png",
-                    "name": "legacy.png",
-                    "thumbnail": "legacy-thumb",
-                }
-            ]
-            assert ollama_global_queue._broadcast_fn is connection.broadcast_message
-        finally:
-            app_state.screenshot_list = saved_global_screenshots
+        default_session = manager.get_session("default")
+        assert default_session is not None
+        assert default_session.state.tab_id == "default"
+        assert ollama_global_queue._broadcast_fn is connection.broadcast_message
 
 
 class TestProcessFnRouting:

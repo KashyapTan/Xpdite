@@ -5,19 +5,11 @@ Centralizes all mutable global state into a single class for better
 maintainability and testability.
 """
 
-import os
 import threading
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .request_context import RequestContext
 import asyncio
-
-if TYPE_CHECKING:
-    from ..ss import ScreenshotService
-
-# Compatibility placeholder for tests and patch sites. The actual screenshot
-# implementation is imported lazily elsewhere during runtime startup.
-ScreenshotService = Any
 
 
 class AppState:
@@ -29,9 +21,7 @@ class AppState:
     """
 
     def __init__(self):
-        # Screenshot state
-        # Each entry: {"id": str, "path": str, "name": str, "thumbnail": str}
-        self.screenshot_list: List[Dict[str, Any]] = []
+        # Screenshot IDs are global so chips remain unique across tabs.
         self.screenshot_counter: int = 0
 
         # Request lifecycle — the canonical way to manage streaming state.
@@ -63,7 +53,7 @@ class AppState:
         self.conversation_id: Optional[str] = None
 
         # Service references for cleanup
-        self.screenshot_service: Optional["ScreenshotService"] = None
+        self.screenshot_service: Optional[Any] = None
         self.transcription_service: Optional[Any] = None
         self.server_thread: Optional[threading.Thread] = None
         self.service_thread: Optional[threading.Thread] = None
@@ -89,31 +79,6 @@ class AppState:
         """Reset state for a new conversation."""
         self.chat_history = []
         self.conversation_id = None
-        self.screenshot_list = []
-
-    def add_screenshot(self, screenshot_data: Dict[str, Any]) -> str:
-        """Add a screenshot and return its ID."""
-        self.screenshot_counter += 1
-        ss_id = f"ss_{self.screenshot_counter}"
-        screenshot_data["id"] = ss_id
-        self.screenshot_list.append(screenshot_data)
-        return ss_id
-
-    def remove_screenshot(self, screenshot_id: str) -> bool:
-        """Remove a screenshot by ID. Returns True if found and removed."""
-        original_len = len(self.screenshot_list)
-        self.screenshot_list = [
-            ss for ss in self.screenshot_list if ss["id"] != screenshot_id
-        ]
-        return len(self.screenshot_list) < original_len
-
-    def get_image_paths(self) -> List[str]:
-        """Get list of valid image paths from current screenshots."""
-        return [
-            os.path.abspath(ss["path"])
-            for ss in self.screenshot_list
-            if os.path.exists(ss["path"])
-        ]
 
 
 # Global singleton instance
