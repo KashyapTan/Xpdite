@@ -198,7 +198,7 @@ if __name__ == "__main__":
 
 ### Step 2: Register the Server
 
-Add your server to the MCP initialization in `source/mcp_integration/manager.py` -> `init_mcp_servers()`:
+Add your server to the MCP initialization in `source/mcp_integration/core/manager.py` -> `init_mcp_servers()`:
 
 ```python
 await mcp_manager.connect_server(

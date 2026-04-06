@@ -27,10 +27,10 @@ This guide covers common development tasks, code patterns, and conventions used 
 - **State management**: Process-level shared state lives in `AppState` (singleton in `source/core/state.py`).
 - **Thread safety**: Use `app_state.server_loop_holder` to schedule coroutines from non-async threads. Use `wrap_with_tab_ctx(tab_id, coro)` when scheduling from background threads so the correct tab context is stamped.
 - **Broadcasting**: Always use `broadcast_message()` from `core.connection` (not `manager.broadcast()` directly) — it auto-stamps `tab_id` from the ContextVar.
-- **Unified Terminal Logic**: Use `execute_terminal_tool()` from `source/mcp_integration/terminal_executor.py` for any shell-related tool calls.
+- **Unified Terminal Logic**: Use `execute_terminal_tool()` from `source/mcp_integration/executors/terminal_executor.py` for any shell-related tool calls.
 - **Skills**: Builtin skills live in `source/skills_seed/<name>/`. They are seeded to `user_data/skills/builtin/` on every startup by `SkillManager`. Never hardcode skill content in Python code.
 - **Logging**: Use `print()` with `[MODULE]` prefixes (e.g., `[MCP]`, `[WS]`, `[SS]`).
-- **Constants**: All magic numbers and defaults live in `source/config.py`.
+- **Constants**: All magic numbers and defaults live in `source/infrastructure/config.py`.
 - **Security**: Never commit secrets. Use `KeyManager` for sensitive user data.
 
 ### React Frontend
@@ -115,7 +115,7 @@ See the dedicated [MCP Guide](./mcp-guide.md) for detailed instructions.
 
 ### Modifying the Database Schema
 
-1. Edit `_init_db()` in `source/database.py` to add the new table or column
+1. Edit `_init_db()` in `source/infrastructure/database.py` to add the new table or column
 2. Add a migration for existing databases:
    ```python
    try:
@@ -135,19 +135,19 @@ See the dedicated [MCP Guide](./mcp-guide.md) for detailed instructions.
 
 ### Adding a Cloud Provider
 
-1. Implement streaming logic in `source/llm/cloud_provider.py`
-2. Update `source/llm/router.py` to handle the new provider prefix
+1. Implement streaming logic in `source/llm/providers/cloud_provider.py`
+2. Update `source/llm/core/router.py` to handle the new provider prefix
 3. Add API key management support in `source/api/http.py` and `SettingsApiKey.tsx`
 4. Register available models in `source/api/http.py`
 
 ## Google OAuth Setup
 
 The app uses an embedded OAuth client configuration for Google authentication.
-The configuration is loaded from `GOOGLE_CLIENT_CONFIG` in `source/config.py`.
+The configuration is loaded from `GOOGLE_CLIENT_CONFIG` in `source/infrastructure/config.py`.
 
 To update the OAuth client:
 1. Download `client_secret_*.json` from Google Cloud Console
-2. Update the `GOOGLE_CLIENT_CONFIG` dictionary in `source/config.py`
+2. Update the `GOOGLE_CLIENT_CONFIG` dictionary in `source/infrastructure/config.py`
 3. Ensure scopes in `GOOGLE_SCOPES` match the required permissions
 
 ## Architecture Patterns

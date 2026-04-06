@@ -4,7 +4,7 @@ This document covers all configurable aspects of Xpdite.
 
 ## Python Backend Configuration
 
-### Constants (`source/config.py`)
+### Constants (`source/infrastructure/config.py`)
 
 | Constant | Default | Description |
 |----------|---------|-------------|
@@ -27,7 +27,7 @@ This document covers all configurable aspects of Xpdite.
 
 The server probes ports starting from `DEFAULT_PORT` (8000) up to 8009. The first available port is used. This prevents conflicts when multiple instances run or when a stale process holds a port.
 
-### CORS Configuration (`source/app.py`)
+### CORS Configuration (`source/bootstrap/app_factory.py`)
 
 By default, CORS allows all origins for development:
 
