@@ -4,78 +4,111 @@
 
 ```
 source/
-├── main.py                      # Entry point: port discovery, uvicorn startup, MCP init hook
+├── main.py                               # Entry point: boot markers, port discovery, uvicorn startup
 ├── bootstrap/
 │   ├── __init__.py
-│   └── app_factory.py           # FastAPI factory + startup/shutdown wiring
+│   └── app_factory.py                    # FastAPI factory + startup/shutdown wiring
 ├── infrastructure/
 │   ├── __init__.py
-│   ├── config.py                # All constants (ports, paths, defaults, OAuth config)
-│   ├── database.py              # DatabaseManager — sole gateway to SQLite
-│   └── screenshot_runtime.py    # ScreenshotService + screenshot utility helpers
-├── app.py                       # Compatibility shim → bootstrap/app_factory.py
-├── config.py                    # Compatibility shim → infrastructure/config.py
-├── database.py                  # Compatibility shim → infrastructure/database.py
-├── ss.py                        # Compatibility shim → infrastructure/screenshot_runtime.py
+│   ├── config.py                         # Paths, defaults, OAuth config, shared constants
+│   ├── database.py                       # DatabaseManager — sole gateway to SQLite
+│   └── screenshot_runtime.py             # ScreenshotService + screenshot utility helpers
 │
 ├── core/
-│   ├── state.py         # AppState singleton (screenshot list, model selection, chat history)
-│   ├── connection.py    # ConnectionManager + broadcast_message + broadcast_to_tab helpers
-│   ├── request_context.py  # Per-request lifecycle and cancellation
-│   ├── thread_pool.py   # run_in_thread — offload blocking calls from event loop
-│   └── lifecycle.py     # Signal handlers, graceful shutdown
+│   ├── __init__.py
+│   ├── connection.py                     # ConnectionManager + tab-aware broadcast helpers
+│   ├── lifecycle.py                      # Signal handlers + graceful shutdown
+│   ├── request_context.py                # Per-request lifecycle, cancellation, model ContextVars
+│   ├── state.py                          # AppState singleton
+│   └── thread_pool.py                    # run_in_thread helper
 │
 ├── api/
-│   ├── websocket.py     # WS endpoint + full protocol docstring
-│   ├── handlers.py      # MessageHandler — one _handle_<type> per WS message
-│   ├── http.py          # REST: models, API keys, MCP info, skills, Google auth, settings
-│   └── terminal.py      # REST: terminal settings (shell path, timeout, approval mode)
+│   ├── __init__.py
+│   ├── websocket.py                      # WS endpoint + protocol reference docstring
+│   ├── handlers.py                       # MessageHandler (_handle_<type> per WS message)
+│   ├── http.py                           # Main REST endpoints (models, keys, skills, settings)
+│   ├── terminal.py                       # REST: terminal settings + approval history controls
+│   └── mobile_internal.py                # Internal REST API for channel bridge
 │
 ├── llm/
-│   ├── router.py        # parse_provider() + route_chat() — Ollama vs cloud dispatch, and reuses pre-retrieved tools for Ollama to avoid duplicate retrieval latency
-│   ├── ollama_provider.py  # stream_ollama_chat: async 2-phase tool detect + streaming via AsyncClient
-│   ├── cloud_provider.py   # stream_cloud_chat: unified Anthropic / OpenAI / Gemini streaming via LiteLLM
-│   ├── key_manager.py   # Encrypted API key storage/retrieval
-│   └── prompt.py        # build_system_prompt, accepts skills_block + optional template
+│   ├── __init__.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── router.py                     # parse_provider() + route_chat()
+│   │   ├── key_manager.py                # Encrypted API key storage/retrieval
+│   │   ├── prompt.py                     # build_system_prompt()
+│   │   └── types.py                      # ChatResult + provider-neutral types
+│   └── providers/
+│       ├── __init__.py
+│       ├── ollama_provider.py            # AsyncClient streaming + Ollama tool loop integration
+│       └── cloud_provider.py             # Unified Anthropic/OpenAI/Gemini via LiteLLM
 │
 ├── mcp_integration/
-│   ├── manager.py       # McpToolManager: spawn servers, discover tools, route calls
-│   ├── handlers.py      # handle_mcp_tool_calls (Ollama path) + retrieve_relevant_tools
-│   ├── retriever.py     # ToolRetriever: semantic search over tool descriptions
-│   ├── skill_injector.py   # Two-phase skill injection (manifest + contextual)
-│   ├── skills_executor.py    # INLINE skills tools (list_skills/use_skill)
-│   ├── terminal_executor.py  # INLINE terminal execution (approval + PTY + DB persist)
-│   ├── tool_args.py          # Tool argument normalization + malformed JSON handling
-│   └── video_watcher_executor.py  # INLINE video watcher tool execution
+│   ├── __init__.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── manager.py                    # McpToolManager: connect/discover/register tools
+│   │   ├── handlers.py                   # Ollama MCP tool loop + shared retrieval helper
+│   │   ├── retriever.py                  # ToolRetriever (semantic + BM25 + cache)
+│   │   ├── skill_injector.py             # Two-phase skill injection (manifest + contextual)
+│   │   └── tool_args.py                  # Tool argument normalization/sanitization
+│   └── executors/
+│       ├── __init__.py
+│       ├── terminal_executor.py          # Inline terminal tools (approval + PTY + DB persist)
+│       ├── video_watcher_executor.py     # Inline video watcher tool execution
+│       ├── skills_executor.py            # Inline skills tools (list_skills/use_skill)
+│       ├── memory_executor.py            # Inline memory tools (memlist/memread/memcommit)
+│       └── scheduler_executor.py         # Inline scheduler tools
 │
-├── skills_seed/             # Builtin skill folders shipped with the app
-│   ├── terminal/            # Each folder: skill.json + SKILL.md
+├── services/
+│   ├── __init__.py
+│   ├── chat/
+│   │   ├── __init__.py
+│   │   ├── conversations.py              # ConversationService.submit_query()
+│   │   ├── query_queue.py                # Per-tab queue runtime
+│   │   ├── tab_manager.py                # TabState/TabSession/TabManager
+│   │   ├── tab_manager_instance.py       # Lazy singleton + queue->conversation bridge
+│   │   └── ollama_global_queue.py        # Global local-Ollama request serializer
 │   ├── filesystem/
-│   ├── websearch/
-│   ├── youtube/
-│   ├── gmail/
-│   ├── calendar/
-│   └── browser/             # Browser automation via playwright-cli (trigger_servers: [])
+│   │   ├── __init__.py
+│   │   └── file_browser.py               # @ file picker browse/search + index refresh
+│   ├── integrations/
+│   │   ├── __init__.py
+│   │   ├── external_connectors.py        # External MCP connector lifecycle
+│   │   ├── google_auth.py                # OAuth2 flow for Gmail/Calendar
+│   │   └── mobile_channel.py             # Mobile channel session + relay orchestration
+│   ├── media/
+│   │   ├── __init__.py
+│   │   ├── screenshots.py                # ScreenshotHandler lifecycle + tab routing
+│   │   ├── file_extractor.py             # File extraction/parsing helpers
+│   │   ├── video_watcher.py              # YouTube captions/transcription flow
+│   │   ├── transcription.py              # Voice transcription service
+│   │   ├── meeting_recorder.py           # Meeting recording + post-processing pipeline
+│   │   └── gpu_detector.py               # CUDA/CPU detection for Whisper planning
+│   ├── memory_store/
+│   │   ├── __init__.py
+│   │   └── memory.py                     # Filesystem-backed long-term memory service
+│   ├── scheduling/
+│   │   ├── __init__.py
+│   │   ├── scheduler.py                  # APScheduler-backed jobs runtime
+│   │   └── notifications.py              # Notification persistence + delivery helpers
+│   ├── shell/
+│   │   ├── __init__.py
+│   │   ├── terminal.py                   # TerminalService + PTY session lifecycle
+│   │   └── approval_history.py           # Persisted allow-and-remember approvals
+│   └── skills_runtime/
+│       ├── __init__.py
+│       ├── skills.py                     # SkillManager (filesystem-backed skills)
+│       └── sub_agent.py                  # spawn_agent execution + tier resolution
 │
-└── services/
-    ├── conversations.py # ConversationService.submit_query — orchestrates the full turn
-    ├── file_browser.py  # @ file picker browse/search + SQLite index + background refresh
-    ├── skills.py        # SkillManager — filesystem-backed skill loading, caching, CRUD
-    ├── screenshots.py   # ScreenshotHandler — manage screenshot lifecycle + state
-    ├── terminal.py      # TerminalService — PTY sessions, approval queue, history
-    ├── sub_agent.py     # Sub-agent execution: spawn_agent tool, tier resolution, parallel/sequential
-    ├── query_queue.py   # Per-tab async message queue (QueuedQuery, ConversationQueue)
-    ├── tab_manager.py   # TabState, TabSession, TabManager — per-tab state isolation
-    ├── ollama_global_queue.py  # Global Ollama request serializer (GPU is single-tenant)
-    ├── tab_manager_instance.py # Lazy singleton + _process_fn bridging queue → ConversationService
-    ├── google_auth.py   # OAuth2 flow for Gmail/Calendar
-    ├── transcription.py # Voice transcription (pyaudio + faster-whisper base.en, stop_recording trigger)
-    ├── meeting_recorder.py  # Meeting recording service: live Tier 1 + Tier 2 post-processing pipeline
-    ├── gpu_detector.py  # GPU backend detection for Whisper (CUDA vs CPU, compute type)
-    ├── scheduler.py     # APScheduler-backed scheduled jobs runtime
-    ├── notifications.py # Notification persistence and delivery helpers
-    ├── memory.py        # Filesystem-backed long-term memory service
-    └── external_connectors.py  # External MCP connector lifecycle
+└── skills_seed/                           # Builtin skill folders shipped with the app
+    ├── terminal/                         # Each folder contains: skill.json + SKILL.md
+    ├── filesystem/
+    ├── websearch/
+    ├── youtube/
+    ├── gmail/
+    ├── calendar/
+    └── browser/                          # Browser automation via playwright-cli
 ```
 
 ---
@@ -88,20 +121,20 @@ source/
 - **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully. On `QueueFullError`, the handler broadcasts `queue_full` (not `error`). Each enqueued item broadcasts `query_queued` to the frontend. `QueuedQuery` carries `item_id`, `forced_skills`, `llm_query`, `action` (`"submit"` / `"retry"` / `"edit"`), and `target_message_id` for retry/edit flows. `resolved_conversation_id` on the queue allows subsequent items to inherit the conversation started by the first.
 - **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs. `lifecycle.py` calls `tab_manager.close_all()` during graceful shutdown.
 - **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes local Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests and Ollama cloud models (`-cloud`) bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`. Uses a `result_holder[0]` pattern via an inner `_wrapper` coroutine to propagate return values back to `run()` callers. `set_broadcast_fn(fn)` injects the broadcast function after startup to avoid circular imports.
-- **`tab_manager_instance.py`** — lazy singleton initialized from `bootstrap/app_factory.py` startup hooks (or via the `source/bootstrap/app_factory.py` compatibility shim). The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing only local Ollama models through the global queue. `init_tab_manager()` also wires the Ollama queue's broadcast function and creates the default tab.
+- **`services/chat/tab_manager_instance.py`** — lazy singleton initialized from `bootstrap/app_factory.py` startup hooks. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing only local Ollama models through the global queue. `init_tab_manager()` also wires the Ollama queue's broadcast function and creates the default tab.
 - **`bootstrap/app_factory.py` startup hooks** — besides tab/session restoration, startup now also syncs `USER_DATA_DIR/mobile_channels_config.json` from DB by calling `_write_mobile_channels_config_file()` via `run_in_thread(...)` so Channel Bridge always gets a fresh config snapshot after backend boot.
-- **Startup performance guardrails** — keep package `__init__.py` exports lazy (`api/`, `core/`, `llm/`, `mcp_integration/`, `services/`) so importing a narrow module does not eagerly pull in the full LLM/tool stack. `api/handlers.py` should only import heavyweight services lazily inside handlers/helpers, `core/state.py` must not import `infrastructure/screenshot_runtime.py` just for typing, and `mcp_integration/retriever.py` should only import `sentence_transformers` if the Ollama embedding backend is unavailable. Regressing these patterns adds multiple seconds to dev startup before the first boot marker appears.
+- **Startup performance guardrails** — keep package `__init__.py` exports lazy (`api/`, `core/`, `llm/`, `mcp_integration/`, `services/`) so importing a narrow module does not eagerly pull in the full LLM/tool stack. `api/handlers.py` should only import heavyweight services lazily inside handlers/helpers, `core/state.py` must not import `infrastructure/screenshot_runtime.py` just for typing, and `mcp_integration/core/retriever.py` should only import `sentence_transformers` if the Ollama embedding backend is unavailable. Regressing these patterns adds multiple seconds to dev startup before the first boot marker appears.
 - **`api/mobile_internal.py`** — Internal HTTP API called by `channel-bridge` service. Exposes `/internal/mobile/*` endpoints to handle message routing, command execution (`/new`, `/stop`), device pairing, and connection sync for mobile apps like WhatsApp.
-- **`services/mobile_channel.py`** — `MobileChannelService`: Coordinates communication between the Channel Bridge and Xpdite. Manages session states (mapping mobile user IDs to Xpdite tab IDs), pushes mobile messages into the Conversation Queue, and acts as the webhook callback dispatcher. Also broadcasts AI typing and message edits (streams via chunk accumulation) back to the bridge.
-- **`services/external_connectors.py`** — `ExternalConnectorService`: Manages external out-of-process MCP servers (like Figma or Slack) running via `npx` or `uvx` directly. Persists enabled states in DB so they auto-reconnect on boot.
-- **`llm/types.py`** — `ChatResult`: Unified return signature for all Provider streams (text output, token stats, tools, interleaved blocks).
+- **`services/integrations/mobile_channel.py`** — `MobileChannelService`: Coordinates communication between the Channel Bridge and Xpdite. Manages session states (mapping mobile user IDs to Xpdite tab IDs), pushes mobile messages into the Conversation Queue, and acts as the webhook callback dispatcher. Also broadcasts AI typing and message edits (streams via chunk accumulation) back to the bridge.
+- **`services/integrations/external_connectors.py`** — `ExternalConnectorService`: Manages external out-of-process MCP servers (like Figma or Slack) running via `npx` or `uvx` directly. Persists enabled states in DB so they auto-reconnect on boot.
+- **`llm/core/types.py`** — `ChatResult`: Unified return signature for all Provider streams (text output, token stats, tools, interleaved blocks).
 - **`thread_pool.py → run_in_thread`** is mandatory for anything that calls a synchronous SDK (e.g., `google-auth`, `Pillow`, screenshots). Calling them directly will block uvicorn's single event loop. Note: Ollama now uses `AsyncClient` natively and no longer needs `run_in_thread`.
 - **`terminal_executor.py`** handles terminal tools *inline* — it never calls the MCP subprocess for terminal actions. The `terminal` MCP server's `server.py` exists only as a schema/description source. Supported inline tools: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts optional `background=True` and `yield_ms` parameters. A per-command `_notice_checker` asyncio task fires a notice broadcast if the command runs longer than 10 seconds.
-- **`services/sub_agent.py`** — Sub-agent execution service. `execute_sub_agent()` is the entry point called by the `spawn_agent` tool interceptor (in both `cloud_provider.py` and `handlers.py`). Accepts `instruction`, `model_tier` (fast/smart/self), and `agent_name`. Resolves tier to a model via `_resolve_tier_model()` (checks DB setting `sub_agent_tier_<tier>`, falls back to current model). Tools are retrieved via `_get_sub_agent_tools()` which uses semantic retrieval minus `_EXCLUDED_TOOLS` (terminal tools + spawn_agent). Cloud calls use LiteLLM non-streaming with a tool loop; Ollama calls use AsyncClient non-streaming. A global `_concurrency_semaphore` (cap 5) prevents overwhelming APIs/GPU. `execute_sub_agents_parallel()` checks if *any* call resolves to local Ollama — if so, all run sequentially; otherwise parallel with `asyncio.gather(return_exceptions=True)`. Ollama cloud tags `:cloud` and `-cloud` are treated as remote (parallel-safe). Broadcasts `tool_call` status messages with `server: "sub_agent"` for UI progress. Settings: `sub_agent_tier_fast` and `sub_agent_tier_smart` in the `settings` DB table, exposed via `GET/PUT /api/settings/sub-agents`.
-- **`infrastructure/screenshot_runtime.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups. Also exposes `copy_image_to_clipboard(image, dpi_scale=None)` (copies PIL Image to Windows clipboard via `CF_DIB` with retry loop for busy clipboard) and `copy_file_to_clipboard(filepath)` (uses PowerShell `Set-Clipboard -Path`). `ScreenshotService` has a `start_callback` field for when capture starts (used for window hiding) and a 1.5s debounce via `_last_trigger_time`. `source/infrastructure/screenshot_runtime.py` is now a compatibility shim.
-- **`services/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text. Uses an in-memory `_approvals_cache` dict protected by `threading.Lock` to avoid repeated file reads.
-- **`services/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket. `_recording_error: str | None` attribute surfaces audio errors back to the caller.
-- **`services/conversations.py`** — `submit_query` orchestrates the full turn and now requires a concrete `tab_state` (global screenshot fallback removed). Supports `action` parameter (`"submit"` / `"retry"` / `"edit"`) and `target_message_id` for retry/edit flows. When the user cancels mid-generation (`ctx.cancelled`), the method still persists the user prompt and partial assistant response (with `[Response interrupted]` appended) to the DB, creates a conversation record if needed, and broadcasts `conversation_saved`. Tool calls and content blocks executed before cancellation are preserved in the saved message. Screenshots consumed during a turn are always cleared in the `finally` block (covers normal, cancelled, and exception paths). Slash command extraction (`extract_skill_slash_commands`) uses a background thread to parse `/skill-name` tokens via regex `(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)` and returns `(forced_skills, llm_query_without_commands)`.
+- **`services/skills_runtime/sub_agent.py`** — Sub-agent execution service. `execute_sub_agent()` is the entry point called by the `spawn_agent` tool interceptor (in both `cloud_provider.py` and `handlers.py`). Accepts `instruction`, `model_tier` (fast/smart/self), and `agent_name`. Resolves tier to a model via `_resolve_tier_model()` (checks DB setting `sub_agent_tier_<tier>`, falls back to current model). Tools are retrieved via `_get_sub_agent_tools()` which uses semantic retrieval minus `_EXCLUDED_TOOLS` (terminal tools + spawn_agent). Cloud calls use LiteLLM non-streaming with a tool loop; Ollama calls use AsyncClient non-streaming. A global `_concurrency_semaphore` (cap 5) prevents overwhelming APIs/GPU. `execute_sub_agents_parallel()` checks if *any* call resolves to local Ollama — if so, all run sequentially; otherwise parallel with `asyncio.gather(return_exceptions=True)`. Ollama cloud tags `:cloud` and `-cloud` are treated as remote (parallel-safe). Broadcasts `tool_call` status messages with `server: "sub_agent"` for UI progress. Settings: `sub_agent_tier_fast` and `sub_agent_tier_smart` in the `settings` DB table, exposed via `GET/PUT /api/settings/sub-agents`.
+- **`infrastructure/screenshot_runtime.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups. Also exposes `copy_image_to_clipboard(image, dpi_scale=None)` (copies PIL Image to Windows clipboard via `CF_DIB` with retry loop for busy clipboard) and `copy_file_to_clipboard(filepath)` (uses PowerShell `Set-Clipboard -Path`). `ScreenshotService` has a `start_callback` field for when capture starts (used for window hiding) and a 1.5s debounce via `_last_trigger_time`.
+- **`services/shell/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text. Uses an in-memory `_approvals_cache` dict protected by `threading.Lock` to avoid repeated file reads.
+- **`services/media/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket. `_recording_error: str | None` attribute surfaces audio errors back to the caller.
+- **`services/chat/conversations.py`** — `submit_query` orchestrates the full turn and now requires a concrete `tab_state` (global screenshot fallback removed). Supports `action` parameter (`"submit"` / `"retry"` / `"edit"`) and `target_message_id` for retry/edit flows. When the user cancels mid-generation (`ctx.cancelled`), the method still persists the user prompt and partial assistant response (with `[Response interrupted]` appended) to the DB, creates a conversation record if needed, and broadcasts `conversation_saved`. Tool calls and content blocks executed before cancellation are preserved in the saved message. Screenshots consumed during a turn are always cleared in the `finally` block (covers normal, cancelled, and exception paths). Slash command extraction (`extract_skill_slash_commands`) uses a background thread to parse `/skill-name` tokens via regex `(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)` and returns `(forced_skills, llm_query_without_commands)`.
 
 ### Screenshot Tab Routing (No Global Fallback)
 
@@ -111,16 +144,16 @@ source/
 - `ScreenshotHandler` resolves target tab via contextvar first, then `active_tab_id`, and finally coerces to `default` session if needed.
 - Screenshot add/remove/clear broadcasts are explicitly tab-scoped via `broadcast_to_tab(...)`; no “global screenshot tab” behavior remains.
 - Destructive remove flow now fails closed: `_handle_remove_screenshot()` returns early if `tab_id` does not resolve to a live tab state.
-- **`services/terminal.py`** — `TerminalSession` class tracks running processes with fields `session_id`, `request_id`, `command`, `process`, `output_buffer`, `text_buffer`, `reader_task`, `exit_code`. `wait_for_completion(timeout)` is async-safe. `get_recent_output(lines=50)` returns ANSI-stripped output via `_ANSI_RE`. `_kill_process_tree(pid)` uses `taskkill /F /T /PID` on Windows, process-group kill on Unix. `kill_running_command()` and `resize_all_pty(cols, rows)` are available (triggered by `terminal_kill_command` and `terminal_resize` WS messages). Terminal events that fire before the first assistant message (no `conversation_id` yet) are queued via `queue_terminal_event()` and flushed to the DB after the conversation record is created via `flush_pending_events(conversation_id)`.
-- **`services/meeting_recorder.py`** — `MeetingRecorderService` manages one active recording at a time. Audio arrives as base64 PCM chunks via WS, written to `user_data/meeting_audio/<recording_id>.wav` (16kHz, mono, 16-bit). Live Tier 1 transcription runs via `faster-whisper` in a background thread with 5-second chunks and 1-second overlap. Silence detection uses RMS < 50 threshold. `recover_interrupted_recordings()` is called at startup for crash recovery. `PostProcessingPipeline` runs a sequential worker thread with steps: `transcribing → aligning → diarizing → merging → generating_title → saving`, using `faster-whisper large-v3`, WhisperX for alignment, and SpeechBrain for diarization.
-- **`services/gpu_detector.py`** — `detect_compute_backend()` returns `'cuda'` or `'cpu'`. `get_compute_info()` returns `{backend, device_name, vram_gb, compute_type}` — `float16` if VRAM ≥ 4 GB, else `int8`. `get_estimated_processing_time(audio_duration_seconds)` returns `0.15×` for CUDA, `1.5×` for CPU. Results are cached in a module-level `_cached_backend` singleton.
-- **`services/google_auth.py`** — `GoogleAuthService` manages Google OAuth 2.0 lifecycle. `start_oauth_flow()` runs `InstalledAppFlow.run_local_server(port=0)`, saves `token.json` to `user_data/google/`. `disconnect()` attempts token revocation then deletes the file. `get_status()` returns `{connected, email, auth_in_progress}`. The OAuth client credentials are embedded in `infrastructure/config.py` (also re-exported by `source/infrastructure/config.py`) — this is the Google-recommended pattern for native desktop apps (client_secret is not confidential for installed apps).
-- **`services/file_browser.py`** — `FileBrowserService` powers the `@` attachment picker. Search reads from a persisted SQLite index (`user_data/file_browser_index.db`) keyed by root path; when an index is missing it falls back to a bounded recursive scan and schedules background indexing. Ranking uses command-palette heuristics (exact > starts-with > contains > compact subsequence) so best matches appear first. File changes are tracked with an event-driven watchdog observer (with queue coalescing) so index refreshes are incremental. The app starts/stops the file indexer + observer from `bootstrap/app_factory.py` startup/shutdown events.
-- **`services/skills.py`** — `SkillManager` caches skill content lazily on `Skill` instances; `invalidate_content_cache()` clears it. `_validate_safe_name(value, label)` enforces `^[a-zA-Z0-9_-]+$` pattern to prevent path traversal. `add_reference_file(name, filename, content)` writes a `.md` file to `skill_folder/references/` (enforces `.md` extension). Skills with `references/` subdirectories have their reference files available to inject as additional context. `get_all_skills_with_overrides()` returns overridden builtins first (greyed out) followed by all active skills.
-- **`services/video_watcher.py`** — `VideoWatcherService` handles `watch_youtube_video`: normalize URL, extract metadata, prefer native YouTube captions, and fallback to Whisper transcription when captions are unavailable. Fallback path emits a `youtube_transcription_approval` request, waits up to 180s for user approval (`resolve_transcription_approval`), then runs download/transcription in thread pool. Output is bounded to `MAX_TOOL_RESULT_LENGTH` with truncation metadata.
-- **`mcp_integration/skills_executor.py`** — inline executor for `list_skills` and `use_skill` tools. `list_skills` returns active skill catalog and usage guidance; `use_skill` resolves one skill and returns full prompt content without spawning MCP subprocesses.
-- **`mcp_integration/video_watcher_executor.py`** — inline executor for `video_watcher/watch_youtube_video`, routing args to `VideoWatcherService` and returning user-facing errors (`VideoWatcherError`) as tool results.
-- **`mcp_integration/tool_args.py`** — `normalize_tool_args(raw_args)` centralizes tool-argument parsing for dict/string/invalid payloads so cloud and Ollama tool loops share the same validation path and error text.
+- **`services/shell/terminal.py`** — `TerminalSession` class tracks running processes with fields `session_id`, `request_id`, `command`, `process`, `output_buffer`, `text_buffer`, `reader_task`, `exit_code`. `wait_for_completion(timeout)` is async-safe. `get_recent_output(lines=50)` returns ANSI-stripped output via `_ANSI_RE`. `_kill_process_tree(pid)` uses `taskkill /F /T /PID` on Windows, process-group kill on Unix. `kill_running_command()` and `resize_all_pty(cols, rows)` are available (triggered by `terminal_kill_command` and `terminal_resize` WS messages). Terminal events that fire before the first assistant message (no `conversation_id` yet) are queued via `queue_terminal_event()` and flushed to the DB after the conversation record is created via `flush_pending_events(conversation_id)`.
+- **`services/media/meeting_recorder.py`** — `MeetingRecorderService` manages one active recording at a time. Audio arrives as base64 PCM chunks via WS, written to `user_data/meeting_audio/<recording_id>.wav` (16kHz, mono, 16-bit). Live Tier 1 transcription runs via `faster-whisper` in a background thread with 5-second chunks and 1-second overlap. Silence detection uses RMS < 50 threshold. `recover_interrupted_recordings()` is called at startup for crash recovery. `PostProcessingPipeline` runs a sequential worker thread with steps: `transcribing → aligning → diarizing → merging → generating_title → saving`, using `faster-whisper large-v3`, WhisperX for alignment, and SpeechBrain for diarization.
+- **`services/media/gpu_detector.py`** — `detect_compute_backend()` returns `'cuda'` or `'cpu'`. `get_compute_info()` returns `{backend, device_name, vram_gb, compute_type}` — `float16` if VRAM ≥ 4 GB, else `int8`. `get_estimated_processing_time(audio_duration_seconds)` returns `0.15×` for CUDA, `1.5×` for CPU. Results are cached in a module-level `_cached_backend` singleton.
+- **`services/integrations/google_auth.py`** — `GoogleAuthService` manages Google OAuth 2.0 lifecycle. `start_oauth_flow()` runs `InstalledAppFlow.run_local_server(port=0)`, saves `token.json` to `user_data/google/`. `disconnect()` attempts token revocation then deletes the file. `get_status()` returns `{connected, email, auth_in_progress}`. The OAuth client credentials are embedded in `infrastructure/config.py` — this is the Google-recommended pattern for native desktop apps (client_secret is not confidential for installed apps).
+- **`services/filesystem/file_browser.py`** — `FileBrowserService` powers the `@` attachment picker. Search reads from a persisted SQLite index (`user_data/file_browser_index.db`) keyed by root path; when an index is missing it falls back to a bounded recursive scan and schedules background indexing. Ranking uses command-palette heuristics (exact > starts-with > contains > compact subsequence) so best matches appear first. File changes are tracked with an event-driven watchdog observer (with queue coalescing) so index refreshes are incremental. The app starts/stops the file indexer + observer from `bootstrap/app_factory.py` startup/shutdown events.
+- **`services/skills_runtime/skills.py`** — `SkillManager` caches skill content lazily on `Skill` instances; `invalidate_content_cache()` clears it. `_validate_safe_name(value, label)` enforces `^[a-zA-Z0-9_-]+$` pattern to prevent path traversal. `add_reference_file(name, filename, content)` writes a `.md` file to `skill_folder/references/` (enforces `.md` extension). Skills with `references/` subdirectories have their reference files available to inject as additional context. `get_all_skills_with_overrides()` returns overridden builtins first (greyed out) followed by all active skills.
+- **`services/media/video_watcher.py`** — `VideoWatcherService` handles `watch_youtube_video`: normalize URL, extract metadata, prefer native YouTube captions, and fallback to Whisper transcription when captions are unavailable. Fallback path emits a `youtube_transcription_approval` request, waits up to 180s for user approval (`resolve_transcription_approval`), then runs download/transcription in thread pool. Output is bounded to `MAX_TOOL_RESULT_LENGTH` with truncation metadata.
+- **`mcp_integration/executors/skills_executor.py`** — inline executor for `list_skills` and `use_skill` tools. `list_skills` returns active skill catalog and usage guidance; `use_skill` resolves one skill and returns full prompt content without spawning MCP subprocesses.
+- **`mcp_integration/executors/video_watcher_executor.py`** — inline executor for `video_watcher/watch_youtube_video`, routing args to `VideoWatcherService` and returning user-facing errors (`VideoWatcherError`) as tool results.
+- **`mcp_integration/core/tool_args.py`** — `normalize_tool_args(raw_args)` centralizes tool-argument parsing for dict/string/invalid payloads so cloud and Ollama tool loops share the same validation path and error text.
 
 ---
 
@@ -273,11 +306,11 @@ All cloud providers (Anthropic, OpenAI, Gemini) use a single unified implementat
 Skills are managed by `SkillManager` in `source/services/skills_runtime/skills.py`. Builtin skills live in `user_data/skills/builtin/` (seeded from `source/skills_seed/` on every startup). User skills live in `user_data/skills/user/`. A `preferences.json` file stores enabled/disabled state so builtin overwrites never reset user toggles. Skills can have a `references/` subdirectory with `.md` files for supplemental context.
 
 ### Terminal Tools (Inline)
-Terminal tools are handled inline by `terminal_executor.py`, never via the MCP subprocess. Full set: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts `background=True` and `yield_ms` params.
+Terminal tools are handled inline by `source/mcp_integration/executors/terminal_executor.py`, never via the MCP subprocess. Full set: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`, `find_files`. `run_command` accepts `background=True` and `yield_ms` params.
 
 ### Additional Inline Tool Executors
-- **Video watcher (`video_watcher`)**: `watch_youtube_video` is registered as inline and intercepted before MCP subprocess routing. Execution is delegated to `video_watcher_executor.py` / `services/video_watcher.py`, including the user-approval fallback path (`youtube_transcription_approval` → `youtube_transcription_approval_response`) when no captions are available.
-- **Skills (`skills`)**: `list_skills` and `use_skill` are inline tools executed by `skills_executor.py`. Unlike terminal/sub_agent/video_watcher registrations, these are indexed for semantic retrieval (`skip_embed=False`) so models can discover skill-loading tools contextually.
+- **Video watcher (`video_watcher`)**: `watch_youtube_video` is registered as inline and intercepted before MCP subprocess routing. Execution is delegated to `source/mcp_integration/executors/video_watcher_executor.py` / `source/services/media/video_watcher.py`, including the user-approval fallback path (`youtube_transcription_approval` → `youtube_transcription_approval_response`) when no captions are available.
+- **Skills (`skills`)**: `list_skills` and `use_skill` are inline tools executed by `source/mcp_integration/executors/skills_executor.py`. Unlike terminal/sub_agent/video_watcher registrations, these are indexed for semantic retrieval (`skip_embed=False`) so models can discover skill-loading tools contextually.
 
 ### Adding a New MCP Server (end-to-end)
 
