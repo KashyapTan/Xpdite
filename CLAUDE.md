@@ -118,7 +118,7 @@ uv run <file_name>                            # run python files for testing
 - Never use `any` unless bridging an untyped external API; prefer `unknown` + narrow
 
 **Python**
-- All modules inside `source/` use **relative imports** (`from ..config import ...`) — never absolute `from source.xxx`
+- All modules inside `source/` use **relative imports** (`from ..infrastructure.config import ...`) — never absolute `from source.xxx`
 - Every async handler runs in the uvicorn event loop; CPU-heavy or blocking-IO work goes through `run_in_thread` (see `source/core/thread_pool.py`)
 - Never call `sqlite3.connect()` outside `DatabaseManager._get_connection()` — and always pass `check_same_thread=False`
 - All DB methods use `with self._connect() as conn:` context manager — never open/close connections manually
@@ -143,7 +143,9 @@ uv run <file_name>                            # run python files for testing
 
 **New REST endpoint** → add a route to `source/api/http.py` (or `terminal.py` for terminal-related settings); add the fetch call to the `api` singleton in `src/ui/services/api.ts`.
 
-**New DB column** → add an `ALTER TABLE … ADD COLUMN` migration block inside `_init_db()` in `source/database.py`. Never modify the original `CREATE TABLE` statement.
+**New DB column** → add an `ALTER TABLE … ADD COLUMN` migration block inside `_init_db()` in `source/infrastructure/database.py` (compat shim remains at `source/infrastructure/database.py`). Never modify the original `CREATE TABLE` statement.
+
+**Backend app wiring** → FastAPI app composition lives in `source/bootstrap/app_factory.py` (compat shim remains at `source/bootstrap/app_factory.py`).
 
 **New MCP tool server** → see `mcp_servers/CLAUDE_mcp.md` → "How to Add a New MCP Server". If tool calls from that server should render nicely in chat, also update `src/ui/components/chat/toolCallUtils.ts` (and its summary helper usage in `ToolCallsDisplay.tsx`) with badge/text mappings for the new tools.
 
@@ -195,14 +197,14 @@ Always add tests when:
 You can skip tests for very thin glue code (simple delegating WS/HTTP handlers or presentational-only UI), unless behavior changed.
 
 ### Backend test file conventions
-- One file per source module: `source/services/terminal.py` → `tests/test_terminal.py`
+- One file per source module: `source/services/shell/terminal.py` → `tests/test_terminal.py`
 - Class-per-concern inside the file: `class TestMyFeature:`
 - Fixtures live in `tests/conftest.py`; keep them minimal — one `db_manager` fixture backed by `tmp_path` covers all DB tests
 
 ### The circular-import problem (backend pytest)
-`source/` has a circular import involving `mcp_integration.handlers` → `services` → `llm` → `mcp_integration.handlers`. This would crash pytest collection.
+`source/` has a circular import involving `mcp_integration.core.handlers` → `services` → `llm` → `mcp_integration.core.handlers`. This would crash pytest collection.
 
-**`tests/conftest.py` breaks the cycle** by pre-stubbing `source.mcp_integration.handlers` in `sys.modules` before any test file is collected. The stub is a `MagicMock` with `handle_mcp_tool_calls` set. The real package (`source.mcp_integration`) and all other real submodules (`retriever`, `manager`, etc.) remain importable normally.
+**`tests/conftest.py` breaks the cycle** by pre-stubbing `source.mcp_integration.core.handlers` in `sys.modules` before any test file is collected. The stub is a `MagicMock` with `handle_mcp_tool_calls` set. The real package (`source.mcp_integration`) and all other real submodules (`retriever`, `manager`, etc.) remain importable normally.
 
 **Rule**: if you add a test file that imports a module deep in the source tree and pytest crashes at collection with an `ImportError`, check whether the module chains into the circular path. If yes, add a targeted `sys.modules.setdefault(...)` stub in `conftest.py` for the specific module causing the problem — **never** stub entire packages.
 
@@ -213,7 +215,7 @@ import pytest
 @pytest.fixture()
 def db_manager(tmp_path):
     db_path = str(tmp_path / "test.db")
-    from source.database import DatabaseManager
+    from source.infrastructure.database import DatabaseManager
     mgr = DatabaseManager(database_path=db_path)
     return mgr
 ```

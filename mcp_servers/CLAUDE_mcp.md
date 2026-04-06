@@ -15,8 +15,8 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 | `windows_mcp` | ✅ Active | `list_windows`, `focus_window`, `minimize_window`, `maximize_window`, `close_window`, `take_screenshot` | Windows automation via uvx |
 | `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Schemas live in `terminal/inline_tools.py`; execution is inline via `terminal_executor.py` with approval UI. |
 | `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Schema lives in `sub_agent/inline_tools.py`; registration remains in `manager.py`, interception in `cloud_provider.py` and `handlers.py`, execution is in `services/sub_agent.py`. |
-| `video_watcher` | ✅ Active (inline) | `watch_youtube_video` | **Never runs as subprocess.** Schema lives in `video_watcher/inline_tools.py`; execution is inline via `source/services/video_watcher.py` with YouTube-caption fallback approval + Whisper transcription. |
-| `skills` | ✅ Active (inline) | `list_skills`, `use_skill` | **Never runs as subprocess.** Schema lives in `skills/inline_tools.py`; execution is inline via `source/mcp_integration/skills_executor.py` for on-demand skill discovery/loading. |
+| `video_watcher` | ✅ Active (inline) | `watch_youtube_video` | **Never runs as subprocess.** Schema lives in `video_watcher/inline_tools.py`; execution is inline via `source/services/media/video_watcher.py` with YouTube-caption fallback approval + Whisper transcription. |
+| `skills` | ✅ Active (inline) | `list_skills`, `use_skill` | **Never runs as subprocess.** Schema lives in `skills/inline_tools.py`; execution is inline via `source/mcp_integration/executors/skills_executor.py` for on-demand skill discovery/loading. |
 | `figma` | 🔌 External | Design tools via mcp-remote | User-enabled via Settings → Connections. Uses `npx mcp-remote` to bridge Figma's remote MCP server. |
 | `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
 | `discord` | 📝 Placeholder | — | Needs `DISCORD_BOT_TOKEN` in `config/servers.json` |
@@ -36,7 +36,7 @@ External connectors are MCP servers that are **not bundled** with Xpdite. They i
 
 ### How External Connectors Work
 
-1. **Registry**: Connectors are defined in `source/services/external_connectors.py` in the `EXTERNAL_CONNECTORS` dict
+1. **Registry**: Connectors are defined in `source/services/integrations/external_connectors.py` in the `EXTERNAL_CONNECTORS` dict
 2. **UI**: They appear automatically in Settings → Connections with Connect/Disconnect buttons
 3. **State**: Enabled/disabled state is persisted in the settings DB
 4. **Connection**: On connect, the subprocess is spawned; on app restart, enabled connectors auto-reconnect
@@ -49,7 +49,7 @@ External connectors are MCP servers that are **not bundled** with Xpdite. They i
 
 ### How to Add a New External Connector
 
-1. **Add to the registry** in `source/services/external_connectors.py`:
+1. **Add to the registry** in `source/services/integrations/external_connectors.py`:
 
 ```python
 EXTERNAL_CONNECTORS["my_connector"] = {
@@ -165,7 +165,7 @@ Use the shared helper in `mcp_servers/servers/description_format.py` and keep ea
 - `Returns:` literal output prefix for what comes back
 - `Notes:` optional literal output prefix only when workflow or safety guidance matters
 
-### 2. Connect in `source/mcp_integration/manager.py`
+### 2. Connect in `source/mcp_integration/core/manager.py`
 Inside `init_mcp_servers()`:
 ```python
 await mcp_manager.connect_server(
@@ -183,7 +183,7 @@ Create a folder under `source/skills_seed/<your_name>/` with two files:
 - `skill.json` — `{ name, description, slash_command, trigger_servers, version }`
 - `SKILL.md` — the prompt content injected when the skill is active.
 
-The skill is auto-seeded to `user_data/skills/builtin/` on every app startup. `trigger_servers` should list your new server name so the skill auto-injects when relevant tools are retrieved. Skills are managed by `SkillManager` in `source/services/skills.py`.
+The skill is auto-seeded to `user_data/skills/builtin/` on every app startup. `trigger_servers` should list your new server name so the skill auto-injects when relevant tools are retrieved. Skills are managed by `SkillManager` in `source/services/skills_runtime/skills.py`.
 
 ### 5. That's it
 Tools are auto-discovered on startup, indexed by the semantic retriever, and routed automatically when the LLM calls them.
@@ -209,6 +209,6 @@ If the new server's tool calls should display nicely in the chat timeline, updat
 
 **The `sub_agent` server is an inline tool like `terminal`.** The `spawn_agent` schema lives in `mcp_servers/servers/sub_agent/inline_tools.py` and is registered in `manager.py`'s `init_mcp_servers()` via `register_inline_tools("sub_agent", SUB_AGENT_INLINE_TOOLS)`. Tool calls are intercepted in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) before reaching the MCP subprocess router. Sub-agents have no access to terminal tools or `spawn_agent` itself (enforced by `_EXCLUDED_TOOLS` set in `services/sub_agent.py`). Tier-to-model mapping is configurable via Settings → Sub-Agents (stored as `sub_agent_tier_fast` / `sub_agent_tier_smart` in the `settings` DB table).
 
-**The `video_watcher` server is also inline-only.** The `watch_youtube_video` schema lives in `mcp_servers/servers/video_watcher/inline_tools.py` and is registered in `manager.py` via `register_inline_tools("video_watcher", VIDEO_WATCHER_INLINE_TOOLS)`. Execution is intercepted in `cloud_provider.py` and `mcp_integration/handlers.py` and handled by `source/mcp_integration/video_watcher_executor.py` + `source/services/video_watcher.py`. When captions are unavailable, it emits a `youtube_transcription_approval` chat block and waits for user approval before Whisper transcription.
+**The `video_watcher` server is also inline-only.** The `watch_youtube_video` schema lives in `mcp_servers/servers/video_watcher/inline_tools.py` and is registered in `manager.py` via `register_inline_tools("video_watcher", VIDEO_WATCHER_INLINE_TOOLS)`. Execution is intercepted in `cloud_provider.py` and `mcp_integration/handlers.py` and handled by `source/mcp_integration/executors/video_watcher_executor.py` + `source/services/media/video_watcher.py`. When captions are unavailable, it emits a `youtube_transcription_approval` chat block and waits for user approval before Whisper transcription.
 
-**The `skills` server is inline-only and retrieval-enabled.** `list_skills` and `use_skill` are registered via `register_inline_tools("skills", SKILLS_INLINE_TOOLS, skip_embed=False)` so they can be semantically retrieved by the tool retriever. Execution is handled inline by `source/mcp_integration/skills_executor.py` (no subprocess).
+**The `skills` server is inline-only and retrieval-enabled.** `list_skills` and `use_skill` are registered via `register_inline_tools("skills", SKILLS_INLINE_TOOLS, skip_embed=False)` so they can be semantically retrieved by the tool retriever. Execution is handled inline by `source/mcp_integration/executors/skills_executor.py` (no subprocess).
