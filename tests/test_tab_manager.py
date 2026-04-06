@@ -1,10 +1,10 @@
-"""Tests for source/services/tab_manager.py — TabState and TabManager."""
+"""Tests for source/services/chat/tab_manager.py — TabState and TabManager."""
 
 from unittest.mock import AsyncMock
 
 import pytest
 
-from source.services.tab_manager import TabManager, TabState, MAX_TABS
+from source.services.chat.tab_manager import TabManager, TabState, MAX_TABS
 
 
 # ── Fixtures ──────────────────────────────────────────────────────

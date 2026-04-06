@@ -7,10 +7,12 @@ It initializes all services and starts the FastAPI server.
 Architecture:
     source/
     ├── main.py           # This file - entry point
-    ├── app.py            # FastAPI app factory
-    ├── config.py         # Configuration constants
-    ├── database.py       # SQLite operations
-    ├── ss.py             # Screenshot service
+    ├── bootstrap/
+    │   └── app_factory.py # FastAPI app factory + startup/shutdown hooks
+    ├── infrastructure/
+    │   ├── config.py      # Configuration constants
+    │   ├── database.py    # SQLite operations
+    │   └── screenshot_runtime.py # Screenshot service runtime
     ├── core/             # Core utilities
     │   ├── state.py        # Global state management
     │   ├── connection.py   # WebSocket connections
@@ -23,23 +25,20 @@ Architecture:
     │   ├── http.py         # REST API endpoints
     │   └── terminal.py     # Terminal REST endpoints
     ├── mcp_integration/  # MCP tool integration
-    │   ├── manager.py      # Tool manager
-    │   ├── handlers.py     # Tool call handlers (Ollama)
-    │   ├── retriever.py    # Semantic tool retrieval
-    │   └── terminal_executor.py # Terminal tool execution
+    │   ├── core/           # Manager, handlers, retrieval, skill injection
+    │   └── executors/      # Inline tool executors
     ├── llm/              # LLM integration
-    │   ├── router.py       # Provider dispatch
-    │   ├── ollama_provider.py  # Ollama streaming
-    │   ├── cloud_provider.py   # Anthropic/OpenAI/Gemini
-    │   ├── key_manager.py  # API key encryption
-    │   └── prompt.py       # System prompt builder
+    │   ├── core/           # Routing, prompting, key management, shared types
+    │   └── providers/      # Provider-specific streaming implementations
     └── services/         # Business logic
-        ├── screenshots.py  # Screenshot handling
-        ├── conversations.py # Conversation handling
-        ├── terminal.py     # Terminal/PTY service
-        ├── transcription.py # Audio transcription
-        ├── google_auth.py  # Google OAuth
-        └── approval_history.py # Command approval cache
+        ├── chat/            # Conversation orchestration, queues, tab state
+        ├── media/           # Screenshot, transcription, meeting media pipeline
+        ├── shell/           # Terminal execution + approvals
+        ├── integrations/    # External/mobile/google integrations
+        ├── filesystem/      # File browser/indexing
+        ├── memory_store/    # Memory persistence service
+        ├── skills_runtime/  # Skills management + sub-agent runtime
+        └── scheduling/      # Schedules + notifications
 """
 
 import socket
@@ -53,20 +52,20 @@ import sys as _sys
 import uvicorn
 
 # Import configuration (relative to source package)
-from .config import SCREENSHOT_FOLDER, DEFAULT_PORT, MAX_PORT_ATTEMPTS
+from .infrastructure.config import SCREENSHOT_FOLDER, DEFAULT_PORT, MAX_PORT_ATTEMPTS
 
 # Import core components
 from .core.state import app_state
 from .core.lifecycle import register_signal_handlers
 
 # Import app factory
-from .app import app
+from .bootstrap.app_factory import app
 
 # Import MCP initialization
-from .mcp_integration.manager import init_mcp_servers
+from .mcp_integration.core.manager import init_mcp_servers
 
 # Import screenshot service hooks
-from .services.screenshots import process_screenshot, process_screenshot_start
+from .services.media.screenshots import process_screenshot, process_screenshot_start
 
 # Configure logging before runtime startup.
 logging.basicConfig(
@@ -114,11 +113,11 @@ async def _start_optional_services() -> None:
 
     async def _start_google_servers() -> None:
         try:
-            from .config import GOOGLE_TOKEN_FILE
+            from .infrastructure.config import GOOGLE_TOKEN_FILE
             import os
 
             if os.path.exists(GOOGLE_TOKEN_FILE):
-                from .mcp_integration.manager import mcp_manager
+                from .mcp_integration.core.manager import mcp_manager
 
                 await mcp_manager.connect_google_servers()
                 logger.info("Gmail & Calendar MCP servers started (token found)")
@@ -129,7 +128,7 @@ async def _start_optional_services() -> None:
 
     async def _start_scheduler_service() -> None:
         try:
-            from .services.scheduler import scheduler_service
+            from .services.scheduling.scheduler import scheduler_service
 
             await scheduler_service.start()
             logger.info("Scheduler service started")
@@ -158,7 +157,7 @@ def start_server():
 
     # Ensure the default tab exists before any hotkey-driven screenshot
     # work is scheduled from the background listener thread.
-    from .services.tab_manager_instance import init_tab_manager
+    from .services.chat.tab_manager_instance import init_tab_manager
 
     init_tab_manager()
 
@@ -182,10 +181,15 @@ def start_server():
     loop.run_until_complete(server.serve())
 
 
+def bootstrap_backend_server():
+    """Backward-compatible alias for start_server()."""
+    start_server()
+
+
 def start_screenshot_service():
     """Start the screenshot service."""
     try:
-        from .ss import ScreenshotService
+        from .infrastructure.screenshot_runtime import ScreenshotService
 
         app_state.screenshot_service = ScreenshotService(
             process_screenshot, process_screenshot_start
@@ -204,7 +208,7 @@ def start_screenshot_service():
 def start_transcription_service():
     """Start the transcription service."""
     try:
-        from .services.transcription import TranscriptionService
+        from .services.media.transcription import TranscriptionService
 
         # Initialize the service (model loads lazily on first use)
         app_state.transcription_service = TranscriptionService()
@@ -220,7 +224,7 @@ def main():
 
     # Cleanup old extracted images from previous sessions (>24 hours old)
     try:
-        from .services.file_extractor import FileExtractor
+        from .services.media.file_extractor import FileExtractor
 
         removed = FileExtractor.cleanup_extracted_images(max_age_hours=24)
         if removed > 0:

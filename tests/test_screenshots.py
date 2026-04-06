@@ -24,7 +24,7 @@ class TestTabStateScreenshots:
     """Test TabState.add_screenshot and remove_screenshot."""
 
     def _make_tab_state(self, tab_id: str = "test-tab"):
-        from source.services.tab_manager import TabState
+        from source.services.chat.tab_manager import TabState
 
         return TabState(tab_id=tab_id)
 
@@ -108,7 +108,7 @@ class TestCrossTabIsolation:
         saved = app_state.screenshot_counter
         app_state.screenshot_counter = 0
         try:
-            from source.services.tab_manager import TabState
+            from source.services.chat.tab_manager import TabState
 
             tab_a = TabState(tab_id="a")
             tab_b = TabState(tab_id="b")
@@ -135,17 +135,17 @@ class TestResolveTabState:
     """Test ScreenshotHandler._resolve_tab_state fallback logic."""
 
     def test_explicit_tab_state_wins(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         explicit = TabState(tab_id="explicit")
         result = ScreenshotHandler._resolve_tab_state(explicit)
         assert result is explicit
 
-    @patch("source.services.screenshots.ScreenshotHandler._get_active_tab_state")
+    @patch("source.services.media.screenshots.ScreenshotHandler._get_active_tab_state")
     def test_falls_back_to_active_tab(self, mock_get_active):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         active_ts = TabState(tab_id="active")
         mock_get_active.return_value = active_ts
@@ -153,9 +153,9 @@ class TestResolveTabState:
         result = ScreenshotHandler._resolve_tab_state(None)
         assert result is active_ts
 
-    @patch("source.services.screenshots.ScreenshotHandler._get_active_tab_state")
+    @patch("source.services.media.screenshots.ScreenshotHandler._get_active_tab_state")
     def test_raises_when_no_tab(self, mock_get_active):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         mock_get_active.side_effect = RuntimeError("no tab")
         with pytest.raises(RuntimeError, match="no tab"):
@@ -171,8 +171,8 @@ class TestGetActiveTabState:
     """Test _get_active_tab_state prefers contextvar over app_state.active_tab_id."""
 
     def test_prefers_contextvar(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabManager
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabManager
 
         # Build a minimal tab manager with two tabs
         async def _noop(q):
@@ -189,7 +189,7 @@ class TestGetActiveTabState:
         app_state.active_tab_id = "active-tab"
 
         try:
-            with patch("source.services.tab_manager_instance.tab_manager", tm):
+            with patch("source.services.chat.tab_manager_instance.tab_manager", tm):
                 # No contextvar set — should fall back to global
                 result = ScreenshotHandler._get_active_tab_state()
                 assert result is active_tab.state
@@ -205,8 +205,8 @@ class TestGetActiveTabState:
             app_state.active_tab_id = saved_tab
 
     def test_falls_back_to_default_when_active_tab_missing(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabManager
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabManager
 
         async def _noop(_q):
             return None
@@ -220,7 +220,7 @@ class TestGetActiveTabState:
         saved_tab = app_state.active_tab_id
         app_state.active_tab_id = "missing-tab"
         try:
-            with patch("source.services.tab_manager_instance.tab_manager", tm):
+            with patch("source.services.chat.tab_manager_instance.tab_manager", tm):
                 result = ScreenshotHandler._get_active_tab_state()
 
             assert result is default_session.state
@@ -237,8 +237,8 @@ class TestGetActiveTabState:
 class TestCaptureFullscreen:
     @pytest.mark.asyncio
     async def test_capture_fullscreen_success_adds_screenshot(self, tmp_path):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         image_path = tmp_path / "shot.png"
         image_path.write_bytes(b"\x89PNG")
@@ -246,20 +246,20 @@ class TestCaptureFullscreen:
 
         with (
             patch(
-                "source.services.screenshots.broadcast_message", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_message", new_callable=AsyncMock
             ) as mock_broadcast,
             patch(
-                "source.services.screenshots.asyncio.sleep", new_callable=AsyncMock
+                "source.services.media.screenshots.asyncio.sleep", new_callable=AsyncMock
             ) as mock_sleep,
             patch(
-                "source.services.screenshots.run_in_thread",
+                "source.services.media.screenshots.run_in_thread",
                 new_callable=AsyncMock,
                 return_value=str(image_path),
             ) as mock_run,
             patch.object(
                 ScreenshotHandler, "add_screenshot", new=AsyncMock(return_value="ss_42")
             ) as mock_add,
-            patch("source.ss.take_fullscreen_screenshot") as mock_take,
+            patch("source.infrastructure.screenshot_runtime.take_fullscreen_screenshot") as mock_take,
         ):
             result = await ScreenshotHandler.capture_fullscreen(tab_state=tab_state)
 
@@ -268,29 +268,29 @@ class TestCaptureFullscreen:
             "screenshot_start", "Taking fullscreen screenshot..."
         )
         mock_sleep.assert_awaited_once_with(0.4)
-        from source.config import SCREENSHOT_FOLDER
+        from source.infrastructure.config import SCREENSHOT_FOLDER
 
         mock_run.assert_awaited_once_with(mock_take, SCREENSHOT_FOLDER)
         mock_add.assert_awaited_once_with(str(image_path), tab_state=tab_state)
 
     @pytest.mark.asyncio
     async def test_capture_fullscreen_returns_none_when_image_missing(self):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         with (
             patch(
-                "source.services.screenshots.broadcast_message", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_message", new_callable=AsyncMock
             ),
-            patch("source.services.screenshots.asyncio.sleep", new_callable=AsyncMock),
+            patch("source.services.media.screenshots.asyncio.sleep", new_callable=AsyncMock),
             patch(
-                "source.services.screenshots.run_in_thread",
+                "source.services.media.screenshots.run_in_thread",
                 new_callable=AsyncMock,
                 return_value="/missing/path.png",
             ),
             patch.object(
                 ScreenshotHandler, "add_screenshot", new=AsyncMock()
             ) as mock_add,
-            patch("source.ss.take_fullscreen_screenshot"),
+            patch("source.infrastructure.screenshot_runtime.take_fullscreen_screenshot"),
         ):
             result = await ScreenshotHandler.capture_fullscreen()
 
@@ -299,19 +299,19 @@ class TestCaptureFullscreen:
 
     @pytest.mark.asyncio
     async def test_capture_fullscreen_handles_threadpool_error(self):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         with (
             patch(
-                "source.services.screenshots.broadcast_message", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_message", new_callable=AsyncMock
             ),
-            patch("source.services.screenshots.asyncio.sleep", new_callable=AsyncMock),
+            patch("source.services.media.screenshots.asyncio.sleep", new_callable=AsyncMock),
             patch(
-                "source.services.screenshots.run_in_thread",
+                "source.services.media.screenshots.run_in_thread",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("boom"),
             ),
-            patch("source.ss.take_fullscreen_screenshot"),
+            patch("source.infrastructure.screenshot_runtime.take_fullscreen_screenshot"),
         ):
             result = await ScreenshotHandler.capture_fullscreen()
 
@@ -321,26 +321,26 @@ class TestCaptureFullscreen:
     async def test_capture_fullscreen_without_tab_raises_and_returns_none(
         self, tmp_path
     ):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         image_path = tmp_path / "shot.png"
         image_path.write_bytes(b"\x89PNG")
 
         with (
             patch(
-                "source.services.screenshots.broadcast_message", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_message", new_callable=AsyncMock
             ),
-            patch("source.services.screenshots.asyncio.sleep", new_callable=AsyncMock),
+            patch("source.services.media.screenshots.asyncio.sleep", new_callable=AsyncMock),
             patch(
-                "source.services.screenshots.run_in_thread",
+                "source.services.media.screenshots.run_in_thread",
                 new_callable=AsyncMock,
                 return_value=str(image_path),
             ),
             patch(
-                "source.services.screenshots.ScreenshotHandler._get_active_tab_state",
+                "source.services.media.screenshots.ScreenshotHandler._get_active_tab_state",
                 side_effect=RuntimeError("no tab"),
             ),
-            patch("source.ss.take_fullscreen_screenshot"),
+            patch("source.infrastructure.screenshot_runtime.take_fullscreen_screenshot"),
         ):
             result = await ScreenshotHandler.capture_fullscreen()
 
@@ -350,15 +350,15 @@ class TestCaptureFullscreen:
 class TestScreenshotLifecycle:
     @pytest.mark.asyncio
     async def test_add_screenshot_raises_when_no_tab(self, tmp_path):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         image_path = tmp_path / "orphan.png"
         image_path.write_bytes(b"\x89PNG")
 
         with (
-            patch("source.ss.create_thumbnail", return_value="thumb-data"),
+            patch("source.infrastructure.screenshot_runtime.create_thumbnail", return_value="thumb-data"),
             patch(
-                "source.services.screenshots.ScreenshotHandler._get_active_tab_state",
+                "source.services.media.screenshots.ScreenshotHandler._get_active_tab_state",
                 side_effect=RuntimeError("no tab"),
             ),
         ):
@@ -367,8 +367,8 @@ class TestScreenshotLifecycle:
 
     @pytest.mark.asyncio
     async def test_add_screenshot_broadcasts_to_target_tab(self, tmp_path):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         image_path = tmp_path / "tab.png"
         image_path.write_bytes(b"\x89PNG")
@@ -378,9 +378,9 @@ class TestScreenshotLifecycle:
         app_state.screenshot_counter = 0
         try:
             with (
-                patch("source.ss.create_thumbnail", return_value="thumb-data"),
+                patch("source.infrastructure.screenshot_runtime.create_thumbnail", return_value="thumb-data"),
                 patch(
-                    "source.services.screenshots.broadcast_to_tab",
+                    "source.services.media.screenshots.broadcast_to_tab",
                     new_callable=AsyncMock,
                 ) as mock_broadcast,
             ):
@@ -401,8 +401,8 @@ class TestScreenshotLifecycle:
 
     @pytest.mark.asyncio
     async def test_remove_screenshot_deletion_error_still_removes_and_broadcasts(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         tab_state = TabState(tab_id="tab-remove")
         tab_state.screenshot_list = [
@@ -410,13 +410,13 @@ class TestScreenshotLifecycle:
         ]
 
         with (
-            patch("source.services.screenshots.os.path.exists", return_value=True),
+            patch("source.services.media.screenshots.os.path.exists", return_value=True),
             patch(
-                "source.services.screenshots.os.remove",
+                "source.services.media.screenshots.os.remove",
                 side_effect=OSError("cannot delete"),
             ),
             patch(
-                "source.services.screenshots.broadcast_to_tab", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
             ) as mock_broadcast,
         ):
             removed = await ScreenshotHandler.remove_screenshot(
@@ -431,8 +431,8 @@ class TestScreenshotLifecycle:
 
     @pytest.mark.asyncio
     async def test_remove_screenshot_not_found_returns_false(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         tab_state = TabState(tab_id="tab-none")
         tab_state.screenshot_list = [
@@ -440,7 +440,7 @@ class TestScreenshotLifecycle:
         ]
 
         with patch(
-            "source.services.screenshots.broadcast_to_tab", new_callable=AsyncMock
+            "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
         ) as mock_broadcast:
             removed = await ScreenshotHandler.remove_screenshot(
                 "ss_999", tab_state=tab_state
@@ -452,8 +452,8 @@ class TestScreenshotLifecycle:
 
     @pytest.mark.asyncio
     async def test_clear_screenshots_deletion_error_continues_and_clears(self):
-        from source.services.screenshots import ScreenshotHandler
-        from source.services.tab_manager import TabState
+        from source.services.media.screenshots import ScreenshotHandler
+        from source.services.chat.tab_manager import TabState
 
         tab_state = TabState(tab_id="tab-clear")
         tab_state.screenshot_list = [
@@ -466,12 +466,12 @@ class TestScreenshotLifecycle:
                 raise OSError("locked")
 
         with (
-            patch("source.services.screenshots.os.path.exists", return_value=True),
+            patch("source.services.media.screenshots.os.path.exists", return_value=True),
             patch(
-                "source.services.screenshots.os.remove", side_effect=_remove_side_effect
+                "source.services.media.screenshots.os.remove", side_effect=_remove_side_effect
             ),
             patch(
-                "source.services.screenshots.broadcast_to_tab", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
             ) as mock_broadcast,
         ):
             await ScreenshotHandler.clear_screenshots(tab_state=tab_state)
@@ -483,13 +483,13 @@ class TestScreenshotLifecycle:
 class TestPrecisionModeBehavior:
     @pytest.mark.asyncio
     async def test_on_screenshot_start_ignores_non_precision(self):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         saved_capture_mode = app_state.capture_mode
         app_state.capture_mode = "none"
         try:
             with patch(
-                "source.services.screenshots.broadcast_to_tab", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
             ) as mock_broadcast:
                 await ScreenshotHandler.on_screenshot_start()
             mock_broadcast.assert_not_awaited()
@@ -498,8 +498,8 @@ class TestPrecisionModeBehavior:
 
     @pytest.mark.asyncio
     async def test_on_screenshot_start_broadcasts_in_precision(self):
-        from source.config import CaptureMode
-        from source.services.screenshots import ScreenshotHandler
+        from source.infrastructure.config import CaptureMode
+        from source.services.media.screenshots import ScreenshotHandler
 
         saved_capture_mode = app_state.capture_mode
         saved_active_tab = app_state.active_tab_id
@@ -507,7 +507,7 @@ class TestPrecisionModeBehavior:
         app_state.active_tab_id = "tab-precision"
         try:
             with patch(
-                "source.services.screenshots.broadcast_to_tab", new_callable=AsyncMock
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
             ) as mock_broadcast:
                 await ScreenshotHandler.on_screenshot_start()
             mock_broadcast.assert_awaited_once_with(
@@ -519,19 +519,19 @@ class TestPrecisionModeBehavior:
 
     @pytest.mark.asyncio
     async def test_on_screenshot_captured_non_precision_deletes_file(self):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         saved_capture_mode = app_state.capture_mode
         app_state.capture_mode = "fullscreen"
         try:
             with (
-                patch("source.services.screenshots.os.path.exists", return_value=True),
-                patch("source.services.screenshots.os.remove") as mock_remove,
+                patch("source.services.media.screenshots.os.path.exists", return_value=True),
+                patch("source.services.media.screenshots.os.remove") as mock_remove,
                 patch.object(
                     ScreenshotHandler, "add_screenshot", new=AsyncMock()
                 ) as mock_add,
                 patch(
-                    "source.services.screenshots.broadcast_to_tab",
+                    "source.services.media.screenshots.broadcast_to_tab",
                     new_callable=AsyncMock,
                 ) as mock_broadcast,
             ):
@@ -545,15 +545,15 @@ class TestPrecisionModeBehavior:
 
     @pytest.mark.asyncio
     async def test_on_screenshot_captured_non_precision_handles_delete_error(self):
-        from source.services.screenshots import ScreenshotHandler
+        from source.services.media.screenshots import ScreenshotHandler
 
         saved_capture_mode = app_state.capture_mode
         app_state.capture_mode = "fullscreen"
         try:
             with (
-                patch("source.services.screenshots.os.path.exists", return_value=True),
+                patch("source.services.media.screenshots.os.path.exists", return_value=True),
                 patch(
-                    "source.services.screenshots.os.remove", side_effect=OSError("fail")
+                    "source.services.media.screenshots.os.remove", side_effect=OSError("fail")
                 ),
                 patch.object(
                     ScreenshotHandler, "add_screenshot", new=AsyncMock()
@@ -567,8 +567,8 @@ class TestPrecisionModeBehavior:
 
     @pytest.mark.asyncio
     async def test_on_screenshot_captured_precision_adds_and_broadcasts_ready(self):
-        from source.config import CaptureMode
-        from source.services.screenshots import ScreenshotHandler
+        from source.infrastructure.config import CaptureMode
+        from source.services.media.screenshots import ScreenshotHandler
 
         saved_capture_mode = app_state.capture_mode
         saved_active_tab = app_state.active_tab_id
@@ -582,7 +582,7 @@ class TestPrecisionModeBehavior:
                     new=AsyncMock(return_value="ss_1"),
                 ) as mock_add,
                 patch(
-                    "source.services.screenshots.broadcast_to_tab",
+                    "source.services.media.screenshots.broadcast_to_tab",
                     new_callable=AsyncMock,
                 ) as mock_broadcast,
             ):

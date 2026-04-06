@@ -29,7 +29,7 @@ def _get_file_extractor():
     """Lazy-load the file extractor to avoid import overhead."""
     global _file_extractor
     if _file_extractor is None:
-        from source.services.file_extractor import FileExtractor
+        from source.services.media.file_extractor import FileExtractor
 
         _file_extractor = FileExtractor()
     return _file_extractor
@@ -256,7 +256,7 @@ def read_file(
         - dict: For image files, returns {"type": "image", "media_type": ..., "data": ..., ...}
         - str: Error messages only
     """
-    from source.config import DEFAULT_READ_FILE_MAX_CHARS, MAX_TOOL_RESULT_LENGTH
+    from source.infrastructure.config import DEFAULT_READ_FILE_MAX_CHARS, MAX_TOOL_RESULT_LENGTH
 
     # Normalize parameters
     if offset < 0:

@@ -1,9 +1,9 @@
-"""Tests for source/llm/prompt.py - system prompt builder."""
+"""Tests for source/llm/core/prompt.py - system prompt builder."""
 
 import re
 import platform
 
-from source.llm.prompt import (
+from source.llm.core.prompt import (
     _BASE_TEMPLATE,
     _get_datetime,
     _get_os_info,

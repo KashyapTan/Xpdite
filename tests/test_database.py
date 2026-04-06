@@ -9,7 +9,7 @@ import sqlite3
 def db_manager(tmp_path):
     """Create a fresh DatabaseManager backed by a temp SQLite file."""
     db_path = str(tmp_path / "test.db")
-    from source.database import DatabaseManager
+    from source.infrastructure.database import DatabaseManager
 
     return DatabaseManager(database_path=db_path)
 
@@ -421,20 +421,20 @@ class TestSearch:
     # ── _fts5_phrase helper unit tests ─────────────────────────────
 
     def test_fts5_phrase_wraps_in_double_quotes(self, db_manager):
-        from source.database import DatabaseManager
+        from source.infrastructure.database import DatabaseManager
         assert DatabaseManager._fts5_phrase("hello world") == '"hello world"'
 
     def test_fts5_phrase_escapes_internal_quotes(self, db_manager):
-        from source.database import DatabaseManager
+        from source.infrastructure.database import DatabaseManager
         assert DatabaseManager._fts5_phrase('say "hi"') == '"say ""hi"""'
 
     def test_fts5_phrase_escapes_consecutive_quotes(self, db_manager):
-        from source.database import DatabaseManager
+        from source.infrastructure.database import DatabaseManager
         # '""' → each " doubled → '""""' → wrapped → '""""""' (6 chars)
         assert DatabaseManager._fts5_phrase('""') == '""""""'
 
     def test_fts5_phrase_empty_string(self, db_manager):
-        from source.database import DatabaseManager
+        from source.infrastructure.database import DatabaseManager
         assert DatabaseManager._fts5_phrase("") == '""'
 
 

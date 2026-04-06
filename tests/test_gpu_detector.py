@@ -1,9 +1,9 @@
-"""Tests for source/services/gpu_detector.py."""
+"""Tests for source/services/media/gpu_detector.py."""
 
 import sys
 from types import SimpleNamespace
 
-from source.services import gpu_detector
+from source.services.media import gpu_detector
 
 
 class _FakeCuda:
@@ -92,9 +92,12 @@ class TestGpuDetector:
         assert result["backend"] == "cpu"
 
     def test_estimated_processing_time_uses_backend_multiplier(self, monkeypatch):
-        monkeypatch.setattr(gpu_detector, "get_compute_info", lambda: {"backend": "cuda"})
+        monkeypatch.setattr(
+            gpu_detector, "get_compute_info", lambda: {"backend": "cuda"}
+        )
         assert gpu_detector.get_estimated_processing_time(100.0) == 15.0
 
-        monkeypatch.setattr(gpu_detector, "get_compute_info", lambda: {"backend": "cpu"})
+        monkeypatch.setattr(
+            gpu_detector, "get_compute_info", lambda: {"backend": "cpu"}
+        )
         assert gpu_detector.get_estimated_processing_time(10.0) == 15.0
-

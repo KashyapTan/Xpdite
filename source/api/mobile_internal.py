@@ -91,7 +91,7 @@ async def submit_message(body: MessageSubmission):
     Called by Channel Bridge when a user sends a chat message (not a command).
     Looks up or creates a session, queues the message, returns immediately.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     success, message, tab_id = await mobile_channel_service.handle_message(
         platform=body.platform,
@@ -123,7 +123,7 @@ async def execute_command(body: CommandExecution):
     Commands: /new, /stop, /status, /model, /help, /pair
     Returns the response text to send back to the user.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     response_text = await mobile_channel_service.handle_command(
         platform=body.platform,
@@ -150,7 +150,7 @@ async def verify_pairing(body: PairingVerification):
 
     Called by Channel Bridge when user sends /pair <code>.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     success, message = mobile_channel_service.verify_pairing_code(
         platform=body.platform,
@@ -172,7 +172,7 @@ async def check_pairing(body: PairingCheck):
 
     Called by Channel Bridge to determine if user needs to pair first.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     is_paired = mobile_channel_service.is_paired(
         platform=body.platform,
@@ -191,7 +191,7 @@ async def generate_pairing_code(body: PairingCodeGeneration):
 
     Called by the Settings UI to display a code for the user.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     code = mobile_channel_service.generate_pairing_code(
         expires_in_seconds=body.expires_in_seconds
@@ -210,7 +210,7 @@ async def get_paired_devices():
 
     Called by Settings UI to display paired devices.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     devices = mobile_channel_service.get_all_paired_devices()
 
@@ -226,7 +226,7 @@ async def revoke_device(device_id: int):
 
     Called by Settings UI when user removes a device.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     mobile_channel_service.revoke_device(device_id)
 
@@ -251,7 +251,7 @@ async def update_whatsapp_connection(body: WhatsAppConnectionUpdate):
     import json
     import logging
 
-    from ..database import db
+    from ..infrastructure.database import db
 
     logger = logging.getLogger(__name__)
 
@@ -293,7 +293,7 @@ async def get_all_sessions():
 
     Called by Settings UI to display active sessions.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     sessions = db.get_all_mobile_sessions()
 
@@ -307,7 +307,7 @@ async def get_session(platform: str, sender_id: str):
     """
     Get a specific mobile session.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     session = mobile_channel_service.get_session(platform, sender_id)
 
@@ -324,7 +324,7 @@ async def end_session(platform: str, sender_id: str):
     """
     End a mobile session.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     success = mobile_channel_service.end_session(platform, sender_id)
 
@@ -358,7 +358,7 @@ async def cleanup_expired():
 
     Can be called periodically by Channel Bridge or by a scheduled task.
     """
-    from ..services.mobile_channel import mobile_channel_service
+    from ..services.integrations.mobile_channel import mobile_channel_service
 
     deleted_count = mobile_channel_service.cleanup_expired_codes()
 

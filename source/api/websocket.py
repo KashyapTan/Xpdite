@@ -136,7 +136,7 @@ async def websocket_endpoint(websocket: WebSocket):
     # Screenshots are per-tab; send each tab's screenshots tagged with tab_id
     # so the frontend can route them correctly.
     try:
-        from ..services.tab_manager_instance import tab_manager
+        from ..services.chat.tab_manager_instance import tab_manager
 
         if tab_manager is not None:
             for tid in tab_manager.get_all_tab_ids():

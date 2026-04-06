@@ -1,4 +1,4 @@
-"""Tests for source/services/tab_manager_instance.py."""
+"""Tests for source/services/chat/tab_manager_instance.py."""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -7,11 +7,11 @@ import pytest
 
 from source.core import connection
 from source.core.state import app_state
-from source.services.conversations import ConversationService
-from source.services.ollama_global_queue import ollama_global_queue
-from source.services.query_queue import QueuedQuery
-from source.services import tab_manager_instance
-from source.services.tab_manager_instance import init_tab_manager
+from source.services.chat.conversations import ConversationService
+from source.services.chat.ollama_global_queue import ollama_global_queue
+from source.services.chat.query_queue import QueuedQuery
+from source.services.chat import tab_manager_instance
+from source.services.chat.tab_manager_instance import init_tab_manager
 
 
 @pytest.fixture(autouse=True)

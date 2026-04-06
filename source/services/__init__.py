@@ -11,17 +11,17 @@ from typing import TYPE_CHECKING, Any
 __all__ = ["ScreenshotHandler", "ConversationService"]
 
 if TYPE_CHECKING:
-    from .conversations import ConversationService
-    from .screenshots import ScreenshotHandler
+    from .chat.conversations import ConversationService
+    from .media.screenshots import ScreenshotHandler
 
 
 def __getattr__(name: str) -> Any:
     if name == "ScreenshotHandler":
-        from .screenshots import ScreenshotHandler
+        from .media.screenshots import ScreenshotHandler
 
         return ScreenshotHandler
     if name == "ConversationService":
-        from .conversations import ConversationService
+        from .chat.conversations import ConversationService
 
         return ConversationService
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

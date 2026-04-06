@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from source.config import SKILLS_SEED_DIR
+from source.infrastructure.config import SKILLS_SEED_DIR
 
 
 def _load_seed_skills():

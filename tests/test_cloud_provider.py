@@ -1,4 +1,4 @@
-"""Tests for source/llm/cloud_provider.py.
+"""Tests for source/llm/providers/cloud_provider.py.
 
 Covers:
 - _build_messages: chat history → OpenAI-format conversion
@@ -80,7 +80,7 @@ class TestBuildMessages:
 
     @staticmethod
     def _build(chat_history, user_query="hello", image_paths=None, system_prompt=""):
-        from source.llm.cloud_provider import _build_messages
+        from source.llm.providers.cloud_provider import _build_messages
 
         return _build_messages(
             chat_history, user_query, image_paths or [], system_prompt
@@ -186,7 +186,7 @@ class TestHelpers:
     """Tests for helper functions."""
 
     def test_guess_media_type(self):
-        from source.llm.cloud_provider import _guess_media_type
+        from source.llm.providers.cloud_provider import _guess_media_type
 
         assert _guess_media_type("photo.jpg") == "image/jpeg"
         assert _guess_media_type("photo.jpeg") == "image/jpeg"
@@ -196,12 +196,12 @@ class TestHelpers:
         assert _guess_media_type("photo.bmp") == "image/png"  # fallback
 
     def test_truncate_tool_result_short(self):
-        from source.llm.cloud_provider import _truncate_tool_result
+        from source.llm.providers.cloud_provider import _truncate_tool_result
 
         assert _truncate_tool_result("short") == "short"
 
     def test_truncate_tool_result_long(self):
-        from source.llm.cloud_provider import _truncate_tool_result
+        from source.llm.providers.cloud_provider import _truncate_tool_result
 
         long_text = "x" * 200_000
         result = _truncate_tool_result(long_text)
@@ -209,14 +209,14 @@ class TestHelpers:
         assert result.endswith("[Output truncated due to length]")
 
     def test_format_image(self):
-        from source.llm.cloud_provider import _format_image
+        from source.llm.providers.cloud_provider import _format_image
 
         result = _format_image("abc123", "image/png")
         assert result["type"] == "image_url"
         assert result["image_url"]["url"] == "data:image/png;base64,abc123"
 
     def test_sanitize_tool_args_redacts_sensitive_keys(self):
-        from source.mcp_integration.tool_args import sanitize_tool_args
+        from source.mcp_integration.core.tool_args import sanitize_tool_args
 
         result = sanitize_tool_args(
             "read_file",
@@ -235,7 +235,7 @@ class TestHelpers:
         }
 
     def test_sanitize_tool_args_redacts_memcommit_content(self):
-        from source.mcp_integration.tool_args import sanitize_tool_args
+        from source.mcp_integration.core.tool_args import sanitize_tool_args
 
         result = sanitize_tool_args(
             "memcommit",
@@ -263,7 +263,7 @@ class TestHelpers:
 
     @pytest.mark.asyncio
     async def test_execute_and_broadcast_tool_serializes_dict_results_as_json(self):
-        from source.llm.cloud_provider import _execute_and_broadcast_tool
+        from source.llm.providers.cloud_provider import _execute_and_broadcast_tool
 
         tool_calls = []
         blocks = []
@@ -282,24 +282,24 @@ class TestHelpers:
         mock_mgr.call_tool = AsyncMock(return_value=dict_result)
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mgr),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mgr),
             patch(
-                "source.llm.cloud_provider.broadcast_message", new=AsyncMock()
+                "source.llm.providers.cloud_provider.broadcast_message", new=AsyncMock()
             ) as mock_bcast,
             patch(
-                "source.mcp_integration.terminal_executor.is_terminal_tool",
+                "source.mcp_integration.executors.terminal_executor.is_terminal_tool",
                 return_value=False,
             ),
             patch(
-                "source.mcp_integration.video_watcher_executor.is_video_watcher_tool",
+                "source.mcp_integration.executors.video_watcher_executor.is_video_watcher_tool",
                 return_value=False,
             ),
             patch(
-                "source.mcp_integration.memory_executor.is_memory_tool",
+                "source.mcp_integration.executors.memory_executor.is_memory_tool",
                 return_value=False,
             ),
             patch(
-                "source.mcp_integration.scheduler_executor.is_scheduler_tool",
+                "source.mcp_integration.executors.scheduler_executor.is_scheduler_tool",
                 return_value=False,
             ),
         ):
@@ -326,11 +326,11 @@ class TestHelpers:
 
     def test_get_reasoning_params_supported(self):
         """Models that support reasoning should get reasoning_effort."""
-        from source.llm.cloud_provider import _get_reasoning_params
+        from source.llm.providers.cloud_provider import _get_reasoning_params
 
         # Mock litellm.get_model_info to return supports_reasoning=True
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             return_value={"supports_reasoning": True},
         ):
             params = _get_reasoning_params("anthropic/claude-sonnet-4-20250514")
@@ -338,10 +338,10 @@ class TestHelpers:
 
     def test_get_reasoning_params_not_supported(self):
         """Models that don't support reasoning should get empty dict."""
-        from source.llm.cloud_provider import _get_reasoning_params
+        from source.llm.providers.cloud_provider import _get_reasoning_params
 
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             return_value={"supports_reasoning": False},
         ):
             params = _get_reasoning_params("openai/gpt-4o")
@@ -349,10 +349,10 @@ class TestHelpers:
 
     def test_get_reasoning_params_unknown_model(self):
         """Unknown models (not in litellm registry) should get empty dict."""
-        from source.llm.cloud_provider import _get_reasoning_params
+        from source.llm.providers.cloud_provider import _get_reasoning_params
 
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             side_effect=Exception("Model not found"),
         ):
             params = _get_reasoning_params("custom/my-model")
@@ -360,18 +360,18 @@ class TestHelpers:
 
     def test_get_reasoning_params_missing_field(self):
         """Model info without supports_reasoning field defaults to no reasoning."""
-        from source.llm.cloud_provider import _get_reasoning_params
+        from source.llm.providers.cloud_provider import _get_reasoning_params
 
-        with patch("source.llm.cloud_provider.litellm.get_model_info", return_value={}):
+        with patch("source.llm.providers.cloud_provider.litellm.get_model_info", return_value={}):
             params = _get_reasoning_params("openai/gpt-4o-mini")
         assert params == {}
 
     def test_get_max_tokens_supported(self):
         """Models with known max output tokens should return their limit."""
-        from source.llm.cloud_provider import _get_max_tokens
+        from source.llm.providers.cloud_provider import _get_max_tokens
 
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             return_value={"max_output_tokens": 64000},
         ):
             result = _get_max_tokens("anthropic/claude-sonnet-4-20250514")
@@ -379,10 +379,10 @@ class TestHelpers:
 
     def test_get_max_tokens_unknown_model(self):
         """Unknown models should return None for max_tokens."""
-        from source.llm.cloud_provider import _get_max_tokens
+        from source.llm.providers.cloud_provider import _get_max_tokens
 
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             side_effect=Exception("Not found"),
         ):
             result = _get_max_tokens("custom/my-model")
@@ -390,10 +390,10 @@ class TestHelpers:
 
     def test_get_max_tokens_missing_field(self):
         """Model info without max_output_tokens should return None."""
-        from source.llm.cloud_provider import _get_max_tokens
+        from source.llm.providers.cloud_provider import _get_max_tokens
 
         with patch(
-            "source.llm.cloud_provider.litellm.get_model_info",
+            "source.llm.providers.cloud_provider.litellm.get_model_info",
             return_value={"supports_reasoning": False},
         ):
             result = _get_max_tokens("openai/gpt-4o")
@@ -409,7 +409,7 @@ class TestHelpers:
 def _mock_broadcast():
     """Patch broadcast_message and return the mock."""
     with patch(
-        "source.llm.cloud_provider.broadcast_message", new_callable=AsyncMock
+        "source.llm.providers.cloud_provider.broadcast_message", new_callable=AsyncMock
     ) as m:
         yield m
 
@@ -418,7 +418,7 @@ def _mock_broadcast():
 def _mock_cancelled():
     """Patch is_current_request_cancelled to always return False."""
     with patch(
-        "source.llm.cloud_provider.is_current_request_cancelled", return_value=False
+        "source.llm.providers.cloud_provider.is_current_request_cancelled", return_value=False
     ) as m:
         yield m
 
@@ -431,7 +431,7 @@ def _mock_model_info():
     non-reasoning models.  Individual tests can override by mocking again.
     """
     with patch(
-        "source.llm.cloud_provider.litellm.get_model_info",
+        "source.llm.providers.cloud_provider.litellm.get_model_info",
         return_value={"supports_reasoning": False},
     ):
         yield
@@ -441,7 +441,7 @@ def _mock_model_info():
 def _mock_mcp():
     """Patch the mcp_manager used inside _stream_litellm.
 
-    mcp_manager is imported inline (from ..mcp_integration.manager import mcp_manager),
+    mcp_manager is imported inline (from ..mcp_integration.core.manager import mcp_manager),
     so we patch it at the source module where it lives.
     """
     mock_mgr = MagicMock()
@@ -466,9 +466,9 @@ def _mock_mcp():
     mock_mgr.get_tool_server_name.return_value = "test-server"
     mock_mgr.call_tool = AsyncMock(return_value="tool output")
     with (
-        patch("source.mcp_integration.manager.mcp_manager", mock_mgr),
+        patch("source.mcp_integration.core.manager.mcp_manager", mock_mgr),
         patch(
-            "source.mcp_integration.terminal_executor.is_terminal_tool",
+            "source.mcp_integration.executors.terminal_executor.is_terminal_tool",
             return_value=False,
         ),
     ):
@@ -479,7 +479,7 @@ def _patch_acompletion(*streams):
     """Return a patch context manager that yields each stream in sequence."""
     mock = AsyncMock()
     mock.side_effect = [_make_async_iter(s) for s in streams]
-    return patch("source.llm.cloud_provider.litellm.acompletion", mock)
+    return patch("source.llm.providers.cloud_provider.litellm.acompletion", mock)
 
 
 class TestStreamLitellm:
@@ -495,7 +495,7 @@ class TestStreamLitellm:
             _text_chunk(None, finish_reason="stop"),
         ]
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -537,8 +537,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -576,7 +576,7 @@ class TestStreamLitellm:
             return call_count > 1  # cancelled on 2nd check (inside chunk loop)
 
         with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
+            "source.llm.providers.cloud_provider.is_current_request_cancelled",
             side_effect=cancel_after_one,
         ):
             chunks = [
@@ -585,7 +585,7 @@ class TestStreamLitellm:
                 _text_chunk(None, finish_reason="stop"),
             ]
             with _patch_acompletion(chunks):
-                from source.llm.cloud_provider import stream_cloud_chat
+                from source.llm.providers.cloud_provider import stream_cloud_chat
 
                 text, stats, tool_calls, blocks = await stream_cloud_chat(
                     provider="openai",
@@ -603,9 +603,9 @@ class TestStreamLitellm:
     async def test_cancelled_before_start(self, _mock_broadcast):
         """If cancelled before streaming starts, returns immediately."""
         with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled", return_value=True
+            "source.llm.providers.cloud_provider.is_current_request_cancelled", return_value=True
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -639,8 +639,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -681,8 +681,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
                 provider="openai",
@@ -710,7 +710,7 @@ class TestStreamLitellm:
             _text_chunk(None, finish_reason="stop"),
         ]
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, _, _ = await stream_cloud_chat(
                 provider="anthropic",
@@ -753,7 +753,7 @@ class TestStreamLitellm:
             _text_chunk(None, finish_reason="stop"),
         ]
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, _, _ = await stream_cloud_chat(
                 provider="openai",
@@ -770,10 +770,10 @@ class TestStreamLitellm:
     async def test_api_error_returns_empty(self, _mock_broadcast, _mock_cancelled):
         """An exception from litellm.acompletion should be caught and broadcast as error."""
         with patch(
-            "source.llm.cloud_provider.litellm.acompletion",
+            "source.llm.providers.cloud_provider.litellm.acompletion",
             side_effect=Exception("API down"),
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -818,8 +818,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -843,8 +843,8 @@ class TestStreamLitellm:
             _text_chunk("ok", finish_reason="stop"),
         ]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="anthropic",
@@ -866,8 +866,8 @@ class TestStreamLitellm:
         """OpenRouter should use explicit api_key kwargs like other cloud providers."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="openrouter",
@@ -888,13 +888,13 @@ class TestStreamLitellm:
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
         with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
             patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
+                "source.llm.providers.cloud_provider.litellm.get_model_info",
                 return_value={"supports_reasoning": True},
             ),
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="anthropic",
@@ -915,8 +915,8 @@ class TestStreamLitellm:
         """Non-reasoning models should not get reasoning_effort in kwargs."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="openai",
@@ -936,13 +936,13 @@ class TestStreamLitellm:
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
         with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
             patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
+                "source.llm.providers.cloud_provider.litellm.get_model_info",
                 return_value={"supports_reasoning": False, "max_output_tokens": 64000},
             ),
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="anthropic",
@@ -961,8 +961,8 @@ class TestStreamLitellm:
         """max_tokens should not be set when model's max_output_tokens is unknown."""
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="openai",
@@ -984,13 +984,13 @@ class TestStreamLitellm:
         chunks = [_text_chunk("ok", finish_reason="stop")]
         mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
         with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
             patch(
-                "source.llm.cloud_provider.litellm.get_model_info",
+                "source.llm.providers.cloud_provider.litellm.get_model_info",
                 return_value={"supports_reasoning": False, "max_output_tokens": 0},
             ),
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             await stream_cloud_chat(
                 provider="openai",
@@ -1016,7 +1016,7 @@ class TestStreamLitellm:
         _mock_mcp.get_tools.side_effect = RuntimeError("registry unavailable")
 
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -1054,8 +1054,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
                 provider="openai",
@@ -1096,8 +1096,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
                 provider="openai",
@@ -1158,17 +1158,17 @@ class TestStreamLitellm:
         ]
 
         with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
             patch(
-                "source.mcp_integration.memory_executor.is_memory_tool",
+                "source.mcp_integration.executors.memory_executor.is_memory_tool",
                 return_value=True,
             ),
             patch(
-                "source.mcp_integration.memory_executor.execute_memory_tool",
+                "source.mcp_integration.executors.memory_executor.execute_memory_tool",
                 new=AsyncMock(return_value="raw memory"),
             ) as mock_execute,
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
                 provider="openai",
@@ -1224,19 +1224,19 @@ class TestStreamLitellm:
         ]
 
         with (
-            patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
             patch(
-                "source.mcp_integration.memory_executor.is_memory_tool",
+                "source.mcp_integration.executors.memory_executor.is_memory_tool",
                 return_value=True,
             ),
             patch(
-                "source.mcp_integration.memory_executor.execute_memory_tool",
+                "source.mcp_integration.executors.memory_executor.execute_memory_tool",
                 new=AsyncMock(
                     return_value="Created memory at 'profile/user_profile.md'."
                 ),
             ),
         ):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             _, _, tool_calls, _ = await stream_cloud_chat(
                 provider="openai",
@@ -1291,13 +1291,13 @@ class TestStreamLitellm:
             _tool_call_chunk(0, finish_reason="tool_calls"),
         ]
         with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
+            "source.llm.providers.cloud_provider.is_current_request_cancelled",
             side_effect=cancel_on_tool,
         ):
             mock_acomp = AsyncMock()
             mock_acomp.side_effect = [_make_async_iter(tool_stream)]
-            with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-                from source.llm.cloud_provider import stream_cloud_chat
+            with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+                from source.llm.providers.cloud_provider import stream_cloud_chat
 
                 text, _, tool_calls, _ = await stream_cloud_chat(
                     provider="openai",
@@ -1337,12 +1337,12 @@ class TestStreamLitellm:
         ]
 
         with patch(
-            "source.llm.cloud_provider.is_current_request_cancelled",
+            "source.llm.providers.cloud_provider.is_current_request_cancelled",
             side_effect=cancel_after_first_tool,
         ):
             mock_acomp = AsyncMock(return_value=_make_async_iter(tool_stream))
-            with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-                from source.llm.cloud_provider import stream_cloud_chat
+            with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+                from source.llm.providers.cloud_provider import stream_cloud_chat
 
                 await stream_cloud_chat(
                     provider="openai",
@@ -1383,8 +1383,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             Exception("Connection reset"),  # Round 2 fails
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",
@@ -1424,8 +1424,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, tool_calls, _ = await stream_cloud_chat(
                 provider="gemini",
@@ -1473,8 +1473,8 @@ class TestStreamLitellm:
             _make_async_iter(round1_stream),
             _make_async_iter(round2_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, _, _, _ = await stream_cloud_chat(
                 provider="anthropic",
@@ -1511,7 +1511,7 @@ class TestStreamLitellm:
             _text_chunk_with_usage(None, "stop", 15, 8),
         ]
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="anthropic",
@@ -1551,8 +1551,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="gemini",
@@ -1595,8 +1595,8 @@ class TestStreamLitellm:
             _make_async_iter(tool_stream),
             _make_async_iter(text_stream),
         ]
-        with patch("source.llm.cloud_provider.litellm.acompletion", mock_acomp):
-            from source.llm.cloud_provider import stream_cloud_chat
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="gemini",
@@ -1631,7 +1631,7 @@ class TestStreamLitellm:
             _usage_chunk(15, 8),
         ]
         with _patch_acompletion(chunks):
-            from source.llm.cloud_provider import stream_cloud_chat
+            from source.llm.providers.cloud_provider import stream_cloud_chat
 
             text, stats, tool_calls, blocks = await stream_cloud_chat(
                 provider="openai",

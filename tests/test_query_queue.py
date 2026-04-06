@@ -1,11 +1,11 @@
-"""Tests for source/services/query_queue.py — ConversationQueue."""
+"""Tests for source/services/chat/query_queue.py — ConversationQueue."""
 
 import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
-from source.services.query_queue import (
+from source.services.chat.query_queue import (
     ConversationQueue,
     QueuedQuery,
     QueueFullError,

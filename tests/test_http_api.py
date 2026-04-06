@@ -82,7 +82,7 @@ class TestHttpApiEndpoints:
         service.search.return_value = fake_result
 
         with (
-            patch("source.services.file_browser.file_browser_service", service),
+            patch("source.services.filesystem.file_browser.file_browser_service", service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.browse_files()
@@ -104,7 +104,7 @@ class TestHttpApiEndpoints:
         service.search.return_value = fake_result
 
         with (
-            patch("source.services.file_browser.file_browser_service", service),
+            patch("source.services.filesystem.file_browser.file_browser_service", service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.browse_files(query="foo")
@@ -128,7 +128,7 @@ class TestHttpApiEndpoints:
         ]
 
         with patch(
-            "source.database.db.get_job_conversations",
+            "source.infrastructure.database.db.get_job_conversations",
             return_value=conversations_payload,
         ) as get_job_conversations:
             client = TestClient(app)
@@ -146,7 +146,7 @@ class TestHttpApiEndpoints:
     @pytest.mark.asyncio
     async def test_get_enabled_models_reads_from_db(self):
         with patch(
-            "source.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])
+            "source.infrastructure.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])
         ):
             result = await http_api.get_enabled_models()
         assert result == ["a", "b"]
@@ -154,7 +154,7 @@ class TestHttpApiEndpoints:
     @pytest.mark.asyncio
     async def test_set_enabled_models_persists_and_returns_payload(self):
         db_mock = MagicMock()
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             body = http_api.EnabledModelsUpdate(models=["m1", "m2"])
             result = await http_api.set_enabled_models(body)
 
@@ -165,7 +165,7 @@ class TestHttpApiEndpoints:
     async def test_get_api_key_status_delegates_to_key_manager(self):
         key_manager = MagicMock()
         key_manager.get_api_key_status.return_value = {"openai": {"has_key": False}}
-        with patch("source.llm.key_manager.key_manager", key_manager):
+        with patch("source.llm.core.key_manager.key_manager", key_manager):
             result = await http_api.get_api_key_status()
 
         assert result == {"openai": {"has_key": False}}
@@ -197,8 +197,8 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
-            patch("source.llm.key_manager.VALID_PROVIDERS", ("openrouter",)),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.VALID_PROVIDERS", ("openrouter",)),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
             patch.object(http_api.requests, "get", return_value=response),
             patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
@@ -229,8 +229,8 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
-            patch("source.llm.key_manager.VALID_PROVIDERS", ("openrouter",)),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.VALID_PROVIDERS", ("openrouter",)),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
             patch.object(http_api.requests, "get", return_value=response),
         ):
@@ -260,12 +260,12 @@ class TestHttpApiEndpoints:
         ]
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch(
-                "source.llm.key_manager.VALID_PROVIDERS",
+                "source.llm.core.key_manager.VALID_PROVIDERS",
                 ("openrouter", "openai", "anthropic"),
             ),
-            patch("source.database.db", db_mock),
+            patch("source.infrastructure.database.db", db_mock),
             patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
         ):
             result = await http_api.delete_api_key("openrouter")
@@ -291,7 +291,7 @@ class TestHttpApiEndpoints:
             return response
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch.object(http_api, "_MODEL_CACHE", {}),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
@@ -315,7 +315,7 @@ class TestHttpApiEndpoints:
             return response
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch.object(http_api, "_MODEL_CACHE", {}),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
@@ -339,7 +339,7 @@ class TestHttpApiEndpoints:
             return response
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch.object(http_api, "_MODEL_CACHE", {}),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
@@ -373,7 +373,7 @@ class TestHttpApiEndpoints:
         fake_openai = SimpleNamespace(AsyncOpenAI=MagicMock(return_value=fake_client))
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch.object(http_api, "_MODEL_CACHE", {}),
             patch.dict(sys.modules, {"openai": fake_openai}),
         ):
@@ -425,7 +425,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.llm.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.key_manager", key_manager),
             patch.object(http_api, "_MODEL_CACHE", {}),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
             patch.dict(sys.modules, {"google": fake_google}),
@@ -450,8 +450,8 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.google_auth.google_auth", google_auth),
-            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+            patch("source.services.integrations.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.core.manager.mcp_manager", mcp_manager),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.connect_google()
@@ -471,7 +471,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.google_auth.google_auth", google_auth),
+            patch("source.services.integrations.google_auth.google_auth", google_auth),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -489,7 +489,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.google_auth.google_auth", google_auth),
+            patch("source.services.integrations.google_auth.google_auth", google_auth),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -505,8 +505,8 @@ class TestHttpApiEndpoints:
         mcp_manager = SimpleNamespace(disconnect_google_servers=AsyncMock())
 
         with (
-            patch("source.services.google_auth.google_auth", google_auth),
-            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+            patch("source.services.integrations.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.core.manager.mcp_manager", mcp_manager),
         ):
             result = await http_api.disconnect_google()
 
@@ -524,8 +524,8 @@ class TestHttpApiEndpoints:
         )
 
         with (
-            patch("source.services.google_auth.google_auth", google_auth),
-            patch("source.mcp_integration.manager.mcp_manager", mcp_manager),
+            patch("source.services.integrations.google_auth.google_auth", google_auth),
+            patch("source.mcp_integration.core.manager.mcp_manager", mcp_manager),
         ):
             result = await http_api.disconnect_google()
 
@@ -540,7 +540,7 @@ class TestHttpApiEndpoints:
             "tool_retriever_top_k": None,
         }.get(key)
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_tools_settings()
 
         assert result == {"always_on": ["filesystem", "terminal"], "top_k": 5}
@@ -553,7 +553,7 @@ class TestHttpApiEndpoints:
             "tool_retriever_top_k": "9",
         }.get(key)
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_tools_settings()
 
         assert result == {"always_on": [], "top_k": 9}
@@ -563,7 +563,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         body = http_api.ToolsSettingsUpdate(always_on=["a", "b"], top_k=3)
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.set_tools_settings(body)
 
         db_mock.set_setting.assert_any_call("tool_always_on", '["a", "b"]')
@@ -580,7 +580,7 @@ class TestHttpApiEndpoints:
             "mobile_channel_whatsapp": "{bad-json",
         }.get(key)
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_mobile_channels_config()
 
         assert result == {
@@ -610,7 +610,7 @@ class TestHttpApiEndpoints:
 
         body = http_api.MobilePlatformConfig(enabled=True)
         with (
-            patch("source.database.db", db_mock),
+            patch("source.infrastructure.database.db", db_mock),
             patch.object(http_api, "_write_mobile_channels_config_file"),
         ):
             result = await http_api.set_mobile_platform_config("telegram", body)
@@ -632,7 +632,7 @@ class TestHttpApiEndpoints:
 
         body = http_api.MobilePlatformConfig(token="new-token", enabled=True)
         with (
-            patch("source.database.db", db_mock),
+            patch("source.infrastructure.database.db", db_mock),
             patch.object(http_api, "_write_mobile_channels_config_file"),
         ):
             result = await http_api.set_mobile_platform_config("telegram", body)
@@ -653,7 +653,7 @@ class TestHttpApiEndpoints:
 
         body = http_api.MobilePlatformConfig(enabled=True)
         with (
-            patch("source.database.db", db_mock),
+            patch("source.infrastructure.database.db", db_mock),
             patch.object(
                 http_api,
                 "_write_mobile_channels_config_file",
@@ -679,8 +679,8 @@ class TestHttpApiEndpoints:
         fake_state = SimpleNamespace(server_loop_holder={"port": 8012})
 
         with (
-            patch("source.database.db", db_mock),
-            patch("source.config.USER_DATA_DIR", tmp_path),
+            patch("source.infrastructure.database.db", db_mock),
+            patch("source.infrastructure.config.USER_DATA_DIR", tmp_path),
             patch("source.core.state.app_state", fake_state),
         ):
             http_api._write_mobile_channels_config_file()
@@ -718,8 +718,8 @@ class TestHttpApiEndpoints:
         fake_state = SimpleNamespace(server_loop_holder={"port": 8000})
 
         with (
-            patch("source.database.db", db_mock),
-            patch("source.config.USER_DATA_DIR", tmp_path),
+            patch("source.infrastructure.database.db", db_mock),
+            patch("source.infrastructure.config.USER_DATA_DIR", tmp_path),
             patch("source.core.state.app_state", fake_state),
             patch.object(http_api.os, "replace") as replace_mock,
         ):
@@ -735,7 +735,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         db_mock.get_setting.return_value = None
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_sub_agent_settings()
 
         assert result == {"fast_model": "", "smart_model": ""}
@@ -745,7 +745,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         body = http_api.SubAgentSettingsUpdate(fast_model=" fast-1 ", smart_model="   ")
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.set_sub_agent_settings(body)
 
         db_mock.set_setting.assert_called_once_with("sub_agent_tier_fast", "fast-1")
@@ -757,7 +757,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         db_mock.get_setting.return_value = None
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_memory_settings()
 
         assert result == {"profile_auto_inject": True}
@@ -766,7 +766,7 @@ class TestHttpApiEndpoints:
     async def test_set_memory_settings_persists_boolean_flag(self):
         db_mock = MagicMock()
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.set_memory_settings(
                 http_api.MemorySettingsUpdate(profile_auto_inject=False)
             )
@@ -788,7 +788,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.list_memories(folder="semantic")
@@ -805,7 +805,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -823,7 +823,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -842,7 +842,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -870,7 +870,7 @@ class TestHttpApiEndpoints:
         )
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.update_memory_file(body)
@@ -895,7 +895,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -912,7 +912,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.clear_all_memories()
@@ -929,7 +929,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.memory.memory_service", memory_service),
+            patch("source.services.memory_store.memory.memory_service", memory_service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as exc:
@@ -944,8 +944,8 @@ class TestHttpApiEndpoints:
         db_mock.get_system_prompt_template.return_value = None
 
         with (
-            patch("source.database.db", db_mock),
-            patch("source.llm.prompt._BASE_TEMPLATE", "DEFAULT-TEMPLATE"),
+            patch("source.infrastructure.database.db", db_mock),
+            patch("source.llm.core.prompt._BASE_TEMPLATE", "DEFAULT-TEMPLATE"),
         ):
             result = await http_api.get_system_prompt()
 
@@ -956,7 +956,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         db_mock.get_system_prompt_template.return_value = "CUSTOM"
 
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.get_system_prompt()
 
         assert result == {"template": "CUSTOM", "is_custom": True}
@@ -964,7 +964,7 @@ class TestHttpApiEndpoints:
     @pytest.mark.asyncio
     async def test_update_system_prompt_strips_and_stores(self):
         db_mock = MagicMock()
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.update_system_prompt(
                 http_api.SystemPromptUpdate(template="  Hello prompt  ")
             )
@@ -975,7 +975,7 @@ class TestHttpApiEndpoints:
     @pytest.mark.asyncio
     async def test_update_system_prompt_empty_resets_to_default(self):
         db_mock = MagicMock()
-        with patch("source.database.db", db_mock):
+        with patch("source.infrastructure.database.db", db_mock):
             result = await http_api.update_system_prompt(
                 http_api.SystemPromptUpdate(template="   ")
             )
@@ -1001,7 +1001,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.skills.get_skill_manager", return_value=manager),
+            patch("source.services.skills_runtime.skills.get_skill_manager", return_value=manager),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             all_skills = await http_api.get_skills()
@@ -1050,7 +1050,7 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.skills.get_skill_manager", return_value=manager),
+            patch("source.services.skills_runtime.skills.get_skill_manager", return_value=manager),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as not_found:

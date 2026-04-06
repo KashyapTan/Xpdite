@@ -1,16 +1,16 @@
-"""Tests for source/services/conversations.py."""
+"""Tests for source/services/chat/conversations.py."""
 
 from pathlib import Path
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
-from source.services.conversations import (
+from source.services.chat.conversations import (
     ConversationService,
     _extract_skill_slash_commands_sync,
 )
-from source.services.skills import Skill
-from source.services.tab_manager import TabState
+from source.services.skills_runtime.skills import Skill
+from source.services.chat.tab_manager import TabState
 
 
 def _make_skill(name, slash_command, enabled=True):
@@ -28,7 +28,7 @@ def _make_skill(name, slash_command, enabled=True):
 
 @pytest.fixture()
 def db_manager(tmp_path):
-    from source.database import DatabaseManager
+    from source.infrastructure.database import DatabaseManager
 
     return DatabaseManager(database_path=str(tmp_path / "test.db"))
 
@@ -38,7 +38,7 @@ class TestExtractSkillSlashCommands:
         mock_manager = MagicMock()
         mock_manager.get_all_skills.return_value = skills
         with patch(
-            "source.services.skills.get_skill_manager", return_value=mock_manager
+            "source.services.skills_runtime.skills.get_skill_manager", return_value=mock_manager
         ):
             return _extract_skill_slash_commands_sync(message)
 
@@ -147,9 +147,9 @@ class TestConversationBranching:
         tab_state.conversation_id = cid
         tab_state.chat_history = []
 
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
         monkeypatch.setattr(
-            "source.services.conversations.route_chat",
+            "source.services.chat.conversations.route_chat",
             AsyncMock(
                 return_value=(
                     "Fresh answer",
@@ -160,7 +160,7 @@ class TestConversationBranching:
             ),
         )
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", AsyncMock()
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
         )
 
         conversation_id = await ConversationService.submit_query(
@@ -201,9 +201,9 @@ class TestConversationBranching:
         tab_state.conversation_id = cid
         tab_state.chat_history = db_manager.get_active_chat_history(cid)
 
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
         monkeypatch.setattr(
-            "source.services.conversations.route_chat",
+            "source.services.chat.conversations.route_chat",
             AsyncMock(
                 return_value=(
                     "Retried answer",
@@ -215,7 +215,7 @@ class TestConversationBranching:
         )
         broadcast_mock = AsyncMock()
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", broadcast_mock
+            "source.services.chat.conversations.broadcast_message", broadcast_mock
         )
 
         conversation_id = await ConversationService.submit_query(
@@ -278,9 +278,9 @@ class TestConversationBranching:
         tab_state.conversation_id = cid
         tab_state.chat_history = db_manager.get_active_chat_history(cid)
 
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
         monkeypatch.setattr(
-            "source.services.conversations.route_chat",
+            "source.services.chat.conversations.route_chat",
             AsyncMock(
                 return_value=(
                     "Edited answer",
@@ -291,7 +291,7 @@ class TestConversationBranching:
             ),
         )
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", AsyncMock()
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
         )
 
         conversation_id = await ConversationService.submit_query(
@@ -327,12 +327,12 @@ class TestConversationBranching:
 
         tab_state = TabState(tab_id="default")
         broadcast_mock = AsyncMock()
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", broadcast_mock
+            "source.services.chat.conversations.broadcast_message", broadcast_mock
         )
         monkeypatch.setattr(
-            "source.services.conversations.run_in_thread",
+            "source.services.chat.conversations.run_in_thread",
             AsyncMock(return_value="thumb-data"),
         )
 
@@ -369,10 +369,10 @@ class TestConversationBranching:
                 [{"type": "text", "content": "ok"}],
             )
         )
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
-        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.route_chat", route_mock)
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", AsyncMock()
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
         )
 
         await ConversationService.submit_query(
@@ -414,10 +414,10 @@ class TestConversationBranching:
                 [{"type": "text", "content": "ok"}],
             )
         )
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
-        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.route_chat", route_mock)
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", AsyncMock()
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
         )
 
         await ConversationService.submit_query(
@@ -488,13 +488,13 @@ class TestConversationBranching:
             )
         )
 
-        monkeypatch.setattr("source.services.conversations.db", db_manager)
-        monkeypatch.setattr("source.services.conversations.route_chat", route_mock)
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.chat.conversations.route_chat", route_mock)
         monkeypatch.setattr(
-            "source.services.conversations.broadcast_message", AsyncMock()
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
         )
         monkeypatch.setattr(
-            "source.services.conversations._run_read_file_for_attachment",
+            "source.services.chat.conversations._run_read_file_for_attachment",
             AsyncMock(return_value=read_file_payload),
         )
 

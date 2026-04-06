@@ -16,13 +16,13 @@ class TestExternalConnectorsService:
         mock_mcp_manager.is_server_connected.return_value = False
 
         with (
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.services.integrations.external_connectors.db", mock_db),
             patch(
-                "source.mcp_integration.manager.mcp_manager",
+                "source.mcp_integration.core.manager.mcp_manager",
                 mock_mcp_manager,
             ),
         ):
-            from source.services.external_connectors import ExternalConnectorService
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             connectors = service.get_all_connectors()
@@ -42,8 +42,8 @@ class TestExternalConnectorsService:
         mock_db = MagicMock()
         mock_db.get_setting.return_value = "true"
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             result = service.is_enabled("everything")
@@ -58,8 +58,8 @@ class TestExternalConnectorsService:
         mock_db = MagicMock()
         mock_db.get_setting.return_value = "false"
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             result = service.is_enabled("everything")
@@ -71,8 +71,8 @@ class TestExternalConnectorsService:
         mock_db = MagicMock()
         mock_db.get_setting.return_value = None
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             result = service.is_enabled("everything")
@@ -83,8 +83,8 @@ class TestExternalConnectorsService:
         """Test set_enabled stores the setting in the database."""
         mock_db = MagicMock()
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             service.set_enabled("everything", True)
@@ -97,8 +97,8 @@ class TestExternalConnectorsService:
         """Test set_enabled raises ValueError for unknown connector."""
         mock_db = MagicMock()
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             with pytest.raises(ValueError, match="Unknown connector"):
@@ -106,7 +106,7 @@ class TestExternalConnectorsService:
 
     def test_get_connector_returns_connector_definition(self):
         """Test get_connector returns the connector definition."""
-        from source.services.external_connectors import ExternalConnectorService
+        from source.services.integrations.external_connectors import ExternalConnectorService
 
         service = ExternalConnectorService()
         connector = service.get_connector("everything")
@@ -118,7 +118,7 @@ class TestExternalConnectorsService:
 
     def test_get_connector_returns_none_for_unknown(self):
         """Test get_connector returns None for unknown connector."""
-        from source.services.external_connectors import ExternalConnectorService
+        from source.services.integrations.external_connectors import ExternalConnectorService
 
         service = ExternalConnectorService()
         connector = service.get_connector("nonexistent")
@@ -136,8 +136,8 @@ class TestExternalConnectorsService:
 
         mock_db.get_setting.side_effect = mock_get_setting
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             enabled = service.get_enabled_connectors()
@@ -148,8 +148,8 @@ class TestExternalConnectorsService:
         """Test set_last_error stores error in database."""
         mock_db = MagicMock()
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             service.set_last_error("everything", "Connection timeout")
@@ -162,8 +162,8 @@ class TestExternalConnectorsService:
         """Test set_last_error deletes the setting when error is None."""
         mock_db = MagicMock()
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import ExternalConnectorService
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import ExternalConnectorService
 
             service = ExternalConnectorService()
             service.set_last_error("everything", None)
@@ -179,7 +179,7 @@ class TestConnectExternalConnector:
     @pytest.mark.asyncio
     async def test_connect_returns_error_for_unknown_connector(self):
         """Test connecting unknown connector returns error."""
-        from source.services.external_connectors import connect_external_connector
+        from source.services.integrations.external_connectors import connect_external_connector
 
         result = await connect_external_connector("nonexistent")
 
@@ -197,16 +197,16 @@ class TestConnectExternalConnector:
         mock_db.get_setting.return_value = None
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
             patch(
-                "source.services.external_connectors.external_connectors.set_enabled"
+                "source.services.integrations.external_connectors.external_connectors.set_enabled"
             ),
             patch(
-                "source.services.external_connectors.external_connectors.set_last_error"
+                "source.services.integrations.external_connectors.external_connectors.set_last_error"
             ),
         ):
-            from source.services.external_connectors import connect_external_connector
+            from source.services.integrations.external_connectors import connect_external_connector
 
             result = await connect_external_connector("everything")
 
@@ -227,10 +227,10 @@ class TestConnectExternalConnector:
         mock_db.get_setting.return_value = None
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
         ):
-            from source.services.external_connectors import connect_external_connector
+            from source.services.integrations.external_connectors import connect_external_connector
 
             result = await connect_external_connector("everything")
 
@@ -250,10 +250,10 @@ class TestConnectExternalConnector:
         mock_db.get_setting.return_value = None
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
         ):
-            from source.services.external_connectors import connect_external_connector
+            from source.services.integrations.external_connectors import connect_external_connector
 
             result = await connect_external_connector("everything")
 
@@ -267,7 +267,7 @@ class TestDisconnectExternalConnector:
     @pytest.mark.asyncio
     async def test_disconnect_returns_error_for_unknown_connector(self):
         """Test disconnecting unknown connector returns error."""
-        from source.services.external_connectors import disconnect_external_connector
+        from source.services.integrations.external_connectors import disconnect_external_connector
 
         result = await disconnect_external_connector("nonexistent")
 
@@ -284,10 +284,10 @@ class TestDisconnectExternalConnector:
         mock_db = MagicMock()
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
         ):
-            from source.services.external_connectors import (
+            from source.services.integrations.external_connectors import (
                 disconnect_external_connector,
             )
 
@@ -306,10 +306,10 @@ class TestDisconnectExternalConnector:
         mock_db = MagicMock()
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
         ):
-            from source.services.external_connectors import (
+            from source.services.integrations.external_connectors import (
                 disconnect_external_connector,
             )
 
@@ -330,8 +330,8 @@ class TestInitExternalConnectors:
         mock_db = MagicMock()
         mock_db.get_setting.return_value = None
 
-        with patch("source.services.external_connectors.db", mock_db):
-            from source.services.external_connectors import init_external_connectors
+        with patch("source.services.integrations.external_connectors.db", mock_db):
+            from source.services.integrations.external_connectors import init_external_connectors
 
             # Should complete without error
             await init_external_connectors()
@@ -353,10 +353,10 @@ class TestInitExternalConnectors:
         mock_db.get_setting.side_effect = mock_get_setting
 
         with (
-            patch("source.mcp_integration.manager.mcp_manager", mock_mcp_manager),
-            patch("source.services.external_connectors.db", mock_db),
+            patch("source.mcp_integration.core.manager.mcp_manager", mock_mcp_manager),
+            patch("source.services.integrations.external_connectors.db", mock_db),
         ):
-            from source.services.external_connectors import init_external_connectors
+            from source.services.integrations.external_connectors import init_external_connectors
 
             await init_external_connectors()
 

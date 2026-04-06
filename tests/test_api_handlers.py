@@ -10,7 +10,7 @@ import pytest
 
 import source.api.handlers as handlers
 from source.core.state import app_state
-from source.services.query_queue import QueueFullError
+from source.services.chat.query_queue import QueueFullError
 
 
 class _FakeWebSocket:
@@ -651,13 +651,13 @@ class TestMeetingHandlers:
     async def test_meeting_get_status_and_compute_info(self, handler, websocket):
         with (
             patch(
-                "source.services.meeting_recorder.meeting_recorder_service",
+                "source.services.media.meeting_recorder.meeting_recorder_service",
                 SimpleNamespace(
                     get_status=MagicMock(return_value={"is_recording": False})
                 ),
             ),
             patch(
-                "source.services.gpu_detector.get_compute_info",
+                "source.services.media.gpu_detector.get_compute_info",
                 return_value={"backend": "cpu", "available": True},
             ) as mock_compute,
         ):
@@ -711,7 +711,7 @@ class TestMeetingHandlers:
         fake_recorder = SimpleNamespace(set_model_size=MagicMock())
         with (
             patch(
-                "source.services.meeting_recorder.meeting_recorder_service",
+                "source.services.media.meeting_recorder.meeting_recorder_service",
                 fake_recorder,
             ),
             patch.object(handlers.db, "set_setting") as mock_set,
@@ -748,7 +748,7 @@ class TestMeetingHandlers:
     @pytest.mark.asyncio
     async def test_meeting_start_recording_success(self, handler, websocket):
         with patch(
-            "source.services.meeting_recorder.meeting_recorder_service",
+            "source.services.media.meeting_recorder.meeting_recorder_service",
             SimpleNamespace(
                 start_recording=AsyncMock(return_value={"recording_id": "r1"}),
                 stop_recording=AsyncMock(),
@@ -761,7 +761,7 @@ class TestMeetingHandlers:
     @pytest.mark.asyncio
     async def test_meeting_stop_recording_success(self, handler, websocket):
         with patch(
-            "source.services.meeting_recorder.meeting_recorder_service",
+            "source.services.media.meeting_recorder.meeting_recorder_service",
             SimpleNamespace(
                 start_recording=AsyncMock(),
                 stop_recording=AsyncMock(
@@ -776,7 +776,7 @@ class TestMeetingHandlers:
     @pytest.mark.asyncio
     async def test_meeting_start_recording_error(self, handler, websocket):
         with patch(
-            "source.services.meeting_recorder.meeting_recorder_service",
+            "source.services.media.meeting_recorder.meeting_recorder_service",
             SimpleNamespace(
                 start_recording=AsyncMock(side_effect=RuntimeError("already running")),
                 stop_recording=AsyncMock(),
@@ -789,7 +789,7 @@ class TestMeetingHandlers:
     @pytest.mark.asyncio
     async def test_meeting_stop_recording_error(self, handler, websocket):
         with patch(
-            "source.services.meeting_recorder.meeting_recorder_service",
+            "source.services.media.meeting_recorder.meeting_recorder_service",
             SimpleNamespace(
                 start_recording=AsyncMock(),
                 stop_recording=AsyncMock(side_effect=RuntimeError("not running")),
@@ -805,7 +805,7 @@ class TestMeetingHandlers:
         fake_service = SimpleNamespace(handle_audio_chunk=MagicMock())
 
         with patch(
-            "source.services.meeting_recorder.meeting_recorder_service",
+            "source.services.media.meeting_recorder.meeting_recorder_service",
             fake_service,
         ):
             await handler._handle_meeting_audio_chunk({"audio": payload})
@@ -845,7 +845,7 @@ class TestMeetingHandlers:
         )
         with (
             patch(
-                "source.services.meeting_recorder.meeting_analysis_service",
+                "source.services.media.meeting_recorder.meeting_analysis_service",
                 fake_analysis,
             ),
             patch.object(handlers, "broadcast_message", new=AsyncMock()) as mock_bcast,
@@ -885,7 +885,7 @@ class TestMeetingHandlers:
         )
         with (
             patch(
-                "source.services.meeting_recorder.meeting_analysis_service",
+                "source.services.media.meeting_recorder.meeting_analysis_service",
                 fake_analysis,
             ),
             patch.object(handlers, "broadcast_message", new=AsyncMock()) as mock_bcast,
@@ -903,7 +903,7 @@ class TestMeetingHandlers:
         self, handler, websocket
     ):
         with patch(
-            "source.mcp_integration.manager.mcp_manager.call_tool",
+            "source.mcp_integration.core.manager.mcp_manager.call_tool",
             new=AsyncMock(return_value="Created event"),
         ) as mock_call:
             await handler._handle_meeting_execute_action(
@@ -944,7 +944,7 @@ class TestMeetingHandlers:
         assert "not executable" in websocket.sent[-1]["content"]["result"]
 
         with patch(
-            "source.mcp_integration.manager.mcp_manager.call_tool",
+            "source.mcp_integration.core.manager.mcp_manager.call_tool",
             new=AsyncMock(side_effect=RuntimeError("tool exploded")),
         ):
             await handler._handle_meeting_execute_action(
@@ -968,7 +968,7 @@ class TestMeetingHandlers:
         self, handler, websocket
     ):
         with patch(
-            "source.mcp_integration.manager.mcp_manager.call_tool",
+            "source.mcp_integration.core.manager.mcp_manager.call_tool",
             new=AsyncMock(side_effect=["Draft created", "Error: quota exceeded"]),
         ) as mock_call:
             await handler._handle_meeting_execute_action(

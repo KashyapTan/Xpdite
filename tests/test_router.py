@@ -3,8 +3,8 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from source.llm.router import is_local_ollama_model, parse_provider
-import source.mcp_integration.manager as mcp_manager_module
+from source.llm.core.router import is_local_ollama_model, parse_provider
+import source.mcp_integration.core.manager as mcp_manager_module
 
 
 # ------------------------------------------------------------------
@@ -87,14 +87,14 @@ class TestIsLocalOllamaModel:
 
 # All lazy imports in route_chat need to be patched at their source module.
 _ROUTE_PATCHES = {
-    "source.database.db": MagicMock(
+    "source.infrastructure.database.db": MagicMock(
         get_setting=MagicMock(return_value=None),
     ),
-    "source.llm.prompt.build_system_prompt": MagicMock(return_value="system"),
-    "source.mcp_integration.skill_injector.get_skills_to_inject": MagicMock(
+    "source.llm.core.prompt.build_system_prompt": MagicMock(return_value="system"),
+    "source.mcp_integration.core.skill_injector.get_skills_to_inject": MagicMock(
         return_value=[]
     ),
-    "source.mcp_integration.skill_injector.build_skills_prompt_block": MagicMock(
+    "source.mcp_integration.core.skill_injector.build_skills_prompt_block": MagicMock(
         return_value=""
     ),
     "source.core.state.app_state": MagicMock(
@@ -112,14 +112,14 @@ class TestRouteChat:
         )
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
 
         with patch.dict("sys.modules", {}):
             ctx = {k: patch(k, v) for k, v in patches.items()}
             for p in ctx.values():
                 p.start()
             try:
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 mock_stream.assert_awaited_once()
@@ -140,8 +140,8 @@ class TestRouteChat:
         mock_mcp.has_tools.return_value = True
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
-        patches["source.mcp_integration.handlers.retrieve_relevant_tools"] = MagicMock(
+        patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = MagicMock(
             return_value=retrieved_tools
         )
 
@@ -150,7 +150,7 @@ class TestRouteChat:
             p.start()
         try:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 await route_chat("llama3:8b", "Hello", [], [])
 
@@ -180,15 +180,15 @@ class TestRouteChat:
         mock_mcp.has_tools.return_value = False
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.cloud_provider.stream_cloud_chat"] = mock_stream
-        patches["source.llm.key_manager.key_manager"] = mock_km
+        patches["source.llm.providers.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.core.key_manager.key_manager"] = mock_km
 
         ctx = {k: patch(k, v) for k, v in patches.items()}
         for p in ctx.values():
             p.start()
         try:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 result = await route_chat(
                     "anthropic/claude-sonnet-4-20250514", "Hello", [], []
@@ -211,7 +211,7 @@ class TestRouteChat:
         mock_broadcast = AsyncMock()
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.key_manager.key_manager"] = mock_km
+        patches["source.llm.core.key_manager.key_manager"] = mock_km
         patches["source.core.connection.broadcast_message"] = mock_broadcast
 
         ctx = {k: patch(k, v) for k, v in patches.items()}
@@ -219,7 +219,7 @@ class TestRouteChat:
             p.start()
         try:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 result = await route_chat("openai/gpt-4o", "Hi", [], [])
                 # Should return an error message
@@ -243,19 +243,19 @@ class TestRouteChat:
         }.get(key)
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.database.db"] = mock_db
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
-        patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
-        patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
+        patches["source.infrastructure.database.db"] = mock_db
+        patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.core.prompt.build_system_prompt"] = mock_build_prompt
+        patches["source.llm.core.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
         )
-        patches["source.llm.prompt.build_user_profile_block"] = MagicMock(
+        patches["source.llm.core.prompt.build_user_profile_block"] = MagicMock(
             return_value="\n## User Profile\n\nProfile body\n"
         )
         patches["source.core.thread_pool.run_in_thread"] = AsyncMock(
             return_value={"body": "Profile body"}
         )
-        patches["source.config.MEMORY_PROFILE_FILE"] = MagicMock(
+        patches["source.infrastructure.config.MEMORY_PROFILE_FILE"] = MagicMock(
             exists=MagicMock(return_value=True)
         )
         mock_mcp = MagicMock(has_tools=MagicMock(return_value=False))
@@ -265,7 +265,7 @@ class TestRouteChat:
             p.start()
         try:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"
@@ -292,19 +292,19 @@ class TestRouteChat:
         }.get(key)
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.database.db"] = mock_db
-        patches["source.llm.ollama_provider.stream_ollama_chat"] = mock_stream
-        patches["source.llm.prompt.build_system_prompt"] = mock_build_prompt
-        patches["source.llm.prompt.build_memory_prompt_block"] = MagicMock(
+        patches["source.infrastructure.database.db"] = mock_db
+        patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.llm.core.prompt.build_system_prompt"] = mock_build_prompt
+        patches["source.llm.core.prompt.build_memory_prompt_block"] = MagicMock(
             return_value="\nMEMORY BLOCK\n"
         )
-        patches["source.llm.prompt.build_user_profile_block"] = MagicMock(
+        patches["source.llm.core.prompt.build_user_profile_block"] = MagicMock(
             return_value="\n## User Profile\n\nProfile body\n"
         )
         patches["source.core.thread_pool.run_in_thread"] = AsyncMock(
             return_value={"body": "Profile body"}
         )
-        patches["source.config.MEMORY_PROFILE_FILE"] = MagicMock(
+        patches["source.infrastructure.config.MEMORY_PROFILE_FILE"] = MagicMock(
             exists=MagicMock(return_value=True)
         )
         mock_mcp = MagicMock(has_tools=MagicMock(return_value=False))
@@ -314,7 +314,7 @@ class TestRouteChat:
             p.start()
         try:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
-                from source.llm.router import route_chat
+                from source.llm.core.router import route_chat
 
                 result = await route_chat("llama3:8b", "Hello", [], [])
                 assert result[0] == "reply"

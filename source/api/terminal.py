@@ -12,8 +12,8 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Literal
 
-from ..services.terminal import terminal_service
-from ..services.approval_history import get_approval_count, clear_approvals
+from ..services.shell.terminal import terminal_service
+from ..services.shell.approval_history import get_approval_count, clear_approvals
 
 
 router = APIRouter(prefix="/api/terminal")

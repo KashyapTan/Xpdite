@@ -17,8 +17,8 @@ import pytest
 
 def _get_service_class():
     """Import MeetingAnalysisService with startup recovery side effects neutralized."""
-    with patch("source.database.db.get_meeting_recordings", return_value=[]):
-        module = importlib.import_module("source.services.meeting_recorder")
+    with patch("source.infrastructure.database.db.get_meeting_recordings", return_value=[]):
+        module = importlib.import_module("source.services.media.meeting_recorder")
     return module.MeetingAnalysisService
 
 
@@ -317,8 +317,8 @@ class TestBuildAnalysisPrompt:
 
 def _get_pipeline_class():
     """Import PostProcessingPipeline with startup recovery side effects neutralized."""
-    with patch("source.database.db.get_meeting_recordings", return_value=[]):
-        module = importlib.import_module("source.services.meeting_recorder")
+    with patch("source.infrastructure.database.db.get_meeting_recordings", return_value=[]):
+        module = importlib.import_module("source.services.media.meeting_recorder")
     return module.PostProcessingPipeline
 
 
@@ -405,7 +405,7 @@ class TestCallLlm:
         )
 
         with (
-            patch("source.llm.key_manager.key_manager") as mock_key_manager,
+            patch("source.llm.core.key_manager.key_manager") as mock_key_manager,
             patch("litellm.completion", return_value=fake_response) as mock_completion,
         ):
             mock_key_manager.get_api_key.return_value = "or-test-key"

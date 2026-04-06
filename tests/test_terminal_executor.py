@@ -1,4 +1,4 @@
-"""Tests for source/mcp_integration/terminal_executor.py — pure logic functions."""
+"""Tests for source/mcp_integration/executors/terminal_executor.py — pure logic functions."""
 
 from unittest.mock import AsyncMock
 import platform
@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 
-from source.mcp_integration.terminal_executor import (
+from source.mcp_integration.executors.terminal_executor import (
     is_terminal_tool,
     TERMINAL_TOOLS,
 )
@@ -51,7 +51,9 @@ class TestHandleFindFiles:
     """Test _handle_find_files synchronous logic."""
 
     def _call(self, fn_args):
-        from source.mcp_integration.terminal_executor import _handle_find_files
+        from source.mcp_integration.executors.terminal_executor import (
+            _handle_find_files,
+        )
 
         return _handle_find_files(fn_args)
 
@@ -95,10 +97,35 @@ class TestHandleFindFiles:
         assert "Found 1 file(s):" in result
         assert "file.py" in result
 
+    def test_rejects_absolute_pattern(self, tmp_path):
+        with patch("os.getcwd", return_value=str(tmp_path)):
+            result = self._call(
+                {"pattern": str(tmp_path / "*.py"), "directory": str(tmp_path)}
+            )
+        assert result == "Error: pattern must be relative to the selected directory"
+
+    def test_rejects_parent_traversal_pattern(self, tmp_path):
+        with patch("os.getcwd", return_value=str(tmp_path)):
+            result = self._call({"pattern": "../*.py", "directory": str(tmp_path)})
+        assert (
+            result == "Error: pattern cannot include parent-directory traversal ('..')"
+        )
+
+    def test_caps_large_match_sets(self, tmp_path):
+        for index in range(205):
+            (tmp_path / f"f{index}.txt").write_text("x")
+
+        with patch("os.getcwd", return_value=str(tmp_path)):
+            result = self._call({"pattern": "*.txt", "directory": str(tmp_path)})
+
+        assert "Found 205 files. Showing first 200:" in result
+
 
 class TestHandleGetEnvironment:
     def test_returns_environment_info(self):
-        from source.mcp_integration.terminal_executor import _handle_get_environment
+        from source.mcp_integration.executors.terminal_executor import (
+            _handle_get_environment,
+        )
 
         result = _handle_get_environment()
         assert "OS:" in result
@@ -107,7 +134,9 @@ class TestHandleGetEnvironment:
         assert "CWD:" in result
 
     def test_contains_current_os(self):
-        from source.mcp_integration.terminal_executor import _handle_get_environment
+        from source.mcp_integration.executors.terminal_executor import (
+            _handle_get_environment,
+        )
 
         result = _handle_get_environment()
         assert platform.system() in result

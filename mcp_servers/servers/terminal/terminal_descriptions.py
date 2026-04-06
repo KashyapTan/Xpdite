@@ -46,17 +46,17 @@ RUN_COMMAND_DESCRIPTION = build_tool_description(
     ),
 )
 
-# FIND_FILES_DESCRIPTION = build_tool_description(
-#     purpose="Return a simple text list of files that match a glob pattern under the current working directory tree.",
-#     use_when=(
-#         "You are already in a terminal-centric workflow and need a quick fallback file list. "
-#         "Prefer the filesystem server's glob_files tool for normal file discovery because "
-#         "it returns structured JSON and stronger sandbox guidance."
-#     ),
-#     inputs="pattern (for example *.py or **/*.ts) and directory (optional, must stay inside the current working directory tree).",
-#     returns="A text list of matching file paths, capped at the first 200 matches.",
-#     notes="Use this for file discovery only. It does not read file contents and does not require user approval. Use grep_files for content search and glob_files for the primary structured file-discovery workflow.",
-# )
+FIND_FILES_DESCRIPTION = build_tool_description(
+    purpose="Return a simple text list of files that match a glob pattern under the current working directory tree.",
+    use_when=(
+        "You are already in a terminal-centric workflow and need a quick fallback file list. "
+        "Prefer the filesystem server's glob_files tool for normal file discovery because "
+        "it returns structured JSON and stronger sandbox guidance."
+    ),
+    inputs="pattern (for example *.py or **/*.ts) and directory (optional, must stay inside the current working directory tree).",
+    returns="A text list of matching file paths, capped at the first 200 matches.",
+    notes="Use this for file discovery only. It does not read file contents and does not require user approval. Use grep_files for content search and glob_files for the primary structured file-discovery workflow.",
+)
 
 REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(
     purpose="Ask for permission to run terminal commands without user approval.",
@@ -65,7 +65,7 @@ REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(
     ),
     inputs="reason = a short explanation of the planned batch of work.",
     returns="A status string indicating whether session mode was approved.",
-    notes ="Always run this command first before any other termianl command."
+    notes="Always run this command first before any other termianl command.",
 )
 
 END_SESSION_MODE_DESCRIPTION = build_tool_description(

@@ -9,7 +9,7 @@ import pytest
 def db_manager(tmp_path):
     """Create a fresh DatabaseManager backed by a temp SQLite file."""
     db_path = str(tmp_path / "test.db")
-    from source.database import DatabaseManager
+    from source.infrastructure.database import DatabaseManager
 
     mgr = DatabaseManager(database_path=db_path)
     return mgr

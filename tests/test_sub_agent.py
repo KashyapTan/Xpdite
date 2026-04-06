@@ -1,4 +1,4 @@
-"""Tests for source/services/sub_agent.py — tier resolution, tool filtering, local detection."""
+"""Tests for source/services/skills_runtime/sub_agent.py — tier resolution, tool filtering, local detection."""
 
 from types import SimpleNamespace
 import asyncio
@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 
 # We need to import after conftest stubs the circular import
-from source.services.sub_agent import (
+from source.services.skills_runtime.sub_agent import (
     _resolve_tier_model,
     _is_local_ollama,
     _uses_ollama_client,
@@ -97,8 +97,8 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with patch("source.services.sub_agent._resolve_tier_model") as mock_resolve, patch(
-            "source.services.sub_agent.execute_sub_agent",
+        with patch("source.services.skills_runtime.sub_agent._resolve_tier_model") as mock_resolve, patch(
+            "source.services.skills_runtime.sub_agent.execute_sub_agent",
             side_effect=fake_execute_sub_agent,
         ):
             mock_resolve.side_effect = lambda tier: {
@@ -133,8 +133,8 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
-            "source.services.sub_agent.execute_sub_agent",
+        with patch("source.services.skills_runtime.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.skills_runtime.sub_agent.execute_sub_agent",
             side_effect=fake_execute_sub_agent,
         ):
             calls = [
@@ -162,8 +162,8 @@ class TestExecuteSubAgentsParallel:
                 in_flight -= 1
             return f"ok:{agent_name}:{model_tier}:{instruction}"
 
-        with patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
-            "source.services.sub_agent.execute_sub_agent",
+        with patch("source.services.skills_runtime.sub_agent._resolve_tier_model", return_value="llama3.2"), patch(
+            "source.services.skills_runtime.sub_agent.execute_sub_agent",
             side_effect=fake_execute_sub_agent,
         ):
             calls = [
@@ -183,37 +183,37 @@ class TestExecuteSubAgentsParallel:
 
 
 class TestResolveTierModel:
-    @patch("source.services.sub_agent.get_current_model", return_value="anthropic/claude-sonnet-4-20250514")
-    @patch("source.services.sub_agent.db")
+    @patch("source.services.skills_runtime.sub_agent.get_current_model", return_value="anthropic/claude-sonnet-4-20250514")
+    @patch("source.services.skills_runtime.sub_agent.db")
     def test_self_tier_returns_current_model(self, mock_db, mock_model):
         result = _resolve_tier_model("self")
         assert result == "anthropic/claude-sonnet-4-20250514"
         # self tier should never check DB
         mock_db.get_setting.assert_not_called()
 
-    @patch("source.services.sub_agent.get_current_model", return_value="openai/gpt-4o")
-    @patch("source.services.sub_agent.db")
+    @patch("source.services.skills_runtime.sub_agent.get_current_model", return_value="openai/gpt-4o")
+    @patch("source.services.skills_runtime.sub_agent.db")
     def test_fast_tier_with_no_override_returns_current(self, mock_db, mock_model):
         mock_db.get_setting.return_value = None
         result = _resolve_tier_model("fast")
         assert result == "openai/gpt-4o"
 
-    @patch("source.services.sub_agent.get_current_model", return_value="openai/gpt-4o")
-    @patch("source.services.sub_agent.db")
+    @patch("source.services.skills_runtime.sub_agent.get_current_model", return_value="openai/gpt-4o")
+    @patch("source.services.skills_runtime.sub_agent.db")
     def test_fast_tier_with_override_returns_override(self, mock_db, mock_model):
         mock_db.get_setting.return_value = "gemini/gemini-2.5-flash"
         result = _resolve_tier_model("fast")
         assert result == "gemini/gemini-2.5-flash"
 
-    @patch("source.services.sub_agent.get_current_model", return_value="openai/gpt-4o")
-    @patch("source.services.sub_agent.db")
+    @patch("source.services.skills_runtime.sub_agent.get_current_model", return_value="openai/gpt-4o")
+    @patch("source.services.skills_runtime.sub_agent.db")
     def test_smart_tier_with_empty_override_returns_current(self, mock_db, mock_model):
         mock_db.get_setting.return_value = "  "
         result = _resolve_tier_model("smart")
         assert result == "openai/gpt-4o"
 
-    @patch("source.services.sub_agent.get_current_model", return_value=None)
-    @patch("source.services.sub_agent.db")
+    @patch("source.services.skills_runtime.sub_agent.get_current_model", return_value=None)
+    @patch("source.services.skills_runtime.sub_agent.db")
     def test_fallback_to_app_state_when_no_context_var(self, mock_db, mock_model):
         mock_db.get_setting.return_value = None
         with patch("source.core.state.app_state") as mock_app:
@@ -228,13 +228,13 @@ class TestResolveTierModel:
 
 
 class TestGetSubAgentTools:
-    @patch("source.mcp_integration.manager.mcp_manager")
+    @patch("source.mcp_integration.core.manager.mcp_manager")
     def test_returns_none_when_no_tools(self, mock_manager):
         mock_manager.has_tools.return_value = False
         assert _get_sub_agent_tools("read the file") is None
 
-    @patch("source.mcp_integration.handlers.retrieve_relevant_tools")
-    @patch("source.mcp_integration.manager.mcp_manager")
+    @patch("source.mcp_integration.core.handlers.retrieve_relevant_tools")
+    @patch("source.mcp_integration.core.manager.mcp_manager")
     def test_excludes_terminal_and_spawn_agent(self, mock_manager, mock_retrieve):
         mock_manager.has_tools.return_value = True
         mock_retrieve.return_value = [
@@ -251,8 +251,8 @@ class TestGetSubAgentTools:
         assert "run_command" not in names
         assert "spawn_agent" not in names
 
-    @patch("source.mcp_integration.handlers.retrieve_relevant_tools")
-    @patch("source.mcp_integration.manager.mcp_manager")
+    @patch("source.mcp_integration.core.handlers.retrieve_relevant_tools")
+    @patch("source.mcp_integration.core.manager.mcp_manager")
     def test_returns_none_when_all_filtered(self, mock_manager, mock_retrieve):
         mock_manager.has_tools.return_value = True
         mock_retrieve.return_value = [
@@ -335,10 +335,10 @@ def _make_streaming_chunks(content: str, tool_calls=None, prompt_tokens=0, compl
 
 
 class TestRunCloudSubAgent:
-    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
-    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
-    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
-    @patch("source.llm.key_manager.key_manager.get_api_key", return_value="or-test-key")
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.core.key_manager.key_manager.get_api_key", return_value="or-test-key")
     async def test_openrouter_passes_api_key_directly(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
     ):
@@ -360,10 +360,10 @@ class TestRunCloudSubAgent:
         assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert call_kwargs["api_key"] == "or-test-key"
 
-    @patch("source.services.sub_agent.is_current_request_cancelled", return_value=False)
-    @patch("source.services.sub_agent.litellm.get_model_info", return_value={})
-    @patch("source.services.sub_agent.litellm.acompletion", new_callable=AsyncMock)
-    @patch("source.llm.key_manager.key_manager.get_api_key", return_value="sk-test")
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.core.key_manager.key_manager.get_api_key", return_value="sk-test")
     async def test_cloud_sub_agent_invalid_tool_args_do_not_crash(
         self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
     ):
@@ -395,10 +395,10 @@ class TestRunCloudSubAgent:
 
 
 class TestExecuteSubAgent:
-    @patch("source.services.sub_agent.broadcast_message", new_callable=AsyncMock)
-    @patch("source.services.sub_agent._get_sub_agent_tools", return_value=None)
-    @patch("source.services.sub_agent._resolve_tier_model", return_value="anthropic/claude-sonnet-4-20250514")
-    @patch("source.services.sub_agent._run_cloud_sub_agent", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent._get_sub_agent_tools", return_value=None)
+    @patch("source.services.skills_runtime.sub_agent._resolve_tier_model", return_value="anthropic/claude-sonnet-4-20250514")
+    @patch("source.services.skills_runtime.sub_agent._run_cloud_sub_agent", new_callable=AsyncMock)
     async def test_cloud_sub_agent_returns_response(
         self, mock_run, mock_resolve, mock_tools, mock_broadcast
     ):
@@ -412,10 +412,10 @@ class TestExecuteSubAgent:
         # Should have broadcast calling + complete
         assert mock_broadcast.call_count == 2
 
-    @patch("source.services.sub_agent.broadcast_message", new_callable=AsyncMock)
-    @patch("source.services.sub_agent._get_sub_agent_tools", return_value=None)
-    @patch("source.services.sub_agent._resolve_tier_model", return_value="llama3.2")
-    @patch("source.services.sub_agent._run_ollama_sub_agent", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent._get_sub_agent_tools", return_value=None)
+    @patch("source.services.skills_runtime.sub_agent._resolve_tier_model", return_value="llama3.2")
+    @patch("source.services.skills_runtime.sub_agent._run_ollama_sub_agent", new_callable=AsyncMock)
     async def test_ollama_sub_agent_routes_to_ollama(
         self, mock_run, mock_resolve, mock_tools, mock_broadcast
     ):

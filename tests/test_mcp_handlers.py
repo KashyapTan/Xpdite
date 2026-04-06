@@ -1,4 +1,4 @@
-"""Tests for source/mcp_integration/handlers.py."""
+"""Tests for source/mcp_integration/core/handlers.py."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def _load_handlers_module(monkeypatch):
     services_pkg.__path__ = [str(root / "source" / "services")]
     monkeypatch.setitem(sys.modules, "source.services", services_pkg)
 
-    module_name = "source.mcp_integration.handlers_cov"
-    module_path = root / "source" / "mcp_integration" / "handlers.py"
+    module_name = "source.mcp_integration.core.handlers_cov"
+    module_path = root / "source" / "mcp_integration" / "core" / "handlers.py"
     spec = importlib.util.spec_from_file_location(module_name, module_path)
     assert spec is not None and spec.loader is not None
 
@@ -66,7 +66,7 @@ class TestRetrieveRelevantTools:
                 handlers_module.retriever, "retrieve_tools", return_value=filtered
             ) as mock_retrieve,
             patch(
-                "source.database.db.get_setting",
+                "source.infrastructure.database.db.get_setting",
                 side_effect=["{bad json", "7"],
             ),
         ):
@@ -79,6 +79,28 @@ class TestRetrieveRelevantTools:
             always_on=[],
             top_k=7,
         )
+
+    def test_invalid_top_k_falls_back_to_default(self, handlers_module):
+        all_tools = [{"function": {"name": "read_file"}}]
+        filtered = all_tools
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module.mcp_manager, "get_ollama_tools", return_value=all_tools
+            ),
+            patch.object(
+                handlers_module.retriever, "retrieve_tools", return_value=filtered
+            ) as mock_retrieve,
+            patch(
+                "source.infrastructure.database.db.get_setting",
+                side_effect=[None, "not-an-int"],
+            ),
+        ):
+            result = handlers_module.retrieve_relevant_tools("find config")
+
+        assert result == filtered
+        assert mock_retrieve.call_args.kwargs["top_k"] == 5
 
 
 class TestTruncateResult:
@@ -232,7 +254,6 @@ class TestHandleMcpToolCalls:
                 handlers_module, "is_current_request_cancelled", return_value=False
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
         ):
             (
                 updated_messages,
@@ -282,7 +303,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 20,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module,
                 "_stream_tool_follow_up",
@@ -369,11 +389,13 @@ class TestHandleMcpToolCalls:
         )
         fake_client = SimpleNamespace(chat=AsyncMock(return_value=detection))
 
-        sub_agent_module = types.ModuleType("source.services.sub_agent")
+        sub_agent_module = types.ModuleType("source.services.skills_runtime.sub_agent")
         sub_agent_module.execute_sub_agents_parallel = AsyncMock(
             return_value=["parallel-result"]
         )
-        monkeypatch.setitem(sys.modules, "source.services.sub_agent", sub_agent_module)
+        monkeypatch.setitem(
+            sys.modules, "source.services.skills_runtime.sub_agent", sub_agent_module
+        )
 
         with (
             patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
@@ -388,7 +410,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 10,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module.mcp_manager,
                 "get_tool_server_name",
@@ -452,7 +473,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 10,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module,
                 "_stream_tool_follow_up",
@@ -533,7 +553,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 10,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module,
                 "_stream_tool_follow_up",
@@ -618,7 +637,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 10,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module,
                 "_stream_tool_follow_up",
@@ -690,7 +708,6 @@ class TestHandleMcpToolCalls:
                 side_effect=[False] * 10,
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
-            patch.object(handlers_module.app_state, "selected_model", "qwen3:8b"),
             patch.object(
                 handlers_module,
                 "_stream_tool_follow_up",

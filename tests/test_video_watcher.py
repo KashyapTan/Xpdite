@@ -4,7 +4,7 @@ import types
 
 import pytest
 
-from source.services import video_watcher as vw
+from source.services.media import video_watcher as vw
 
 
 def _direct_run_in_thread(func, *args, **kwargs):

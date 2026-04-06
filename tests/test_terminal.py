@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from source.services.terminal import TerminalService, TerminalSession, _strip_ansi
+from source.services.shell.terminal import TerminalService, TerminalSession, _strip_ansi
 
 
 class _FakeStdout:
@@ -144,7 +144,7 @@ class TestTerminalSession:
         assert session.process is None
 
     def test_duration_ms(self):
-        with patch("source.services.terminal.time.time") as mock_time:
+        with patch("source.services.shell.terminal.time.time") as mock_time:
             mock_time.return_value = 100.0
             session = TerminalSession("s", "r", "cmd", "/")
             mock_time.return_value = 100.125
@@ -219,7 +219,7 @@ class TestTerminalServiceState:
         assert len(ts._pending_events) == 2
 
         mock_db = MagicMock()
-        with patch("source.database.db", mock_db):
+        with patch("source.infrastructure.database.db", mock_db):
             ts.flush_pending_events("conv-123")
         assert mock_db.save_terminal_event.call_count == 2
         assert ts._pending_events == []
@@ -361,7 +361,7 @@ class TestCheckApproval:
 
         ts = self._make_service()
         ts._ask_level = "on-miss"
-        with patch("source.services.terminal.is_command_approved", return_value=True):
+        with patch("source.services.shell.terminal.is_command_approved", return_value=True):
             approved, _ = await ts.check_approval("echo hello", "/home")
         assert approved is True
 
@@ -373,12 +373,12 @@ class TestCheckApproval:
         ts = self._make_service()
         ts._ask_level = "on-miss"
         with (
-            patch("source.services.terminal.is_command_approved", return_value=False),
+            patch("source.services.shell.terminal.is_command_approved", return_value=False),
             patch(
-                "source.services.terminal.broadcast_message", new_callable=AsyncMock
+                "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
             ) as mock_bcast,
             patch(
-                "source.services.terminal.asyncio.wait_for",
+                "source.services.shell.terminal.asyncio.wait_for",
                 side_effect=_wait_for_timeout,
             ),
         ):
@@ -402,10 +402,10 @@ class TestCheckApproval:
         ts._ask_level = "always"
         with (
             patch(
-                "source.services.terminal.broadcast_message", new_callable=AsyncMock
+                "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
             ) as mock_bcast,
             patch(
-                "source.services.terminal.asyncio.wait_for",
+                "source.services.shell.terminal.asyncio.wait_for",
                 side_effect=_wait_for_timeout,
             ),
         ):
@@ -429,11 +429,11 @@ class TestCheckApproval:
                 ts.resolve_approval(payload["request_id"], True, remember=True)
 
         with (
-            patch("source.services.terminal.is_command_approved", return_value=False),
+            patch("source.services.shell.terminal.is_command_approved", return_value=False),
             patch(
-                "source.services.terminal.broadcast_message", new_callable=AsyncMock
+                "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
             ) as mock_bcast,
-            patch("source.services.terminal.remember_approval") as mock_remember,
+            patch("source.services.shell.terminal.remember_approval") as mock_remember,
         ):
             mock_bcast.side_effect = _fake_broadcast
             approved, request_id = await ts.check_approval("echo hello", "/tmp")
@@ -455,7 +455,7 @@ class TestSessionMode:
                 ts.resolve_session(True)
 
         with patch(
-            "source.services.terminal.broadcast_message", new_callable=AsyncMock
+            "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
         ) as mock_bcast:
             mock_bcast.side_effect = _fake_broadcast
             approved = await ts.request_session("Need autonomous terminal control")
@@ -471,9 +471,9 @@ class TestSessionMode:
         ts = TerminalService()
 
         with (
-            patch("source.services.terminal.broadcast_message", new_callable=AsyncMock),
+            patch("source.services.shell.terminal.broadcast_message", new_callable=AsyncMock),
             patch(
-                "source.services.terminal.asyncio.wait_for",
+                "source.services.shell.terminal.asyncio.wait_for",
                 side_effect=_wait_for_timeout,
             ),
         ):
@@ -489,7 +489,7 @@ class TestSessionMode:
         ts._session_mode = True
 
         with patch(
-            "source.services.terminal.broadcast_message", new_callable=AsyncMock
+            "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
         ) as mock_bcast:
             await ts.end_session()
 
@@ -508,9 +508,9 @@ class TestRunningNotices:
         }
 
         with (
-            patch("source.services.terminal.time.time", return_value=111.2),
+            patch("source.services.shell.terminal.time.time", return_value=111.2),
             patch(
-                "source.services.terminal.broadcast_message", new_callable=AsyncMock
+                "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
             ) as mock_bcast,
         ):
             await ts.check_running_notices()
@@ -526,7 +526,7 @@ class TestExecuteCommand:
     async def test_invalid_working_directory_short_circuits(self):
         ts = TerminalService()
 
-        with patch("source.services.terminal.os.path.isdir", return_value=False):
+        with patch("source.services.shell.terminal.os.path.isdir", return_value=False):
             output, exit_code, duration_ms, timed_out = await ts.execute_command(
                 "echo hi", "C:/missing/path"
             )
@@ -541,13 +541,13 @@ class TestExecuteCommand:
         ts = TerminalService()
 
         with (
-            patch("source.services.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
             patch(
-                "source.services.terminal.check_blocklist",
+                "source.services.shell.terminal.check_blocklist",
                 return_value=(True, "dangerous"),
             ),
             patch(
-                "source.services.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_shell",
                 new_callable=AsyncMock,
             ) as mock_create,
         ):
@@ -573,10 +573,10 @@ class TestExecuteCommand:
         )
 
         with (
-            patch("source.services.terminal.os.path.isdir", return_value=True),
-            patch("source.services.terminal.check_blocklist", return_value=(False, "")),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_shell",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
@@ -608,10 +608,10 @@ class TestExecuteCommand:
         )
 
         with (
-            patch("source.services.terminal.os.path.isdir", return_value=True),
-            patch("source.services.terminal.check_blocklist", return_value=(False, "")),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_shell",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
@@ -634,14 +634,14 @@ class TestExecuteCommand:
         fake_process = _FakeProcess(_TimeoutStdout(), wait_result=0, pid=444)
 
         with (
-            patch("source.services.terminal.os.path.isdir", return_value=True),
-            patch("source.services.terminal.check_blocklist", return_value=(False, "")),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_shell",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
-            patch("source.services.terminal._kill_process_tree") as mock_kill,
+            patch("source.services.shell.terminal._kill_process_tree") as mock_kill,
         ):
             output, exit_code, _, timed_out = await ts.execute_command(
                 "sleep 999", "C:/repo", timeout=1, request_id="req-timeout"
@@ -662,10 +662,10 @@ class TestExecuteCommand:
         ts = TerminalService()
 
         with (
-            patch("source.services.terminal.os.path.isdir", return_value=True),
-            patch("source.services.terminal.check_blocklist", return_value=(False, "")),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_shell",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("boom"),
             ),
@@ -690,7 +690,7 @@ class TestKillRunningCommand:
         ts.broadcast_output = AsyncMock()
         ts._kill_session = AsyncMock()
 
-        with patch("source.services.terminal._kill_process_tree") as mock_kill:
+        with patch("source.services.shell.terminal._kill_process_tree") as mock_kill:
             killed = await ts.kill_running_command()
 
         assert killed is True
@@ -752,11 +752,11 @@ class TestSessionInteraction:
 
         with (
             patch(
-                "source.services.terminal.asyncio.to_thread",
+                "source.services.shell.terminal.asyncio.to_thread",
                 side_effect=_run_in_thread_now,
             ),
             patch(
-                "source.services.terminal.asyncio.sleep", new_callable=AsyncMock
+                "source.services.shell.terminal.asyncio.sleep", new_callable=AsyncMock
             ) as mock_sleep,
         ):
             result = await ts.send_input("sid", "status", press_enter=True, wait_ms=250)
@@ -773,7 +773,7 @@ class TestSessionInteraction:
         ts._background_sessions["sid"] = session
 
         with patch(
-            "source.services.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
         ):
             result = await ts.send_input("sid", "status", press_enter=False, wait_ms=0)
 
@@ -839,7 +839,7 @@ class TestPtyResizeAndCleanup:
         ts._background_sessions["sid"] = session
 
         with patch(
-            "source.services.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
         ):
             await ts.resize_pty("sid", cols=90, rows=40)
 
@@ -857,7 +857,7 @@ class TestPtyResizeAndCleanup:
         ts._background_sessions["sid-dead"] = dead
 
         with patch(
-            "source.services.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
         ):
             await ts.resize_all_pty(cols=120, rows=50)
 
@@ -877,7 +877,7 @@ class TestPtyResizeAndCleanup:
         ts.broadcast_complete = AsyncMock()
 
         with patch(
-            "source.services.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
         ):
             await ts._kill_session("sid", "Manually stopped")
 
@@ -912,7 +912,7 @@ class TestCancelAllPendingAdvanced:
         session.process = MagicMock()
         ts._background_sessions["sid"] = session
 
-        with patch("source.services.terminal._kill_process_tree") as mock_kill:
+        with patch("source.services.shell.terminal._kill_process_tree") as mock_kill:
             ts.cancel_all_pending()
 
         assert approval_event.is_set()

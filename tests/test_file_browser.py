@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from source.services.file_browser import FileBrowserService, FileEntry
+from source.services.filesystem.file_browser import FileBrowserService, FileEntry
 
 
 @pytest.fixture

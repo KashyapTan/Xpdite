@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-import source.mcp_integration.manager as manager_module
+import source.mcp_integration.core.manager as manager_module
 
 
 @pytest.fixture()
@@ -52,7 +52,7 @@ class TestInitMcpServers:
             patch.object(manager, "register_inline_tools") as register_inline_tools,
             patch.object(manager_module.retriever, "embed_tools") as embed_tools,
             patch(
-                "source.services.external_connectors.init_external_connectors",
+                "source.services.integrations.external_connectors.init_external_connectors",
                 new_callable=AsyncMock,
             ),
         ):
@@ -75,7 +75,7 @@ class TestConnectGoogleServers:
         manager = reset_mcp_manager_state
 
         with (
-            patch("source.mcp_integration.manager.os.path.exists", return_value=True),
+            patch("source.mcp_integration.core.manager.os.path.exists", return_value=True),
             patch.object(
                 manager,
                 "is_server_connected",

@@ -1,11 +1,11 @@
-"""Tests for source/services/ollama_global_queue.py — OllamaGlobalQueue."""
+"""Tests for source/services/chat/ollama_global_queue.py — OllamaGlobalQueue."""
 
 import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
 
-from source.services.ollama_global_queue import OllamaGlobalQueue
+from source.services.chat.ollama_global_queue import OllamaGlobalQueue
 
 
 # ── Fixtures ──────────────────────────────────────────────────────

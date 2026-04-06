@@ -1,6 +1,6 @@
-"""Tests for source/mcp_integration/tool_args.py."""
+"""Tests for source/mcp_integration/core/tool_args.py."""
 
-from source.mcp_integration.tool_args import normalize_tool_args
+from source.mcp_integration.core.tool_args import normalize_tool_args
 
 
 def test_normalize_tool_args_dict():

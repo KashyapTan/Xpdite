@@ -1,6 +1,6 @@
-"""Tests for source/config.py — verify constants and CaptureMode."""
+"""Tests for source/infrastructure/config.py — verify constants and CaptureMode."""
 
-from source.config import (
+from source.infrastructure.config import (
     DEFAULT_PORT,
     MAX_PORT_ATTEMPTS,
     DEFAULT_MODEL,

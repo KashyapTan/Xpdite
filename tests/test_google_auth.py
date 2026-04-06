@@ -1,11 +1,11 @@
-"""Tests for source/services/google_auth.py."""
+"""Tests for source/services/integrations/google_auth.py."""
 
 import json
 import os
 import sys
 import types
 
-from source.services import google_auth as ga
+from source.services.integrations import google_auth as ga
 
 
 class _FakeCredentials:

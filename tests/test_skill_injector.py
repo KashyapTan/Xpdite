@@ -1,13 +1,13 @@
-"""Tests for source/mcp_integration/skill_injector.py."""
+"""Tests for source/mcp_integration/core/skill_injector.py."""
 
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from source.mcp_integration.skill_injector import (
+from source.mcp_integration.core.skill_injector import (
     build_skills_prompt_block,
     get_skills_to_inject,
 )
-from source.services.skills import Skill
+from source.services.skills_runtime.skills import Skill
 
 
 def _make_skill(
@@ -44,7 +44,7 @@ class TestGetSkillsToInject:
     def test_no_skills_no_forced(self):
         """No skills returned when no forced skills and no YouTube URL."""
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([]),
         ):
             result = get_skills_to_inject(forced_skills=[])
@@ -54,7 +54,7 @@ class TestGetSkillsToInject:
         """Forced skills (from slash commands) are always returned."""
         terminal = _make_skill("terminal")
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([terminal]),
         ):
             result = get_skills_to_inject(forced_skills=[terminal])
@@ -66,7 +66,7 @@ class TestGetSkillsToInject:
         terminal = _make_skill("terminal")
         filesystem = _make_skill("filesystem")
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([terminal, filesystem]),
         ):
             result = get_skills_to_inject(forced_skills=[terminal, filesystem])
@@ -80,7 +80,7 @@ class TestGetSkillsToInject:
         youtube = _make_skill("youtube", trigger_servers=[])
         query = "Can you summarize this? https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([youtube]),
         ):
             result = get_skills_to_inject(forced_skills=[], user_query=query)
@@ -92,7 +92,7 @@ class TestGetSkillsToInject:
         youtube = _make_skill("youtube", trigger_servers=[])
         query = "Check this out: https://youtu.be/dQw4w9WgXcQ"
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([youtube]),
         ):
             result = get_skills_to_inject(forced_skills=[], user_query=query)
@@ -103,7 +103,7 @@ class TestGetSkillsToInject:
         """YouTube skill is NOT auto-injected when no YouTube URL present."""
         youtube = _make_skill("youtube", trigger_servers=[])
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([youtube]),
         ):
             result = get_skills_to_inject(forced_skills=[], user_query="Summarize that video")
@@ -114,7 +114,7 @@ class TestGetSkillsToInject:
         youtube = _make_skill("youtube", enabled=False, trigger_servers=[])
         query = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([youtube]),
         ):
             result = get_skills_to_inject(forced_skills=[], user_query=query)
@@ -127,7 +127,7 @@ class TestGetSkillsToInject:
         terminal = _make_skill("terminal")
         query = "https://www.youtube.com/watch?v=test"
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([youtube, terminal]),
         ):
             result = get_skills_to_inject(forced_skills=[terminal], user_query=query)
@@ -143,7 +143,7 @@ class TestGetSkillsToInject:
         """
         terminal = _make_skill("terminal", trigger_servers=["terminal"])
         with patch(
-            "source.mcp_integration.skill_injector._get_manager",
+            "source.mcp_integration.core.skill_injector._get_manager",
             return_value=_mock_manager([terminal]),
         ):
             result = get_skills_to_inject(forced_skills=[], user_query="Run a command")

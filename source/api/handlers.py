@@ -18,7 +18,7 @@ from ..core.connection import (
     set_current_tab_id,
 )
 from ..core.state import app_state
-from ..database import db
+from ..infrastructure.database import db
 
 logger = logging.getLogger(__name__)
 
@@ -26,19 +26,19 @@ logger = logging.getLogger(__name__)
 def __getattr__(name: str):
     """Provide lazy module-level imports for compatibility and test patching."""
     if name == "ConversationService":
-        from ..services.conversations import ConversationService
+        from ..services.chat.conversations import ConversationService
 
         return ConversationService
     if name == "ScreenshotHandler":
-        from ..services.screenshots import ScreenshotHandler
+        from ..services.media.screenshots import ScreenshotHandler
 
         return ScreenshotHandler
     if name == "terminal_service":
-        from ..services.terminal import terminal_service
+        from ..services.shell.terminal import terminal_service
 
         return terminal_service
     if name == "video_watcher_service":
-        from ..services.video_watcher import video_watcher_service
+        from ..services.media.video_watcher import video_watcher_service
 
         return video_watcher_service
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
@@ -81,8 +81,8 @@ class MessageHandler:
         return data.get("tab_id", "default")
 
     def _get_tab_manager(self):
-        from ..services.tab_manager import TabManager
-        from ..services.tab_manager_instance import init_tab_manager, tab_manager
+        from ..services.chat.tab_manager import TabManager
+        from ..services.chat.tab_manager_instance import init_tab_manager, tab_manager
 
         manager = tab_manager
         if manager is None:
@@ -91,25 +91,25 @@ class MessageHandler:
 
     @staticmethod
     def _conversation_service():
-        from ..services.conversations import ConversationService
+        from ..services.chat.conversations import ConversationService
 
         return ConversationService
 
     @staticmethod
     def _screenshot_handler():
-        from ..services.screenshots import ScreenshotHandler
+        from ..services.media.screenshots import ScreenshotHandler
 
         return ScreenshotHandler
 
     @staticmethod
     def _terminal_service():
-        from ..services.terminal import terminal_service
+        from ..services.shell.terminal import terminal_service
 
         return terminal_service
 
     @staticmethod
     def _video_watcher_service():
-        from ..services.video_watcher import video_watcher_service
+        from ..services.media.video_watcher import video_watcher_service
 
         return video_watcher_service
 
@@ -158,8 +158,8 @@ class MessageHandler:
         happen immediately without being blocked by the Ollama global queue
         or another tab's in-flight LLM request.
         """
-        from ..services.query_queue import QueuedQuery, QueueFullError
-        from ..config import CaptureMode
+        from ..services.chat.query_queue import QueuedQuery, QueueFullError
+        from ..infrastructure.config import CaptureMode
 
         tab_id = self._get_tab_id(data)
         query_text = data.get("content", "").strip()
@@ -234,7 +234,7 @@ class MessageHandler:
             await broadcast_to_tab(tab_id, "queue_full", {"tab_id": tab_id})
 
     async def _enqueue_turn_action(self, data: Dict[str, Any], action: str) -> None:
-        from ..services.query_queue import QueuedQuery, QueueFullError
+        from ..services.chat.query_queue import QueuedQuery, QueueFullError
 
         tab_id = self._get_tab_id(data)
         message_id = str(data.get("message_id", "")).strip()
@@ -555,7 +555,7 @@ class MessageHandler:
 
     async def _handle_meeting_start_recording(self, data: Dict[str, Any]):
         """Start a new meeting recording session."""
-        from ..services.meeting_recorder import meeting_recorder_service
+        from ..services.media.meeting_recorder import meeting_recorder_service
 
         try:
             result = await meeting_recorder_service.start_recording()
@@ -569,7 +569,7 @@ class MessageHandler:
 
     async def _handle_meeting_stop_recording(self, data: Dict[str, Any]):
         """Stop the active meeting recording."""
-        from ..services.meeting_recorder import meeting_recorder_service
+        from ..services.media.meeting_recorder import meeting_recorder_service
 
         try:
             result = await meeting_recorder_service.stop_recording()
@@ -584,7 +584,7 @@ class MessageHandler:
     async def _handle_meeting_audio_chunk(self, data: Dict[str, Any]):
         """Receive a base64-encoded PCM audio chunk from the renderer."""
         import base64
-        from ..services.meeting_recorder import meeting_recorder_service
+        from ..services.media.meeting_recorder import meeting_recorder_service
 
         audio_b64 = data.get("audio", "")
         if audio_b64:
@@ -645,7 +645,7 @@ class MessageHandler:
 
     async def _handle_meeting_get_status(self, data: Dict[str, Any]):
         """Get current meeting recording status."""
-        from ..services.meeting_recorder import meeting_recorder_service
+        from ..services.media.meeting_recorder import meeting_recorder_service
 
         status = meeting_recorder_service.get_status()
         await self.websocket.send_text(
@@ -654,7 +654,7 @@ class MessageHandler:
 
     async def _handle_meeting_get_compute_info(self, data: Dict[str, Any]):
         """Get GPU compute backend info for settings display."""
-        from ..services.gpu_detector import get_compute_info
+        from ..services.media.gpu_detector import get_compute_info
 
         info = get_compute_info()
         await self.websocket.send_text(
@@ -675,7 +675,7 @@ class MessageHandler:
 
     async def _handle_meeting_update_settings(self, data: Dict[str, Any]):
         """Save meeting recorder settings."""
-        from ..services.meeting_recorder import meeting_recorder_service
+        from ..services.media.meeting_recorder import meeting_recorder_service
 
         settings = data.get("settings", {})
         if "whisper_model" in settings:
@@ -704,7 +704,7 @@ class MessageHandler:
     async def _handle_meeting_generate_analysis(self, data: Dict[str, Any]):
         """Generate AI summary and action suggestions for a recording."""
         import asyncio
-        from ..services.meeting_recorder import meeting_analysis_service
+        from ..services.media.meeting_recorder import meeting_analysis_service
 
         recording_id = data.get("recording_id")
         model = data.get("model")  # Optional model override from frontend
@@ -767,7 +767,7 @@ class MessageHandler:
 
     async def _handle_meeting_execute_action(self, data: Dict[str, Any]):
         """Execute an action suggestion via MCP tools."""
-        from ..mcp_integration.manager import mcp_manager
+        from ..mcp_integration.core.manager import mcp_manager
 
         recording_id = data.get("recording_id", "")
         action = data.get("action", {})

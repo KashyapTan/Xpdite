@@ -1,16 +1,18 @@
-"""Tests for source/llm/key_manager.py — KeyManager."""
+"""Tests for source/llm/core/key_manager.py — KeyManager."""
 
 from unittest.mock import patch, MagicMock
 import pytest
+from cryptography.fernet import Fernet
 
-from source.llm.key_manager import KeyManager, VALID_PROVIDERS
+from source.llm.core.key_manager import KeyManager, VALID_PROVIDERS
 
 
 # ---------------------------------------------------------------------------
 # Isolated KeyManager that uses an in-memory settings dict instead of the
-# real database singleton.  key_manager.py does lazy `from ..database import db`
-# inside each method, so we patch `source.database.db`.
+# real database singleton.  key_manager.py does lazy `from ..infrastructure.database import db`
+# inside each method, so we patch `source.infrastructure.database.db`.
 # ---------------------------------------------------------------------------
+
 
 def _make_key_manager():
     """Return a KeyManager backed by a fake in-memory DB."""
@@ -25,7 +27,7 @@ def _make_key_manager():
     return km, fake_db, settings
 
 
-_DB_PATCH_TARGET = "source.database.db"
+_DB_PATCH_TARGET = "source.infrastructure.database.db"
 
 
 class TestMaskKey:
@@ -109,6 +111,29 @@ class TestSaveGetDeleteApiKey:
         km, fake_db, _ = _make_key_manager()
         with patch(_DB_PATCH_TARGET, fake_db):
             assert km.get_api_key("unknown") is None
+
+    def test_get_api_key_decrypts_legacy_ciphertext_and_migrates(self):
+        km, fake_db, settings = _make_key_manager()
+        with patch(_DB_PATCH_TARGET, fake_db):
+            # Seed a fixed salt so key derivation is deterministic in this test.
+            salt = b"\x01" * 32
+            settings["encryption_salt"] = salt.hex()
+
+            app_paths = km._get_app_path_candidates()
+            assert len(app_paths) >= 2
+
+            legacy_key = km._derive_key(salt, app_paths[1])
+            legacy_fernet = Fernet(legacy_key)
+            legacy_cipher = legacy_fernet.encrypt(b"legacy-openai-key").decode("utf-8")
+            settings["api_key_openai"] = legacy_cipher
+
+            decrypted = km.get_api_key("openai")
+            assert decrypted == "legacy-openai-key"
+
+            # Value should be re-encrypted with canonical derivation.
+            migrated_cipher = settings["api_key_openai"]
+            assert migrated_cipher != legacy_cipher
+            assert km.decrypt_key(migrated_cipher) == "legacy-openai-key"
 
 
 class TestGetApiKeyStatus:

@@ -4,7 +4,7 @@ import os
 import json
 import pytest
 
-from source.services.approval_history import (
+from source.services.shell.approval_history import (
     _normalize_command,
     _compute_hash,
     is_command_approved,
@@ -12,7 +12,7 @@ from source.services.approval_history import (
     get_approval_count,
     clear_approvals,
 )
-import source.services.approval_history as ah_mod
+import source.services.shell.approval_history as ah_mod
 
 
 class TestNormalizeCommand:

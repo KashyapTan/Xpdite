@@ -7,7 +7,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from source.mcp_integration.retriever import RRF_K
+from source.mcp_integration.core.retriever import RRF_K
 
 
 def _make_tools(descriptions_by_name):
@@ -44,7 +44,7 @@ def _embed_tools_with_vectors(retriever, descriptions_by_name, vectors_by_name):
 @pytest.fixture()
 def retriever(tmp_path, monkeypatch):
     """Create a ToolRetriever with a fake local embedding backend."""
-    import source.mcp_integration.retriever as retriever_module
+    import source.mcp_integration.core.retriever as retriever_module
 
     cache_dir = tmp_path / "cache"
     monkeypatch.setattr(retriever_module, "_CACHE_DIR", str(cache_dir))
@@ -398,7 +398,7 @@ class TestEmbedToolsCacheCleanup:
         }
         assert retriever._tool_name_index == ["read_file", "list_calendars"]
 
-        import source.mcp_integration.retriever as retriever_module
+        import source.mcp_integration.core.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert read_key in data.files
@@ -433,7 +433,7 @@ class TestEmbedToolsCacheCleanup:
             initial_embedding / np.linalg.norm(initial_embedding),
         )
 
-        import source.mcp_integration.retriever as retriever_module
+        import source.mcp_integration.core.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert initial_key in data.files
@@ -459,7 +459,7 @@ class TestEmbedToolsCacheCleanup:
         assert updated_key in retriever._embedding_cache
         assert retriever._tool_cache_index == {"search_docs": updated_key}
 
-        import source.mcp_integration.retriever as retriever_module
+        import source.mcp_integration.core.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert initial_key not in data.files
@@ -499,7 +499,7 @@ class TestEmbedToolsCacheCleanup:
             "open_ticket": ticket_key,
         }
 
-        import source.mcp_integration.retriever as retriever_module
+        import source.mcp_integration.core.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert search_key in data.files
@@ -543,7 +543,7 @@ class TestEmbedToolsCacheCleanup:
             "list_calendars": calendar_key,
         }
 
-        import source.mcp_integration.retriever as retriever_module
+        import source.mcp_integration.core.retriever as retriever_module
 
         with np.load(retriever_module._CACHE_FILE, allow_pickle=False) as data:
             assert read_key in data.files

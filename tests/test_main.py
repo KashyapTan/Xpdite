@@ -113,7 +113,7 @@ class TestMainServices:
         fake_state = SimpleNamespace(screenshot_service=None, service_thread=None)
 
         monkeypatch.setattr(main_module, "app_state", fake_state)
-        monkeypatch.setattr("source.ss.ScreenshotService", _FakeScreenshotService)
+        monkeypatch.setattr("source.infrastructure.screenshot_runtime.ScreenshotService", _FakeScreenshotService)
         monkeypatch.setattr(main_module.threading, "Thread", _FakeThread)
 
         main_module.start_screenshot_service()
@@ -131,7 +131,7 @@ class TestMainServices:
                 raise RuntimeError("boom")
 
         monkeypatch.setattr(main_module, "app_state", fake_state)
-        monkeypatch.setattr("source.ss.ScreenshotService", _BrokenScreenshotService)
+        monkeypatch.setattr("source.infrastructure.screenshot_runtime.ScreenshotService", _BrokenScreenshotService)
 
         main_module.start_screenshot_service()
         assert fake_state.screenshot_service is None
@@ -145,7 +145,7 @@ class TestMainServices:
         monkeypatch.setattr(main_module, "app_state", fake_state)
         monkeypatch.setitem(
             sys.modules,
-            "source.services.transcription",
+            "source.services.media.transcription",
             SimpleNamespace(TranscriptionService=_FakeTranscriptionService),
         )
 
@@ -162,7 +162,7 @@ class TestMainServices:
         monkeypatch.setattr(main_module, "app_state", fake_state)
         monkeypatch.setitem(
             sys.modules,
-            "source.services.transcription",
+            "source.services.media.transcription",
             SimpleNamespace(TranscriptionService=_BrokenTranscriptionService),
         )
 
@@ -213,7 +213,7 @@ class TestStartServer:
         monkeypatch.setattr(main_module, "find_available_port", lambda: 8123)
         monkeypatch.setattr(main_module, "_emit_boot_marker", lambda p, m, pr: markers.append((p, m, pr)))
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.init_tab_manager",
+            "source.services.chat.tab_manager_instance.init_tab_manager",
             lambda: tab_init.__setitem__("count", tab_init["count"] + 1),
         )
 
@@ -257,7 +257,7 @@ class TestStartServer:
 
         monkeypatch.setattr(main_module, "app_state", fake_state)
         monkeypatch.setattr(main_module, "find_available_port", lambda: 9009)
-        monkeypatch.setattr("source.services.tab_manager_instance.init_tab_manager", lambda: None)
+        monkeypatch.setattr("source.services.chat.tab_manager_instance.init_tab_manager", lambda: None)
         monkeypatch.setattr(main_module, "_emit_boot_marker", lambda *_args: None)
 
         async def _fake_init_mcp():
@@ -269,7 +269,7 @@ class TestStartServer:
         monkeypatch.setattr(main_module, "init_mcp_servers", _fake_init_mcp)
         monkeypatch.setattr("os.path.exists", lambda _path: True)
         monkeypatch.setattr(
-            "source.mcp_integration.manager.mcp_manager",
+            "source.mcp_integration.core.manager.mcp_manager",
             SimpleNamespace(connect_google_servers=_fake_connect_google),
             raising=False,
         )
@@ -300,7 +300,7 @@ class TestStartServer:
 
         monkeypatch.setattr(main_module, "app_state", fake_state)
         monkeypatch.setattr(main_module, "find_available_port", lambda: 8011)
-        monkeypatch.setattr("source.services.tab_manager_instance.init_tab_manager", lambda: None)
+        monkeypatch.setattr("source.services.chat.tab_manager_instance.init_tab_manager", lambda: None)
         monkeypatch.setattr(main_module, "_emit_boot_marker", lambda *_args: None)
         monkeypatch.setattr("os.path.exists", lambda _path: False)
 

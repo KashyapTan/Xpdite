@@ -42,7 +42,7 @@ class AppState:
 
         # Currently selected model (updated when user picks from dropdown)
         # deferred: avoid circular import with config.py
-        from ..config import DEFAULT_MODEL
+        from ..infrastructure.config import DEFAULT_MODEL
 
         self.selected_model: str = DEFAULT_MODEL
 

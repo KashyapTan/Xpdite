@@ -1,4 +1,4 @@
-"""Tests for source/services/memory.py."""
+"""Tests for source/services/memory_store/memory.py."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from source.services.memory import MemoryService
+from source.services.memory_store.memory import MemoryService
 
 
 @pytest.fixture()

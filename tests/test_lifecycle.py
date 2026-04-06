@@ -63,7 +63,7 @@ class TestLifecycleHooks:
         monkeypatch.setattr(
             "builtins.__import__",
             lambda name, *args, **kwargs: (_ for _ in ()).throw(ImportError("boom"))
-            if name in {".state", "..mcp_integration.manager", "..config"}
+            if name in {".state", "..mcp_integration.core.manager", "..config"}
             else real_import(name, *args, **kwargs),
         )
 
@@ -113,13 +113,13 @@ class TestLifecycleHooks:
         monkeypatch.setitem(__import__("sys").modules, "source.core.state", types.SimpleNamespace(app_state=fake_state))
         monkeypatch.setitem(
             __import__("sys").modules,
-            "source.mcp_integration.manager",
+            "source.mcp_integration.core.manager",
             types.SimpleNamespace(mcp_manager=fake_mcp_manager),
         )
-        monkeypatch.setitem(__import__("sys").modules, "source.config", fake_config)
+        monkeypatch.setitem(__import__("sys").modules, "source.infrastructure.config", fake_config)
         monkeypatch.setitem(__import__("sys").modules, "source.core.thread_pool", fake_thread_pool)
         monkeypatch.setitem(
-            __import__("sys").modules, "source.services.tab_manager_instance", fake_tab_mgr_mod
+            __import__("sys").modules, "source.services.chat.tab_manager_instance", fake_tab_mgr_mod
         )
 
         def _fake_run_coroutine_threadsafe(coro, _loop):

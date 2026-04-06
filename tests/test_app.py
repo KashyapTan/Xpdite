@@ -1,10 +1,10 @@
-"""Tests for source/app.py application factory wiring."""
+"""Tests for source/bootstrap/app_factory.py application factory wiring."""
 
 import inspect
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from source.app import create_app
+from source.bootstrap.app_factory import create_app
 
 
 class TestCreateApp:
@@ -43,7 +43,7 @@ class TestCreateApp:
         sync_calls: list[str] = []
 
         with patch(
-            "source.services.tab_manager_instance.init_tab_manager",
+            "source.services.chat.tab_manager_instance.init_tab_manager",
             side_effect=lambda: init_calls.append("called") or SimpleNamespace(),
         ):
             # Invoke the registered startup hook directly.
@@ -78,7 +78,7 @@ class TestCreateApp:
         assert inspect.iscoroutinefunction(file_browser_start_handler)
 
         with patch(
-            "source.services.file_browser.file_browser_service"
+            "source.services.filesystem.file_browser.file_browser_service"
         ) as browser_service:
             import asyncio
 
@@ -94,7 +94,7 @@ class TestCreateApp:
         assert inspect.iscoroutinefunction(file_browser_shutdown_handler)
 
         with patch(
-            "source.services.file_browser.file_browser_service"
+            "source.services.filesystem.file_browser.file_browser_service"
         ) as browser_service:
             import asyncio
 

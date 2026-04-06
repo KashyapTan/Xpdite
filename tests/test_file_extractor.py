@@ -1,4 +1,4 @@
-"""Tests for source/services/file_extractor.py"""
+"""Tests for source/services/media/file_extractor.py"""
 
 import base64
 import os
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from source.services.file_extractor import (
+from source.services.media.file_extractor import (
     ARCHIVE_EXTENSIONS,
     EXTRACTED_IMAGE_PREFIX,
     EXTRACTION_EXTENSIONS,
@@ -368,7 +368,7 @@ class TestFileExtractorInit:
         assert extractor.screenshot_folder == folder
 
     def test_init_uses_default_folder(self):
-        with patch("source.services.file_extractor.SCREENSHOT_FOLDER", "/default"):
+        with patch("source.services.media.file_extractor.SCREENSHOT_FOLDER", "/default"):
             with patch("os.makedirs"):
                 extractor = FileExtractor()
                 assert extractor.screenshot_folder == "/default"
@@ -971,7 +971,7 @@ class TestFileExtractorCleanup:
         assert removed == 0
 
     def test_cleanup_uses_default_folder(self):
-        with patch("source.services.file_extractor.SCREENSHOT_FOLDER", "/default"):
+        with patch("source.services.media.file_extractor.SCREENSHOT_FOLDER", "/default"):
             with patch("os.path.exists", return_value=False):
                 removed = FileExtractor.cleanup_extracted_images()
                 assert removed == 0

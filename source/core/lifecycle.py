@@ -31,13 +31,13 @@ def cleanup_resources():
     # Support both package mode and direct execution
     if "source.core.state" in sys.modules:
         from source.core.state import app_state
-        from source.mcp_integration.manager import mcp_manager
-        from source.config import SCREENSHOT_FOLDER
+        from source.mcp_integration.core.manager import mcp_manager
+        from source.infrastructure.config import SCREENSHOT_FOLDER
     else:
         try:
             from .state import app_state
-            from ..mcp_integration.manager import mcp_manager
-            from ..config import SCREENSHOT_FOLDER
+            from ..mcp_integration.core.manager import mcp_manager
+            from ..infrastructure.config import SCREENSHOT_FOLDER
         except ImportError:
             logger.warning("Could not import cleanup dependencies")
             return
@@ -77,7 +77,7 @@ def cleanup_resources():
 
     # Clean up extracted document images (all of them on shutdown)
     try:
-        from ..services.file_extractor import FileExtractor
+        from ..services.media.file_extractor import FileExtractor
 
         removed = FileExtractor.cleanup_extracted_images(max_age_hours=0)
         if removed > 0:
@@ -96,7 +96,7 @@ def cleanup_resources():
 
     # Drain all tab queues
     try:
-        from source.services.tab_manager_instance import tab_manager
+        from source.services.chat.tab_manager_instance import tab_manager
 
         if tab_manager is not None:
             loop = None
@@ -119,7 +119,7 @@ def cleanup_resources():
 
     # Stop the scheduler service
     try:
-        from source.services.scheduler import scheduler_service
+        from source.services.scheduling.scheduler import scheduler_service
 
         loop = app_state.server_loop_holder.get("loop")
         if loop and loop.is_running():

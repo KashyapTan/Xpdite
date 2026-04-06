@@ -65,7 +65,7 @@ class TestWebsocketEndpoint:
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.tab_manager",
+            "source.services.chat.tab_manager_instance.tab_manager",
             fake_tab_manager,
             raising=False,
         )
@@ -108,7 +108,7 @@ class TestWebsocketEndpoint:
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.tab_manager",
+            "source.services.chat.tab_manager_instance.tab_manager",
             fake_tab_manager,
             raising=False,
         )
@@ -140,7 +140,7 @@ class TestWebsocketEndpoint:
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.tab_manager", None, raising=False
+            "source.services.chat.tab_manager_instance.tab_manager", None, raising=False
         )
 
         ws = _FakeWebSocket(
@@ -178,7 +178,7 @@ class TestWebsocketEndpoint:
         monkeypatch.setattr(websocket_api, "manager", manager)
         monkeypatch.setattr(websocket_api, "MessageHandler", _Handler)
         monkeypatch.setattr(
-            "source.services.tab_manager_instance.tab_manager", None, raising=False
+            "source.services.chat.tab_manager_instance.tab_manager", None, raising=False
         )
 
         ws = _FakeWebSocket(

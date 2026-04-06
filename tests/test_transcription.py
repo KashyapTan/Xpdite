@@ -1,4 +1,4 @@
-"""Tests for source/services/transcription.py."""
+"""Tests for source/services/media/transcription.py."""
 
 import importlib
 import os
@@ -20,7 +20,7 @@ def ts_module(monkeypatch):
         "faster_whisper",
         types.SimpleNamespace(WhisperModel=object),
     )
-    module = importlib.import_module("source.services.transcription")
+    module = importlib.import_module("source.services.media.transcription")
     return importlib.reload(module)
 
 

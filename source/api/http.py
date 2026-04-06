@@ -370,7 +370,7 @@ async def get_enabled_models() -> List[str]:
 
     These are stored in the SQLite database so they persist across restarts.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     return db.get_enabled_models()
 
@@ -382,7 +382,7 @@ async def set_enabled_models(body: EnabledModelsUpdate):
 
     Called every time the user toggles a model on/off in SettingsModels.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     db.set_enabled_models(body.models)
     return {"status": "updated", "models": body.models}
@@ -405,7 +405,7 @@ async def get_api_key_status():
     Get status of all provider API keys.
     Returns which providers have keys stored and their masked values.
     """
-    from ..llm.key_manager import key_manager
+    from ..llm.core.key_manager import key_manager
 
     return key_manager.get_api_key_status()
 
@@ -418,7 +418,7 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
     Performs a lightweight validation call before storing.
     Uses async clients/threads to avoid blocking the server loop.
     """
-    from ..llm.key_manager import key_manager, VALID_PROVIDERS
+    from ..llm.core.key_manager import key_manager, VALID_PROVIDERS
 
     if provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
@@ -506,7 +506,7 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
 @router.delete("/keys/{provider}")
 async def delete_api_key(provider: str):
     """Remove a stored API key for a provider."""
-    from ..llm.key_manager import key_manager, VALID_PROVIDERS
+    from ..llm.core.key_manager import key_manager, VALID_PROVIDERS
 
     if provider not in VALID_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Invalid provider: {provider}")
@@ -514,7 +514,7 @@ async def delete_api_key(provider: str):
     key_manager.delete_api_key(provider)
 
     # Also remove any cloud models from the enabled list that belong to this provider
-    from ..database import db
+    from ..infrastructure.database import db
 
     enabled = db.get_enabled_models()
     filtered = [m for m in enabled if not m.startswith(f"{provider}/")]
@@ -574,7 +574,7 @@ GEMINI_FALLBACK = [
 @router.get("/google/status")
 async def get_google_status():
     """Get the current Google account connection status."""
-    from ..services.google_auth import google_auth
+    from ..services.integrations.google_auth import google_auth
 
     return google_auth.get_status()
 
@@ -589,7 +589,7 @@ async def connect_google():
 
     Uses the app-owned thread pool to avoid the default executor shutdown issue.
     """
-    from ..services.google_auth import google_auth
+    from ..services.integrations.google_auth import google_auth
 
     try:
         result = await _run_in_thread(google_auth.start_oauth_flow)
@@ -609,7 +609,7 @@ async def connect_google():
 
     # Start Gmail and Calendar MCP servers after successful auth
     try:
-        from ..mcp_integration.manager import mcp_manager
+        from ..mcp_integration.core.manager import mcp_manager
 
         await mcp_manager.connect_google_servers()
     except Exception as e:
@@ -624,8 +624,8 @@ async def disconnect_google():
     Disconnect Google account: revoke token, remove token file,
     and stop Gmail/Calendar MCP servers.
     """
-    from ..services.google_auth import google_auth
-    from ..mcp_integration.manager import mcp_manager
+    from ..services.integrations.google_auth import google_auth
+    from ..mcp_integration.core.manager import mcp_manager
 
     # Disconnect MCP servers first
     try:
@@ -662,7 +662,7 @@ def _to_cloud_model(
 @router.get("/models/anthropic")
 async def get_anthropic_models(refresh: bool = False) -> List[dict]:
     """Get available Anthropic models. Requires a stored API key."""
-    from ..llm.key_manager import key_manager
+    from ..llm.core.key_manager import key_manager
 
     async def _fetch() -> List[dict]:
         api_key = key_manager.get_api_key("anthropic")
@@ -709,7 +709,7 @@ async def get_anthropic_models(refresh: bool = False) -> List[dict]:
 @router.get("/models/openai")
 async def get_openai_models(refresh: bool = False) -> List[dict]:
     """Get available OpenAI models. Requires a stored API key."""
-    from ..llm.key_manager import key_manager
+    from ..llm.core.key_manager import key_manager
 
     async def _fetch() -> List[dict]:
         api_key = key_manager.get_api_key("openai")
@@ -775,7 +775,7 @@ async def get_openai_models(refresh: bool = False) -> List[dict]:
 @router.get("/models/gemini")
 async def get_gemini_models(refresh: bool = False) -> List[dict]:
     """Get available Gemini models. Requires a stored API key."""
-    from ..llm.key_manager import key_manager
+    from ..llm.core.key_manager import key_manager
 
     async def _fetch() -> List[dict]:
         api_key = key_manager.get_api_key("gemini")
@@ -838,7 +838,7 @@ async def get_gemini_models(refresh: bool = False) -> List[dict]:
 @router.get("/models/openrouter")
 async def get_openrouter_models(refresh: bool = False) -> List[dict]:
     """Get tool-capable OpenRouter models. Requires a stored OpenRouter API key."""
-    from ..llm.key_manager import key_manager
+    from ..llm.core.key_manager import key_manager
 
     async def _fetch() -> List[dict]:
         api_key = key_manager.get_api_key("openrouter")
@@ -945,7 +945,7 @@ class ToolsSettingsUpdate(BaseModel):
 @router.get("/mcp/servers")
 async def get_mcp_servers():
     """Get connected MCP servers and their tools."""
-    from ..mcp_integration.manager import mcp_manager
+    from ..mcp_integration.core.manager import mcp_manager
 
     servers = mcp_manager.get_server_tools()
 
@@ -958,7 +958,7 @@ async def get_mcp_servers():
 @router.get("/settings/tools")
 async def get_tools_settings():
     """Get current tool retrieval settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     always_on_json = db.get_setting("tool_always_on")
     always_on = []
@@ -977,7 +977,7 @@ async def get_tools_settings():
 @router.put("/settings/tools")
 async def set_tools_settings(body: ToolsSettingsUpdate):
     """Update tool retrieval settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     db.set_setting("tool_always_on", json.dumps(body.always_on))
     db.set_setting("tool_retriever_top_k", str(body.top_k))
@@ -1026,7 +1026,7 @@ def _raise_memory_http_error(operation: str, exc: Exception) -> None:
 @router.get("/settings/sub-agents")
 async def get_sub_agent_settings():
     """Get current sub-agent tier model settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     fast_model = db.get_setting("sub_agent_tier_fast") or ""
     smart_model = db.get_setting("sub_agent_tier_smart") or ""
@@ -1040,7 +1040,7 @@ async def get_sub_agent_settings():
 @router.put("/settings/sub-agents")
 async def set_sub_agent_settings(body: SubAgentSettingsUpdate):
     """Update sub-agent tier model settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     if body.fast_model is not None:
         if body.fast_model.strip():
@@ -1060,7 +1060,7 @@ async def set_sub_agent_settings(body: SubAgentSettingsUpdate):
 @router.get("/settings/memory")
 async def get_memory_settings():
     """Get persisted memory-related settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     stored = db.get_setting("memory_profile_auto_inject")
     return {"profile_auto_inject": stored != "false"}
@@ -1069,7 +1069,7 @@ async def get_memory_settings():
 @router.put("/settings/memory")
 async def set_memory_settings(body: MemorySettingsUpdate):
     """Persist memory-related settings."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     db.set_setting(
         "memory_profile_auto_inject",
@@ -1081,7 +1081,7 @@ async def set_memory_settings(body: MemorySettingsUpdate):
 @router.get("/memory")
 async def list_memories(folder: Optional[str] = None):
     """List memory summaries, optionally scoped to a subtree."""
-    from ..services.memory import memory_service
+    from ..services.memory_store.memory import memory_service
 
     try:
         memories = await _run_in_thread(memory_service.list_memories, folder)
@@ -1097,7 +1097,7 @@ async def list_memories(folder: Optional[str] = None):
 @router.get("/memory/file")
 async def get_memory_file(path: str):
     """Read a single memory file in full."""
-    from ..services.memory import memory_service
+    from ..services.memory_store.memory import memory_service
 
     try:
         return await _run_in_thread(memory_service.read_memory, path, touch_access=True)
@@ -1114,7 +1114,7 @@ async def get_memory_file(path: str):
 @router.put("/memory/file")
 async def update_memory_file(body: MemoryFileUpdate):
     """Create or overwrite a single memory file."""
-    from ..services.memory import memory_service
+    from ..services.memory_store.memory import memory_service
 
     try:
         return await _run_in_thread(
@@ -1138,7 +1138,7 @@ async def update_memory_file(body: MemoryFileUpdate):
 @router.delete("/memory/file")
 async def delete_memory_file(path: str):
     """Delete a single memory file."""
-    from ..services.memory import memory_service
+    from ..services.memory_store.memory import memory_service
 
     try:
         deleted = await _run_in_thread(memory_service.delete_memory, path)
@@ -1158,7 +1158,7 @@ async def delete_memory_file(path: str):
 @router.delete("/memory")
 async def clear_all_memories():
     """Delete all memory files and recreate the default directory layout."""
-    from ..services.memory import memory_service
+    from ..services.memory_store.memory import memory_service
 
     try:
         deleted_count = await _run_in_thread(memory_service.clear_all_memories)
@@ -1181,8 +1181,8 @@ class SystemPromptUpdate(BaseModel):
 @router.get("/settings/system-prompt")
 async def get_system_prompt():
     """Returns the current custom template, or the default if none is saved."""
-    from ..database import db
-    from ..llm.prompt import _BASE_TEMPLATE
+    from ..infrastructure.database import db
+    from ..llm.core.prompt import _BASE_TEMPLATE
 
     custom = db.get_system_prompt_template()
     return {
@@ -1197,7 +1197,7 @@ async def update_system_prompt(body: SystemPromptUpdate):
     Saves a custom template. Expects: {"template": "..."}
     Send an empty string or omit the key to reset to the default.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     template = body.template.strip()
     db.set_system_prompt_template(template if template else None)
@@ -1240,7 +1240,7 @@ class ReferenceFileCreate(BaseModel):
 @router.get("/skills")
 async def get_skills():
     """Get all skills (builtin + user), with override info for the UI."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     manager = get_skill_manager()
     return await _run_in_thread(manager.get_all_skills_with_overrides)
@@ -1249,7 +1249,7 @@ async def get_skills():
 @router.get("/skills/{name}/content")
 async def get_skill_content(name: str):
     """Return the full SKILL.md text for a skill."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     manager = get_skill_manager()
     content = await _run_in_thread(manager.get_skill_content, name)
@@ -1261,7 +1261,7 @@ async def get_skill_content(name: str):
 @router.post("/skills")
 async def create_skill(body: SkillCreate):
     """Create a new user skill."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     if not body.name or not body.name.strip():
         raise HTTPException(status_code=400, detail="Skill name is required")
@@ -1286,7 +1286,7 @@ async def create_skill(body: SkillCreate):
 @router.put("/skills/{name}")
 async def update_skill(name: str, body: SkillUpdate):
     """Update an existing user skill. Rejects edits to builtin skills."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     manager = get_skill_manager()
     try:
@@ -1310,7 +1310,7 @@ async def update_skill(name: str, body: SkillUpdate):
 @router.patch("/skills/{name}/toggle")
 async def toggle_skill(name: str, body: SkillToggle):
     """Enable or disable a skill (works for both builtin and user)."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     manager = get_skill_manager()
     result = await _run_in_thread(manager.toggle_skill, name, body.enabled)
@@ -1322,7 +1322,7 @@ async def toggle_skill(name: str, body: SkillToggle):
 @router.delete("/skills/{name}")
 async def delete_skill(name: str):
     """Delete a user skill folder. Rejects deletion of builtin skills."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     manager = get_skill_manager()
     result = await _run_in_thread(manager.delete_user_skill, name)
@@ -1337,7 +1337,7 @@ async def delete_skill(name: str):
 @router.post("/skills/{name}/references")
 async def add_reference_file(name: str, body: ReferenceFileCreate):
     """Add a reference .md file to a user skill."""
-    from ..services.skills import get_skill_manager
+    from ..services.skills_runtime.skills import get_skill_manager
 
     if not body.filename.endswith(".md"):
         raise HTTPException(status_code=400, detail="Reference files must be .md")
@@ -1369,7 +1369,7 @@ async def get_external_connectors():
     - connected: whether currently connected to MCP server
     - last_error: last connection error if any
     """
-    from ..services.external_connectors import external_connectors
+    from ..services.integrations.external_connectors import external_connectors
 
     return external_connectors.get_all_connectors()
 
@@ -1384,7 +1384,7 @@ async def connect_external_connector_endpoint(name: str):
 
     Returns: {success: true} or {success: false, error: "..."}
     """
-    from ..services.external_connectors import (
+    from ..services.integrations.external_connectors import (
         connect_external_connector,
         external_connectors,
     )
@@ -1415,7 +1415,7 @@ async def disconnect_external_connector_endpoint(name: str):
 
     Stops the subprocess, marks as disabled, and clears errors.
     """
-    from ..services.external_connectors import (
+    from ..services.integrations.external_connectors import (
         disconnect_external_connector,
         external_connectors,
     )
@@ -1471,7 +1471,7 @@ async def get_mobile_channels_config():
 
     Returns config for all platforms with their enabled status and connection state.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     # Read configs from database settings
     platforms = {}
@@ -1505,8 +1505,8 @@ def _write_mobile_channels_config_file() -> None:
     Write the mobile channels config to a JSON file for the Channel Bridge to read.
     This bridges the gap between the Python backend and the TypeScript service.
     """
-    from ..database import db
-    from ..config import USER_DATA_DIR, DEFAULT_PORT
+    from ..infrastructure.database import db
+    from ..infrastructure.config import USER_DATA_DIR, DEFAULT_PORT
     from ..core.state import app_state
     import json
     import logging
@@ -1616,7 +1616,7 @@ async def set_mobile_platform_config(platform_id: str, config: MobilePlatformCon
 
     Saves the token (encrypted) and enabled status.
     """
-    from ..database import db
+    from ..infrastructure.database import db
 
     if platform_id not in ["telegram", "discord", "whatsapp"]:
         raise HTTPException(status_code=400, detail=f"Unknown platform: {platform_id}")
@@ -1700,7 +1700,7 @@ class ScheduledJobUpdate(BaseModel):
 @router.get("/scheduled-jobs")
 async def list_scheduled_jobs():
     """List all scheduled jobs."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     jobs = scheduler_service.list_jobs()
     return {"jobs": jobs}
@@ -1709,7 +1709,7 @@ async def list_scheduled_jobs():
 @router.get("/scheduled-jobs/conversations")
 async def list_scheduled_job_conversations():
     """List all conversations created by scheduled jobs."""
-    from ..database import db
+    from ..infrastructure.database import db
 
     conversations = db.get_job_conversations()
     return {"conversations": conversations}
@@ -1718,7 +1718,7 @@ async def list_scheduled_job_conversations():
 @router.get("/scheduled-jobs/{job_id}")
 async def get_scheduled_job(job_id: str):
     """Get a specific scheduled job by ID."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = scheduler_service.get_job(job_id)
     if not job:
@@ -1729,7 +1729,7 @@ async def get_scheduled_job(job_id: str):
 @router.post("/scheduled-jobs")
 async def create_scheduled_job(job_data: ScheduledJobCreate):
     """Create a new scheduled job."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     try:
         job = await scheduler_service.create_job(
@@ -1753,8 +1753,8 @@ async def create_scheduled_job(job_data: ScheduledJobCreate):
 @router.put("/scheduled-jobs/{job_id}")
 async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
     """Update an existing scheduled job."""
-    from ..database import db
-    from ..services.scheduler import scheduler_service
+    from ..infrastructure.database import db
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = scheduler_service.get_job(job_id)
     if not job:
@@ -1802,7 +1802,7 @@ async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
 @router.delete("/scheduled-jobs/{job_id}")
 async def delete_scheduled_job(job_id: str):
     """Delete a scheduled job."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = scheduler_service.get_job(job_id)
     if not job:
@@ -1818,7 +1818,7 @@ async def delete_scheduled_job(job_id: str):
 @router.post("/scheduled-jobs/{job_id}/pause")
 async def pause_scheduled_job(job_id: str):
     """Pause a scheduled job."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = await scheduler_service.pause_job(job_id)
     if not job:
@@ -1830,7 +1830,7 @@ async def pause_scheduled_job(job_id: str):
 @router.post("/scheduled-jobs/{job_id}/resume")
 async def resume_scheduled_job(job_id: str):
     """Resume a paused scheduled job."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = await scheduler_service.resume_job(job_id)
     if not job:
@@ -1842,7 +1842,7 @@ async def resume_scheduled_job(job_id: str):
 @router.post("/scheduled-jobs/{job_id}/run-now")
 async def run_scheduled_job_now(job_id: str):
     """Trigger a scheduled job to run immediately."""
-    from ..services.scheduler import scheduler_service
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = scheduler_service.get_job(job_id)
     if not job:
@@ -1863,8 +1863,8 @@ async def run_scheduled_job_now(job_id: str):
 @router.get("/scheduled-jobs/{job_id}/conversations")
 async def list_job_conversations(job_id: str):
     """List conversations for a specific scheduled job."""
-    from ..database import db
-    from ..services.scheduler import scheduler_service
+    from ..infrastructure.database import db
+    from ..services.scheduling.scheduler import scheduler_service
 
     job = scheduler_service.get_job(job_id)
     if not job:
@@ -1882,7 +1882,7 @@ async def list_job_conversations(job_id: str):
 @router.get("/notifications")
 async def list_notifications():
     """List all notifications."""
-    from ..services.notifications import notification_service
+    from ..services.scheduling.notifications import notification_service
 
     notifications = notification_service.list()
     count = notification_service.count()
@@ -1892,7 +1892,7 @@ async def list_notifications():
 @router.get("/notifications/count")
 async def get_notification_count():
     """Get the count of unread notifications."""
-    from ..services.notifications import notification_service
+    from ..services.scheduling.notifications import notification_service
 
     count = notification_service.count()
     return {"count": count}
@@ -1901,7 +1901,7 @@ async def get_notification_count():
 @router.delete("/notifications/{notification_id}")
 async def dismiss_notification(notification_id: str):
     """Dismiss (delete) a single notification."""
-    from ..services.notifications import notification_service
+    from ..services.scheduling.notifications import notification_service
 
     success = await notification_service.dismiss(notification_id)
     if not success:
@@ -1914,7 +1914,7 @@ async def dismiss_notification(notification_id: str):
 @router.delete("/notifications")
 async def dismiss_all_notifications():
     """Dismiss (delete) all notifications."""
-    from ..services.notifications import notification_service
+    from ..services.scheduling.notifications import notification_service
 
     count = await notification_service.dismiss_all()
     return {"success": True, "dismissed_count": count}
@@ -1938,7 +1938,7 @@ async def browse_files(query: Optional[str] = None):
         current_path: absolute home/search root path
         parent_path: always null (navigation disabled)
     """
-    from ..services.file_browser import file_browser_service
+    from ..services.filesystem.file_browser import file_browser_service
 
     try:
         result = await _run_in_thread(file_browser_service.search, query or "", None)

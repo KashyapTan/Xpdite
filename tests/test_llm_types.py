@@ -1,8 +1,8 @@
-"""Tests for source/llm/types.py."""
+"""Tests for source/llm/core/types.py."""
 
 from typing import get_args, get_origin
 
-from source.llm.types import ChatResult
+from source.llm.core.types import ChatResult
 
 
 class TestLlmTypes:

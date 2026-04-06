@@ -1,11 +1,11 @@
-"""Tests for source/services/skills.py — SkillManager service."""
+"""Tests for source/services/skills_runtime/skills.py — SkillManager service."""
 
 import json
 from pathlib import Path
 
 import pytest
 
-from source.services.skills import SkillManager
+from source.services.skills_runtime.skills import SkillManager
 
 
 # ── Helpers ───────────────────────────────────────────────────────

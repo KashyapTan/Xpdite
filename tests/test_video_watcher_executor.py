@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from source.services.video_watcher import VideoWatcherError
-from source.mcp_integration.video_watcher_executor import (
+from source.services.media.video_watcher import VideoWatcherError
+from source.mcp_integration.executors.video_watcher_executor import (
     VIDEO_WATCHER_TOOLS,
     execute_video_watcher_tool,
     is_video_watcher_tool,
@@ -38,7 +38,7 @@ class TestExecuteVideoWatcherTool:
     @pytest.mark.asyncio
     async def test_watch_youtube_video_success_passes_include_timestamps(self):
         with patch(
-            "source.mcp_integration.video_watcher_executor.video_watcher_service.watch_youtube_video",
+            "source.mcp_integration.executors.video_watcher_executor.video_watcher_service.watch_youtube_video",
             new=AsyncMock(return_value="ok"),
         ) as mock_watch:
             result = await execute_video_watcher_tool(
@@ -55,7 +55,7 @@ class TestExecuteVideoWatcherTool:
     @pytest.mark.asyncio
     async def test_watch_youtube_video_wraps_service_errors(self):
         with patch(
-            "source.mcp_integration.video_watcher_executor.video_watcher_service.watch_youtube_video",
+            "source.mcp_integration.executors.video_watcher_executor.video_watcher_service.watch_youtube_video",
             new=AsyncMock(side_effect=VideoWatcherError("boom")),
         ):
             result = await execute_video_watcher_tool(

@@ -1,6 +1,6 @@
-"""Tests for source/services/mobile_channel.py canonical sender handling."""
+"""Tests for source/services/integrations/mobile_channel.py canonical sender handling."""
 
-from source.services.mobile_channel import canonical_sender_id
+from source.services.integrations.mobile_channel import canonical_sender_id
 
 
 class TestMobileChannelServiceCanonicalization:

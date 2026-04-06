@@ -19,7 +19,7 @@ import concurrent.futures
 import functools
 from typing import TypeVar, Callable, Any
 
-from ..config import THREAD_POOL_SIZE
+from ..infrastructure.config import THREAD_POOL_SIZE
 
 T = TypeVar("T")
 

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import source.services.meeting_recorder as mr
+import source.services.media.meeting_recorder as mr
 
 
 class _FakeThread(threading.Thread):
@@ -407,11 +407,11 @@ class TestPostProcessingPipeline:
 
         with (
             patch(
-                "source.services.gpu_detector.get_compute_info",
+                "source.services.media.gpu_detector.get_compute_info",
                 return_value={"backend": "cpu", "compute_type": "int8"},
             ),
             patch(
-                "source.services.gpu_detector.get_estimated_processing_time",
+                "source.services.media.gpu_detector.get_estimated_processing_time",
                 return_value=100.0,
             ),
             patch.object(
@@ -457,11 +457,11 @@ class TestPostProcessingPipeline:
 
         with (
             patch(
-                "source.services.gpu_detector.get_compute_info",
+                "source.services.media.gpu_detector.get_compute_info",
                 return_value={"backend": "cuda", "compute_type": "float16"},
             ),
             patch(
-                "source.services.gpu_detector.get_estimated_processing_time",
+                "source.services.media.gpu_detector.get_estimated_processing_time",
                 return_value=40.0,
             ),
             patch.object(
@@ -518,11 +518,11 @@ class TestPostProcessingPipeline:
 
         with (
             patch(
-                "source.services.gpu_detector.get_compute_info",
+                "source.services.media.gpu_detector.get_compute_info",
                 return_value={"backend": "cuda", "compute_type": "float16"},
             ),
             patch(
-                "source.services.gpu_detector.get_estimated_processing_time",
+                "source.services.media.gpu_detector.get_estimated_processing_time",
                 return_value=20.0,
             ),
             patch.object(
@@ -555,11 +555,11 @@ class TestPostProcessingPipeline:
 
         with (
             patch(
-                "source.services.gpu_detector.get_compute_info",
+                "source.services.media.gpu_detector.get_compute_info",
                 return_value={"backend": "cpu", "compute_type": "int8"},
             ),
             patch(
-                "source.services.gpu_detector.get_estimated_processing_time",
+                "source.services.media.gpu_detector.get_estimated_processing_time",
                 return_value=10.0,
             ),
             patch.object(
