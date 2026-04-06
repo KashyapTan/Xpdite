@@ -174,7 +174,7 @@ PASS / FAIL
 - [ ] Public functions and complex logic have **docstrings/comments** explaining *why*, not just *what*.
 - [ ] Type hints present on all public function signatures (Python) / all props typed (TypeScript).
 - [ ] No `TODO` or `FIXME` comments left without a tracked issue reference.
-- [ ] Python: relative imports only inside `source/` (`from ..config import ...`).
+- [ ] Python: relative imports only inside `source/` (`from ..infrastructure.config import ...`).
 - [ ] TypeScript: no `any` unless bridging untyped external API; prefer `unknown` + narrow.
 - [ ] Variable and function names **describe intent** (`fetchUserById` not `doThing`).
 - [ ] Booleans read as assertions: `isActive`, `hasPermission`, `canRetry`.
