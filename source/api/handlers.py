@@ -478,16 +478,29 @@ class MessageHandler:
             logger.debug("Capture mode set to: %s", mode)
 
     async def _handle_get_conversations(self, data: Dict[str, Any]):
-        """Handle conversation list request."""
-        limit = data.get("limit", 50)
-        offset = data.get("offset", 0)
+        """Handle conversation list request with pagination support."""
+        try:
+            limit = min(max(int(data.get("limit", 50)), 1), 200)  # Clamp 1-200
+            offset = max(int(data.get("offset", 0)), 0)  # Non-negative
+        except (ValueError, TypeError):
+            limit = 50
+            offset = 0
+        # Fetch one extra to determine if there are more conversations
         conversations = self._conversation_service().get_conversations(
-            limit=limit, offset=offset
+            limit=limit + 1, offset=offset
         )
-        # TODO(frontend): content is now a native object, not a JSON string.
-        # Remove any extra JSON.parse() calls on the frontend for this message type.
+        has_more = len(conversations) > limit
+        if has_more:
+            conversations = conversations[:limit]  # Remove the extra item
         await self.websocket.send_text(
-            json.dumps({"type": "conversations_list", "content": conversations})
+            json.dumps(
+                {
+                    "type": "conversations_list",
+                    "content": conversations,
+                    "offset": offset,
+                    "has_more": has_more,
+                }
+            )
         )
 
     async def _handle_load_conversation(self, data: Dict[str, Any]):

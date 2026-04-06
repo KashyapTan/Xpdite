@@ -12,6 +12,8 @@ interface Conversation {
   date: number; // Unix timestamp
 }
 
+const CONVERSATIONS_PER_PAGE = 50;
+
 const ChatHistory: React.FC = () => {
   const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
   const navigate = useNavigate();
@@ -20,7 +22,15 @@ const ChatHistory: React.FC = () => {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingMore, setLoadingMore] = useState<boolean>(false);
+  const [hasMore, setHasMore] = useState<boolean>(true);
   const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const listContainerRef = useRef<HTMLDivElement>(null);
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
+  // Refs for synchronous access in IntersectionObserver callback to avoid race conditions
+  const loadingMoreRef = useRef<boolean>(false);
+  const hasMoreRef = useRef<boolean>(true);
+  const conversationsLengthRef = useRef<number>(0);
 
   // Subscribe to WebSocket messages and fetch conversations on connect
   useEffect(() => {
@@ -28,23 +38,53 @@ const ChatHistory: React.FC = () => {
       switch (data.type) {
         case '__ws_connected': {
           // Request conversations list on connect
-          send({ type: 'get_conversations', limit: 50, offset: 0 });
+          setConversations([]);
+          conversationsLengthRef.current = 0;
+          setHasMore(true);
+          hasMoreRef.current = true;
+          send({ type: 'get_conversations', limit: CONVERSATIONS_PER_PAGE, offset: 0 });
           break;
         }
         case 'conversations_list': {
           const convos = data.content as Conversation[];
-          setConversations(convos);
+          const responseOffset = data.offset as number | undefined;
+          const responseHasMore = data.has_more as boolean | undefined;
+
+          // If this is a response to a search or first page load (offset 0)
+          if (responseOffset === undefined || responseOffset === 0) {
+            setConversations(convos);
+            conversationsLengthRef.current = convos.length;
+          } else {
+            // Append new conversations for pagination
+            setConversations(prev => {
+              const newConversations = [...prev, ...convos];
+              conversationsLengthRef.current = newConversations.length;
+              return newConversations;
+            });
+          }
+
+          const newHasMore = responseHasMore ?? false;
+          setHasMore(newHasMore);
+          hasMoreRef.current = newHasMore;
           setLoading(false);
+          setLoadingMore(false);
+          loadingMoreRef.current = false;
           break;
         }
         case 'conversation_deleted': {
-          const deleteData = data.content;
-          setConversations(prev => prev.filter(c => c.id !== deleteData.conversation_id));
+          const deleteData = data.content as { conversation_id: string };
+          setConversations(prev => {
+            const newConversations = prev.filter(c => c.id !== deleteData.conversation_id);
+            conversationsLengthRef.current = newConversations.length;
+            return newConversations;
+          });
           break;
         }
         case 'error': {
           console.error('ChatHistory received error from backend:', data.content);
           setLoading(false);
+          setLoadingMore(false);
+          loadingMoreRef.current = false;
           break;
         }
       }
@@ -52,11 +92,46 @@ const ChatHistory: React.FC = () => {
 
     // If already connected when this component mounts, fetch immediately
     if (isConnected) {
-      send({ type: 'get_conversations', limit: 50, offset: 0 });
+      setConversations([]);
+      conversationsLengthRef.current = 0;
+      setHasMore(true);
+      hasMoreRef.current = true;
+      send({ type: 'get_conversations', limit: CONVERSATIONS_PER_PAGE, offset: 0 });
     }
 
     return unsubscribe;
   }, [send, subscribe, isConnected]);
+
+  // Intersection observer for infinite scroll
+  // Uses refs for synchronous access to avoid race conditions in the observer callback
+  useEffect(() => {
+    if (!loadMoreTriggerRef.current || searchQuery.trim()) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const [entry] = entries;
+        // Use refs for synchronous, race-free checks
+        if (entry.isIntersecting && hasMoreRef.current && !loadingMoreRef.current && !loading) {
+          const newOffset = conversationsLengthRef.current;
+          // Set ref synchronously before async state update to prevent duplicate requests
+          loadingMoreRef.current = true;
+          setLoadingMore(true);
+          send({ type: 'get_conversations', limit: CONVERSATIONS_PER_PAGE, offset: newOffset });
+        }
+      },
+      {
+        root: listContainerRef.current,
+        rootMargin: '100px',
+        threshold: 0.1,
+      }
+    );
+
+    observer.observe(loadMoreTriggerRef.current);
+
+    return () => {
+      observer.disconnect();
+    };
+  }, [loading, send, searchQuery]);
 
   // Debounced search
   const handleSearchChange = useCallback((value: string) => {
@@ -68,9 +143,19 @@ const ChatHistory: React.FC = () => {
 
     searchTimeoutRef.current = setTimeout(() => {
       if (value.trim()) {
+        // Search resets to initial state
+        setConversations([]);
+        conversationsLengthRef.current = 0;
+        setHasMore(false); // Search results don't support pagination
+        hasMoreRef.current = false;
         send({ type: 'search_conversations', query: value.trim() });
       } else {
-        send({ type: 'get_conversations', limit: 50, offset: 0 });
+        // Clear search: reset and fetch first page
+        setConversations([]);
+        conversationsLengthRef.current = 0;
+        setHasMore(true);
+        hasMoreRef.current = true;
+        send({ type: 'get_conversations', limit: CONVERSATIONS_PER_PAGE, offset: 0 });
       }
     }, 300);
   }, [send]);
@@ -176,14 +261,24 @@ const ChatHistory: React.FC = () => {
             />
           </form>
         </div>
-        <div className="chat-history-list-container">
+        <div className="chat-history-list-container" ref={listContainerRef}>
           {loading ? (
             <div className="chat-history-empty-state">Loading conversations...</div>
           ) : conversations.length === 0 ? (
             <div className="chat-history-empty-state">
               {searchQuery ? 'No conversations match your search.' : 'No conversations yet. Start chatting!'}
             </div>
-          ) : renderConversations()}
+          ) : (
+            <>
+              {renderConversations()}
+              {/* Infinite scroll trigger element */}
+              {hasMore && !searchQuery.trim() && (
+                <div ref={loadMoreTriggerRef} className="chat-history-load-more-trigger">
+                  {loadingMore && <div className="chat-history-loading-more">Loading more...</div>}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     </>
