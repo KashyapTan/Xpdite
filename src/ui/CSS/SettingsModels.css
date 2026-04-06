@@ -241,11 +241,31 @@
     background: rgba(255, 255, 255, 0.06);
     color: rgba(255, 255, 255, 0.8);
     height: 22px;
-    padding: 0 8px;
+    width: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     border-radius: 6px;
-    font-size: 0.65rem;
-    font-family: inherit;
+    font-size: 0;
     cursor: pointer;
+}
+
+.settings-models-refresh-btn .spin {
+    animation: spin 1s linear infinite;
+}
+
+.settings-models-add-btn {
+    width: fit-content !important;
+    padding: 0 10px !important;
+    font-size: 0.75rem !important;
+    font-family: inherit !important;
+    height: 32px;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
 }
 
 .settings-models-refresh-btn:hover:not(:disabled) {

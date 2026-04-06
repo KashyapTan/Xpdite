@@ -7,6 +7,7 @@ import {
 } from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
+import { RotateCcwIcon } from '../icons/AppIcons';
 import '../../CSS/SettingsModels.css';
 
 type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
@@ -487,8 +488,9 @@ const SettingsModels: React.FC = () => {
           void refreshProviderModels(provider);
         }}
         disabled={refreshingProviders[provider] || loading}
+        title={refreshingProviders[provider] ? 'Refreshing...' : 'Refresh'}
       >
-        {refreshingProviders[provider] ? 'Refreshing...' : 'Refresh'}
+        {refreshingProviders[provider] ? <RotateCcwIcon className="spin" size={14} /> : <RotateCcwIcon size={14} />}
       </button>
     </div>
   );
@@ -657,7 +659,7 @@ const SettingsModels: React.FC = () => {
         <div className="settings-models-ollama-content">
           <div className="settings-models-ollama-custom">
             <div className="settings-models-ollama-custom-copy">
-              Add any Ollama model ID to keep it selectable. Xpdite uses your local daemon at <code>http://localhost:11434</code>.
+              What to use more Ollama models? Add them below!
             </div>
             <div className="settings-models-ollama-custom-row">
               <input
@@ -675,10 +677,10 @@ const SettingsModels: React.FC = () => {
                     void handleAddCustomModel();
                   }
                 }}
-                placeholder="llama3.2 or ollama/model-name"
+                placeholder="Ex: qwen3.5:9b, qwen3.5:cloud"
               />
               <button
-                className="settings-models-refresh-btn"
+                className="settings-models-refresh-btn settings-models-add-btn"
                 onClick={() => void handleAddCustomModel()}
                 disabled={loading}
               >
