@@ -8,6 +8,10 @@ vi.mock('../../contexts/WebSocketContext', () => ({
   WebSocketProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
 }));
 
+vi.mock('../../hooks', () => ({
+  useTabKeyboardShortcuts: vi.fn(),
+}));
+
 vi.mock('../../components/boot/BootScreen', () => ({
   default: () => <div data-testid="boot-screen">boot</div>,
 }));

@@ -3,4 +3,5 @@
  */
 export { useChatState } from './useChatState';
 export { useScreenshots } from './useScreenshots';
+export { useTabKeyboardShortcuts } from './useTabKeyboardShortcuts';
 export { useTokenUsage } from './useTokenUsage';
