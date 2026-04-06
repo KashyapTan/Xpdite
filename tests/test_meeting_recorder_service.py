@@ -595,6 +595,37 @@ class TestPostProcessingPipeline:
         assert "title" not in saved_kwargs
         mock_remove.assert_not_called()
 
+    def test_generate_title_uses_meeting_analysis_model_setting(self):
+        pipeline = mr.PostProcessingPipeline(MagicMock())
+        transcript = [
+            {
+                "text": "Project kickoff discussed timeline deliverables risks owners "
+                "and next steps for the quarter planning meeting"
+            }
+        ]
+
+        with (
+            patch.object(
+                pipeline,
+                "_get_setting",
+                side_effect=lambda key, default="": (
+                    "openrouter/z-ai/glm-4.5-air:free"
+                    if key == "meeting_analysis_model"
+                    else default
+                ),
+            ),
+            patch.object(
+                mr.MeetingAnalysisService,
+                "_call_llm",
+                return_value="Quarterly Planning Alignment",
+            ) as mock_call_llm,
+        ):
+            title = pipeline._generate_title(transcript)
+
+        assert title == "Quarterly Planning Alignment"
+        call_kwargs = mock_call_llm.call_args.kwargs
+        assert call_kwargs["model"] == "openrouter/z-ai/glm-4.5-air:free"
+
 
 class TestMeetingAnalysisServiceGenerateAnalysis:
     @pytest.mark.asyncio

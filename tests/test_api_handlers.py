@@ -865,6 +865,50 @@ class TestMeetingHandlers:
         )
 
     @pytest.mark.asyncio
+    async def test_meeting_generate_analysis_persists_model_preference(
+        self, handler, monkeypatch
+    ):
+        tasks: list[asyncio.Task] = []
+        original_create_task = asyncio.create_task
+
+        def _track_task(coro):
+            task = original_create_task(coro)
+            tasks.append(task)
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", _track_task)
+
+        fake_analysis = SimpleNamespace(
+            generate_analysis=AsyncMock(
+                return_value={
+                    "summary": "Meeting summary",
+                    "actions": [],
+                    "parse_error": False,
+                }
+            )
+        )
+
+        with (
+            patch(
+                "source.services.media.meeting_recorder.meeting_analysis_service",
+                fake_analysis,
+            ),
+            patch.object(handlers.db, "set_setting") as mock_set_setting,
+            patch.object(handlers, "broadcast_message", new=AsyncMock()),
+        ):
+            await handler._handle_meeting_generate_analysis(
+                {
+                    "recording_id": "rec-1",
+                    "model": "openrouter/z-ai/glm-4.5-air:free",
+                }
+            )
+            await asyncio.gather(*tasks)
+
+        mock_set_setting.assert_called_once_with(
+            "meeting_analysis_model", "openrouter/z-ai/glm-4.5-air:free"
+        )
+
+    @pytest.mark.asyncio
     async def test_meeting_generate_analysis_broadcasts_error_on_failed_result(
         self, handler, monkeypatch
     ):

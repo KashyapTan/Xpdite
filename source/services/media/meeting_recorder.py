@@ -122,7 +122,9 @@ class MeetingRecorderService:
         self._started_at = time.time()
 
         # Generate title from timestamp
-        title = time.strftime("Meeting %Y-%m-%d %H:%M", time.localtime(self._started_at))
+        title = time.strftime(
+            "Meeting %Y-%m-%d %H:%M", time.localtime(self._started_at)
+        )
 
         # Create DB record
         self._recording_id = db.create_meeting_recording(title, self._started_at)
@@ -154,9 +156,7 @@ class MeetingRecorderService:
         )
         self._transcription_thread.start()
 
-        logger.info(
-            "Meeting recording started: %s (%s)", self._recording_id, title
-        )
+        logger.info("Meeting recording started: %s (%s)", self._recording_id, title)
 
         return {
             "recording_id": self._recording_id,
@@ -276,7 +276,7 @@ class MeetingRecorderService:
                 # Extract chunk
                 chunk = bytes(self._audio_buffer[:chunk_bytes])
                 # Keep overlap for next chunk
-                self._audio_buffer = self._audio_buffer[chunk_bytes - overlap_bytes:]
+                self._audio_buffer = self._audio_buffer[chunk_bytes - overlap_bytes :]
 
             # Check for silence (skip transcription for silent chunks)
             if self._is_silence(chunk):
@@ -425,7 +425,8 @@ class MeetingRecorderService:
                         self._processing_pipeline.enqueue(rid, audio_path, duration)
                     else:
                         logger.warning(
-                            "No audio file for interrupted recording %s, marking partial", rid
+                            "No audio file for interrupted recording %s, marking partial",
+                            rid,
                         )
                         db.update_meeting_recording(rid, status="partial")
                 elif rec.get("status") == "recording":
@@ -473,11 +474,13 @@ class PostProcessingPipeline:
     ) -> None:
         """Add a recording to the processing queue."""
         with self._queue_lock:
-            self._queue.append({
-                "recording_id": recording_id,
-                "audio_file_path": audio_file_path,
-                "duration_seconds": duration_seconds,
-            })
+            self._queue.append(
+                {
+                    "recording_id": recording_id,
+                    "audio_file_path": audio_file_path,
+                    "duration_seconds": duration_seconds,
+                }
+            )
 
         # Start worker if not running
         if not self._is_running:
@@ -506,12 +509,8 @@ class PostProcessingPipeline:
                     job["recording_id"],
                     e,
                 )
-                db.update_meeting_recording(
-                    job["recording_id"], status="partial"
-                )
-                self._broadcast_progress(
-                    job["recording_id"], "error", 0, 0
-                )
+                db.update_meeting_recording(job["recording_id"], status="partial")
+                self._broadcast_progress(job["recording_id"], "error", 0, 0)
 
     def _process_recording(self, job: dict) -> None:
         """Run the full Tier 2 pipeline on a single recording."""
@@ -557,22 +556,22 @@ class PostProcessingPipeline:
             return
 
         # ── Step 2: WhisperX alignment ──
-        self._broadcast_progress(
-            recording_id, "aligning", 40, estimated_total * 0.5
-        )
+        self._broadcast_progress(recording_id, "aligning", 40, estimated_total * 0.5)
 
         aligned_segments = None
         try:
-            aligned_segments = self._align_transcript(tier2_segments, audio_path, backend)
+            aligned_segments = self._align_transcript(
+                tier2_segments, audio_path, backend
+            )
         except Exception as e:
             logger.warning("WhisperX alignment failed (continuing without): %s", e)
 
         # ── Step 3: SpeechBrain diarization ──
-        self._broadcast_progress(
-            recording_id, "diarizing", 60, estimated_total * 0.3
-        )
+        self._broadcast_progress(recording_id, "diarizing", 60, estimated_total * 0.3)
 
-        diarization_enabled = self._get_setting("meeting_diarization_enabled", "true") == "true"
+        diarization_enabled = (
+            self._get_setting("meeting_diarization_enabled", "true") == "true"
+        )
         diarization_result = None
         if diarization_enabled:
             try:
@@ -581,9 +580,7 @@ class PostProcessingPipeline:
                 logger.warning("Diarization failed (continuing without): %s", e)
 
         # ── Step 4: Merge into unified JSON ──
-        self._broadcast_progress(
-            recording_id, "merging", 75, estimated_total * 0.15
-        )
+        self._broadcast_progress(recording_id, "merging", 75, estimated_total * 0.15)
 
         unified_transcript = self._merge_results(
             tier2_segments, aligned_segments, diarization_result
@@ -601,9 +598,7 @@ class PostProcessingPipeline:
             logger.warning("AI title generation failed: %s", e)
 
         # ── Step 6: Save to DB + cleanup ──
-        self._broadcast_progress(
-            recording_id, "saving", 95, estimated_total * 0.02
-        )
+        self._broadcast_progress(recording_id, "saving", 95, estimated_total * 0.02)
 
         update_fields: dict[str, Any] = {
             "tier2_transcript_json": json.dumps(unified_transcript),
@@ -644,9 +639,7 @@ class PostProcessingPipeline:
         )
         model = WhisperModel("large-v3", device=device, compute_type=compute_type)
 
-        segments, info = model.transcribe(
-            audio_path, beam_size=5, word_timestamps=True
-        )
+        segments, info = model.transcribe(audio_path, beam_size=5, word_timestamps=True)
 
         result = []
         for seg in segments:
@@ -692,13 +685,10 @@ class PostProcessingPipeline:
 
         audio = whisperx.load_audio(audio_path)
         wx_segments = [
-            {"text": s["text"], "start": s["start"], "end": s["end"]}
-            for s in segments
+            {"text": s["text"], "start": s["start"], "end": s["end"]} for s in segments
         ]
 
-        model_a, metadata = whisperx.load_align_model(
-            language_code="en", device=device
-        )
+        model_a, metadata = whisperx.load_align_model(language_code="en", device=device)
         result = whisperx.align(wx_segments, model_a, metadata, audio, device)
 
         return result.get("segments", result.get("word_segments", []))
@@ -743,6 +733,7 @@ class PostProcessingPipeline:
         # download error returns None instead of crashing the pipeline.
         # ------------------------------------------------------------------
         import pyannote.audio.pipelines.speaker_diarization as _sd_module
+
         _orig_get_plda = _sd_module.get_plda
 
         def _safe_get_plda(plda, **kwargs):
@@ -831,7 +822,12 @@ class PostProcessingPipeline:
         )
 
         try:
-            title = MeetingAnalysisService._call_llm(prompt)
+            # Use explicit per-feature model preference if set.
+            configured_model = self._get_setting("meeting_analysis_model", "").strip()
+            title = MeetingAnalysisService._call_llm(
+                prompt,
+                model=configured_model or None,
+            )
             title = title.strip('"').strip("'")
             if 1 <= len(title.split()) <= 10:
                 return title
@@ -879,7 +875,9 @@ class MeetingAnalysisService:
     def __init__(self, recorder_service: MeetingRecorderService) -> None:
         self._service = recorder_service
 
-    async def generate_analysis(self, recording_id: str, model: str | None = None) -> dict[str, Any]:
+    async def generate_analysis(
+        self, recording_id: str, model: str | None = None
+    ) -> dict[str, Any]:
         """Generate AI summary and action suggestions for a recording.
 
         Args:
@@ -902,7 +900,9 @@ class MeetingAnalysisService:
         # Truncate to ~4000 words to avoid overloading context
         words = transcript_text.split()
         if len(words) > 4000:
-            transcript_text = " ".join(words[:4000]) + "\n\n[... transcript truncated ...]"
+            transcript_text = (
+                " ".join(words[:4000]) + "\n\n[... transcript truncated ...]"
+            )
 
         # Build prompt
         prompt = self._build_analysis_prompt(transcript_text)
@@ -1078,7 +1078,9 @@ class MeetingAnalysisService:
             if idx != -1:
                 content_start = idx + len(fence)
                 closing = raw.find("```", content_start)
-                json_str = raw[content_start:closing] if closing != -1 else raw[content_start:]
+                json_str = (
+                    raw[content_start:closing] if closing != -1 else raw[content_start:]
+                )
                 break
 
         try:
@@ -1089,14 +1091,17 @@ class MeetingAnalysisService:
             # Validate action types
             valid_types = ("calendar_event", "email", "task")
             valid_actions = [
-                a for a in actions
+                a
+                for a in actions
                 if isinstance(a, dict) and a.get("type") in valid_types
             ]
 
             return {"summary": summary, "actions": valid_actions}
 
         except (json.JSONDecodeError, ValueError):
-            logger.warning("Failed to parse AI analysis JSON, using raw text as summary")
+            logger.warning(
+                "Failed to parse AI analysis JSON, using raw text as summary"
+            )
             return {"summary": raw[:1000], "actions": [], "parse_error": True}
 
 
@@ -1104,4 +1109,3 @@ class MeetingAnalysisService:
 meeting_recorder_service = MeetingRecorderService()
 meeting_analysis_service = MeetingAnalysisService(meeting_recorder_service)
 meeting_recorder_service.recover_interrupted_recordings()
-

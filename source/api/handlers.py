@@ -707,7 +707,9 @@ class MessageHandler:
         from ..services.media.meeting_recorder import meeting_analysis_service
 
         recording_id = data.get("recording_id")
-        model = data.get("model")  # Optional model override from frontend
+        model_raw = data.get("model")  # Optional model override from frontend
+        model = str(model_raw).strip() if model_raw is not None else ""
+        model = model or None
         if not recording_id:
             await self.websocket.send_text(
                 json.dumps(
@@ -718,6 +720,11 @@ class MessageHandler:
                 )
             )
             return
+
+        # Persist preferred meeting-analysis model so automatic title generation
+        # can use the same provider/model family on future recordings.
+        if model:
+            db.set_setting("meeting_analysis_model", model)
 
         # Run in background to avoid blocking WS
         async def _run_analysis():
