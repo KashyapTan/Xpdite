@@ -12,6 +12,7 @@ export default tseslint.config(
     '.venv',
     'node_modules',
     'archive',
+    'claude-code-reference-implementations',
   ] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
