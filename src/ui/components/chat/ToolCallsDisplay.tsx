@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
+import { InlineArtifactBlock } from './InlineArtifactBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
 import { InlineYouTubeApprovalBlock } from './InlineYouTubeApprovalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
@@ -345,6 +346,9 @@ function ToolChainTimeline({
             />
           );
         }
+        if (block.type === 'artifact') {
+          return <InlineArtifactBlock key={`pre-${idx}`} artifact={block.artifact} />;
+        }
         return null;
       })}
 
@@ -471,6 +475,14 @@ function ToolChainTimeline({
             />
           );
         }
+        if (block.type === 'artifact') {
+          return (
+            <InlineArtifactBlock
+              key={`resp-${idx}`}
+              artifact={block.artifact}
+            />
+          );
+        }
         if (block.type === 'terminal_command') {
           return (
             <InlineTerminalBlock
@@ -569,6 +581,14 @@ export function InlineContentBlocks({
             />
           );
         }
+        if (block.type === 'artifact') {
+          return (
+            <InlineArtifactBlock
+              key={idx}
+              artifact={block.artifact}
+            />
+          );
+        }
         if (block.type === 'terminal_command') {
           return (
             <InlineTerminalBlock
@@ -612,6 +632,7 @@ function isChainBlock(block: ContentBlock): boolean {
 // Group consecutive chain blocks together, with text blocks as separators
 type BlockGroup =
   | { kind: 'text'; block: ContentBlock & { type: 'text' } }
+  | { kind: 'artifact'; block: ContentBlock & { type: 'artifact' } }
   | { kind: 'chain'; blocks: ContentBlock[] };
 
 function groupConsecutiveBlocks(blocks: ContentBlock[]): BlockGroup[] {
@@ -629,6 +650,12 @@ function groupConsecutiveBlocks(blocks: ContentBlock[]): BlockGroup[] {
         currentChainGroup = [];
       }
       groups.push({ kind: 'text', block: block as ContentBlock & { type: 'text' } });
+    } else if (block.type === 'artifact') {
+      if (currentChainGroup.length > 0) {
+        groups.push({ kind: 'chain', blocks: currentChainGroup });
+        currentChainGroup = [];
+      }
+      groups.push({ kind: 'artifact', block: block as ContentBlock & { type: 'artifact' } });
     }
     // Skip empty text blocks
   }
@@ -664,6 +691,15 @@ function InterleavedContentBlocks({
               key={`text-${groupIdx}`}
               content={group.block.content}
               isStreaming={isStreaming}
+            />
+          );
+        }
+
+        if (group.kind === 'artifact') {
+          return (
+            <InlineArtifactBlock
+              key={`artifact-${groupIdx}`}
+              artifact={group.block.artifact}
             />
           );
         }

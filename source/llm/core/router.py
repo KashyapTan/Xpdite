@@ -80,6 +80,7 @@ async def route_chat(
     from ...infrastructure.config import MEMORY_PROFILE_FILE
     from ...services.memory_store.memory import memory_service
     from .prompt import (
+        build_artifacts_prompt_block,
         build_memory_prompt_block,
         build_system_prompt,
         build_user_profile_block,
@@ -131,6 +132,7 @@ async def route_chat(
 
     custom_template = db.get_setting("system_prompt_template")
     memory_block = build_memory_prompt_block()
+    artifacts_block = build_artifacts_prompt_block()
     user_profile_block = ""
     auto_inject_profile = db.get_setting("memory_profile_auto_inject")
     should_inject_profile = auto_inject_profile != "false"
@@ -153,6 +155,7 @@ async def route_chat(
     system_prompt = build_system_prompt(
         skills_block=skills_block,
         memory_block=memory_block,
+        artifacts_block=artifacts_block,
         user_profile_block=user_profile_block,
         template=custom_template,
     )

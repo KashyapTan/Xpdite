@@ -19,6 +19,7 @@ from ...infrastructure.config import OLLAMA_CTX_SIZE
 from ...core.connection import broadcast_message
 from ...core.request_context import get_current_model, get_current_request, is_current_request_cancelled
 from ...core.state import app_state
+from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
 from ...mcp_integration.core.handlers import handle_mcp_tool_calls
 from ...mcp_integration.core.manager import mcp_manager
 from ...mcp_integration.core.tool_args import normalize_tool_args
@@ -150,12 +151,15 @@ async def stream_ollama_chat(
 
     # ── Streaming Phase ──────────────────────────────────────────
     accumulated: list[str] = []
+    interleaved_blocks: List[Dict[str, Any]] = []
     thinking_tokens: list[str] = []
     final_message_content: str | None = None
     collected_token_stats: Dict[str, int] = {
         "prompt_eval_count": 0,
         "eval_count": 0,
     }
+    artifact_parser = ArtifactStreamParser()
+    thinking_complete_sent = False
 
     try:
         chat_kwargs: Dict[str, Any] = {
@@ -180,10 +184,19 @@ async def stream_ollama_chat(
 
             # Handle regular content
             if content_token:
-                if thinking_tokens and not accumulated:
+                events = artifact_parser.feed(content_token)
+                if events and thinking_tokens and not thinking_complete_sent:
                     await broadcast_message("thinking_complete", "")
-                accumulated.append(content_token)
-                await broadcast_message("response_chunk", content_token)
+                    interleaved_blocks.append(
+                        {"type": "thinking", "content": "".join(thinking_tokens)}
+                    )
+                    thinking_complete_sent = True
+                cleaned_text = await emit_artifact_stream_events(
+                    events,
+                    interleaved_blocks,
+                )
+                if cleaned_text:
+                    accumulated.append(cleaned_text)
 
             # Handle unexpected tool calls in the stream
             if hasattr(chunk, "message"):
@@ -198,11 +211,22 @@ async def stream_ollama_chat(
                             args = {"_arg_error": arg_error}
                         tool_text = f"\n\n[Model requested tool: {fn}({args})]"
 
-                        if thinking_tokens and not accumulated:
+                        if thinking_tokens and not thinking_complete_sent:
                             await broadcast_message("thinking_complete", "")
+                            interleaved_blocks.append(
+                                {
+                                    "type": "thinking",
+                                    "content": "".join(thinking_tokens),
+                                }
+                            )
+                            thinking_complete_sent = True
 
-                        accumulated.append(tool_text)
-                        await broadcast_message("response_chunk", tool_text)
+                        emitted_tool_text = await emit_artifact_stream_events(
+                            [{"type": "text", "content": tool_text}],
+                            interleaved_blocks,
+                        )
+                        if emitted_tool_text:
+                            accumulated.append(emitted_tool_text)
             elif isinstance(chunk, dict):
                 msg = chunk.get("message", {})
                 if isinstance(msg, dict) and msg.get("tool_calls"):
@@ -214,11 +238,22 @@ async def stream_ollama_chat(
                             args = {"_arg_error": arg_error}
                         tool_text = f"\n\n[Model requested tool: {fn}({args})]"
 
-                        if thinking_tokens and not accumulated:
+                        if thinking_tokens and not thinking_complete_sent:
                             await broadcast_message("thinking_complete", "")
+                            interleaved_blocks.append(
+                                {
+                                    "type": "thinking",
+                                    "content": "".join(thinking_tokens),
+                                }
+                            )
+                            thinking_complete_sent = True
 
-                        accumulated.append(tool_text)
-                        await broadcast_message("response_chunk", tool_text)
+                        emitted_tool_text = await emit_artifact_stream_events(
+                            [{"type": "text", "content": tool_text}],
+                            interleaved_blocks,
+                        )
+                        if emitted_tool_text:
+                            accumulated.append(emitted_tool_text)
 
             # Track final message and token stats
             if hasattr(chunk, "done") and getattr(chunk, "done"):
@@ -240,12 +275,31 @@ async def stream_ollama_chat(
                             final_message_content = mc
 
         # Handle edge cases
-        if thinking_tokens and not accumulated:
+        if thinking_tokens and not thinking_complete_sent:
             await broadcast_message("thinking_complete", "")
+            interleaved_blocks.append(
+                {"type": "thinking", "content": "".join(thinking_tokens)}
+            )
+            thinking_complete_sent = True
+
+        final_events = artifact_parser.finalize()
+        if final_events:
+            cleaned_text = await emit_artifact_stream_events(
+                final_events,
+                interleaved_blocks,
+            )
+            if cleaned_text:
+                accumulated.append(cleaned_text)
 
         if not accumulated and final_message_content:
-            accumulated.append(final_message_content)
-            await broadcast_message("response_chunk", final_message_content)
+            final_events = artifact_parser.feed(final_message_content)
+            final_events.extend(artifact_parser.finalize())
+            cleaned_text = await emit_artifact_stream_events(
+                final_events,
+                interleaved_blocks,
+            )
+            if cleaned_text:
+                accumulated.append(cleaned_text)
         elif not accumulated and not is_current_request_cancelled():
             # Fallback to non-streaming call if streaming yielded nothing
             try:
@@ -259,33 +313,60 @@ async def stream_ollama_chat(
                 fallback = await client.chat(**fallback_kwargs)
 
                 content_str = ""
+                fallback_thinking = ""
                 if hasattr(fallback, "message"):
                     msg = getattr(fallback, "message")
                     if msg:
                         if hasattr(msg, "thinking") and msg.thinking:
-                            await broadcast_message("thinking_chunk", msg.thinking)
-                            await broadcast_message("thinking_complete", "")
+                            fallback_thinking = msg.thinking
 
                         if hasattr(msg, "content") and msg.content:
                             content_str = msg.content
 
+                if fallback_thinking:
+                    await broadcast_message("thinking_chunk", fallback_thinking)
+                    await broadcast_message("thinking_complete", "")
+                    interleaved_blocks.append(
+                        {"type": "thinking", "content": fallback_thinking}
+                    )
+
                 if content_str:
-                    accumulated.append(content_str)
-                    await broadcast_message("response_chunk", content_str)
+                    fallback_parser = ArtifactStreamParser()
+                    fallback_events = fallback_parser.feed(content_str)
+                    fallback_events.extend(fallback_parser.finalize())
+                    cleaned_text = await emit_artifact_stream_events(
+                        fallback_events,
+                        interleaved_blocks,
+                    )
+                    if cleaned_text:
+                        accumulated.append(cleaned_text)
                 else:
                     no_content_msg = "[Model returned no content after tool loop]"
-                    accumulated.append(no_content_msg)
-                    await broadcast_message("response_chunk", no_content_msg)
+                    emitted_no_content = await emit_artifact_stream_events(
+                        [{"type": "text", "content": no_content_msg}],
+                        interleaved_blocks,
+                    )
+                    if emitted_no_content:
+                        accumulated.append(emitted_no_content)
             except Exception as e:
                 logger.warning("Non-streamed fallback failed after empty stream: %s", e)
                 no_content_msg = "[Model returned no content after tool loop]"
-                accumulated.append(no_content_msg)
-                await broadcast_message("response_chunk", no_content_msg)
+                emitted_no_content = await emit_artifact_stream_events(
+                    [{"type": "text", "content": no_content_msg}],
+                    interleaved_blocks,
+                )
+                if emitted_no_content:
+                    accumulated.append(emitted_no_content)
 
         if not is_current_request_cancelled():
             await broadcast_message("response_complete", "")
 
-        return ("".join(accumulated), collected_token_stats, tool_calls_list, None)
+        return (
+            "".join(accumulated),
+            collected_token_stats,
+            tool_calls_list,
+            interleaved_blocks or None,
+        )
 
     except Exception as e:
         if is_current_request_cancelled():
@@ -300,7 +381,7 @@ async def stream_ollama_chat(
             "".join(accumulated) if accumulated else "",
             collected_token_stats,
             tool_calls_list,
-            None,
+            interleaved_blocks or None,
         )
 
 
@@ -325,15 +406,20 @@ async def _broadcast_tool_final_response(
     token_stats = pre_computed.get(
         "token_stats", {"prompt_eval_count": 0, "eval_count": 0}
     )
+    interleaved_blocks: List[Dict[str, Any]] = []
 
     # Broadcast thinking if present
     if thinking:
         await broadcast_message("thinking_chunk", thinking)
         await broadcast_message("thinking_complete", "")
+        interleaved_blocks.append({"type": "thinking", "content": thinking})
 
     # Broadcast the content
     if content:
-        await broadcast_message("response_chunk", content)
+        parser = ArtifactStreamParser()
+        events = parser.feed(content)
+        events.extend(parser.finalize())
+        content = await emit_artifact_stream_events(events, interleaved_blocks)
 
     await broadcast_message("response_complete", "")
 
@@ -341,7 +427,7 @@ async def _broadcast_tool_final_response(
     if token_stats.get("prompt_eval_count") or token_stats.get("eval_count"):
         await broadcast_message("token_usage", json.dumps(token_stats))
 
-    return content, token_stats, tool_calls_list, None
+    return content, token_stats, tool_calls_list, interleaved_blocks or None
 
 
 def _extract_token(chunk) -> tuple[str | None, str | None]:

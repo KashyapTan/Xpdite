@@ -75,6 +75,7 @@ Skills contain best practices, workflows, and tool usage patterns - load them be
 <memory>
 {{memory_block}}
 </memory>
+{{artifacts_block}}
 {{skills_block}}\
 """
 
@@ -102,6 +103,27 @@ If none fit, create a new folder (`projects/xpdite/`, `people/`, etc.) - new fol
 """
 
 
+ARTIFACTS_WORKFLOW_BLOCK = """\
+
+## Artifacts
+
+When the user asks for a durable deliverable (code, markdown, or HTML), emit it as XML:
+
+<artifact type="code|markdown|html" title="Short title" language="optional-for-code">
+...artifact content...
+</artifact>
+
+Rules:
+- Supported types are exactly `code`, `markdown`, and `html`
+- `title` is required
+- `language` is optional and only valid for `code`
+- Keep normal assistant narration outside artifact tags
+- Do not nest `<artifact>` blocks inside other artifacts
+- Always close the tag
+- For `html`, return a self-contained document or fragment with inline assets only
+"""
+
+
 def build_user_profile_block(profile_body: str) -> str:
     """Format the optional profile injection block."""
     if not profile_body or not profile_body.strip():
@@ -120,6 +142,11 @@ def build_user_profile_block(profile_body: str) -> str:
 def build_memory_prompt_block() -> str:
     """Return the dynamic memory workflow instructions."""
     return MEMORY_WORKFLOW_BLOCK
+
+
+def build_artifacts_prompt_block() -> str:
+    """Return the artifact authoring instructions injected into the prompt."""
+    return ARTIFACTS_WORKFLOW_BLOCK
 
 
 def _append_block_if_missing(template: str, placeholder: str, block: str) -> str:
@@ -162,6 +189,7 @@ def _get_os_info() -> str:
 def build_system_prompt(
     skills_block: str = "",
     memory_block: str = "",
+    artifacts_block: str = "",
     user_profile_block: str = "",
     template: str | None = None,
 ) -> str:
@@ -174,6 +202,7 @@ def build_system_prompt(
                       If non-empty, must begin with a newline character so it
                       appends cleanly after the last <behavior> section.
         memory_block: Dynamic long-term memory workflow guidance.
+        artifacts_block: Dynamic artifact authoring workflow guidance.
         user_profile_block:
                       Optional user profile content injected under the runtime
                       context section when enabled.
@@ -188,11 +217,13 @@ def build_system_prompt(
     base = template if template and template.strip() else _BASE_TEMPLATE
     base = _append_block_if_missing(base, "{{user_profile_block}}", user_profile_block)
     base = _append_block_if_missing(base, "{{memory_block}}", memory_block)
+    base = _append_block_if_missing(base, "{{artifacts_block}}", artifacts_block)
     prompt = base
     prompt = prompt.replace("{{current_datetime}}", _get_datetime())
     prompt = prompt.replace("{{os_info}}", _get_os_info())
     prompt = prompt.replace("{{user_profile_block}}", user_profile_block)
     prompt = prompt.replace("{{memory_block}}", memory_block)
+    prompt = prompt.replace("{{artifacts_block}}", artifacts_block)
     prompt = prompt.replace("{{skills_block}}", skills_block)
     # print(f'{"="*10} SYSTEM PROMPT {"="*10}')
     # print(prompt)

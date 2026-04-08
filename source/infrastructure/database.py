@@ -4,7 +4,7 @@ import uuid
 import time
 import os
 from contextlib import contextmanager
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 
 class DatabaseManager:
@@ -245,6 +245,68 @@ class DatabaseManager:
                 END
             """)
 
+            # --- TABLE: ARTIFACTS ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS artifacts (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT,
+                    message_id TEXT,
+                    artifact_type TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    language TEXT,
+                    storage_kind TEXT NOT NULL,
+                    storage_path TEXT,
+                    inline_content TEXT,
+                    searchable_text TEXT NOT NULL DEFAULT '',
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    line_count INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'ready',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_artifacts_conversation
+                ON artifacts(conversation_id, created_at DESC)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_artifacts_message
+                ON artifacts(message_id)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_artifacts_type
+                ON artifacts(artifact_type, updated_at DESC)
+            """)
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts USING fts5(
+                    artifact_id UNINDEXED,
+                    title,
+                    searchable_text,
+                    tokenize="unicode61"
+                )
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS artifacts_fts_ai
+                AFTER INSERT ON artifacts BEGIN
+                    INSERT INTO artifacts_fts(rowid, artifact_id, title, searchable_text)
+                    VALUES (new.rowid, new.id, new.title, new.searchable_text);
+                END
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS artifacts_fts_au
+                AFTER UPDATE OF title, searchable_text ON artifacts BEGIN
+                    DELETE FROM artifacts_fts WHERE rowid = old.rowid;
+                    INSERT INTO artifacts_fts(rowid, artifact_id, title, searchable_text)
+                    VALUES (new.rowid, new.id, new.title, new.searchable_text);
+                END
+            """)
+            cursor.execute("""
+                CREATE TRIGGER IF NOT EXISTS artifacts_fts_ad
+                AFTER DELETE ON artifacts BEGIN
+                    DELETE FROM artifacts_fts WHERE rowid = old.rowid;
+                END
+            """)
+
             # --- MOBILE CHANNEL TABLES ---
             # Paired devices table - stores devices that have completed pairing
             cursor.execute("""
@@ -380,6 +442,101 @@ class DatabaseManager:
     def _decode_content_blocks(content_blocks_json: Optional[str]) -> List[Dict] | None:
         return json.loads(content_blocks_json) if content_blocks_json else None
 
+    @staticmethod
+    def generate_artifact_id() -> str:
+        return str(uuid.uuid4())
+
+    def _artifact_rows_by_id(
+        self, artifact_ids: List[str], conn: sqlite3.Connection
+    ) -> Dict[str, Dict[str, Any]]:
+        ids = [artifact_id for artifact_id in dict.fromkeys(artifact_ids) if artifact_id]
+        if not ids:
+            return {}
+
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""SELECT id, artifact_type, title, language, size_bytes, line_count,
+                       status, conversation_id, message_id, created_at, updated_at
+                FROM artifacts
+                WHERE id IN ({placeholders})""",
+            ids,
+        ).fetchall()
+        return {
+            row[0]: {
+                "id": row[0],
+                "artifact_type": row[1],
+                "title": row[2],
+                "language": row[3],
+                "size_bytes": row[4],
+                "line_count": row[5],
+                "status": row[6],
+                "conversation_id": row[7],
+                "message_id": row[8],
+                "created_at": row[9],
+                "updated_at": row[10],
+            }
+            for row in rows
+        }
+
+    def _resolve_content_blocks(
+        self,
+        content_blocks_json: Optional[str],
+        conn: sqlite3.Connection,
+    ) -> List[Dict] | None:
+        blocks = self._decode_content_blocks(content_blocks_json)
+        if not blocks:
+            return blocks
+
+        artifact_ids = [
+            str(block.get("artifact_id") or block.get("artifactId") or "").strip()
+            for block in blocks
+            if block.get("type") == "artifact"
+        ]
+        artifact_map = self._artifact_rows_by_id(artifact_ids, conn)
+
+        resolved_blocks: List[Dict[str, Any]] = []
+        for block in blocks:
+            if block.get("type") != "artifact":
+                resolved_blocks.append(block)
+                continue
+
+            artifact_id = str(block.get("artifact_id") or block.get("artifactId") or "").strip()
+            artifact_row = artifact_map.get(artifact_id)
+            resolved_blocks.append(
+                {
+                    "type": "artifact",
+                    "artifact_id": artifact_id,
+                    "artifact_type": (
+                        block.get("artifact_type")
+                        or block.get("artifactType")
+                        or (artifact_row or {}).get("artifact_type")
+                        or ""
+                    ),
+                    "title": block.get("title") or (artifact_row or {}).get("title") or "Untitled artifact",
+                    "language": block.get("language")
+                    if block.get("language") is not None
+                    else (artifact_row or {}).get("language"),
+                    "size_bytes": (
+                        (artifact_row or {}).get("size_bytes")
+                        if artifact_row is not None
+                        else int(block.get("size_bytes") or block.get("sizeBytes") or 0)
+                    ),
+                    "line_count": (
+                        (artifact_row or {}).get("line_count")
+                        if artifact_row is not None
+                        else int(block.get("line_count") or block.get("lineCount") or 0)
+                    ),
+                    "status": (
+                        "deleted"
+                        if artifact_row is None
+                        or str((artifact_row or {}).get("status") or "").lower() == "deleted"
+                        else "ready"
+                    ),
+                }
+            )
+
+        return resolved_blocks
+
     def _build_response_variants(
         self, assistant_message_id: str, conn: sqlite3.Connection
     ) -> List[Dict[str, Any]]:
@@ -395,7 +552,7 @@ class DatabaseManager:
                 "response_index": row[0],
                 "content": row[1],
                 "model": row[2],
-                "content_blocks": self._decode_content_blocks(row[3]),
+                "content_blocks": self._resolve_content_blocks(row[3], conn),
                 "timestamp": row[4],
             }
             for row in rows
@@ -413,7 +570,7 @@ class DatabaseManager:
             "images": self._decode_images(row[5]),
             "timestamp": row[6],
             "model": row[7],
-            "content_blocks": self._decode_content_blocks(row[8]),
+            "content_blocks": self._resolve_content_blocks(row[8], conn),
             "active_response_index": row[9] or 0,
         }
         # mobile_origin is stored as JSON text in row[10]
@@ -816,6 +973,7 @@ class DatabaseManager:
                     "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
                     (assistant_id,),
                 )
+                conn.execute("DELETE FROM artifacts WHERE message_id = ?", (assistant_id,))
 
             conn.execute(
                 "DELETE FROM terminal_events WHERE conversation_id = ? AND message_index > ?",
@@ -865,6 +1023,353 @@ class DatabaseManager:
                 )
             conn.commit()
         return self.get_message_by_id(message_id)
+
+    def create_artifact(
+        self,
+        *,
+        artifact_id: str,
+        conversation_id: Optional[str],
+        message_id: Optional[str],
+        artifact_type: str,
+        title: str,
+        language: Optional[str],
+        storage_kind: str,
+        storage_path: Optional[str],
+        inline_content: Optional[str],
+        searchable_text: str,
+        size_bytes: int,
+        line_count: int,
+        status: str = "ready",
+    ) -> Dict[str, Any]:
+        now = time.time()
+        with self._connect() as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO artifacts
+                   (id, conversation_id, message_id, artifact_type, title, language,
+                    storage_kind, storage_path, inline_content, searchable_text,
+                    size_bytes, line_count, status, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    artifact_id,
+                    conversation_id,
+                    message_id,
+                    artifact_type,
+                    title,
+                    language,
+                    storage_kind,
+                    storage_path,
+                    inline_content,
+                    searchable_text,
+                    size_bytes,
+                    line_count,
+                    status,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        artifact = self.get_artifact(artifact_id)
+        assert artifact is not None
+        return artifact
+
+    def update_artifact(
+        self,
+        *,
+        artifact_id: str,
+        title: str,
+        language: Optional[str],
+        storage_path: Optional[str],
+        inline_content: Optional[str],
+        searchable_text: str,
+        size_bytes: int,
+        line_count: int,
+    ) -> Dict[str, Any] | None:
+        now = time.time()
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """UPDATE artifacts
+                   SET title = ?,
+                       language = ?,
+                       storage_path = ?,
+                       inline_content = ?,
+                       searchable_text = ?,
+                       size_bytes = ?,
+                       line_count = ?,
+                       updated_at = ?
+                   WHERE id = ?""",
+                (
+                    title,
+                    language,
+                    storage_path,
+                    inline_content,
+                    searchable_text,
+                    size_bytes,
+                    line_count,
+                    now,
+                    artifact_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                conn.rollback()
+                return None
+            conn.commit()
+        return self.get_artifact(artifact_id)
+
+    def link_artifacts_to_message(
+        self, artifact_ids: List[str], message_id: str
+    ) -> None:
+        if not artifact_ids:
+            return
+        placeholders = ",".join("?" for _ in artifact_ids)
+        with self._connect() as conn:
+            conn.execute(
+                f"""UPDATE artifacts
+                    SET message_id = ?, updated_at = ?
+                    WHERE id IN ({placeholders})""",
+                [message_id, time.time(), *artifact_ids],
+            )
+            conn.commit()
+
+    def get_artifact(self, artifact_id: str) -> Dict[str, Any] | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT id, conversation_id, message_id, artifact_type, title, language,
+                          storage_kind, storage_path, inline_content, searchable_text,
+                          size_bytes, line_count, status, created_at, updated_at
+                   FROM artifacts
+                   WHERE id = ?""",
+                (artifact_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0],
+            "conversation_id": row[1],
+            "message_id": row[2],
+            "artifact_type": row[3],
+            "title": row[4],
+            "language": row[5],
+            "storage_kind": row[6],
+            "storage_path": row[7],
+            "inline_content": row[8],
+            "searchable_text": row[9],
+            "size_bytes": row[10],
+            "line_count": row[11],
+            "status": row[12],
+            "created_at": row[13],
+            "updated_at": row[14],
+        }
+
+    def list_artifacts(
+        self,
+        *,
+        query: str = "",
+        artifact_type: Optional[str] = None,
+        status: Optional[str] = None,
+        page: int = 1,
+        page_size: int = 50,
+        conversation_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        page = max(page, 1)
+        page_size = max(min(page_size, 200), 1)
+        offset = (page - 1) * page_size
+        query = query.strip()
+        filters: List[str] = []
+        params: List[Any] = []
+
+        if artifact_type:
+            filters.append("a.artifact_type = ?")
+            params.append(artifact_type)
+        if status:
+            filters.append("a.status = ?")
+            params.append(status)
+        if conversation_id:
+            filters.append("a.conversation_id = ?")
+            params.append(conversation_id)
+
+        where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+
+        with self._connect() as conn:
+            if query:
+                fts_term = self._fts5_phrase(query)
+                count_row = conn.execute(
+                    f"""SELECT COUNT(*)
+                        FROM artifacts a
+                        JOIN artifacts_fts fts ON fts.rowid = a.rowid
+                        {where_clause}
+                        {"AND" if where_clause else "WHERE"} artifacts_fts MATCH ?""",
+                    [*params, fts_term],
+                ).fetchone()
+                rows = conn.execute(
+                    f"""SELECT a.id, a.artifact_type, a.title, a.language,
+                               a.size_bytes, a.line_count, a.status,
+                               a.conversation_id, a.message_id, a.created_at, a.updated_at
+                        FROM artifacts a
+                        JOIN artifacts_fts fts ON fts.rowid = a.rowid
+                        {where_clause}
+                        {"AND" if where_clause else "WHERE"} artifacts_fts MATCH ?
+                        ORDER BY a.updated_at DESC
+                        LIMIT ? OFFSET ?""",
+                    [*params, fts_term, page_size, offset],
+                ).fetchall()
+            else:
+                count_row = conn.execute(
+                    f"SELECT COUNT(*) FROM artifacts a {where_clause}",
+                    params,
+                ).fetchone()
+                rows = conn.execute(
+                    f"""SELECT a.id, a.artifact_type, a.title, a.language,
+                               a.size_bytes, a.line_count, a.status,
+                               a.conversation_id, a.message_id, a.created_at, a.updated_at
+                        FROM artifacts a
+                        {where_clause}
+                        ORDER BY a.updated_at DESC
+                        LIMIT ? OFFSET ?""",
+                    [*params, page_size, offset],
+                ).fetchall()
+
+        total = int(count_row[0]) if count_row and count_row[0] is not None else 0
+        artifacts = [
+            {
+                "id": row[0],
+                "type": row[1],
+                "title": row[2],
+                "language": row[3],
+                "size_bytes": row[4],
+                "line_count": row[5],
+                "status": row[6],
+                "conversation_id": row[7],
+                "message_id": row[8],
+                "created_at": row[9],
+                "updated_at": row[10],
+            }
+            for row in rows
+        ]
+        return artifacts, total
+
+    def delete_artifact(self, artifact_id: str) -> Dict[str, Any] | None:
+        artifact = self.get_artifact(artifact_id)
+        if artifact is None:
+            return None
+        with self._connect() as conn:
+            conn.execute(
+                """UPDATE artifacts
+                   SET storage_path = NULL,
+                       inline_content = NULL,
+                       searchable_text = '',
+                       status = 'deleted',
+                       updated_at = ?
+                   WHERE id = ?""",
+                (time.time(), artifact_id),
+            )
+            conn.commit()
+        return artifact
+
+    def delete_artifacts_for_message(self, message_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, conversation_id, message_id, artifact_type, title, language,
+                          storage_kind, storage_path, inline_content, searchable_text,
+                          size_bytes, line_count, status, created_at, updated_at
+                   FROM artifacts
+                   WHERE message_id = ?""",
+                (message_id,),
+            ).fetchall()
+            conn.execute(
+                """UPDATE artifacts
+                   SET storage_path = NULL,
+                       inline_content = NULL,
+                       searchable_text = '',
+                       status = 'deleted',
+                       updated_at = ?
+                   WHERE message_id = ?""",
+                (time.time(), message_id),
+            )
+            conn.commit()
+
+        return [
+            {
+                "id": row[0],
+                "conversation_id": row[1],
+                "message_id": row[2],
+                "artifact_type": row[3],
+                "title": row[4],
+                "language": row[5],
+                "storage_kind": row[6],
+                "storage_path": row[7],
+                "inline_content": row[8],
+                "searchable_text": row[9],
+                "size_bytes": row[10],
+                "line_count": row[11],
+                "status": row[12],
+                "created_at": row[13],
+                "updated_at": row[14],
+            }
+            for row in rows
+        ]
+
+    def delete_artifacts_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT id, conversation_id, message_id, artifact_type, title, language,
+                          storage_kind, storage_path, inline_content, searchable_text,
+                          size_bytes, line_count, status, created_at, updated_at
+                   FROM artifacts
+                   WHERE conversation_id = ?""",
+                (conversation_id,),
+            ).fetchall()
+            conn.execute(
+                """UPDATE artifacts
+                   SET storage_path = NULL,
+                       inline_content = NULL,
+                       searchable_text = '',
+                       status = 'deleted',
+                       updated_at = ?
+                   WHERE conversation_id = ?""",
+                (time.time(), conversation_id),
+            )
+            conn.commit()
+
+        return [
+            {
+                "id": row[0],
+                "conversation_id": row[1],
+                "message_id": row[2],
+                "artifact_type": row[3],
+                "title": row[4],
+                "language": row[5],
+                "storage_kind": row[6],
+                "storage_path": row[7],
+                "inline_content": row[8],
+                "searchable_text": row[9],
+                "size_bytes": row[10],
+                "line_count": row[11],
+                "status": row[12],
+                "created_at": row[13],
+                "updated_at": row[14],
+            }
+            for row in rows
+        ]
+
+    def get_assistant_message_ids_after_turn(
+        self, conversation_id: str, turn_id: str
+    ) -> List[str]:
+        with self._connect() as conn:
+            cutoff = conn.execute(
+                """SELECT MAX(num_messages)
+                   FROM messages
+                   WHERE conversation_id = ? AND turn_id = ?""",
+                (conversation_id, turn_id),
+            ).fetchone()
+            if cutoff is None or cutoff[0] is None:
+                return []
+            rows = conn.execute(
+                """SELECT message_id
+                   FROM messages
+                   WHERE conversation_id = ? AND num_messages > ? AND role = 'assistant'""",
+                (conversation_id, cutoff[0]),
+            ).fetchall()
+        return [row[0] for row in rows if row and row[0]]
 
     def is_first_user_message(self, conversation_id: str, message_id: str) -> bool:
         """Return True when message_id is the first user turn in the conversation."""
@@ -925,6 +1430,11 @@ class DatabaseManager:
                     "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
                     (assistant_id,),
                 )
+                conn.execute("DELETE FROM artifacts WHERE message_id = ?", (assistant_id,))
+            conn.execute(
+                "DELETE FROM artifacts WHERE conversation_id = ?",
+                (conversation_id,),
+            )
             conn.execute(
                 "DELETE FROM terminal_events WHERE conversation_id = ?",
                 (conversation_id,),

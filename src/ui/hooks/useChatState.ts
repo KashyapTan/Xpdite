@@ -5,6 +5,7 @@
  */
 import { useState, useRef, useCallback } from 'react';
 import type {
+  ArtifactBlockData,
   ChatMessage,
   ToolCall,
   ContentBlock,
@@ -48,6 +49,9 @@ interface UseChatStateReturn {
   appendResponse: (chunk: string) => void;
   addToolCall: (toolCall: ToolCall) => void;
   updateToolCall: (toolCall: ToolCall) => void;
+  addArtifactBlock: (artifact: ArtifactBlockData) => void;
+  completeArtifactBlock: (artifact: ArtifactBlockData) => void;
+  markArtifactDeleted: (artifactId: string) => void;
   addTerminalBlock: (terminal: TerminalCommandBlock) => void;
   updateTerminalBlock: (requestId: string, updates: Partial<TerminalCommandBlock>) => void;
   appendTerminalOutput: (requestId: string, text: string, raw?: boolean) => void;
@@ -144,6 +148,65 @@ export function useChatState(): UseChatStateReturn {
     const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'tool_call', toolCall }];
     contentBlocksRef.current = newBlocks;
     setContentBlocks(newBlocks);
+  }, []);
+
+  const addArtifactBlock = useCallback((artifact: ArtifactBlockData) => {
+    const nextBlocks = [...contentBlocksRef.current];
+    const existingIndex = nextBlocks.findIndex(
+      (block) => block.type === 'artifact' && block.artifact.artifactId === artifact.artifactId,
+    );
+
+    if (existingIndex >= 0) {
+      nextBlocks[existingIndex] = { type: 'artifact', artifact };
+    } else {
+      nextBlocks.push({ type: 'artifact', artifact });
+    }
+
+    contentBlocksRef.current = nextBlocks;
+    setContentBlocks(nextBlocks);
+  }, []);
+
+  const completeArtifactBlock = useCallback((artifact: ArtifactBlockData) => {
+    const nextBlocks = [...contentBlocksRef.current];
+    const existingIndex = nextBlocks.findIndex(
+      (block) => block.type === 'artifact' && block.artifact.artifactId === artifact.artifactId,
+    );
+
+    if (existingIndex >= 0) {
+      const existingBlock = nextBlocks[existingIndex];
+      nextBlocks[existingIndex] = {
+        type: 'artifact',
+        artifact: {
+          ...(existingBlock.type === 'artifact' ? existingBlock.artifact : {}),
+          ...artifact,
+        },
+      };
+    } else {
+      nextBlocks.push({ type: 'artifact', artifact });
+    }
+
+    contentBlocksRef.current = nextBlocks;
+    setContentBlocks(nextBlocks);
+  }, []);
+
+  const markArtifactDeleted = useCallback((artifactId: string) => {
+    const nextBlocks = contentBlocksRef.current.map((block) => {
+      if (block.type !== 'artifact' || block.artifact.artifactId !== artifactId) {
+        return block;
+      }
+
+      return {
+        type: 'artifact' as const,
+        artifact: {
+          ...block.artifact,
+          status: 'deleted' as const,
+          content: undefined,
+        },
+      };
+    });
+
+    contentBlocksRef.current = nextBlocks;
+    setContentBlocks(nextBlocks);
   }, []);
 
   const updateToolCall = useCallback((updatedToolCall: ToolCall) => {
@@ -285,7 +348,7 @@ export function useChatState(): UseChatStateReturn {
     const completedToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
     const completedContentBlocks = contentBlocksRef.current.length > 0 ? [...contentBlocksRef.current] : undefined;
     const timestamp = Date.now();
-    const responseVersions = completedResponse || completedToolCalls
+    const responseVersions = completedResponse || completedToolCalls || completedContentBlocks
       ? [{
         responseIndex: 0,
         content: completedResponse,
@@ -297,7 +360,7 @@ export function useChatState(): UseChatStateReturn {
 
     // Guard: if nothing was generated (cancelled before any output, or duplicate
     // response_complete), just reset state without adding empty messages.
-    if (!completedResponse && !completedThinking && !completedToolCalls) {
+    if (!completedResponse && !completedThinking && !completedToolCalls && !completedContentBlocks) {
       clearStreamingState('Ready');
       return;
     }
@@ -442,6 +505,9 @@ export function useChatState(): UseChatStateReturn {
     appendResponse,
     addToolCall,
     updateToolCall,
+    addArtifactBlock,
+    completeArtifactBlock,
+    markArtifactDeleted,
     addTerminalBlock,
     updateTerminalBlock,
     appendTerminalOutput,

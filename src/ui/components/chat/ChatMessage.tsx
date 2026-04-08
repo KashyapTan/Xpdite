@@ -121,6 +121,7 @@ function ChatMessageComponent({
     && !renderableBlocks.some(
       (block) =>
         block.type === 'tool_call'
+        || block.type === 'artifact'
         || block.type === 'terminal_command'
         || block.type === 'youtube_transcription_approval',
     );

@@ -8,6 +8,7 @@ import SettingsConnections from '../components/settings/SettingsConnections';
 import SettingsSystemPrompt from '../components/settings/SettingsSystemPrompt';
 import SettingsSkills from '../components/settings/SettingsSkills';
 import SettingsMemory from '../components/settings/SettingsMemory';
+import SettingsArtifacts from '../components/settings/SettingsArtifacts';
 import MeetingRecorderSettings from '../components/settings/MeetingRecorderSettings';
 import SettingsOllama from '../components/settings/SettingsOllama';
 import SettingsSubAgents from '../components/settings/SettingsSubAgents';
@@ -48,6 +49,7 @@ const Settings: React.FC = () => {
     { id: 'tools', label: 'Tools', icon: toolsIcon, className: 'settings-tools', component: <SettingsTools /> },
     { id: 'skills', label: 'Skills', icon: settingsIcon, className: 'settings-skills-tab', component: <SettingsSkills /> },
     { id: 'memory', label: 'Memory', icon: settingsIcon, className: 'settings-memory-tab', component: <SettingsMemory /> },
+    { id: 'artifacts', label: 'Artifacts', icon: settingsIcon, className: 'settings-artifacts-tab', component: <SettingsArtifacts /> },
     { id: 'scheduled-jobs', label: 'Tasks', icon: settingsIcon, className: 'settings-scheduled-jobs-tab', component: <SettingsScheduledJobs /> },
     { id: 'meeting', label: 'Meeting', icon: settingsIcon, className: 'settings-meeting-tab', component: <MeetingRecorderSettings /> },
     { id: 'sub-agents', label: 'Sub-Agents', icon: settingsIcon, className: 'settings-sub-agents-tab', component: <SettingsSubAgents /> },

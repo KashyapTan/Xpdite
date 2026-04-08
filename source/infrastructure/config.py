@@ -54,6 +54,10 @@ MEMORY_DEFAULT_FOLDERS = (
     "procedural",
 )
 
+# Artifact directories
+ARTIFACTS_DIR = USER_DATA_DIR / "artifacts"
+os.makedirs(ARTIFACTS_DIR, exist_ok=True)
+
 # Server configuration
 DEFAULT_PORT = 8000
 MAX_PORT_ATTEMPTS = 10

@@ -18,6 +18,9 @@ const IMAGE_CHIPS_HEIGHT = 46;
 const CHAIN_GROUP_COLLAPSED_HEIGHT = 44;
 const THINKING_GROUP_BODY_PADDING = 14;
 const TEXT_BLOCK_GAP_HEIGHT = 8;
+const ARTIFACT_CARD_BASE_HEIGHT = 136;
+const ARTIFACT_CARD_STREAMING_HEIGHT = 116;
+const ARTIFACT_CARD_DELETED_HEIGHT = 92;
 
 const preparedCache = new Map<string, ReturnType<typeof prepare>>();
 
@@ -94,6 +97,7 @@ function isChainBlock(block: ContentBlock): boolean {
 
 type BlockGroup =
   | { kind: 'text'; block: ContentBlock & { type: 'text' } }
+  | { kind: 'artifact'; block: ContentBlock & { type: 'artifact' } }
   | { kind: 'chain'; blocks: ContentBlock[] };
 
 function groupBlocks(blocks: ContentBlock[]): BlockGroup[] {
@@ -112,6 +116,15 @@ function groupBlocks(blocks: ContentBlock[]): BlockGroup[] {
         chainBlocks = [];
       }
       groups.push({ kind: 'text', block });
+      continue;
+    }
+
+    if (block.type === 'artifact') {
+      if (chainBlocks.length > 0) {
+        groups.push({ kind: 'chain', blocks: chainBlocks });
+        chainBlocks = [];
+      }
+      groups.push({ kind: 'artifact', block });
     }
   }
 
@@ -155,6 +168,30 @@ function estimateChainGroupHeight(blocks: ContentBlock[], maxTextWidth: number):
   return height;
 }
 
+function estimateArtifactBlockHeight(block: ContentBlock & { type: 'artifact' }, maxTextWidth: number): number {
+  if (block.artifact.status === 'deleted') {
+    return ARTIFACT_CARD_DELETED_HEIGHT;
+  }
+
+  if (block.artifact.status === 'streaming') {
+    return ARTIFACT_CARD_STREAMING_HEIGHT;
+  }
+
+  const metadataHeight = block.artifact.language ? 22 : 18;
+  const titleHeight = estimateTextHeight(
+    block.artifact.title,
+    ASSISTANT_FONT,
+    maxTextWidth,
+    ASSISTANT_LINE_HEIGHT,
+    'normal',
+  );
+
+  return Math.max(
+    ARTIFACT_CARD_BASE_HEIGHT,
+    84 + metadataHeight + titleHeight,
+  );
+}
+
 function estimateAssistantContentHeight(message: ChatMessage, maxTextWidth: number): number {
   const blocks = buildRenderableContentBlocks(message);
   if (!blocks || blocks.length === 0) {
@@ -174,6 +211,8 @@ function estimateAssistantContentHeight(message: ChatMessage, maxTextWidth: numb
         ASSISTANT_LINE_HEIGHT,
         'normal',
       );
+    } else if (group.kind === 'artifact') {
+      total += estimateArtifactBlockHeight(group.block, maxTextWidth);
     } else {
       total += estimateChainGroupHeight(group.blocks, maxTextWidth);
     }

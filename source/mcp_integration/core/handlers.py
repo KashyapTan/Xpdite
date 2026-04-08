@@ -17,6 +17,7 @@ from ollama import AsyncClient as OllamaAsyncClient
 from ...infrastructure.config import DEFAULT_MODEL, MAX_TOOL_RESULT_LENGTH
 from ...core.connection import broadcast_message
 from ...core.request_context import is_current_request_cancelled, get_current_model
+from ...llm.core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
 from .manager import mcp_manager
 from .retriever import retriever
 from ..executors.terminal_executor import execute_terminal_tool, is_terminal_tool
@@ -299,24 +300,23 @@ async def handle_mcp_tool_calls(
                     {"type": "thinking", "content": current_thinking}
                 )
             if current_content:
-                await broadcast_message("response_chunk", current_content)
-                all_accumulated_text.append(current_content)
-                interleaved_blocks.append({"type": "text", "content": current_content})
-            is_first_round = False
-        else:
-            if current_thinking:
-                interleaved_blocks.append(
-                    {"type": "thinking", "content": current_thinking}
+                parser = ArtifactStreamParser()
+                detection_events = parser.feed(current_content)
+                detection_events.extend(parser.finalize())
+                current_content = await emit_artifact_stream_events(
+                    detection_events,
+                    interleaved_blocks,
                 )
-            if current_content:
-                # Text was already broadcast by _stream_tool_follow_up
-                all_accumulated_text.append(current_content)
-                interleaved_blocks.append({"type": "text", "content": current_content})
+                if current_content:
+                    all_accumulated_text.append(current_content)
+            is_first_round = False
+        elif current_content:
+            all_accumulated_text.append(current_content)
 
         # Add assistant message (with tool calls) to history
         assistant_msg: Dict[str, Any] = {
             "role": "assistant",
-            "content": current_content,
+            "content": current_content or None,
         }
         assistant_msg["tool_calls"] = [
             {
@@ -544,7 +544,12 @@ async def handle_mcp_tool_calls(
             current_tool_calls,
             round_stats,
             current_thinking,
-        ) = await _stream_tool_follow_up(messages, filtered_tools, client=async_client)
+        ) = await _stream_tool_follow_up(
+            messages,
+            filtered_tools,
+            interleaved_blocks=interleaved_blocks,
+            client=async_client,
+        )
 
         total_token_stats["prompt_eval_count"] += round_stats.get(
             "prompt_eval_count", 0
@@ -554,13 +559,8 @@ async def handle_mcp_tool_calls(
 
         # If no more tool calls, the final text was already streamed
         if not current_tool_calls:
-            if current_thinking:
-                interleaved_blocks.append(
-                    {"type": "thinking", "content": current_thinking}
-                )
             if current_content:
                 all_accumulated_text.append(current_content)
-                interleaved_blocks.append({"type": "text", "content": current_content})
             break
 
     # Broadcast response_complete (text was streamed throughout the loop)
@@ -587,6 +587,7 @@ async def handle_mcp_tool_calls(
 async def _stream_tool_follow_up(
     messages: List[Dict[str, Any]],
     tools: list,
+    interleaved_blocks: List[Dict[str, Any]],
     client: Optional[OllamaAsyncClient] = None,
 ) -> tuple[str, List[Dict[str, Any]], Dict[str, int], str]:
     """
@@ -607,6 +608,7 @@ async def _stream_tool_follow_up(
         tool_calls_found: List[Dict[str, Any]] = []
         token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
         thinking_complete_sent = False
+        artifact_parser = ArtifactStreamParser()
 
         stream = await async_client.chat(
             model=_get_request_model(),
@@ -655,9 +657,17 @@ async def _stream_tool_follow_up(
             if content_token:
                 if thinking_chunks and not thinking_complete_sent:
                     await broadcast_message("thinking_complete", "")
+                    interleaved_blocks.append(
+                        {"type": "thinking", "content": "".join(thinking_chunks)}
+                    )
                     thinking_complete_sent = True
-                text_chunks.append(content_token)
-                await broadcast_message("response_chunk", content_token)
+                events = artifact_parser.feed(content_token)
+                cleaned_text = await emit_artifact_stream_events(
+                    events,
+                    interleaved_blocks,
+                )
+                if cleaned_text:
+                    text_chunks.append(cleaned_text)
 
             if tool_calls:
                 for tc in tool_calls:
@@ -697,6 +707,19 @@ async def _stream_tool_follow_up(
 
         if thinking_chunks and not thinking_complete_sent:
             await broadcast_message("thinking_complete", "")
+            interleaved_blocks.append(
+                {"type": "thinking", "content": "".join(thinking_chunks)}
+            )
+            thinking_complete_sent = True
+
+        final_events = artifact_parser.finalize()
+        if final_events:
+            cleaned_text = await emit_artifact_stream_events(
+                final_events,
+                interleaved_blocks,
+            )
+            if cleaned_text:
+                text_chunks.append(cleaned_text)
 
         return (
             "".join(text_chunks),

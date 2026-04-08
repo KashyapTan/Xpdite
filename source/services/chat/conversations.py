@@ -20,6 +20,7 @@ from ...core.state import app_state
 from ...core.thread_pool import run_in_thread
 from ...infrastructure.database import db
 from ...llm.core.router import route_chat
+from ..artifacts import artifact_service
 from ..media.screenshots import ScreenshotHandler
 
 logger = logging.getLogger(__name__)
@@ -202,6 +203,27 @@ class ConversationService:
         if response_text.strip():
             blocks.append({"type": "text", "content": response_text})
         return blocks
+
+    @staticmethod
+    def _extract_artifact_ids(
+        content_blocks: Optional[List[Dict[str, Any]]],
+    ) -> List[str]:
+        if not content_blocks:
+            return []
+        return [
+            artifact_id
+            for artifact_id in (
+                str(block.get("artifact_id") or "").strip()
+                for block in content_blocks
+                if block.get("type") == "artifact"
+            )
+            if artifact_id
+        ]
+
+    @staticmethod
+    async def _broadcast_deleted_artifacts(artifact_ids: List[str]) -> None:
+        for artifact_id in artifact_ids:
+            await broadcast_message("artifact_deleted", {"artifact_id": artifact_id})
 
     @staticmethod
     def _resolve_turn_context(target_message_id: str) -> Dict[str, Any]:
@@ -634,6 +656,54 @@ class ConversationService:
                 interleaved_blocks_from_llm,
                 interrupted=interrupted,
             )
+            should_save_assistant = bool(
+                (response_text and response_text.strip())
+                or tool_calls
+                or content_blocks_data
+            )
+
+            if turn_context is not None:
+                later_assistant_ids = db.get_assistant_message_ids_after_turn(
+                    turn_context["conversation_id"], turn_context["turn_id"]
+                )
+                if later_assistant_ids:
+                    deleted_batches = await asyncio.gather(
+                        *[
+                            run_in_thread(
+                                artifact_service.delete_artifacts_for_message,
+                                assistant_message_id,
+                            )
+                            for assistant_message_id in later_assistant_ids
+                        ]
+                    )
+                    for deleted_ids in deleted_batches:
+                        await ConversationService._broadcast_deleted_artifacts(
+                            deleted_ids
+                        )
+
+                if action == "edit":
+                    deleted_ids = await run_in_thread(
+                        artifact_service.delete_artifacts_for_message,
+                        turn_context["assistant_message"]["message_id"],
+                    )
+                    await ConversationService._broadcast_deleted_artifacts(
+                        deleted_ids
+                    )
+
+            if content_blocks_data:
+                persist_message_id = (
+                    turn_context["assistant_message"]["message_id"]
+                    if turn_context is not None
+                    else None
+                )
+                content_blocks_data = await run_in_thread(
+                    artifact_service.persist_generated_artifacts,
+                    content_blocks_data,
+                    conversation_id=_require_conv_id(),
+                    message_id=persist_message_id,
+                )
+
+            artifact_ids = ConversationService._extract_artifact_ids(content_blocks_data)
 
             saved_turn: Dict[str, Any] | None = None
 
@@ -664,12 +734,10 @@ class ConversationService:
                     mobile_origin=mobile_origin,
                 )
 
-                if response_text.strip() or tool_calls:
-                    save_text = (
-                        response_text
-                        if response_text.strip()
-                        else "[Tool calls completed]"
-                    )
+                if should_save_assistant:
+                    save_text = response_text if response_text.strip() else ""
+                    if not save_text and tool_calls and not content_blocks_data:
+                        save_text = "[Tool calls completed]"
                     assistant_message = db.add_message(
                         _require_conv_id(),
                         "assistant",
@@ -678,6 +746,12 @@ class ConversationService:
                         content_blocks=content_blocks_data,
                         turn_id=turn_id,
                     )
+                    if artifact_ids:
+                        await run_in_thread(
+                            artifact_service.link_artifacts_to_message,
+                            artifact_ids,
+                            message_id=assistant_message["message_id"],
+                        )
                     db.save_response_version(
                         _require_conv_id(),
                         assistant_message["message_id"],
@@ -715,11 +789,9 @@ class ConversationService:
                     if updated_user_message is None:
                         raise ValueError("Selected turn could not be updated.")
 
-                save_text = (
-                    response_text
-                    if response_text.strip()
-                    else "[Model returned empty response]"
-                )
+                save_text = response_text if response_text.strip() else ""
+                if not save_text and not content_blocks_data:
+                    save_text = "[Model returned empty response]"
                 db.save_response_version(
                     turn_context["conversation_id"],
                     turn_context["assistant_message"]["message_id"],
@@ -827,6 +899,7 @@ class ConversationService:
     @staticmethod
     def delete_conversation(conversation_id: str):
         """Delete a conversation."""
+        artifact_service.delete_artifacts_for_conversation(conversation_id)
         db.delete_conversation(conversation_id)
 
     @staticmethod

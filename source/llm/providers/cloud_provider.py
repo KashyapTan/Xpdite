@@ -22,6 +22,7 @@ import litellm
 from ...core.connection import broadcast_message
 from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ...core.request_context import is_current_request_cancelled
+from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
 from ...mcp_integration.core.tool_args import normalize_tool_args, sanitize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -486,8 +487,17 @@ async def _stream_litellm(
             current_round_text = []
             thinking_tokens: list[str] = []
             thinking_complete_sent = False
+            artifact_parser = ArtifactStreamParser()
             round_prompt_tokens = 0
             round_completion_tokens = 0
+
+            def _store_thinking_block() -> None:
+                nonlocal thinking_complete_sent
+                if thinking_tokens and not thinking_complete_sent:
+                    interleaved_blocks.append(
+                        {"type": "thinking", "content": "".join(thinking_tokens)}
+                    )
+                    thinking_complete_sent = True
 
             if is_current_request_cancelled():
                 break
@@ -577,12 +587,17 @@ async def _stream_litellm(
 
                 # Handle regular text content
                 if delta.content:
-                    if thinking_tokens and not thinking_complete_sent:
+                    events = artifact_parser.feed(delta.content)
+                    if events and thinking_tokens and not thinking_complete_sent:
                         await broadcast_message("thinking_complete", "")
-                        thinking_complete_sent = True
-                    all_accumulated.append(delta.content)
-                    current_round_text.append(delta.content)
-                    await broadcast_message("response_chunk", delta.content)
+                        _store_thinking_block()
+                    cleaned_text = await emit_artifact_stream_events(
+                        events,
+                        interleaved_blocks,
+                    )
+                    if cleaned_text:
+                        all_accumulated.append(cleaned_text)
+                        current_round_text.append(cleaned_text)
 
                 # Accumulate tool call deltas
                 if delta.tool_calls:
@@ -611,7 +626,17 @@ async def _stream_litellm(
             # Finalize thinking section in UI for this round
             if thinking_tokens and not thinking_complete_sent:
                 await broadcast_message("thinking_complete", "")
-                thinking_complete_sent = True
+                _store_thinking_block()
+
+            final_events = artifact_parser.finalize()
+            if final_events:
+                cleaned_text = await emit_artifact_stream_events(
+                    final_events,
+                    interleaved_blocks,
+                )
+                if cleaned_text:
+                    all_accumulated.append(cleaned_text)
+                    current_round_text.append(cleaned_text)
 
             # After stream: check if tool calls were made.
             # Use pending_tool_calls as the primary signal instead of
@@ -654,12 +679,6 @@ async def _stream_litellm(
                 assistant_msg["content"] = (
                     "".join(current_round_text) if current_round_text else None
                 )
-
-                if current_round_text:
-                    interleaved_blocks.append(
-                        {"type": "text", "content": "".join(current_round_text)}
-                    )
-                    current_round_text.clear()
 
                 # Execute each tool and append results
                 tool_result_messages: List[Dict[str, Any]] = []
@@ -859,10 +878,6 @@ async def _stream_litellm(
         if tool_calls_list:
             logger.info(
                 "%s tool loop complete after %d round(s)", provider.capitalize(), rounds
-            )
-        if current_round_text:
-            interleaved_blocks.append(
-                {"type": "text", "content": "".join(current_round_text)}
             )
 
         return (

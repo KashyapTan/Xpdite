@@ -45,11 +45,13 @@ import type {
   ConversationSavedContent,
   ConversationResumedContent,
   ConversationTurnPayload,
+  ArtifactContentPayload,
   ToolCall,
   ToolCallContent,
   SubAgentStreamContent,
   TokenUsageContent,
   ChatMessage,
+  ContentBlock,
   TerminalApprovalRequest,
   TerminalSessionRequest,
   TerminalOutput,
@@ -182,6 +184,106 @@ function mapYouTubeApprovalToBlock(approvalData: YouTubeTranscriptionApprovalReq
     playlistNote: approvalData.playlist_note,
     status: 'pending' as const,
   };
+}
+
+function mapArtifactPayloadToBlock(
+  artifactData: ArtifactContentPayload,
+): ContentBlock & { type: 'artifact' } {
+  return {
+    type: 'artifact',
+    artifact: {
+      artifactId: artifactData.artifact_id,
+      artifactType: artifactData.artifact_type,
+      title: artifactData.title,
+      language: artifactData.language ?? undefined,
+      sizeBytes: artifactData.size_bytes ?? 0,
+      lineCount: artifactData.line_count ?? 0,
+      status: artifactData.status,
+      content: artifactData.content,
+      conversationId: artifactData.conversation_id,
+      messageId: artifactData.message_id,
+      createdAt: artifactData.created_at,
+      updatedAt: artifactData.updated_at,
+    },
+  };
+}
+
+function upsertArtifactBlock(
+  blocks: ContentBlock[],
+  artifactBlock: ContentBlock & { type: 'artifact' },
+): ContentBlock[] {
+  const nextBlocks = [...blocks];
+  const existingIndex = nextBlocks.findIndex(
+    (block) =>
+      block.type === 'artifact'
+      && block.artifact.artifactId === artifactBlock.artifact.artifactId,
+  );
+
+  if (existingIndex >= 0) {
+    const existingBlock = nextBlocks[existingIndex];
+    if (existingBlock.type === 'artifact') {
+      nextBlocks[existingIndex] = {
+        type: 'artifact',
+        artifact: {
+          ...existingBlock.artifact,
+          ...artifactBlock.artifact,
+        },
+      };
+    }
+  } else {
+    nextBlocks.push(artifactBlock);
+  }
+
+  return nextBlocks;
+}
+
+function markArtifactDeletedInBlocks(
+  blocks: ContentBlock[],
+  artifactId: string,
+): ContentBlock[] {
+  return blocks.map((block) => {
+    if (block.type !== 'artifact' || block.artifact.artifactId !== artifactId) {
+      return block;
+    }
+
+    return {
+      type: 'artifact',
+      artifact: {
+        ...block.artifact,
+        status: 'deleted',
+        content: undefined,
+      },
+    };
+  });
+}
+
+function markArtifactDeletedInMessage(
+  message: ChatMessage,
+  artifactId: string,
+): ChatMessage {
+  const nextContentBlocks = message.contentBlocks
+    ? markArtifactDeletedInBlocks(message.contentBlocks, artifactId)
+    : message.contentBlocks;
+
+  const nextResponseVersions = message.responseVersions?.map((variant) => ({
+    ...variant,
+    contentBlocks: variant.contentBlocks
+      ? markArtifactDeletedInBlocks(variant.contentBlocks, artifactId)
+      : variant.contentBlocks,
+  }));
+
+  return {
+    ...message,
+    contentBlocks: nextContentBlocks,
+    responseVersions: nextResponseVersions,
+  };
+}
+
+function markArtifactDeletedInHistory(
+  history: ChatMessage[],
+  artifactId: string,
+): ChatMessage[] {
+  return history.map((message) => markArtifactDeletedInMessage(message, artifactId));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -651,6 +753,30 @@ function App() {
         break;
       }
 
+      case 'artifact_start': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'background:artifact_start');
+        if (!artifactData) {
+          return;
+        }
+        chat.contentBlocks = upsertArtifactBlock(
+          chat.contentBlocks,
+          mapArtifactPayloadToBlock(artifactData),
+        );
+        break;
+      }
+
+      case 'artifact_complete': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'background:artifact_complete');
+        if (!artifactData) {
+          return;
+        }
+        chat.contentBlocks = upsertArtifactBlock(
+          chat.contentBlocks,
+          mapArtifactPayloadToBlock(artifactData),
+        );
+        break;
+      }
+
       case 'response_complete': {
         if (tabId === activeTabIdRef.current) {
           finishStreamPerfCycle('background-response-complete');
@@ -661,7 +787,7 @@ function App() {
           break;
         }
 
-        if (chat.response || chat.thinking || chat.toolCalls.length > 0) {
+        if (chat.response || chat.thinking || chat.toolCalls.length > 0 || chat.contentBlocks.length > 0) {
           const timestamp = Date.now();
           chat.chatHistory = [
             ...chat.chatHistory,
@@ -936,6 +1062,22 @@ function App() {
         break;
       }
 
+      case 'artifact_deleted': {
+        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'background:artifact_deleted');
+        if (!artifactDeleted?.artifact_id) {
+          return;
+        }
+        chat.contentBlocks = markArtifactDeletedInBlocks(
+          chat.contentBlocks,
+          artifactDeleted.artifact_id,
+        );
+        chat.chatHistory = markArtifactDeletedInHistory(
+          chat.chatHistory,
+          artifactDeleted.artifact_id,
+        );
+        break;
+      }
+
       case 'token_usage': {
         const stats = parseWsPayload<TokenUsageContent>(data, 'background:token_usage');
         if (!stats) {
@@ -1114,6 +1256,40 @@ function App() {
         return true;
       }
 
+      case 'artifact_deleted': {
+        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'global:artifact_deleted');
+        if (!artifactDeleted?.artifact_id) {
+          return true;
+        }
+
+        for (const tab of tabsRef.current) {
+          const snapshot = getTabSnapshot(tab.id) ?? freshSnapshot();
+          setTabSnapshot(tab.id, {
+            ...snapshot,
+            chat: {
+              ...snapshot.chat,
+              contentBlocks: markArtifactDeletedInBlocks(
+                snapshot.chat.contentBlocks,
+                artifactDeleted.artifact_id,
+              ),
+              chatHistory: markArtifactDeletedInHistory(
+                snapshot.chat.chatHistory,
+                artifactDeleted.artifact_id,
+              ),
+            },
+          });
+        }
+
+        if (activeTabIdRef.current) {
+          chatState.markArtifactDeleted(artifactDeleted.artifact_id);
+          chatState.setChatHistory((previousHistory) =>
+            markArtifactDeletedInHistory(previousHistory, artifactDeleted.artifact_id),
+          );
+        }
+
+        return true;
+      }
+
       case 'ollama_queue_status':
         // TODO: display Ollama serialization status in UI
         return true;
@@ -1144,7 +1320,7 @@ function App() {
       default:
         return false; // Not a global message
     }
-  }, [chatState, setIsHidden, wsSend, setQueueItems]);
+  }, [chatState, freshSnapshot, getTabSnapshot, setIsHidden, setQueueItems, setTabSnapshot, wsSend]);
 
   /** Handle tab-scoped messages for the active tab. */
   const handleActiveTabMessage = useCallback(async (data: WebSocketMessage) => {
@@ -1340,6 +1516,24 @@ function App() {
         chatState.setStatus('Receiving response...');
         break;
 
+      case 'artifact_start': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'active:artifact_start');
+        if (!artifactData) {
+          break;
+        }
+        chatState.addArtifactBlock(mapArtifactPayloadToBlock(artifactData).artifact);
+        break;
+      }
+
+      case 'artifact_complete': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'active:artifact_complete');
+        if (!artifactData) {
+          break;
+        }
+        chatState.completeArtifactBlock(mapArtifactPayloadToBlock(artifactData).artifact);
+        break;
+      }
+
       case 'response_chunk':
         {
           const chunk = String(data.content);
@@ -1496,6 +1690,18 @@ function App() {
           break;
         }
         chatState.addYouTubeApprovalBlock(mapYouTubeApprovalToBlock(approvalData));
+        break;
+      }
+
+      case 'artifact_deleted': {
+        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'active:artifact_deleted');
+        if (!artifactDeleted?.artifact_id) {
+          break;
+        }
+        chatState.markArtifactDeleted(artifactDeleted.artifact_id);
+        chatState.setChatHistory((previousHistory) =>
+          markArtifactDeletedInHistory(previousHistory, artifactDeleted.artifact_id),
+        );
         break;
       }
 

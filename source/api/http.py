@@ -22,6 +22,7 @@ from pydantic import BaseModel
 from typing import Any, Awaitable, Callable, List, Optional
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
+from ..core.connection import manager
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,171 @@ async def _get_cached_or_fetch_models(
 async def health_check():
     """Check if the server is running."""
     return {"status": "healthy"}
+
+
+# ============================================
+# Artifacts API
+# ============================================
+
+
+_VALID_ARTIFACT_TYPES = {"code", "markdown", "html"}
+_VALID_ARTIFACT_STATUSES = {"ready", "deleted"}
+
+
+class ArtifactCreateRequest(BaseModel):
+    """Request body for creating an artifact."""
+
+    type: str
+    title: str
+    content: str
+    language: Optional[str] = None
+    conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
+
+
+class ArtifactUpdateRequest(BaseModel):
+    """Request body for updating an artifact."""
+
+    title: Optional[str] = None
+    content: Optional[str] = None
+    language: Optional[str] = None
+
+
+def _validate_artifact_type(artifact_type: Optional[str]) -> Optional[str]:
+    if artifact_type is None:
+        return None
+    normalized = artifact_type.strip().lower()
+    if normalized not in _VALID_ARTIFACT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid artifact type: {artifact_type}",
+        )
+    return normalized
+
+
+def _validate_artifact_status(status: Optional[str]) -> Optional[str]:
+    if status is None:
+        return None
+    normalized = status.strip().lower()
+    if normalized not in _VALID_ARTIFACT_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid artifact status: {status}",
+        )
+    return normalized
+
+
+@router.get("/artifacts")
+async def list_artifacts(
+    query: str = "",
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """List stored artifacts with optional search and filtering."""
+    from ..services.artifacts import artifact_service
+
+    return await _run_in_thread(
+        artifact_service.list_artifacts,
+        query=query,
+        artifact_type=_validate_artifact_type(type),
+        status=_validate_artifact_status(status),
+        page=page,
+        page_size=page_size,
+    )
+
+
+@router.get("/artifacts/conversation/{conversation_id}")
+async def list_artifacts_for_conversation(
+    conversation_id: str,
+    query: str = "",
+    type: Optional[str] = None,
+    status: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+):
+    """List artifacts associated with a conversation."""
+    from ..services.artifacts import artifact_service
+
+    return await _run_in_thread(
+        artifact_service.list_artifacts,
+        query=query,
+        artifact_type=_validate_artifact_type(type),
+        status=_validate_artifact_status(status),
+        page=page,
+        page_size=page_size,
+        conversation_id=conversation_id,
+    )
+
+
+@router.get("/artifacts/{artifact_id}")
+async def get_artifact(artifact_id: str):
+    """Fetch a single artifact including full content."""
+    from ..services.artifacts import artifact_service
+
+    artifact = await _run_in_thread(artifact_service.get_artifact, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+    return artifact
+
+
+@router.post("/artifacts")
+async def create_artifact(payload: ArtifactCreateRequest):
+    """Create a new artifact record."""
+    from ..services.artifacts import artifact_service
+
+    artifact_type = _validate_artifact_type(payload.type)
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Artifact title is required")
+
+    return await _run_in_thread(
+        artifact_service.create_artifact,
+        artifact_type=artifact_type,
+        title=payload.title,
+        content=payload.content,
+        language=payload.language,
+        conversation_id=payload.conversation_id,
+        message_id=payload.message_id,
+    )
+
+
+@router.put("/artifacts/{artifact_id}")
+async def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest):
+    """Update artifact metadata or content."""
+    from ..services.artifacts import artifact_service
+
+    if (
+        payload.title is None
+        and payload.content is None
+        and payload.language is None
+    ):
+        artifact = await _run_in_thread(artifact_service.get_artifact, artifact_id)
+    else:
+        artifact = await _run_in_thread(
+            artifact_service.update_artifact,
+            artifact_id,
+            title=payload.title,
+            content=payload.content,
+            language=payload.language,
+        )
+
+    if artifact is None:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+    return artifact
+
+
+@router.delete("/artifacts/{artifact_id}")
+async def delete_artifact(artifact_id: str):
+    """Delete an artifact and notify connected clients."""
+    from ..services.artifacts import artifact_service
+
+    deleted = await _run_in_thread(artifact_service.delete_artifact, artifact_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+
+    await manager.broadcast_json("artifact_deleted", {"artifact_id": artifact_id})
+    return {"success": True, "artifact_id": artifact_id}
 
 
 # ============================================

@@ -1,0 +1,92 @@
+.inline-artifact-card {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.inline-artifact-card.status-streaming {
+  border-style: dashed;
+}
+
+.inline-artifact-card.status-deleted {
+  border-color: rgba(239, 68, 68, 0.25);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.inline-artifact-card-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.inline-artifact-card-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.inline-artifact-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.inline-artifact-card-meta span,
+.inline-artifact-status {
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.inline-artifact-status-ready {
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
+.inline-artifact-status-streaming {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fcd34d;
+}
+
+.inline-artifact-status-deleted {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+.inline-artifact-placeholder {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.inline-artifact-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.inline-artifact-actions button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.inline-artifact-actions button:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}

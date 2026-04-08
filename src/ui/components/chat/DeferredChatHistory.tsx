@@ -137,6 +137,12 @@ function estimateContentBlockChars(block: ContentBlock): number {
       + block.terminal.output.length;
   }
 
+  if (block.type === 'artifact') {
+    return block.artifact.title.length
+      + (block.artifact.language?.length ?? 0)
+      + (block.artifact.content?.length ?? 0);
+  }
+
   return safeStringLength(block.approval.title)
     + safeStringLength(block.approval.channel)
     + safeStringLength(block.approval.noCaptionsReason)
@@ -181,6 +187,8 @@ function contentBlocksMeasurementSignature(blocks: ContentBlock[] | undefined): 
   let toolComplete = 0;
   let terminalActive = 0;
   let terminalDone = 0;
+  let artifactsReady = 0;
+  let artifactsDeleted = 0;
   let approvalsPending = 0;
   let approvalsResolved = 0;
 
@@ -213,6 +221,15 @@ function contentBlocksMeasurementSignature(blocks: ContentBlock[] | undefined): 
       continue;
     }
 
+    if (block.type === 'artifact') {
+      if (block.artifact.status === 'deleted') {
+        artifactsDeleted += 1;
+      } else {
+        artifactsReady += 1;
+      }
+      continue;
+    }
+
     if (block.approval.status === 'pending') {
       approvalsPending += 1;
     } else {
@@ -220,7 +237,7 @@ function contentBlocksMeasurementSignature(blocks: ContentBlock[] | undefined): 
     }
   }
 
-  return `${blocks.length}:${textChars}:${thinkingChars}:${toolCalling}:${toolComplete}:${terminalActive}:${terminalDone}:${approvalsPending}:${approvalsResolved}`;
+  return `${blocks.length}:${textChars}:${thinkingChars}:${toolCalling}:${toolComplete}:${terminalActive}:${terminalDone}:${artifactsReady}:${artifactsDeleted}:${approvalsPending}:${approvalsResolved}`;
 }
 
 function messageLayoutSignature(

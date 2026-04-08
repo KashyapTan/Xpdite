@@ -4,7 +4,13 @@
 import { describe, expect, test } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useChatState } from '../../hooks/useChatState';
-import type { ToolCall, TerminalCommandBlock, YouTubeTranscriptionApprovalBlock, ChatStateSnapshot } from '../../types';
+import type {
+  ArtifactBlockData,
+  ToolCall,
+  TerminalCommandBlock,
+  YouTubeTranscriptionApprovalBlock,
+  ChatStateSnapshot,
+} from '../../types';
 
 describe('useChatState', () => {
   describe('initial state', () => {
@@ -375,6 +381,76 @@ describe('useChatState', () => {
     });
   });
 
+  describe('artifact block management', () => {
+    const streamingArtifact: ArtifactBlockData = {
+      artifactId: 'artifact-1',
+      artifactType: 'code',
+      title: 'demo.py',
+      language: 'python',
+      sizeBytes: 0,
+      lineCount: 0,
+      status: 'streaming',
+    };
+
+    test('should add artifact block', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addArtifactBlock(streamingArtifact);
+      });
+
+      expect(result.current.contentBlocks).toHaveLength(1);
+      expect(result.current.contentBlocks[0]).toEqual({
+        type: 'artifact',
+        artifact: streamingArtifact,
+      });
+    });
+
+    test('should complete artifact block in place', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addArtifactBlock(streamingArtifact);
+        result.current.completeArtifactBlock({
+          ...streamingArtifact,
+          status: 'ready',
+          sizeBytes: 11,
+          lineCount: 1,
+          content: 'print("hi")',
+        });
+      });
+
+      const block = result.current.contentBlocks[0];
+      expect(block.type).toBe('artifact');
+      if (block.type === 'artifact') {
+        expect(block.artifact.status).toBe('ready');
+        expect(block.artifact.content).toBe('print("hi")');
+      }
+    });
+
+    test('should mark artifact as deleted', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addArtifactBlock({
+          ...streamingArtifact,
+          status: 'ready',
+          sizeBytes: 11,
+          lineCount: 1,
+          content: 'print("hi")',
+        });
+        result.current.markArtifactDeleted('artifact-1');
+      });
+
+      const block = result.current.contentBlocks[0];
+      expect(block.type).toBe('artifact');
+      if (block.type === 'artifact') {
+        expect(block.artifact.status).toBe('deleted');
+        expect(block.artifact.content).toBeUndefined();
+      }
+    });
+  });
+
   describe('terminal block management', () => {
     test('should add terminal block', () => {
       const { result } = renderHook(() => useChatState());
@@ -647,6 +723,64 @@ describe('useChatState', () => {
       });
 
       expect(result.current.chatHistory).toHaveLength(0);
+    });
+
+    test('should persist artifact-only responses into chat history', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.startQuery('Build a file');
+        result.current.addArtifactBlock({
+          artifactId: 'artifact-1',
+          artifactType: 'code',
+          title: 'demo.py',
+          language: 'python',
+          sizeBytes: 0,
+          lineCount: 0,
+          status: 'streaming',
+        });
+        result.current.completeArtifactBlock({
+          artifactId: 'artifact-1',
+          artifactType: 'code',
+          title: 'demo.py',
+          language: 'python',
+          sizeBytes: 11,
+          lineCount: 1,
+          status: 'ready',
+          content: 'print("hi")',
+        });
+        result.current.completeResponse(undefined, 'gpt-4.1');
+      });
+
+      expect(result.current.chatHistory).toHaveLength(2);
+      expect(result.current.chatHistory[0].content).toBe('Build a file');
+      expect(result.current.chatHistory[1].content).toBe('');
+      expect(result.current.chatHistory[1].contentBlocks?.[0]).toEqual({
+        type: 'artifact',
+        artifact: {
+          artifactId: 'artifact-1',
+          artifactType: 'code',
+          title: 'demo.py',
+          language: 'python',
+          sizeBytes: 11,
+          lineCount: 1,
+          status: 'ready',
+          content: 'print("hi")',
+        },
+      });
+      expect(result.current.chatHistory[1].responseVersions?.[0].contentBlocks?.[0]).toEqual({
+        type: 'artifact',
+        artifact: {
+          artifactId: 'artifact-1',
+          artifactType: 'code',
+          title: 'demo.py',
+          language: 'python',
+          sizeBytes: 11,
+          lineCount: 1,
+          status: 'ready',
+          content: 'print("hi")',
+        },
+      });
     });
 
     test('should include response versions', () => {

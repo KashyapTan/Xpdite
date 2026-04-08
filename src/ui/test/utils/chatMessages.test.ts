@@ -157,6 +157,42 @@ describe('mapConversationContentBlock', () => {
     });
   });
 
+  test('maps artifact block correctly', () => {
+    expect(
+      mapConversationContentBlock({
+        type: 'artifact',
+        artifact_id: 'artifact-1',
+        artifact_type: 'code',
+        title: 'demo.py',
+        language: 'python',
+        size_bytes: 11,
+        line_count: 1,
+        status: 'ready',
+        content: 'print("hi")',
+        conversation_id: 'conv-1',
+        message_id: 'msg-1',
+        created_at: 1700000000,
+        updated_at: 1700000001,
+      }),
+    ).toEqual({
+      type: 'artifact',
+      artifact: {
+        artifactId: 'artifact-1',
+        artifactType: 'code',
+        title: 'demo.py',
+        language: 'python',
+        sizeBytes: 11,
+        lineCount: 1,
+        status: 'ready',
+        content: 'print("hi")',
+        conversationId: 'conv-1',
+        messageId: 'msg-1',
+        createdAt: 1700000000000,
+        updatedAt: 1700000001000,
+      },
+    });
+  });
+
   test('maps terminal_command block with snake_case fields', () => {
     expect(
       mapConversationContentBlock({
@@ -517,6 +553,52 @@ describe('serializeMessageForCopy', () => {
         contentBlocks: [{ type: 'tool_call', toolCall }],
       }),
     ).toBe('[Tool: read_file]\nFile contents here');
+  });
+
+  test('serializes artifact blocks', () => {
+    expect(
+      serializeMessageForCopy({
+        role: 'assistant',
+        content: '',
+        contentBlocks: [
+          {
+            type: 'artifact',
+            artifact: {
+              artifactId: 'artifact-1',
+              artifactType: 'code',
+              title: 'demo.py',
+              language: 'python',
+              sizeBytes: 11,
+              lineCount: 1,
+              status: 'ready',
+              content: 'print("hi")',
+            },
+          },
+        ],
+      }),
+    ).toBe('[Artifact: demo.py]\nprint("hi")');
+  });
+
+  test('serializes deleted artifact blocks as tombstones', () => {
+    expect(
+      serializeMessageForCopy({
+        role: 'assistant',
+        content: '',
+        contentBlocks: [
+          {
+            type: 'artifact',
+            artifact: {
+              artifactId: 'artifact-1',
+              artifactType: 'markdown',
+              title: 'spec.md',
+              sizeBytes: 0,
+              lineCount: 0,
+              status: 'deleted',
+            },
+          },
+        ],
+      }),
+    ).toBe('[Artifact: spec.md]\n[Deleted]');
   });
 
   test('serializes terminal command blocks', () => {

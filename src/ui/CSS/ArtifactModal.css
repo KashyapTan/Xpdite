@@ -1,0 +1,295 @@
+.artifact-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.68);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  z-index: 1200;
+}
+
+.artifact-modal-shell {
+  width: min(1080px, 100%);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: #111319;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.45);
+}
+
+.artifact-modal-header,
+.artifact-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.artifact-modal-footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: none;
+}
+
+.artifact-modal-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: #fff;
+}
+
+.artifact-modal-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.artifact-modal-meta span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.72);
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.artifact-status-ready {
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+}
+
+.artifact-status-streaming {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fcd34d;
+}
+
+.artifact-status-deleted {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fca5a5;
+}
+
+.artifact-modal-close {
+  border: none;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 1.5rem;
+  line-height: 1;
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.artifact-modal-error,
+.artifact-modal-loading,
+.artifact-modal-tombstone {
+  margin: 0 22px;
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 0.9rem;
+}
+
+.artifact-modal-error {
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+}
+
+.artifact-modal-loading,
+.artifact-modal-tombstone {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.artifact-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 22px;
+}
+
+.artifact-modal-read-view {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.artifact-modal-view-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.artifact-modal-tab-strip {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+}
+
+.artifact-modal-tab-strip button,
+.artifact-modal-copy-button,
+.artifact-modal-secondary,
+.artifact-modal-primary,
+.artifact-modal-danger {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+  border-radius: 10px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.artifact-modal-tab-strip button {
+  border: none;
+  background: transparent;
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+
+.artifact-modal-tab-strip button.active {
+  background: rgba(59, 130, 246, 0.2);
+  color: #bfdbfe;
+}
+
+.artifact-modal-primary {
+  background: rgba(59, 130, 246, 0.2);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+
+.artifact-modal-danger {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.32);
+  color: #fca5a5;
+}
+
+.artifact-modal-tab-strip button:hover,
+.artifact-modal-copy-button:hover,
+.artifact-modal-secondary:hover,
+.artifact-modal-primary:hover,
+.artifact-modal-danger:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.artifact-modal-preview-surface {
+  min-height: 420px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.03);
+  overflow: hidden;
+  padding: 16px;
+}
+
+.artifact-modal-preview-surface pre {
+  margin: 0;
+}
+
+.artifact-modal-html-frame {
+  width: 100%;
+  min-height: 520px;
+  border: none;
+  background: #fff;
+  border-radius: 8px;
+}
+
+.artifact-modal-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.artifact-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.artifact-modal-field label,
+.artifact-modal-editor-pane label,
+.artifact-modal-preview-header {
+  font-size: 0.82rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.artifact-modal-field input,
+.artifact-modal-editor {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(0, 0, 0, 0.22);
+  color: #fff;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+  box-sizing: border-box;
+}
+
+.artifact-modal-editor-pane,
+.artifact-modal-preview-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.artifact-modal-editor-pane {
+  grid-column: 1 / 2;
+}
+
+.artifact-modal-preview-pane {
+  grid-column: 2 / 3;
+}
+
+.artifact-modal-editor {
+  min-height: 480px;
+  resize: vertical;
+  font-family: 'Fira Code', Consolas, 'Courier New', monospace;
+  line-height: 1.5;
+}
+
+.artifact-modal-footer-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+@media (max-width: 860px) {
+  .artifact-modal-shell {
+    max-height: 96vh;
+  }
+
+  .artifact-modal-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .artifact-modal-editor-pane,
+  .artifact-modal-preview-pane {
+    grid-column: auto;
+  }
+
+  .artifact-modal-preview-surface {
+    min-height: 280px;
+  }
+
+  .artifact-modal-footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .artifact-modal-footer-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .artifact-modal-footer-actions button,
+  .artifact-modal-secondary {
+    width: 100%;
+  }
+}

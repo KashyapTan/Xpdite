@@ -47,7 +47,14 @@
  */
 
 import { discoverServerPort, getHttpBaseUrl, getWsBaseUrl } from './portDiscovery';
-import type { MemoryDetail, MemorySettings, MemorySummary, Skill } from '../types';
+import type {
+  ArtifactKind,
+  ArtifactStatus,
+  MemoryDetail,
+  MemorySettings,
+  MemorySummary,
+  Skill,
+} from '../types';
 
 /**
  * Awaits port discovery (cached after first call) and returns the HTTP base URL.
@@ -154,6 +161,68 @@ export interface FileEntry {
   is_directory: boolean;
   size: number | null;
   extension: string | null;
+}
+
+export interface ArtifactRecord {
+  id: string;
+  type: ArtifactKind;
+  title: string;
+  language?: string;
+  content?: string;
+  sizeBytes: number;
+  lineCount: number;
+  status: ArtifactStatus;
+  conversationId?: string | null;
+  messageId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
+interface RawArtifactRecord {
+  id: string;
+  type: ArtifactKind;
+  title: string;
+  language?: string | null;
+  content?: string;
+  size_bytes: number;
+  line_count: number;
+  status: ArtifactStatus;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  created_at?: number;
+  updated_at?: number;
+}
+
+export interface ArtifactListResponse {
+  artifacts: ArtifactRecord[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+export interface ArtifactListOptions {
+  query?: string;
+  type?: ArtifactKind;
+  status?: Exclude<ArtifactStatus, 'streaming'>;
+  page?: number;
+  pageSize?: number;
+}
+
+function normalizeArtifact(raw: RawArtifactRecord): ArtifactRecord {
+  return {
+    id: raw.id,
+    type: raw.type,
+    title: raw.title,
+    language: raw.language ?? undefined,
+    content: raw.content,
+    sizeBytes: raw.size_bytes ?? 0,
+    lineCount: raw.line_count ?? 0,
+    status: raw.status,
+    conversationId: raw.conversation_id,
+    messageId: raw.message_id,
+    createdAt: raw.created_at,
+    updatedAt: raw.updated_at,
+  };
 }
 
 function normalizeProviderModel(provider: string, rawModel: RawProviderModel): ProviderModel | null {
@@ -780,6 +849,156 @@ export const api = {
       body: JSON.stringify({ template }),
     });
     if (!res.ok) throw new Error('Failed to save system prompt');
+  },
+
+  // ============================================
+  // Artifacts API
+  // ============================================
+
+  async listArtifacts(options: ArtifactListOptions = {}): Promise<ArtifactListResponse> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/artifacts`);
+    if (options.query) {
+      url.searchParams.set('query', options.query);
+    }
+    if (options.type) {
+      url.searchParams.set('type', options.type);
+    }
+    if (options.status) {
+      url.searchParams.set('status', options.status);
+    }
+    if (options.page) {
+      url.searchParams.set('page', String(options.page));
+    }
+    if (options.pageSize) {
+      url.searchParams.set('page_size', String(options.pageSize));
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch artifacts');
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    return {
+      artifacts: Array.isArray(payload?.artifacts)
+        ? payload.artifacts.map((artifact: RawArtifactRecord) => normalizeArtifact(artifact))
+        : [],
+      total: typeof payload?.total === 'number' ? payload.total : 0,
+      page: typeof payload?.page === 'number' ? payload.page : 1,
+      pageSize: typeof payload?.page_size === 'number' ? payload.page_size : (options.pageSize ?? 50),
+    };
+  },
+
+  async getArtifactsForConversation(
+    conversationId: string,
+    options: ArtifactListOptions = {},
+  ): Promise<ArtifactListResponse> {
+    const base = await baseUrl();
+    const url = new URL(`${base}/api/artifacts/conversation/${encodeURIComponent(conversationId)}`);
+    if (options.query) {
+      url.searchParams.set('query', options.query);
+    }
+    if (options.type) {
+      url.searchParams.set('type', options.type);
+    }
+    if (options.status) {
+      url.searchParams.set('status', options.status);
+    }
+    if (options.page) {
+      url.searchParams.set('page', String(options.page));
+    }
+    if (options.pageSize) {
+      url.searchParams.set('page_size', String(options.pageSize));
+    }
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch conversation artifacts');
+      throw new Error(detail);
+    }
+
+    const payload = await response.json();
+    return {
+      artifacts: Array.isArray(payload?.artifacts)
+        ? payload.artifacts.map((artifact: RawArtifactRecord) => normalizeArtifact(artifact))
+        : [],
+      total: typeof payload?.total === 'number' ? payload.total : 0,
+      page: typeof payload?.page === 'number' ? payload.page : 1,
+      pageSize: typeof payload?.page_size === 'number' ? payload.page_size : (options.pageSize ?? 50),
+    };
+  },
+
+  async getArtifact(artifactId: string): Promise<ArtifactRecord> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`);
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch artifact');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return normalizeArtifact(payload as RawArtifactRecord);
+  },
+
+  async createArtifact(input: {
+    type: ArtifactKind;
+    title: string;
+    content: string;
+    language?: string;
+    conversationId?: string | null;
+    messageId?: string | null;
+  }): Promise<ArtifactRecord> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/artifacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: input.type,
+        title: input.title,
+        content: input.content,
+        language: input.language,
+        conversation_id: input.conversationId,
+        message_id: input.messageId,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to create artifact');
+      throw new Error(detail);
+    }
+    return normalizeArtifact(await response.json() as RawArtifactRecord);
+  },
+
+  async updateArtifact(
+    artifactId: string,
+    updates: {
+      title?: string;
+      content?: string;
+      language?: string;
+    },
+  ): Promise<ArtifactRecord> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to update artifact');
+      throw new Error(detail);
+    }
+    return normalizeArtifact(await response.json() as RawArtifactRecord);
+  },
+
+  async deleteArtifact(artifactId: string): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to delete artifact');
+      throw new Error(detail);
+    }
   },
 
   // ============================================

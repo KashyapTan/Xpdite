@@ -72,12 +72,33 @@ function serializeYouTubeApprovalBlock(approval: YouTubeTranscriptionApprovalBlo
   ].join('\n');
 }
 
+function serializeArtifactBlock(messageArtifact: {
+  title: string;
+  status: 'streaming' | 'ready' | 'deleted';
+  content?: string;
+}): string {
+  const prefix = `[Artifact: ${messageArtifact.title}]`;
+  if (messageArtifact.status === 'deleted') {
+    return `${prefix}\n[Deleted]`;
+  }
+  if (messageArtifact.content?.trim()) {
+    return `${prefix}\n${messageArtifact.content}`;
+  }
+  if (messageArtifact.status === 'streaming') {
+    return `${prefix}\n[Streaming]`;
+  }
+  return prefix;
+}
+
 export function serializeMessageForCopy(message: ChatMessage): string {
   if (message.contentBlocks && message.contentBlocks.length > 0) {
     return message.contentBlocks
       .map((block) => {
         if (block.type === 'text' || block.type === 'thinking') {
           return block.content;
+        }
+        if (block.type === 'artifact') {
+          return serializeArtifactBlock(block.artifact);
         }
         if (block.type === 'tool_call') {
           return serializeToolCall(block.toolCall);

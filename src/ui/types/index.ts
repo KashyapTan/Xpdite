@@ -33,9 +33,28 @@ export interface ToolCall {
   partialResult?: string;
 }
 
+export type ArtifactKind = 'code' | 'markdown' | 'html';
+export type ArtifactStatus = 'streaming' | 'ready' | 'deleted';
+
+export interface ArtifactBlockData {
+  artifactId: string;
+  artifactType: ArtifactKind;
+  title: string;
+  language?: string;
+  sizeBytes: number;
+  lineCount: number;
+  status: ArtifactStatus;
+  content?: string;
+  conversationId?: string | null;
+  messageId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export type ContentBlock =
   | { type: 'text'; content: string }
   | { type: 'thinking'; content: string }
+  | { type: 'artifact'; artifact: ArtifactBlockData }
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'terminal_command'; terminal: TerminalCommandBlock }
   | { type: 'youtube_transcription_approval'; approval: YouTubeTranscriptionApprovalBlock };
@@ -276,9 +295,26 @@ export interface ConversationSavedContent {
   turn?: ConversationTurnPayload;
 }
 
+export interface ArtifactContentPayload {
+  artifact_id: string;
+  artifact_type: ArtifactKind;
+  title: string;
+  language?: string | null;
+  size_bytes: number;
+  line_count: number;
+  status: ArtifactStatus;
+  content?: string;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  created_at?: number;
+  updated_at?: number;
+}
+
 export interface ConversationContentBlockPayload {
   type: string;
   content?: string;
+  artifact_id?: string;
+  artifact_type?: ArtifactKind;
   name?: string;
   args?: Record<string, unknown>;
   server?: string;
@@ -300,6 +336,11 @@ export interface ConversationContentBlockPayload {
   timed_out?: boolean;
   timedOut?: boolean;
   title?: string;
+  language?: string | null;
+  size_bytes?: number;
+  sizeBytes?: number;
+  line_count?: number;
+  lineCount?: number;
   channel?: string;
   duration?: string;
   duration_seconds?: number;
@@ -313,6 +354,10 @@ export interface ConversationContentBlockPayload {
   whisper_model?: string;
   compute_backend?: string;
   playlist_note?: string;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  created_at?: number;
+  updated_at?: number;
 }
 
 export type ConversationImagePayload = { name: string; thumbnail: string | null } | string;

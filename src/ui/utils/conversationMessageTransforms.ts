@@ -25,6 +25,26 @@ export function normalizeTimestamp(timestamp?: number): number | undefined {
 export function mapConversationContentBlock(
   block: ConversationContentBlockPayload,
 ): ContentBlock {
+  if (block.type === 'artifact') {
+    return {
+      type: 'artifact',
+      artifact: {
+        artifactId: block.artifact_id ?? '',
+        artifactType: (block.artifact_type ?? 'code') as 'code' | 'markdown' | 'html',
+        title: block.title ?? 'Untitled artifact',
+        language: block.language ?? undefined,
+        sizeBytes: block.size_bytes ?? block.sizeBytes ?? 0,
+        lineCount: block.line_count ?? block.lineCount ?? 0,
+        status: (block.status as 'streaming' | 'ready' | 'deleted') ?? 'ready',
+        content: block.content,
+        conversationId: block.conversation_id,
+        messageId: block.message_id,
+        createdAt: normalizeTimestamp(block.created_at) ?? block.created_at,
+        updatedAt: normalizeTimestamp(block.updated_at) ?? block.updated_at,
+      },
+    };
+  }
+
   if (block.type === 'thinking') {
     return {
       type: 'thinking',
