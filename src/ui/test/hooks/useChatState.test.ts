@@ -428,6 +428,41 @@ describe('useChatState', () => {
       }
     });
 
+    test('should update existing artifact block without appending a new one', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.updateArtifactBlock({
+          ...streamingArtifact,
+          status: 'ready',
+          sizeBytes: 11,
+          lineCount: 1,
+          content: 'print("hi")',
+        });
+      });
+
+      expect(result.current.contentBlocks).toEqual([]);
+
+      act(() => {
+        result.current.addArtifactBlock(streamingArtifact);
+        result.current.updateArtifactBlock({
+          ...streamingArtifact,
+          status: 'ready',
+          sizeBytes: 11,
+          lineCount: 1,
+          content: 'print("hi")',
+        });
+      });
+
+      expect(result.current.contentBlocks).toHaveLength(1);
+      const block = result.current.contentBlocks[0];
+      expect(block.type).toBe('artifact');
+      if (block.type === 'artifact') {
+        expect(block.artifact.status).toBe('ready');
+        expect(block.artifact.content).toBe('print("hi")');
+      }
+    });
+
     test('should mark artifact as deleted', () => {
       const { result } = renderHook(() => useChatState());
 

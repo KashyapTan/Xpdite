@@ -17,7 +17,12 @@ from ollama import AsyncClient as OllamaAsyncClient
 from ...infrastructure.config import DEFAULT_MODEL, MAX_TOOL_RESULT_LENGTH
 from ...core.connection import broadcast_message
 from ...core.request_context import is_current_request_cancelled, get_current_model
-from ...llm.core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
+from ...llm.core.artifacts import (
+    ArtifactStreamParser,
+    apply_artifact_stream_events,
+    emit_artifact_stream_events,
+    serialize_blocks_for_model_content,
+)
 from .manager import mcp_manager
 from .retriever import retriever
 from ..executors.terminal_executor import execute_terminal_tool, is_terminal_tool
@@ -266,6 +271,7 @@ async def handle_mcp_tool_calls(
 
     # Normalize initial tool calls from the detection response
     current_content = response.message.content or ""
+    current_model_content: Optional[str] = current_content or None
     current_thinking = ""
     if hasattr(response.message, "thinking") and response.message.thinking:
         current_thinking = response.message.thinking
@@ -303,12 +309,26 @@ async def handle_mcp_tool_calls(
                 parser = ArtifactStreamParser()
                 detection_events = parser.feed(current_content)
                 detection_events.extend(parser.finalize())
-                current_content = await emit_artifact_stream_events(
+                current_round_blocks: List[Dict[str, Any]] = []
+                current_content = apply_artifact_stream_events(
+                    detection_events,
+                    current_round_blocks,
+                )
+                current_model_content = (
+                    serialize_blocks_for_model_content(
+                        current_round_blocks,
+                        fallback_text=current_content,
+                    )
+                    or None
+                )
+                await emit_artifact_stream_events(
                     detection_events,
                     interleaved_blocks,
                 )
                 if current_content:
                     all_accumulated_text.append(current_content)
+            else:
+                current_model_content = None
             is_first_round = False
         elif current_content:
             all_accumulated_text.append(current_content)
@@ -316,7 +336,7 @@ async def handle_mcp_tool_calls(
         # Add assistant message (with tool calls) to history
         assistant_msg: Dict[str, Any] = {
             "role": "assistant",
-            "content": current_content or None,
+            "content": current_model_content,
         }
         assistant_msg["tool_calls"] = [
             {
@@ -541,6 +561,7 @@ async def handle_mcp_tool_calls(
         # Text is broadcast to the user in real-time inside this call
         (
             current_content,
+            current_model_content,
             current_tool_calls,
             round_stats,
             current_thinking,
@@ -589,21 +610,22 @@ async def _stream_tool_follow_up(
     tools: list,
     interleaved_blocks: List[Dict[str, Any]],
     client: Optional[OllamaAsyncClient] = None,
-) -> tuple[str, List[Dict[str, Any]], Dict[str, int], str]:
+) -> tuple[str, Optional[str], List[Dict[str, Any]], Dict[str, int], str]:
     """
     Stream a follow-up Ollama call during the tool loop.
 
     Broadcasts text chunks to the user in real-time using the async client.
     Collects any tool calls that appear in the stream for the next round.
 
-    Returns: (accumulated_text, tool_calls_found, token_stats, thinking_text)
+    Returns: (visible_text, model_content, tool_calls_found, token_stats, thinking_text)
     """
     async_client = client or OllamaAsyncClient()
 
     async def _consume_stream(
         think_enabled: bool,
-    ) -> tuple[str, List[Dict[str, Any]], Dict[str, int], str]:
+    ) -> tuple[str, Optional[str], List[Dict[str, Any]], Dict[str, int], str]:
         text_chunks: list[str] = []
+        current_round_blocks: List[Dict[str, Any]] = []
         thinking_chunks: list[str] = []
         tool_calls_found: List[Dict[str, Any]] = []
         token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
@@ -662,7 +684,11 @@ async def _stream_tool_follow_up(
                     )
                     thinking_complete_sent = True
                 events = artifact_parser.feed(content_token)
-                cleaned_text = await emit_artifact_stream_events(
+                cleaned_text = apply_artifact_stream_events(
+                    events,
+                    current_round_blocks,
+                )
+                await emit_artifact_stream_events(
                     events,
                     interleaved_blocks,
                 )
@@ -714,26 +740,37 @@ async def _stream_tool_follow_up(
 
         final_events = artifact_parser.finalize()
         if final_events:
-            cleaned_text = await emit_artifact_stream_events(
+            cleaned_text = apply_artifact_stream_events(
+                final_events,
+                current_round_blocks,
+            )
+            await emit_artifact_stream_events(
                 final_events,
                 interleaved_blocks,
             )
             if cleaned_text:
                 text_chunks.append(cleaned_text)
 
+        visible_text = "".join(text_chunks)
         return (
-            "".join(text_chunks),
+            visible_text,
+            serialize_blocks_for_model_content(
+                current_round_blocks,
+                fallback_text=visible_text,
+            )
+            or None,
             tool_calls_found,
             token_stats,
             "".join(thinking_chunks),
         )
 
     try:
-        text, tool_calls_found, token_stats, thinking_text = await _consume_stream(
+        text, model_content, tool_calls_found, token_stats, thinking_text = await _consume_stream(
             think_enabled=True
         )
         if (
             not text
+            and not model_content
             and not thinking_text
             and not tool_calls_found
             and not is_current_request_cancelled()
@@ -743,7 +780,7 @@ async def _stream_tool_follow_up(
             )
             return await _consume_stream(think_enabled=False)
 
-        return text, tool_calls_found, token_stats, thinking_text
+        return text, model_content, tool_calls_found, token_stats, thinking_text
 
     except Exception as e:
         if not is_current_request_cancelled():
@@ -759,4 +796,4 @@ async def _stream_tool_follow_up(
                     "error", "Tool follow-up streaming error. Please retry."
                 )
 
-    return "", [], {"prompt_eval_count": 0, "eval_count": 0}, ""
+    return "", None, [], {"prompt_eval_count": 0, "eval_count": 0}, ""

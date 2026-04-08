@@ -1097,4 +1097,63 @@ describe('api singleton - HTTP endpoints', () => {
       });
     });
   });
+
+  describe('artifact auth headers', () => {
+    const originalElectronApi = window.electronAPI;
+
+    afterEach(() => {
+      window.electronAPI = originalElectronApi;
+    });
+
+    test('adds the Electron server token header for artifact reads', async () => {
+      window.electronAPI = {
+        getServerToken: vi.fn().mockResolvedValue('artifact-token'),
+      } as typeof window.electronAPI;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          artifacts: [],
+          total: 0,
+          page: 1,
+          page_size: 50,
+        }),
+      });
+
+      await api.listArtifacts();
+
+      const [, init] = vi.mocked(fetch).mock.calls[0];
+      expect(init).toBeDefined();
+      expect((init?.headers as Headers).get('X-Xpdite-Server-Token')).toBe('artifact-token');
+    });
+
+    test('adds the Electron server token header and content type for artifact writes', async () => {
+      window.electronAPI = {
+        getServerToken: vi.fn().mockResolvedValue('artifact-token'),
+      } as typeof window.electronAPI;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          id: 'artifact-1',
+          type: 'code',
+          title: 'demo.py',
+          language: 'python',
+          size_bytes: 11,
+          line_count: 1,
+          status: 'ready',
+        }),
+      });
+
+      await api.createArtifact({
+        type: 'code',
+        title: 'demo.py',
+        content: 'print("hi")',
+        language: 'python',
+      });
+
+      const [, init] = vi.mocked(fetch).mock.calls[0];
+      expect(init).toBeDefined();
+      expect((init?.headers as Headers).get('X-Xpdite-Server-Token')).toBe('artifact-token');
+      expect((init?.headers as Headers).get('Content-Type')).toBe('application/json');
+    });
+  });
 });

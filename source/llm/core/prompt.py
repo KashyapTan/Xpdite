@@ -7,6 +7,11 @@ Interpolated at request time - never hardcoded or cached.
 import platform
 from datetime import datetime
 
+from .artifacts import (
+    ARTIFACT_LITERAL_CLOSE_SENTINEL,
+    ARTIFACT_LITERAL_OPEN_SENTINEL,
+)
+
 
 _BASE_TEMPLATE = """\
 You are Xpdite, a powerful desktop AI assistant and task automation tool.
@@ -121,6 +126,8 @@ Rules:
 - Do not nest `<artifact>` blocks inside other artifacts
 - Always close the tag
 - For `html`, return a self-contained document or fragment with inline assets only
+- If the artifact body must contain literal `<artifact` text, replace it with `{{artifact_open_sentinel}}`
+- If the artifact body must contain literal `</artifact>` text, replace it with `{{artifact_close_sentinel}}`
 """
 
 
@@ -224,6 +231,12 @@ def build_system_prompt(
     prompt = prompt.replace("{{user_profile_block}}", user_profile_block)
     prompt = prompt.replace("{{memory_block}}", memory_block)
     prompt = prompt.replace("{{artifacts_block}}", artifacts_block)
+    prompt = prompt.replace(
+        "{{artifact_open_sentinel}}", ARTIFACT_LITERAL_OPEN_SENTINEL
+    )
+    prompt = prompt.replace(
+        "{{artifact_close_sentinel}}", ARTIFACT_LITERAL_CLOSE_SENTINEL
+    )
     prompt = prompt.replace("{{skills_block}}", skills_block)
     # print(f'{"="*10} SYSTEM PROMPT {"="*10}')
     # print(prompt)

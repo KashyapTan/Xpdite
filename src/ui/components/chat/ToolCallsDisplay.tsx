@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import React from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { ToolCall, ContentBlock } from '../../types';
+import type { ArtifactBlockData, ToolCall, ContentBlock } from '../../types';
 import { CodeBlock } from './CodeBlock';
 import { InlineArtifactBlock } from './InlineArtifactBlock';
 import { InlineTerminalBlock } from './InlineTerminalBlock';
@@ -182,6 +182,8 @@ interface ToolChainTimelineProps {
   isStreaming?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
@@ -196,6 +198,8 @@ function ToolChainTimeline({
   isStreaming = false,
   expanded: controlledExpanded,
   onToggleExpanded,
+  onArtifactUpdated,
+  onArtifactDeleted,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
@@ -347,7 +351,14 @@ function ToolChainTimeline({
           );
         }
         if (block.type === 'artifact') {
-          return <InlineArtifactBlock key={`pre-${idx}`} artifact={block.artifact} />;
+          return (
+            <InlineArtifactBlock
+              key={`pre-${idx}`}
+              artifact={block.artifact}
+              onArtifactUpdated={onArtifactUpdated}
+              onArtifactDeleted={onArtifactDeleted}
+            />
+          );
         }
         return null;
       })}
@@ -480,6 +491,8 @@ function ToolChainTimeline({
             <InlineArtifactBlock
               key={`resp-${idx}`}
               artifact={block.artifact}
+              onArtifactUpdated={onArtifactUpdated}
+              onArtifactDeleted={onArtifactDeleted}
             />
           );
         }
@@ -519,6 +532,8 @@ interface InlineContentBlocksProps {
   isStreaming?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
@@ -533,6 +548,8 @@ export function InlineContentBlocks({
   isStreaming = false,
   expanded,
   onToggleExpanded,
+  onArtifactUpdated,
+  onArtifactDeleted,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
@@ -558,6 +575,8 @@ export function InlineContentBlocks({
         isStreaming={isStreaming}
         expanded={expanded}
         onToggleExpanded={onToggleExpanded}
+        onArtifactUpdated={onArtifactUpdated}
+        onArtifactDeleted={onArtifactDeleted}
         onTerminalApprove={onTerminalApprove}
         onTerminalDeny={onTerminalDeny}
         onTerminalApproveRemember={onTerminalApproveRemember}
@@ -586,6 +605,8 @@ export function InlineContentBlocks({
             <InlineArtifactBlock
               key={idx}
               artifact={block.artifact}
+              onArtifactUpdated={onArtifactUpdated}
+              onArtifactDeleted={onArtifactDeleted}
             />
           );
         }
@@ -672,6 +693,8 @@ function InterleavedContentBlocks({
   blocks,
   isThinking,
   isStreaming = false,
+  onArtifactUpdated,
+  onArtifactDeleted,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
@@ -700,6 +723,8 @@ function InterleavedContentBlocks({
             <InlineArtifactBlock
               key={`artifact-${groupIdx}`}
               artifact={group.block.artifact}
+              onArtifactUpdated={onArtifactUpdated}
+              onArtifactDeleted={onArtifactDeleted}
             />
           );
         }
@@ -711,6 +736,8 @@ function InterleavedContentBlocks({
             blocks={group.blocks}
             isThinking={isThinking}
             isStreaming={isStreaming}
+            onArtifactUpdated={onArtifactUpdated}
+            onArtifactDeleted={onArtifactDeleted}
             onTerminalApprove={onTerminalApprove}
             onTerminalDeny={onTerminalDeny}
             onTerminalApproveRemember={onTerminalApproveRemember}
@@ -730,6 +757,8 @@ interface CollapsibleChainGroupProps {
   blocks: ContentBlock[];
   isThinking?: boolean;
   isStreaming?: boolean;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;
@@ -742,6 +771,8 @@ function CollapsibleChainGroup({
   blocks,
   isThinking,
   // isStreaming is accepted but not used currently - kept for API consistency
+  onArtifactUpdated,
+  onArtifactDeleted,
   onTerminalApprove,
   onTerminalDeny,
   onTerminalApproveRemember,
@@ -869,6 +900,17 @@ function CollapsibleChainGroup({
                   key={idx}
                   toolCall={block.toolCall}
                   isLast={isLast}
+                />
+              );
+            }
+
+            if (block.type === 'artifact') {
+              return (
+                <InlineArtifactBlock
+                  key={idx}
+                  artifact={block.artifact}
+                  onArtifactUpdated={onArtifactUpdated}
+                  onArtifactDeleted={onArtifactDeleted}
                 />
               );
             }

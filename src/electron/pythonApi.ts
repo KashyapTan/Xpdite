@@ -1,4 +1,5 @@
 import { spawn, ChildProcess, SpawnOptions } from 'child_process';
+import { randomBytes } from 'crypto';
 import path from 'path';
 import { isDev } from './utils.js';
 import { app } from 'electron';
@@ -6,6 +7,7 @@ import fs from 'fs';
 
 let pythonProcess: ChildProcess | null = null;
 let detectedPort: number = 8000;
+const serverToken = randomBytes(32).toString('hex');
 
 /** Callback for XPDITE_BOOT markers parsed from Python stdout. */
 type BootMarkerCallback = (marker: { phase: string; message: string; progress: number }) => void;
@@ -14,6 +16,10 @@ let bootMarkerCallback: BootMarkerCallback | null = null;
 /** Register a listener for structured boot markers from the Python child process. */
 export function onBootMarker(cb: BootMarkerCallback) {
     bootMarkerCallback = cb;
+}
+
+export function getServerToken(): string {
+    return serverToken;
 }
 
 /** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
@@ -255,6 +261,7 @@ export async function startPythonServer(): Promise<void> {
                 // (e.g. %APPDATA%/Xpdite on Windows). In dev the Python
                 // config.py falls back to <PROJECT_ROOT>/user_data.
                 ...(!isDev() ? { XPDITE_USER_DATA_DIR: app.getPath('userData') } : {}),
+                XPDITE_SERVER_TOKEN: serverToken,
             },
         };
 

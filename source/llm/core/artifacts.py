@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 import uuid
 from dataclasses import dataclass
-from typing import Any, Dict, List, Literal, Optional
+from html import escape as html_escape
+from typing import Any, Dict, Iterable, List, Literal, Optional
 
 from ...core.connection import broadcast_message
 
@@ -13,6 +14,8 @@ ArtifactType = Literal["code", "markdown", "html"]
 
 _OPEN_TAG_PREFIX = "<artifact"
 _CLOSE_TAG = "</artifact>"
+ARTIFACT_LITERAL_OPEN_SENTINEL = "[[ARTIFACT_OPEN]]"
+ARTIFACT_LITERAL_CLOSE_SENTINEL = "[[ARTIFACT_CLOSE]]"
 _ATTR_PATTERN = re.compile(r"""([a-zA-Z_:][\w:.-]*)\s*=\s*(['"])(.*?)\2""", re.DOTALL)
 _ALLOWED_ARTIFACT_TYPES = {"code", "markdown", "html"}
 
@@ -47,6 +50,73 @@ def _artifact_block_payload(
     if content is not None:
         payload["content"] = content
     return payload
+
+
+def escape_artifact_literals(content: str) -> str:
+    """Replace literal artifact delimiters with transport-safe sentinels."""
+    if not content:
+        return ""
+
+    return content.replace(
+        _OPEN_TAG_PREFIX, ARTIFACT_LITERAL_OPEN_SENTINEL
+    ).replace(_CLOSE_TAG, ARTIFACT_LITERAL_CLOSE_SENTINEL)
+
+
+def restore_artifact_literals(content: str) -> str:
+    """Restore transport sentinels back to literal artifact delimiters."""
+    if not content:
+        return ""
+
+    return content.replace(
+        ARTIFACT_LITERAL_OPEN_SENTINEL, _OPEN_TAG_PREFIX
+    ).replace(ARTIFACT_LITERAL_CLOSE_SENTINEL, _CLOSE_TAG)
+
+
+def serialize_artifact_block_for_transport(block: Dict[str, Any]) -> str:
+    """Encode a persisted artifact block into model-facing XML transport."""
+    artifact_type = str(block.get("artifact_type") or "").strip()
+    title = str(block.get("title") or "").strip()
+    if artifact_type not in _ALLOWED_ARTIFACT_TYPES or not title:
+        return ""
+
+    attributes = [
+        f'type="{html_escape(artifact_type, quote=True)}"',
+        f'title="{html_escape(title, quote=True)}"',
+    ]
+    language = str(block.get("language") or "").strip()
+    if artifact_type == "code" and language:
+        attributes.append(f'language="{html_escape(language, quote=True)}"')
+
+    content = str(block.get("content") or "")
+    if str(block.get("status") or "").lower() == "deleted":
+        return f'[Artifact "{title}" is unavailable]'
+    if not content:
+        return ""
+
+    safe_content = escape_artifact_literals(content)
+    return f'<artifact {" ".join(attributes)}>{safe_content}</artifact>'
+
+
+def serialize_blocks_for_model_content(
+    blocks: Iterable[Dict[str, Any]] | None,
+    *,
+    fallback_text: str = "",
+) -> str:
+    """Serialize visible text/artifacts into a single model-facing string."""
+    if not blocks:
+        return fallback_text
+
+    parts: List[str] = []
+    for block in blocks:
+        block_type = str(block.get("type") or "")
+        if block_type == "text":
+            parts.append(str(block.get("content") or ""))
+            continue
+        if block_type == "artifact":
+            parts.append(serialize_artifact_block_for_transport(block))
+
+    serialized = "".join(parts)
+    return serialized if serialized.strip() else fallback_text
 
 
 def append_text_block(interleaved_blocks: List[Dict[str, Any]], text: str) -> None:
@@ -84,15 +154,16 @@ class ArtifactChunk:
         )
 
     def complete_payload(self) -> Dict[str, Any]:
+        restored_content = restore_artifact_literals(self.content)
         return _artifact_block_payload(
             artifact_id=self.artifact_id,
             artifact_type=self.artifact_type,
             title=self.title,
             language=self.language,
-            size_bytes=len(self.content.encode("utf-8")),
-            line_count=_count_lines(self.content),
+            size_bytes=len(restored_content.encode("utf-8")),
+            line_count=_count_lines(restored_content),
             status="ready",
-            content=self.content,
+            content=restored_content,
         )
 
 
@@ -255,10 +326,12 @@ class ArtifactStreamParser:
         events: List[Dict[str, Any]] = []
 
         if self._active_artifact is not None:
+            restored_partial = restore_artifact_literals(
+                f"{self._active_artifact.content}{self._buffer}"
+            )
             fallback_text = (
                 f"{self._active_artifact.open_tag}"
-                f"{self._active_artifact.content}"
-                f"{self._buffer}"
+                f"{restored_partial}"
             )
             events.append(
                 {
@@ -280,14 +353,11 @@ class ArtifactStreamParser:
         return events
 
 
-async def emit_artifact_stream_events(
+def apply_artifact_stream_events(
     events: List[Dict[str, Any]],
     interleaved_blocks: List[Dict[str, Any]],
 ) -> str:
-    """Broadcast parser events and update ordered content blocks.
-
-    Returns the cleaned conversational text emitted by these events.
-    """
+    """Update ordered content blocks without broadcasting side effects."""
     text_parts: List[str] = []
 
     for event in events:
@@ -298,6 +368,30 @@ async def emit_artifact_stream_events(
                 continue
             text_parts.append(text)
             append_text_block(interleaved_blocks, text)
+            continue
+
+        if event_type == "artifact_complete":
+            interleaved_blocks.append(dict(event["artifact"]))
+
+    return "".join(text_parts)
+
+
+async def emit_artifact_stream_events(
+    events: List[Dict[str, Any]],
+    interleaved_blocks: List[Dict[str, Any]],
+) -> str:
+    """Broadcast parser events and update ordered content blocks.
+
+    Returns the cleaned conversational text emitted by these events.
+    """
+    text_output = apply_artifact_stream_events(events, interleaved_blocks)
+
+    for event in events:
+        event_type = event.get("type")
+        if event_type == "text":
+            text = str(event.get("content", ""))
+            if not text:
+                continue
             await broadcast_message("response_chunk", text)
             continue
 
@@ -306,9 +400,7 @@ async def emit_artifact_stream_events(
             continue
 
         if event_type == "artifact_complete":
-            artifact_payload = dict(event["artifact"])
-            interleaved_blocks.append(artifact_payload)
-            await broadcast_message("artifact_complete", artifact_payload)
+            await broadcast_message("artifact_complete", dict(event["artifact"]))
             continue
 
         if event_type == "artifact_abandoned":
@@ -317,4 +409,4 @@ async def emit_artifact_stream_events(
                 {"artifact_id": event["artifact_id"], "reason": "abandoned"},
             )
 
-    return "".join(text_parts)
+    return text_output

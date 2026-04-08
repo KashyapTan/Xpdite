@@ -18,6 +18,7 @@ from ..core.connection import (
     set_current_tab_id,
 )
 from ..core.state import app_state
+from ..core.thread_pool import run_in_thread
 from ..infrastructure.database import db
 
 logger = logging.getLogger(__name__)
@@ -521,7 +522,7 @@ class MessageHandler:
         """Handle conversation deletion."""
         conv_id = data.get("conversation_id")
         if conv_id:
-            self._conversation_service().delete_conversation(conv_id)
+            await run_in_thread(self._conversation_service().delete_conversation, conv_id)
             await self.websocket.send_text(
                 json.dumps(
                     {

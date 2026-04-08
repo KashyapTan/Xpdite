@@ -50,6 +50,7 @@ interface UseChatStateReturn {
   addToolCall: (toolCall: ToolCall) => void;
   updateToolCall: (toolCall: ToolCall) => void;
   addArtifactBlock: (artifact: ArtifactBlockData) => void;
+  updateArtifactBlock: (artifact: ArtifactBlockData) => void;
   completeArtifactBlock: (artifact: ArtifactBlockData) => void;
   markArtifactDeleted: (artifactId: string) => void;
   addTerminalBlock: (terminal: TerminalCommandBlock) => void;
@@ -161,6 +162,29 @@ export function useChatState(): UseChatStateReturn {
     } else {
       nextBlocks.push({ type: 'artifact', artifact });
     }
+
+    contentBlocksRef.current = nextBlocks;
+    setContentBlocks(nextBlocks);
+  }, []);
+
+  const updateArtifactBlock = useCallback((artifact: ArtifactBlockData) => {
+    const nextBlocks = [...contentBlocksRef.current];
+    const existingIndex = nextBlocks.findIndex(
+      (block) => block.type === 'artifact' && block.artifact.artifactId === artifact.artifactId,
+    );
+
+    if (existingIndex < 0) {
+      return;
+    }
+
+    const existingBlock = nextBlocks[existingIndex];
+    nextBlocks[existingIndex] = {
+      type: 'artifact',
+      artifact: {
+        ...(existingBlock.type === 'artifact' ? existingBlock.artifact : {}),
+        ...artifact,
+      },
+    };
 
     contentBlocksRef.current = nextBlocks;
     setContentBlocks(nextBlocks);
@@ -506,6 +530,7 @@ export function useChatState(): UseChatStateReturn {
     addToolCall,
     updateToolCall,
     addArtifactBlock,
+    updateArtifactBlock,
     completeArtifactBlock,
     markArtifactDeleted,
     addTerminalBlock,

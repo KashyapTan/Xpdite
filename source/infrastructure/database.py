@@ -6,6 +6,8 @@ import os
 from contextlib import contextmanager
 from typing import List, Dict, Any, Optional, Tuple
 
+from ..llm.core.artifacts import serialize_blocks_for_model_content
+
 
 class DatabaseManager:
     def __init__(self, database_path: str = "user_data/xpdite_app.db"):
@@ -443,26 +445,52 @@ class DatabaseManager:
         return json.loads(content_blocks_json) if content_blocks_json else None
 
     @staticmethod
+    def _read_artifact_file(path: Optional[str]) -> str:
+        if not path:
+            return ""
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                return handle.read()
+        except OSError:
+            return ""
+
+    @staticmethod
     def generate_artifact_id() -> str:
         return str(uuid.uuid4())
 
     def _artifact_rows_by_id(
-        self, artifact_ids: List[str], conn: sqlite3.Connection
+        self,
+        artifact_ids: List[str],
+        conn: sqlite3.Connection,
+        *,
+        include_content: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
         ids = [artifact_id for artifact_id in dict.fromkeys(artifact_ids) if artifact_id]
         if not ids:
             return {}
 
         placeholders = ",".join("?" for _ in ids)
-        rows = conn.execute(
-            f"""SELECT id, artifact_type, title, language, size_bytes, line_count,
-                       status, conversation_id, message_id, created_at, updated_at
-                FROM artifacts
-                WHERE id IN ({placeholders})""",
-            ids,
-        ).fetchall()
-        return {
-            row[0]: {
+        if include_content:
+            rows = conn.execute(
+                f"""SELECT id, artifact_type, title, language, size_bytes, line_count,
+                           status, conversation_id, message_id, created_at, updated_at,
+                           storage_kind, storage_path, inline_content
+                    FROM artifacts
+                    WHERE id IN ({placeholders})""",
+                ids,
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""SELECT id, artifact_type, title, language, size_bytes, line_count,
+                           status, conversation_id, message_id, created_at, updated_at
+                    FROM artifacts
+                    WHERE id IN ({placeholders})""",
+                ids,
+            ).fetchall()
+
+        artifact_map: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            record: Dict[str, Any] = {
                 "id": row[0],
                 "artifact_type": row[1],
                 "title": row[2],
@@ -475,70 +503,163 @@ class DatabaseManager:
                 "created_at": row[9],
                 "updated_at": row[10],
             }
-            for row in rows
-        }
+            if include_content:
+                storage_kind = row[11]
+                storage_path = row[12]
+                inline_content = row[13]
+                record["storage_kind"] = storage_kind
+                record["storage_path"] = storage_path
+                record["content"] = (
+                    self._read_artifact_file(storage_path)
+                    if storage_kind == "file"
+                    else (inline_content or "")
+                )
+            artifact_map[row[0]] = record
 
-    def _resolve_content_blocks(
+        return artifact_map
+
+    def _collect_artifact_ids_from_content_blocks_json(
         self,
-        content_blocks_json: Optional[str],
-        conn: sqlite3.Connection,
-    ) -> List[Dict] | None:
-        blocks = self._decode_content_blocks(content_blocks_json)
-        if not blocks:
-            return blocks
+        content_blocks_json_values: List[Optional[str]],
+    ) -> List[str]:
+        artifact_ids: List[str] = []
+        for content_blocks_json in content_blocks_json_values:
+            blocks = self._decode_content_blocks(content_blocks_json)
+            if not blocks:
+                continue
+            artifact_ids.extend(
+                str(block.get("artifact_id") or block.get("artifactId") or "").strip()
+                for block in blocks
+                if block.get("type") == "artifact"
+            )
+        return [artifact_id for artifact_id in artifact_ids if artifact_id]
 
-        artifact_ids = [
-            str(block.get("artifact_id") or block.get("artifactId") or "").strip()
-            for block in blocks
-            if block.get("type") == "artifact"
-        ]
-        artifact_map = self._artifact_rows_by_id(artifact_ids, conn)
-
+    def _resolve_content_blocks_from_blocks(
+        self,
+        blocks: List[Dict],
+        artifact_map: Dict[str, Dict[str, Any]],
+    ) -> List[Dict]:
         resolved_blocks: List[Dict[str, Any]] = []
         for block in blocks:
             if block.get("type") != "artifact":
                 resolved_blocks.append(block)
                 continue
 
-            artifact_id = str(block.get("artifact_id") or block.get("artifactId") or "").strip()
+            artifact_id = str(
+                block.get("artifact_id") or block.get("artifactId") or ""
+            ).strip()
             artifact_row = artifact_map.get(artifact_id)
-            resolved_blocks.append(
-                {
-                    "type": "artifact",
-                    "artifact_id": artifact_id,
-                    "artifact_type": (
-                        block.get("artifact_type")
-                        or block.get("artifactType")
-                        or (artifact_row or {}).get("artifact_type")
-                        or ""
-                    ),
-                    "title": block.get("title") or (artifact_row or {}).get("title") or "Untitled artifact",
-                    "language": block.get("language")
+            resolved_block: Dict[str, Any] = {
+                "type": "artifact",
+                "artifact_id": artifact_id,
+                "artifact_type": (
+                    block.get("artifact_type")
+                    or block.get("artifactType")
+                    or (artifact_row or {}).get("artifact_type")
+                    or ""
+                ),
+                "title": (
+                    block.get("title")
+                    or (artifact_row or {}).get("title")
+                    or "Untitled artifact"
+                ),
+                "language": (
+                    block.get("language")
                     if block.get("language") is not None
-                    else (artifact_row or {}).get("language"),
-                    "size_bytes": (
-                        (artifact_row or {}).get("size_bytes")
-                        if artifact_row is not None
-                        else int(block.get("size_bytes") or block.get("sizeBytes") or 0)
-                    ),
-                    "line_count": (
-                        (artifact_row or {}).get("line_count")
-                        if artifact_row is not None
-                        else int(block.get("line_count") or block.get("lineCount") or 0)
-                    ),
-                    "status": (
-                        "deleted"
-                        if artifact_row is None
-                        or str((artifact_row or {}).get("status") or "").lower() == "deleted"
-                        else "ready"
-                    ),
-                }
+                    else (artifact_row or {}).get("language")
+                ),
+                "size_bytes": (
+                    (artifact_row or {}).get("size_bytes")
+                    if artifact_row is not None
+                    else int(block.get("size_bytes") or block.get("sizeBytes") or 0)
+                ),
+                "line_count": (
+                    (artifact_row or {}).get("line_count")
+                    if artifact_row is not None
+                    else int(block.get("line_count") or block.get("lineCount") or 0)
+                ),
+                "status": (
+                    "deleted"
+                    if artifact_row is None
+                    or str((artifact_row or {}).get("status") or "").lower() == "deleted"
+                    else "ready"
+                ),
+            }
+            content = (
+                block.get("content")
+                if block.get("content") is not None
+                else (artifact_row or {}).get("content")
             )
+            if content is not None:
+                resolved_block["content"] = str(content)
+            resolved_blocks.append(resolved_block)
 
         return resolved_blocks
 
+    def _serialize_history_content(
+        self,
+        *,
+        fallback_content: str,
+        content_blocks_json: Optional[str],
+        artifact_map: Dict[str, Dict[str, Any]],
+    ) -> str:
+        blocks = self._decode_content_blocks(content_blocks_json)
+        if not blocks:
+            return fallback_content
+
+        resolved_blocks = self._resolve_content_blocks_from_blocks(blocks, artifact_map)
+        return serialize_blocks_for_model_content(
+            resolved_blocks,
+            fallback_text=fallback_content,
+        )
+
+    def _response_variant_rows(
+        self,
+        assistant_message_ids: List[str],
+        conn: sqlite3.Connection,
+    ) -> List[tuple]:
+        ids = [
+            assistant_message_id
+            for assistant_message_id in dict.fromkeys(assistant_message_ids)
+            if assistant_message_id
+        ]
+        if not ids:
+            return []
+
+        placeholders = ",".join("?" for _ in ids)
+        rows = conn.execute(
+            f"""SELECT assistant_message_id, response_index, content, model, content_blocks, created_at
+                FROM message_response_versions
+                WHERE assistant_message_id IN ({placeholders})
+                ORDER BY assistant_message_id ASC, response_index ASC""",
+            ids,
+        ).fetchall()
+        return list(rows)
+
+    def _resolve_content_blocks(
+        self,
+        content_blocks_json: Optional[str],
+        conn: sqlite3.Connection,
+        artifact_map: Optional[Dict[str, Dict[str, Any]]] = None,
+    ) -> List[Dict] | None:
+        blocks = self._decode_content_blocks(content_blocks_json)
+        if not blocks:
+            return blocks
+
+        resolved_artifact_map = artifact_map
+        if resolved_artifact_map is None:
+            artifact_ids = self._collect_artifact_ids_from_content_blocks_json(
+                [content_blocks_json]
+            )
+            resolved_artifact_map = self._artifact_rows_by_id(artifact_ids, conn)
+
+        return self._resolve_content_blocks_from_blocks(blocks, resolved_artifact_map)
+
     def _build_response_variants(
-        self, assistant_message_id: str, conn: sqlite3.Connection
+        self,
+        assistant_message_id: str,
+        conn: sqlite3.Connection,
+        artifact_map: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         rows = conn.execute(
             """SELECT response_index, content, model, content_blocks, created_at
@@ -552,14 +673,18 @@ class DatabaseManager:
                 "response_index": row[0],
                 "content": row[1],
                 "model": row[2],
-                "content_blocks": self._resolve_content_blocks(row[3], conn),
+                "content_blocks": self._resolve_content_blocks(row[3], conn, artifact_map),
                 "timestamp": row[4],
             }
             for row in rows
         ]
 
     def _build_message_record(
-        self, row: tuple, conn: sqlite3.Connection
+        self,
+        row: tuple,
+        conn: sqlite3.Connection,
+        artifact_map: Optional[Dict[str, Dict[str, Any]]] = None,
+        response_variants_by_assistant: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> Dict[str, Any]:
         message = {
             "num_messages": row[0],
@@ -570,15 +695,19 @@ class DatabaseManager:
             "images": self._decode_images(row[5]),
             "timestamp": row[6],
             "model": row[7],
-            "content_blocks": self._resolve_content_blocks(row[8], conn),
+            "content_blocks": self._resolve_content_blocks(row[8], conn, artifact_map),
             "active_response_index": row[9] or 0,
         }
         # mobile_origin is stored as JSON text in row[10]
         if len(row) > 10 and row[10]:
             message["mobile_origin"] = json.loads(row[10])
         if message["role"] == "assistant" and message["message_id"]:
-            message["response_variants"] = self._build_response_variants(
-                message["message_id"], conn
+            message["response_variants"] = (
+                response_variants_by_assistant.get(message["message_id"], [])
+                if response_variants_by_assistant is not None
+                else self._build_response_variants(
+                    message["message_id"], conn, artifact_map
+                )
             )
         return message
 
@@ -798,20 +927,56 @@ class DatabaseManager:
             "assistant": assistant_message,
         }
 
-    def get_active_chat_history(self, conversation_id: str) -> List[Dict[str, Any]]:
+    def get_active_chat_history(
+        self,
+        conversation_id: str,
+        *,
+        stop_before_turn_id: str | None = None,
+    ) -> List[Dict[str, Any]]:
         """Return active conversation messages in LLM-friendly history format."""
-        history: List[Dict[str, Any]] = []
-        for message in self.get_full_conversation(conversation_id):
-            entry: Dict[str, Any] = {
-                "role": message["role"],
-                "content": message["content"],
-            }
-            if message.get("images"):
-                entry["images"] = message["images"]
-            if message.get("model"):
-                entry["model"] = message["model"]
-            history.append(entry)
-        return history
+        with self._connect() as conn:
+            rows = conn.execute(
+                """SELECT num_messages, message_id, turn_id, role, content, images, created_at,
+                          model, content_blocks, active_response_index, mobile_origin
+                   FROM messages
+                   WHERE conversation_id = ?
+                   ORDER BY created_at ASC, num_messages ASC""",
+                (conversation_id,),
+            ).fetchall()
+
+            selected_rows: List[tuple] = []
+            for row in rows:
+                if stop_before_turn_id and row[2] == stop_before_turn_id:
+                    break
+                selected_rows.append(row)
+
+            artifact_ids = self._collect_artifact_ids_from_content_blocks_json(
+                [row[8] for row in selected_rows]
+            )
+            artifact_map = self._artifact_rows_by_id(
+                artifact_ids,
+                conn,
+                include_content=True,
+            )
+
+            history: List[Dict[str, Any]] = []
+            for row in selected_rows:
+                entry: Dict[str, Any] = {
+                    "role": row[3],
+                    "content": self._serialize_history_content(
+                        fallback_content=row[4] or "",
+                        content_blocks_json=row[8],
+                        artifact_map=artifact_map,
+                    ),
+                }
+                images = self._decode_images(row[5])
+                if images:
+                    entry["images"] = images
+                if row[7]:
+                    entry["model"] = row[7]
+                history.append(entry)
+
+            return history
 
     def save_response_version(
         self,
@@ -1269,8 +1434,7 @@ class DatabaseManager:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT id, conversation_id, message_id, artifact_type, title, language,
-                          storage_kind, storage_path, inline_content, searchable_text,
-                          size_bytes, line_count, status, created_at, updated_at
+                          storage_path, size_bytes, line_count, status, created_at, updated_at
                    FROM artifacts
                    WHERE message_id = ?""",
                 (message_id,),
@@ -1295,15 +1459,12 @@ class DatabaseManager:
                 "artifact_type": row[3],
                 "title": row[4],
                 "language": row[5],
-                "storage_kind": row[6],
-                "storage_path": row[7],
-                "inline_content": row[8],
-                "searchable_text": row[9],
-                "size_bytes": row[10],
-                "line_count": row[11],
-                "status": row[12],
-                "created_at": row[13],
-                "updated_at": row[14],
+                "storage_path": row[6],
+                "size_bytes": row[7],
+                "line_count": row[8],
+                "status": row[9],
+                "created_at": row[10],
+                "updated_at": row[11],
             }
             for row in rows
         ]
@@ -1312,8 +1473,7 @@ class DatabaseManager:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT id, conversation_id, message_id, artifact_type, title, language,
-                          storage_kind, storage_path, inline_content, searchable_text,
-                          size_bytes, line_count, status, created_at, updated_at
+                          storage_path, size_bytes, line_count, status, created_at, updated_at
                    FROM artifacts
                    WHERE conversation_id = ?""",
                 (conversation_id,),
@@ -1338,15 +1498,12 @@ class DatabaseManager:
                 "artifact_type": row[3],
                 "title": row[4],
                 "language": row[5],
-                "storage_kind": row[6],
-                "storage_path": row[7],
-                "inline_content": row[8],
-                "searchable_text": row[9],
-                "size_bytes": row[10],
-                "line_count": row[11],
-                "status": row[12],
-                "created_at": row[13],
-                "updated_at": row[14],
+                "storage_path": row[6],
+                "size_bytes": row[7],
+                "line_count": row[8],
+                "status": row[9],
+                "created_at": row[10],
+                "updated_at": row[11],
             }
             for row in rows
         ]
@@ -1413,7 +1570,44 @@ class DatabaseManager:
                 (conversation_id,),
             ).fetchall()
 
-            return [self._build_message_record(row, conn) for row in rows]
+            assistant_message_ids = [
+                row[1] for row in rows if row[3] == "assistant" and row[1]
+            ]
+            response_variant_rows = self._response_variant_rows(
+                assistant_message_ids, conn
+            )
+            artifact_ids = self._collect_artifact_ids_from_content_blocks_json(
+                [row[8] for row in rows]
+                + [variant_row[4] for variant_row in response_variant_rows]
+            )
+            artifact_map = self._artifact_rows_by_id(artifact_ids, conn)
+
+            response_variants_by_assistant: Dict[str, List[Dict[str, Any]]] = {}
+            for variant_row in response_variant_rows:
+                assistant_message_id = variant_row[0]
+                response_variants_by_assistant.setdefault(
+                    assistant_message_id, []
+                ).append(
+                    {
+                        "response_index": variant_row[1],
+                        "content": variant_row[2],
+                        "model": variant_row[3],
+                        "content_blocks": self._resolve_content_blocks(
+                            variant_row[4], conn, artifact_map
+                        ),
+                        "timestamp": variant_row[5],
+                    }
+                )
+
+            return [
+                self._build_message_record(
+                    row,
+                    conn,
+                    artifact_map=artifact_map,
+                    response_variants_by_assistant=response_variants_by_assistant,
+                )
+                for row in rows
+            ]
 
     def delete_conversation(self, conversation_id: str) -> None:
         """Delete a conversation and all associated data (messages, terminal events)."""

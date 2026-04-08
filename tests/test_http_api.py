@@ -9,8 +9,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 import source.api.http as http_api
+
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
@@ -37,7 +40,7 @@ class TestHttpApiHelpers:
         detail = http_api._extract_openrouter_error(response)
         assert detail == "teapot body"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_model_cache_returns_cached_payload_when_ttl_valid(self):
         with patch.object(http_api, "_MODEL_CACHE", {}):
             first_fetcher = AsyncMock(return_value=[{"id": "a"}])
@@ -55,7 +58,7 @@ class TestHttpApiHelpers:
         first_fetcher.assert_awaited_once()
         second_fetcher.assert_not_awaited()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_model_cache_refresh_forces_refetch(self):
         with patch.object(http_api, "_MODEL_CACHE", {}):
             first_fetcher = AsyncMock(return_value=[{"id": "first"}])
@@ -72,6 +75,46 @@ class TestHttpApiHelpers:
 
 
 class TestArtifactApiEndpoints:
+    @pytest.mark.anyio
+    async def test_require_artifact_access_rejects_non_loopback_clients(self):
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/artifacts",
+                "headers": [],
+                "client": ("192.168.1.10", 5000),
+            }
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            await http_api._require_artifact_access(request, artifact_token=None)
+
+        assert exc.value.status_code == 403
+
+    @pytest.mark.anyio
+    async def test_require_artifact_access_enforces_session_token_when_configured(self):
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/artifacts",
+                "headers": [],
+                "client": ("127.0.0.1", 5000),
+            }
+        )
+
+        with patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"):
+            with pytest.raises(HTTPException) as exc:
+                await http_api._require_artifact_access(request, artifact_token="wrong")
+
+            await http_api._require_artifact_access(
+                request,
+                artifact_token="secret-token",
+            )
+
+        assert exc.value.status_code == 403
+
     @pytest.mark.anyio
     async def test_list_artifacts_normalizes_filters_and_delegates(self):
         service = MagicMock()
@@ -182,7 +225,11 @@ class TestArtifactApiEndpoints:
     @pytest.mark.anyio
     async def test_delete_artifact_broadcasts_deletion(self):
         service = MagicMock()
-        service.delete_artifact.return_value = True
+        service.delete_artifact.return_value = {
+            "id": "artifact-1",
+            "conversation_id": "conv-1",
+            "message_id": "msg-1",
+        }
         broadcast_mock = AsyncMock()
 
         async def fake_run_in_thread(fn, *args, **kwargs):
@@ -199,13 +246,17 @@ class TestArtifactApiEndpoints:
         service.delete_artifact.assert_called_once_with("artifact-1")
         broadcast_mock.assert_awaited_once_with(
             "artifact_deleted",
-            {"artifact_id": "artifact-1"},
+            {
+                "artifact_id": "artifact-1",
+                "conversation_id": "conv-1",
+                "message_id": "msg-1",
+            },
         )
 
     @pytest.mark.anyio
     async def test_delete_artifact_raises_404_when_missing(self):
         service = MagicMock()
-        service.delete_artifact.return_value = False
+        service.delete_artifact.return_value = None
 
         async def fake_run_in_thread(fn, *args, **kwargs):
             return fn(*args, **kwargs)
@@ -221,7 +272,7 @@ class TestArtifactApiEndpoints:
 
 
 class TestHttpApiEndpoints:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_browse_files_lists_directory(self):
         fake_result = SimpleNamespace(
             entries=[SimpleNamespace(to_dict=lambda: {"name": "a.txt"})],
@@ -247,7 +298,7 @@ class TestHttpApiEndpoints:
             "parent_path": None,
         }
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_browse_files_search_mode_uses_query(self):
         fake_result = SimpleNamespace(entries=[], current_path="/h", parent_path="/")
 
@@ -292,12 +343,12 @@ class TestHttpApiEndpoints:
         assert response.json() == {"conversations": conversations_payload}
         get_job_conversations.assert_called_once_with()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_health_check_returns_healthy(self):
         result = await http_api.health_check()
         assert result == {"status": "healthy"}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_enabled_models_reads_from_db(self):
         with patch(
             "source.infrastructure.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])
@@ -305,7 +356,7 @@ class TestHttpApiEndpoints:
             result = await http_api.get_enabled_models()
         assert result == ["a", "b"]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_enabled_models_persists_and_returns_payload(self):
         db_mock = MagicMock()
         with patch("source.infrastructure.database.db", db_mock):
@@ -315,7 +366,7 @@ class TestHttpApiEndpoints:
         db_mock.set_enabled_models.assert_called_once_with(["m1", "m2"])
         assert result == {"status": "updated", "models": ["m1", "m2"]}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_api_key_status_delegates_to_key_manager(self):
         key_manager = MagicMock()
         key_manager.get_api_key_status.return_value = {"openai": {"has_key": False}}
@@ -325,7 +376,7 @@ class TestHttpApiEndpoints:
         assert result == {"openai": {"has_key": False}}
         key_manager.get_api_key_status.assert_called_once_with()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_api_key_rejects_invalid_provider(self):
         body = http_api.ApiKeyUpdate(key="sk-test")
         with pytest.raises(HTTPException) as exc:
@@ -333,7 +384,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 400
         assert "Invalid provider" in str(exc.value.detail)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_api_key_rejects_empty_key_after_trim(self):
         body = http_api.ApiKeyUpdate(key="   ")
         with pytest.raises(HTTPException) as exc:
@@ -341,7 +392,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 400
         assert "cannot be empty" in str(exc.value.detail)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_api_key_openrouter_success_saves_and_masks(self):
         key_manager = MagicMock()
         key_manager.mask_key.return_value = "sk-...1234"
@@ -370,7 +421,7 @@ class TestHttpApiEndpoints:
             "masked": "sk-...1234",
         }
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_save_api_key_openrouter_validation_failure_returns_401(self):
         key_manager = MagicMock()
         response = SimpleNamespace(
@@ -397,13 +448,13 @@ class TestHttpApiEndpoints:
         assert "Invalid API key" in str(exc.value.detail)
         key_manager.save_api_key.assert_not_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_api_key_rejects_invalid_provider(self):
         with pytest.raises(HTTPException) as exc:
             await http_api.delete_api_key("invalid-provider")
         assert exc.value.status_code == 400
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_api_key_filters_enabled_models_and_invalidates_cache(self):
         key_manager = MagicMock()
         db_mock = MagicMock()
@@ -431,7 +482,7 @@ class TestHttpApiEndpoints:
         invalidate_mock.assert_called_once_with("openrouter")
         assert result == {"status": "deleted", "provider": "openrouter"}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_openrouter_models_maps_403_to_401(self):
         key_manager = MagicMock()
         key_manager.get_api_key.return_value = "sk-openrouter"
@@ -455,7 +506,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 401
         assert "Failed to fetch OpenRouter models: forbidden" in str(exc.value.detail)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_openrouter_models_maps_500_to_502(self):
         key_manager = MagicMock()
         key_manager.get_api_key.return_value = "sk-openrouter"
@@ -481,7 +532,7 @@ class TestHttpApiEndpoints:
             exc.value.detail
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_openrouter_models_rejects_invalid_data_payload(self):
         key_manager = MagicMock()
         key_manager.get_api_key.return_value = "sk-openrouter"
@@ -503,7 +554,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 502
         assert "unexpected model list format" in str(exc.value.detail)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_openai_models_filters_to_chat_capable_models(self):
         key_manager = MagicMock()
         key_manager.get_api_key.return_value = "sk-openai"
@@ -541,7 +592,7 @@ class TestHttpApiEndpoints:
             "openai/o3-mini",
         ]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_gemini_models_filters_by_supported_actions(self):
         key_manager = MagicMock()
         key_manager.get_api_key.return_value = "sk-gemini"
@@ -591,7 +642,7 @@ class TestHttpApiEndpoints:
             "gemini/gemini-2.0-flash",
         ]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_google_success_starts_mcp_servers(self):
         google_auth = MagicMock()
         google_auth.start_oauth_flow.return_value = {
@@ -613,7 +664,7 @@ class TestHttpApiEndpoints:
         assert result == {"success": True, "account_email": "user@example.com"}
         mcp_manager.connect_google_servers.assert_awaited_once_with()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_google_returns_400_when_oauth_reports_failure(self):
         google_auth = MagicMock()
         google_auth.start_oauth_flow.return_value = {
@@ -634,7 +685,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 400
         assert exc.value.detail == "access_denied"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_connect_google_returns_500_when_oauth_raises(self):
         google_auth = MagicMock()
         google_auth.start_oauth_flow.side_effect = RuntimeError("callback timeout")
@@ -652,7 +703,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 500
         assert "OAuth flow failed" in str(exc.value.detail)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_disconnect_google_returns_result_on_success(self):
         google_auth = MagicMock()
         google_auth.disconnect.return_value = {"success": True}
@@ -667,7 +718,7 @@ class TestHttpApiEndpoints:
         assert result == {"success": True}
         mcp_manager.disconnect_google_servers.assert_awaited_once_with()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_disconnect_google_ignores_mcp_disconnect_failures(self):
         google_auth = MagicMock()
         google_auth.disconnect.return_value = {"success": True, "disconnected": True}
@@ -686,7 +737,7 @@ class TestHttpApiEndpoints:
         assert result == {"success": True, "disconnected": True}
         mcp_manager.disconnect_google_servers.assert_awaited_once_with()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_tools_settings_parses_json_and_defaults_top_k(self):
         db_mock = MagicMock()
         db_mock.get_setting.side_effect = lambda key: {
@@ -699,7 +750,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"always_on": ["filesystem", "terminal"], "top_k": 5}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_tools_settings_handles_invalid_json(self):
         db_mock = MagicMock()
         db_mock.get_setting.side_effect = lambda key: {
@@ -712,7 +763,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"always_on": [], "top_k": 9}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_tools_settings_persists_values(self):
         db_mock = MagicMock()
         body = http_api.ToolsSettingsUpdate(always_on=["a", "b"], top_k=3)
@@ -725,7 +776,7 @@ class TestHttpApiEndpoints:
         assert result["status"] == "updated"
         assert result["settings"] == {"always_on": ["a", "b"], "top_k": 3}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_mobile_channels_config_parses_json_and_defaults(self):
         db_mock = MagicMock()
         db_mock.get_setting.side_effect = lambda key: {
@@ -755,7 +806,7 @@ class TestHttpApiEndpoints:
             }
         }
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_mobile_platform_config_serializes_dict_for_storage(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = (
@@ -779,7 +830,7 @@ class TestHttpApiEndpoints:
         }
         assert result == {"success": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_mobile_platform_config_recovers_from_invalid_existing_json(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = "{bad-json"
@@ -800,7 +851,7 @@ class TestHttpApiEndpoints:
         }
         assert result == {"success": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_mobile_platform_config_returns_500_when_bridge_sync_fails(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = '{"enabled": false}'
@@ -884,7 +935,7 @@ class TestHttpApiEndpoints:
         assert src_path.name.endswith(".tmp")
         assert dst_path == tmp_path / "mobile_channels_config.json"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_sub_agent_settings_uses_empty_defaults(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = None
@@ -894,7 +945,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"fast_model": "", "smart_model": ""}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_sub_agent_settings_sets_and_deletes_based_on_trim(self):
         db_mock = MagicMock()
         body = http_api.SubAgentSettingsUpdate(fast_model=" fast-1 ", smart_model="   ")
@@ -906,7 +957,7 @@ class TestHttpApiEndpoints:
         db_mock.delete_setting.assert_called_once_with("sub_agent_tier_smart")
         assert result == {"status": "updated"}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_memory_settings_defaults_to_enabled(self):
         db_mock = MagicMock()
         db_mock.get_setting.return_value = None
@@ -916,7 +967,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"profile_auto_inject": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_set_memory_settings_persists_boolean_flag(self):
         db_mock = MagicMock()
 
@@ -933,7 +984,7 @@ class TestHttpApiEndpoints:
             "settings": {"profile_auto_inject": False},
         }
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_list_memories_returns_payload_from_service(self):
         memory_service = MagicMock()
         memory_service.list_memories.return_value = [{"path": "semantic/prefs.md"}]
@@ -950,7 +1001,7 @@ class TestHttpApiEndpoints:
         memory_service.list_memories.assert_called_once_with("semantic")
         assert result == {"memories": [{"path": "semantic/prefs.md"}]}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_list_memories_maps_filesystem_errors_to_500(self):
         memory_service = MagicMock()
         memory_service.list_memories.side_effect = OSError("disk failure")
@@ -968,7 +1019,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 500
         assert exc.value.detail == "Memory listing failed. See server logs for details."
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_memory_file_maps_missing_files_to_404(self):
         memory_service = MagicMock()
         memory_service.read_memory.side_effect = FileNotFoundError
@@ -985,7 +1036,7 @@ class TestHttpApiEndpoints:
 
         assert exc.value.status_code == 404
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_memory_file_maps_decode_errors_to_500(self):
         memory_service = MagicMock()
         memory_service.read_memory.side_effect = UnicodeDecodeError(
@@ -1005,7 +1056,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 500
         assert exc.value.detail == "Memory read failed. See server logs for details."
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_memory_file_delegates_to_service(self):
         memory_service = MagicMock()
         memory_service.upsert_memory.return_value = {"path": "semantic/prefs.md"}
@@ -1040,7 +1091,7 @@ class TestHttpApiEndpoints:
         )
         assert result == {"path": "semantic/prefs.md"}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_delete_memory_file_returns_not_found_when_missing(self):
         memory_service = MagicMock()
         memory_service.delete_memory.return_value = False
@@ -1057,7 +1108,7 @@ class TestHttpApiEndpoints:
 
         assert exc.value.status_code == 404
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clear_all_memories_returns_deleted_count(self):
         memory_service = MagicMock()
         memory_service.clear_all_memories.return_value = 3
@@ -1074,7 +1125,7 @@ class TestHttpApiEndpoints:
         memory_service.clear_all_memories.assert_called_once_with()
         assert result == {"success": True, "deleted_count": 3}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_clear_all_memories_maps_filesystem_errors_to_500(self):
         memory_service = MagicMock()
         memory_service.clear_all_memories.side_effect = OSError("permission denied")
@@ -1092,7 +1143,7 @@ class TestHttpApiEndpoints:
         assert exc.value.status_code == 500
         assert exc.value.detail == "Memory clear failed. See server logs for details."
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_system_prompt_returns_default_when_not_custom(self):
         db_mock = MagicMock()
         db_mock.get_system_prompt_template.return_value = None
@@ -1105,7 +1156,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"template": "DEFAULT-TEMPLATE", "is_custom": False}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_get_system_prompt_returns_custom_when_present(self):
         db_mock = MagicMock()
         db_mock.get_system_prompt_template.return_value = "CUSTOM"
@@ -1115,7 +1166,7 @@ class TestHttpApiEndpoints:
 
         assert result == {"template": "CUSTOM", "is_custom": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_system_prompt_strips_and_stores(self):
         db_mock = MagicMock()
         with patch("source.infrastructure.database.db", db_mock):
@@ -1126,7 +1177,7 @@ class TestHttpApiEndpoints:
         db_mock.set_system_prompt_template.assert_called_once_with("Hello prompt")
         assert result == {"ok": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_update_system_prompt_empty_resets_to_default(self):
         db_mock = MagicMock()
         with patch("source.infrastructure.database.db", db_mock):
@@ -1137,7 +1188,7 @@ class TestHttpApiEndpoints:
         db_mock.set_system_prompt_template.assert_called_once_with(None)
         assert result == {"ok": True}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skills_endpoints_handle_success_and_errors(self):
         manager = MagicMock()
         manager.get_all_skills_with_overrides.return_value = [{"name": "terminal"}]
@@ -1190,7 +1241,7 @@ class TestHttpApiEndpoints:
         assert deleted == {"status": "deleted"}
         assert ref_added == {"status": "created", "filename": "notes.md"}
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skills_endpoints_raise_expected_http_errors(self):
         manager = MagicMock()
         manager.get_skill_content.return_value = None

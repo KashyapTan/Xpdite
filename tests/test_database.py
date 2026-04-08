@@ -78,6 +78,51 @@ class TestMessages:
         msgs = db_manager.get_full_conversation(cid)
         assert msgs == []
 
+    def test_get_active_chat_history_preserves_artifact_only_assistant_turns(self, db_manager):
+        cid = db_manager.start_new_conversation("Artifact history")
+        user_message = db_manager.add_message(cid, "user", "Build a file")
+        assistant_message = db_manager.add_message(
+            cid,
+            "assistant",
+            "",
+            model="model-a",
+            content_blocks=[
+                {
+                    "type": "artifact",
+                    "artifact_id": "artifact-1",
+                    "artifact_type": "code",
+                    "title": "demo.py",
+                    "language": "python",
+                }
+            ],
+            turn_id=user_message["turn_id"],
+        )
+        db_manager.create_artifact(
+            artifact_id="artifact-1",
+            conversation_id=cid,
+            message_id=assistant_message["message_id"],
+            artifact_type="code",
+            title="demo.py",
+            language="python",
+            storage_kind="inline",
+            storage_path=None,
+            inline_content='print("hi")',
+            searchable_text='print("hi")',
+            size_bytes=11,
+            line_count=1,
+        )
+
+        history = db_manager.get_active_chat_history(cid)
+
+        assert history == [
+            {"role": "user", "content": "Build a file"},
+            {
+                "role": "assistant",
+                "content": '<artifact type="code" title="demo.py" language="python">print("hi")</artifact>',
+                "model": "model-a",
+            },
+        ]
+
 
 class TestTurnVersioning:
     def _seed_turn(self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"):
@@ -201,6 +246,32 @@ class TestTurnVersioning:
             db_manager.get_message_by_id(user_message["message_id"])["content"]
             == "Original"
         )
+
+    def test_get_active_chat_history_can_stop_before_turn_id(self, db_manager):
+        cid = db_manager.start_new_conversation("Stop before")
+        first_user, _ = self._seed_turn(
+            db_manager,
+            cid,
+            user_content="First",
+            assistant_content="First reply",
+        )
+        second_user, _ = self._seed_turn(
+            db_manager,
+            cid,
+            user_content="Second",
+            assistant_content="Second reply",
+        )
+
+        history = db_manager.get_active_chat_history(
+            cid,
+            stop_before_turn_id=second_user["turn_id"],
+        )
+
+        assert history == [
+            {"role": "user", "content": "First"},
+            {"role": "assistant", "content": "First reply", "model": "model-a"},
+        ]
+        assert first_user["turn_id"] != second_user["turn_id"]
 
 
 # ------------------------------------------------------------------

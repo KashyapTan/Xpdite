@@ -9,7 +9,12 @@ import {
   useState,
 } from 'react';
 import { ChatMessage } from './ChatMessage';
-import type { ChatMessage as ChatMessageType, ContentBlock, ToolCall } from '../../types';
+import type {
+  ArtifactBlockData,
+  ChatMessage as ChatMessageType,
+  ContentBlock,
+  ToolCall,
+} from '../../types';
 import { estimateChatMessageHeight } from '../../utils/pretextMessageLayout';
 import { logPerf } from '../../utils/perfLogger';
 
@@ -20,6 +25,8 @@ interface DeferredChatHistoryProps {
   onRetryMessage: (message: ChatMessageType) => void;
   onEditMessage: (message: ChatMessageType, content: string) => void;
   onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   containerRef: RefObject<HTMLDivElement | null>;
 }
 
@@ -313,6 +320,8 @@ const MeasuredChatMessage = memo(function MeasuredChatMessage({
   onRetryMessage,
   onEditMessage,
   onSetActiveResponse,
+  onArtifactUpdated,
+  onArtifactDeleted,
   onHeight,
 }: {
   index: number;
@@ -322,6 +331,8 @@ const MeasuredChatMessage = memo(function MeasuredChatMessage({
   onRetryMessage: (message: ChatMessageType) => void;
   onEditMessage: (message: ChatMessageType, content: string) => void;
   onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onHeight: (index: number, height: number, signature: string) => void;
 }) {
   const rowRef = useRef<HTMLDivElement | null>(null);
@@ -366,6 +377,8 @@ const MeasuredChatMessage = memo(function MeasuredChatMessage({
         onRetryMessage={onRetryMessage}
         onEditMessage={onEditMessage}
         onSetActiveResponse={onSetActiveResponse}
+        onArtifactUpdated={onArtifactUpdated}
+        onArtifactDeleted={onArtifactDeleted}
       />
     </div>
   );
@@ -378,6 +391,8 @@ export default function DeferredChatHistory({
   onRetryMessage,
   onEditMessage,
   onSetActiveResponse,
+  onArtifactUpdated,
+  onArtifactDeleted,
   containerRef,
 }: DeferredChatHistoryProps) {
   const virtualizationDecision = useMemo<VirtualizationDecision>(() => {
@@ -917,6 +932,8 @@ export default function DeferredChatHistory({
             onRetryMessage={onRetryMessage}
             onEditMessage={onEditMessage}
             onSetActiveResponse={onSetActiveResponse}
+            onArtifactUpdated={onArtifactUpdated}
+            onArtifactDeleted={onArtifactDeleted}
           />
         ))}
       </>
@@ -939,12 +956,14 @@ export default function DeferredChatHistory({
           index={index}
           message={message}
           selectedModel={generatingModel}
-          actionsDisabled={!canSubmit}
-          onRetryMessage={onRetryMessage}
-          onEditMessage={onEditMessage}
-          onSetActiveResponse={onSetActiveResponse}
-          onHeight={handleMeasuredHeight}
-        />
+            actionsDisabled={!canSubmit}
+            onRetryMessage={onRetryMessage}
+            onEditMessage={onEditMessage}
+            onSetActiveResponse={onSetActiveResponse}
+            onArtifactUpdated={onArtifactUpdated}
+            onArtifactDeleted={onArtifactDeleted}
+            onHeight={handleMeasuredHeight}
+          />
       ))}
 
       {bottomSpacer > 0 && (

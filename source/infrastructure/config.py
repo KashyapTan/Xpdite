@@ -61,6 +61,8 @@ os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 # Server configuration
 DEFAULT_PORT = 8000
 MAX_PORT_ATTEMPTS = 10
+SERVER_BIND_HOST = os.environ.get("XPDITE_SERVER_HOST", "127.0.0.1")
+SERVER_SESSION_TOKEN = os.environ.get("XPDITE_SERVER_TOKEN", "")
 
 # Model configuration
 DEFAULT_MODEL = "qwen3-vl:8b-instruct"

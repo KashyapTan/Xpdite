@@ -4,7 +4,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from source.llm.core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
+from source.llm.core.artifacts import (
+    ArtifactStreamParser,
+    emit_artifact_stream_events,
+    serialize_blocks_for_model_content,
+)
 
 
 @pytest.fixture
@@ -105,6 +109,29 @@ class TestArtifactStreamParser:
         ]
         assert events[1]["artifact"]["content"] == (
             'before <artifact type="code" title="Inner">x</artifact> after'
+        )
+
+    def test_transport_restores_literal_artifact_delimiters_inside_artifact_content(self):
+        serialized = serialize_blocks_for_model_content(
+            [
+                {
+                    "type": "artifact",
+                    "artifact_type": "markdown",
+                    "title": "demo.md",
+                    "status": "ready",
+                    "content": "Use <artifact literal> and </artifact> literally.",
+                }
+            ]
+        )
+
+        events = _collect_events(serialized)
+
+        assert [event["type"] for event in events] == [
+            "artifact_start",
+            "artifact_complete",
+        ]
+        assert events[1]["artifact"]["content"] == (
+            "Use <artifact literal> and </artifact> literally."
         )
 
 

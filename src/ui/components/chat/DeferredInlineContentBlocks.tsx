@@ -1,5 +1,5 @@
 import { InlineContentBlocks } from './ToolCallsDisplay';
-import type { ContentBlock } from '../../types';
+import type { ArtifactBlockData, ContentBlock } from '../../types';
 
 interface DeferredInlineContentBlocksProps {
   blocks: ContentBlock[];
@@ -7,6 +7,8 @@ interface DeferredInlineContentBlocksProps {
   isStreaming?: boolean;
   expanded?: boolean;
   onToggleExpanded?: () => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onTerminalApprove?: (requestId: string) => void;
   onTerminalDeny?: (requestId: string) => void;
   onTerminalApproveRemember?: (requestId: string) => void;

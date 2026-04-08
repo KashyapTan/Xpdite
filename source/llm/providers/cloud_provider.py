@@ -22,7 +22,12 @@ import litellm
 from ...core.connection import broadcast_message
 from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, REASONING_EFFORT
 from ...core.request_context import is_current_request_cancelled
-from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
+from ..core.artifacts import (
+    ArtifactStreamParser,
+    apply_artifact_stream_events,
+    emit_artifact_stream_events,
+    serialize_blocks_for_model_content,
+)
 from ...mcp_integration.core.tool_args import normalize_tool_args, sanitize_tool_args
 
 logger = logging.getLogger(__name__)
@@ -455,7 +460,6 @@ async def _stream_litellm(
     # Reasoning params (hoisted outside the loop — model doesn't change)
     reasoning_params = _get_reasoning_params(litellm_model, model_info)
 
-    current_round_text: list[str] = []
     try:
         if is_current_request_cancelled():
             return "", total_token_stats, tool_calls_list, None
@@ -484,7 +488,7 @@ async def _stream_litellm(
         has_more = True
         while has_more:
             # Per-round state resets
-            current_round_text = []
+            current_round_blocks: List[Dict[str, Any]] = []
             thinking_tokens: list[str] = []
             thinking_complete_sent = False
             artifact_parser = ArtifactStreamParser()
@@ -591,13 +595,16 @@ async def _stream_litellm(
                     if events and thinking_tokens and not thinking_complete_sent:
                         await broadcast_message("thinking_complete", "")
                         _store_thinking_block()
-                    cleaned_text = await emit_artifact_stream_events(
+                    cleaned_text = apply_artifact_stream_events(
+                        events,
+                        current_round_blocks,
+                    )
+                    await emit_artifact_stream_events(
                         events,
                         interleaved_blocks,
                     )
                     if cleaned_text:
                         all_accumulated.append(cleaned_text)
-                        current_round_text.append(cleaned_text)
 
                 # Accumulate tool call deltas
                 if delta.tool_calls:
@@ -630,13 +637,16 @@ async def _stream_litellm(
 
             final_events = artifact_parser.finalize()
             if final_events:
-                cleaned_text = await emit_artifact_stream_events(
+                cleaned_text = apply_artifact_stream_events(
+                    final_events,
+                    current_round_blocks,
+                )
+                await emit_artifact_stream_events(
                     final_events,
                     interleaved_blocks,
                 )
                 if cleaned_text:
                     all_accumulated.append(cleaned_text)
-                    current_round_text.append(cleaned_text)
 
             # After stream: check if tool calls were made.
             # Use pending_tool_calls as the primary signal instead of
@@ -677,7 +687,7 @@ async def _stream_litellm(
 
                 # Include text content if the model produced any before tool calls
                 assistant_msg["content"] = (
-                    "".join(current_round_text) if current_round_text else None
+                    serialize_blocks_for_model_content(current_round_blocks) or None
                 )
 
                 # Execute each tool and append results

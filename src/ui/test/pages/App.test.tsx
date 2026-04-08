@@ -18,6 +18,8 @@ type ResponseAreaProps = {
     messageId?: string;
     turnId?: string;
   }) => void;
+  onArtifactUpdated?: (artifact: unknown) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onYouTubeApprovalResponse: (requestId: string, approved: boolean) => void;
 };
 
@@ -106,6 +108,10 @@ const chatStateMock = {
   updateYouTubeApprovalBlock: vi.fn(),
   addToolCall: vi.fn(),
   updateToolCall: vi.fn(),
+  addArtifactBlock: vi.fn(),
+  updateArtifactBlock: vi.fn(),
+  completeArtifactBlock: vi.fn(),
+  markArtifactDeleted: vi.fn(),
 };
 
 const screenshotStateMock = {

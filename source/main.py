@@ -52,7 +52,12 @@ import sys as _sys
 import uvicorn
 
 # Import configuration (relative to source package)
-from .infrastructure.config import SCREENSHOT_FOLDER, DEFAULT_PORT, MAX_PORT_ATTEMPTS
+from .infrastructure.config import (
+    SCREENSHOT_FOLDER,
+    DEFAULT_PORT,
+    MAX_PORT_ATTEMPTS,
+    SERVER_BIND_HOST,
+)
 
 # Import core components
 from .core.state import app_state
@@ -174,7 +179,7 @@ def start_server():
     # Start uvicorn server
     _emit_boot_marker("starting_http", "Preparing chat features", 75)
     config = uvicorn.Config(
-        app, host="0.0.0.0", port=port, log_level="warning", loop="asyncio"
+        app, host=SERVER_BIND_HOST, port=port, log_level="warning", loop="asyncio"
     )
     server = uvicorn.Server(config)
     loop.create_task(_start_optional_services(), name="xpdite-optional-startup")

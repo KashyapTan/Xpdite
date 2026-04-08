@@ -32,13 +32,16 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    # Intentionally permissive: this is a local desktop app, not a web service.
-    # The Electron shell and React dev server both need unrestricted access.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=[
+            "http://127.0.0.1:5123",
+            "http://localhost:5123",
+            "null",
+        ],
+        allow_origin_regex=r"https?://(127\.0\.0\.1|localhost)(:\d+)?$",
         allow_methods=["*"],
-        allow_headers=["*"],
+        allow_headers=["Content-Type", "X-Xpdite-Server-Token"],
     )
 
     # Register WebSocket endpoint

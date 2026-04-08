@@ -476,6 +476,7 @@ declare global {
       focusWindow: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
       getServerPort: () => Promise<number>;
+      getServerToken?: () => Promise<string>;
       getBootState: () => Promise<ElectronBootState>;
       onBootState: (callback: (state: ElectronBootState) => void) => () => void;
       retryBoot: () => Promise<void>;

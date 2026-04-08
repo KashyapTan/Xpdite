@@ -27,6 +27,14 @@ from ...mcp_integration.core.tool_args import normalize_tool_args
 logger = logging.getLogger(__name__)
 
 
+def _events_include_visible_artifact(events: List[Dict[str, Any]]) -> bool:
+    """Return whether a parser event stream contains visible artifact output."""
+    return any(
+        event.get("type") in {"artifact_start", "artifact_complete", "artifact_abandoned"}
+        for event in events
+    )
+
+
 def _build_messages(
     chat_history: List[Dict[str, Any]],
     user_query: str,
@@ -160,6 +168,7 @@ async def stream_ollama_chat(
     }
     artifact_parser = ArtifactStreamParser()
     thinking_complete_sent = False
+    stream_emitted_visible_output = False
 
     try:
         chat_kwargs: Dict[str, Any] = {
@@ -185,6 +194,8 @@ async def stream_ollama_chat(
             # Handle regular content
             if content_token:
                 events = artifact_parser.feed(content_token)
+                if _events_include_visible_artifact(events):
+                    stream_emitted_visible_output = True
                 if events and thinking_tokens and not thinking_complete_sent:
                     await broadcast_message("thinking_complete", "")
                     interleaved_blocks.append(
@@ -197,6 +208,7 @@ async def stream_ollama_chat(
                 )
                 if cleaned_text:
                     accumulated.append(cleaned_text)
+                    stream_emitted_visible_output = True
 
             # Handle unexpected tool calls in the stream
             if hasattr(chunk, "message"):
@@ -227,6 +239,7 @@ async def stream_ollama_chat(
                         )
                         if emitted_tool_text:
                             accumulated.append(emitted_tool_text)
+                            stream_emitted_visible_output = True
             elif isinstance(chunk, dict):
                 msg = chunk.get("message", {})
                 if isinstance(msg, dict) and msg.get("tool_calls"):
@@ -254,6 +267,7 @@ async def stream_ollama_chat(
                         )
                         if emitted_tool_text:
                             accumulated.append(emitted_tool_text)
+                            stream_emitted_visible_output = True
 
             # Track final message and token stats
             if hasattr(chunk, "done") and getattr(chunk, "done"):
@@ -284,23 +298,29 @@ async def stream_ollama_chat(
 
         final_events = artifact_parser.finalize()
         if final_events:
+            if _events_include_visible_artifact(final_events):
+                stream_emitted_visible_output = True
             cleaned_text = await emit_artifact_stream_events(
                 final_events,
                 interleaved_blocks,
             )
             if cleaned_text:
                 accumulated.append(cleaned_text)
+                stream_emitted_visible_output = True
 
-        if not accumulated and final_message_content:
+        if not stream_emitted_visible_output and final_message_content:
             final_events = artifact_parser.feed(final_message_content)
             final_events.extend(artifact_parser.finalize())
+            if _events_include_visible_artifact(final_events):
+                stream_emitted_visible_output = True
             cleaned_text = await emit_artifact_stream_events(
                 final_events,
                 interleaved_blocks,
             )
             if cleaned_text:
                 accumulated.append(cleaned_text)
-        elif not accumulated and not is_current_request_cancelled():
+                stream_emitted_visible_output = True
+        elif not stream_emitted_visible_output and not is_current_request_cancelled():
             # Fallback to non-streaming call if streaming yielded nothing
             try:
                 logger.warning("Stream empty. Attempting non-streamed fallback...")
@@ -334,12 +354,15 @@ async def stream_ollama_chat(
                     fallback_parser = ArtifactStreamParser()
                     fallback_events = fallback_parser.feed(content_str)
                     fallback_events.extend(fallback_parser.finalize())
+                    if _events_include_visible_artifact(fallback_events):
+                        stream_emitted_visible_output = True
                     cleaned_text = await emit_artifact_stream_events(
                         fallback_events,
                         interleaved_blocks,
                     )
                     if cleaned_text:
                         accumulated.append(cleaned_text)
+                        stream_emitted_visible_output = True
                 else:
                     no_content_msg = "[Model returned no content after tool loop]"
                     emitted_no_content = await emit_artifact_stream_events(
@@ -348,6 +371,7 @@ async def stream_ollama_chat(
                     )
                     if emitted_no_content:
                         accumulated.append(emitted_no_content)
+                        stream_emitted_visible_output = True
             except Exception as e:
                 logger.warning("Non-streamed fallback failed after empty stream: %s", e)
                 no_content_msg = "[Model returned no content after tool loop]"
@@ -357,6 +381,7 @@ async def stream_ollama_chat(
                 )
                 if emitted_no_content:
                     accumulated.append(emitted_no_content)
+                    stream_emitted_visible_output = True
 
         if not is_current_request_cancelled():
             await broadcast_message("response_complete", "")

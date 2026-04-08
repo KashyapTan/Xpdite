@@ -10,7 +10,7 @@ import {
   DeferredInlineContentBlocks,
   warmDeferredChatRenderers,
 } from './deferredChatRenderers';
-import type { ChatMessage as ChatMessageType, ContentBlock } from '../../types';
+import type { ArtifactBlockData, ChatMessage as ChatMessageType, ContentBlock } from '../../types';
 import { buildRenderableContentBlocks } from '../../utils/renderableContentBlocks';
 
 function LiveContentFallback({
@@ -42,6 +42,8 @@ interface ResponseAreaProps {
   onRetryMessage: (message: ChatMessageType) => void;
   onEditMessage: (message: ChatMessageType, content: string) => void;
   onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
   onToggleThinking: () => void;
   onScroll: () => void;
   onScrollToBottom: () => void;
@@ -74,6 +76,8 @@ function ResponseAreaComponent({
   onRetryMessage,
   onEditMessage,
   onSetActiveResponse,
+  onArtifactUpdated,
+  onArtifactDeleted,
   onToggleThinking,
   onScroll,
   onScrollToBottom,
@@ -149,6 +153,8 @@ function ResponseAreaComponent({
               onRetryMessage={onRetryMessage}
               onEditMessage={onEditMessage}
               onSetActiveResponse={onSetActiveResponse}
+              onArtifactUpdated={onArtifactUpdated}
+              onArtifactDeleted={onArtifactDeleted}
               containerRef={responseAreaRef}
             />
           </Suspense>
@@ -182,6 +188,8 @@ function ResponseAreaComponent({
                 isStreaming={!canSubmit}
                 expanded={isSingleThinkingTimeline ? !thinkingCollapsed : undefined}
                 onToggleExpanded={isSingleThinkingTimeline ? onToggleThinking : undefined}
+                onArtifactUpdated={onArtifactUpdated}
+                onArtifactDeleted={onArtifactDeleted}
                 onTerminalApprove={onTerminalApprove}
                 onTerminalDeny={onTerminalDeny}
                 onTerminalApproveRemember={onTerminalApproveRemember}

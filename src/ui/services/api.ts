@@ -262,6 +262,33 @@ async function readErrorDetail(response: Response, fallback: string): Promise<st
   return fallback;
 }
 
+async function getArtifactRequestHeaders(headers?: HeadersInit): Promise<Headers> {
+  const resolvedHeaders = new Headers(headers);
+  const electronTokenApi = typeof window !== 'undefined'
+    ? window.electronAPI?.getServerToken
+    : undefined;
+
+  if (!electronTokenApi) {
+    return resolvedHeaders;
+  }
+
+  try {
+    const token = await electronTokenApi();
+    if (token) {
+      resolvedHeaders.set('X-Xpdite-Server-Token', token);
+    }
+  } catch {
+    // Fall back to loopback-only access when token lookup is unavailable.
+  }
+
+  return resolvedHeaders;
+}
+
+async function artifactFetch(input: string | URL, init?: RequestInit): Promise<Response> {
+  const headers = await getArtifactRequestHeaders(init?.headers);
+  return fetch(input, { ...init, headers });
+}
+
 export interface ApiService {
   // WebSocket methods
   submitQuery: (query: string, captureMode: string) => void;
@@ -874,7 +901,7 @@ export const api = {
       url.searchParams.set('page_size', String(options.pageSize));
     }
 
-    const response = await fetch(url.toString());
+    const response = await artifactFetch(url.toString());
     if (!response.ok) {
       const detail = await readErrorDetail(response, 'Failed to fetch artifacts');
       throw new Error(detail);
@@ -913,7 +940,7 @@ export const api = {
       url.searchParams.set('page_size', String(options.pageSize));
     }
 
-    const response = await fetch(url.toString());
+    const response = await artifactFetch(url.toString());
     if (!response.ok) {
       const detail = await readErrorDetail(response, 'Failed to fetch conversation artifacts');
       throw new Error(detail);
@@ -932,7 +959,7 @@ export const api = {
 
   async getArtifact(artifactId: string): Promise<ArtifactRecord> {
     const base = await baseUrl();
-    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`);
+    const response = await artifactFetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`);
     if (!response.ok) {
       const detail = await readErrorDetail(response, 'Failed to fetch artifact');
       throw new Error(detail);
@@ -950,7 +977,7 @@ export const api = {
     messageId?: string | null;
   }): Promise<ArtifactRecord> {
     const base = await baseUrl();
-    const response = await fetch(`${base}/api/artifacts`, {
+    const response = await artifactFetch(`${base}/api/artifacts`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -978,7 +1005,7 @@ export const api = {
     },
   ): Promise<ArtifactRecord> {
     const base = await baseUrl();
-    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
+    const response = await artifactFetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
@@ -992,7 +1019,7 @@ export const api = {
 
   async deleteArtifact(artifactId: string): Promise<void> {
     const base = await baseUrl();
-    const response = await fetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
+    const response = await artifactFetch(`${base}/api/artifacts/${encodeURIComponent(artifactId)}`, {
       method: 'DELETE',
     });
     if (!response.ok) {

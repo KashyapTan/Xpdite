@@ -117,6 +117,16 @@ export default function SettingsArtifacts() {
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, typeFilter]);
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages);
+    }
+  }, [page, totalPages]);
+
   const refreshSelectedPage = async () => {
     setLoading(true);
     setError('');

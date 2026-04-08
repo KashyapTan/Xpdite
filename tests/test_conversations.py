@@ -12,6 +12,8 @@ from source.services.chat.conversations import (
 from source.services.skills_runtime.skills import Skill
 from source.services.chat.tab_manager import TabState
 
+pytestmark = pytest.mark.anyio
+
 
 @pytest.fixture
 def anyio_backend():
@@ -145,7 +147,7 @@ class TestConversationBranching:
         )
         return user_message, assistant_message
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_submit_query_persists_normal_turn(self, db_manager, monkeypatch):
         cid = db_manager.start_new_conversation("Existing chat")
         tab_state = TabState(tab_id="default")
@@ -184,7 +186,7 @@ class TestConversationBranching:
         assert messages[0]["turn_id"] == messages[1]["turn_id"]
         assert messages[1]["response_variants"][0]["content"] == "Fresh answer"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_retry_message_creates_response_variant_and_truncates_later_turns(
         self, db_manager, monkeypatch
     ):
@@ -254,7 +256,7 @@ class TestConversationBranching:
             },
         )
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_edit_message_replaces_prompt_and_resets_response_history(
         self, db_manager, monkeypatch
     ):
@@ -321,7 +323,7 @@ class TestConversationBranching:
         )
         assert tab_state.chat_history[0]["content"] == "Edited prompt"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_resume_conversation_keeps_image_paths_in_backend_history(
         self, db_manager, monkeypatch, tmp_path
     ):
@@ -335,6 +337,10 @@ class TestConversationBranching:
         monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
         monkeypatch.setattr(
             "source.services.chat.conversations.broadcast_message", broadcast_mock
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations._get_thumbnail_creator",
+            lambda: (lambda path: "thumb-data"),
         )
         monkeypatch.setattr(
             "source.services.chat.conversations.run_in_thread",
@@ -354,7 +360,130 @@ class TestConversationBranching:
             {"name": "image.png", "thumbnail": "thumb-data"}
         ]
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
+    async def test_resume_conversation_preserves_artifact_only_assistant_history(
+        self, db_manager, monkeypatch
+    ):
+        cid = db_manager.start_new_conversation("Artifact resume")
+        user_message = db_manager.add_message(cid, "user", "Build a file")
+        assistant_message = db_manager.add_message(
+            cid,
+            "assistant",
+            "",
+            model="model-a",
+            content_blocks=[
+                {
+                    "type": "artifact",
+                    "artifact_id": "artifact-1",
+                    "artifact_type": "code",
+                    "title": "demo.py",
+                    "language": "python",
+                }
+            ],
+            turn_id=user_message["turn_id"],
+        )
+        db_manager.create_artifact(
+            artifact_id="artifact-1",
+            conversation_id=cid,
+            message_id=assistant_message["message_id"],
+            artifact_type="code",
+            title="demo.py",
+            language="python",
+            storage_kind="inline",
+            storage_path=None,
+            inline_content='print("hi")',
+            searchable_text='print("hi")',
+            size_bytes=11,
+            line_count=1,
+        )
+
+        tab_state = TabState(tab_id="default")
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
+        )
+
+        await ConversationService.resume_conversation(cid, tab_state=tab_state)
+
+        assert tab_state.chat_history == [
+            {"role": "user", "content": "Build a file"},
+            {
+                "role": "assistant",
+                "content": '<artifact type="code" title="demo.py" language="python">print("hi")</artifact>',
+                "model": "model-a",
+            },
+        ]
+
+    @pytest.mark.anyio
+    async def test_retry_message_keeps_artifact_only_assistant_history(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        cid = db_manager.start_new_conversation("Artifact retry")
+        first_user, first_assistant = self._seed_turn(
+            db_manager,
+            cid,
+            user_content="Build a file",
+            assistant_content="Initial answer",
+        )
+
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = db_manager.get_active_chat_history(cid)
+
+        artifact_reply = {
+            "type": "artifact",
+            "artifact_id": "artifact-2",
+            "artifact_type": "code",
+            "title": "demo.py",
+            "language": "python",
+            "size_bytes": 11,
+            "line_count": 1,
+            "status": "ready",
+            "content": 'print("hi")',
+        }
+
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.ARTIFACTS_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(
+            "source.services.chat.conversations.route_chat",
+            AsyncMock(
+                return_value=(
+                    "",
+                    {"prompt_eval_count": 3, "eval_count": 5},
+                    [],
+                    [artifact_reply],
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
+        )
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "source.services.chat.conversations.run_in_thread",
+            fake_run_in_thread,
+        )
+
+        await ConversationService.submit_query(
+            user_query="Build a file",
+            llm_query="Build a file",
+            tab_state=tab_state,
+            model="model-b",
+            action="retry",
+            target_message_id=first_assistant["message_id"],
+        )
+
+        assert tab_state.chat_history[-1] == {
+            "role": "assistant",
+            "content": '<artifact type="code" title="demo.py" language="python">print("hi")</artifact>',
+            "model": "model-b",
+        }
+        assert tab_state.chat_history[0]["content"] == "Build a file"
+
+    @pytest.mark.anyio
     async def test_submit_query_injects_and_truncates_attached_text(
         self, db_manager, monkeypatch, tmp_path
     ):
@@ -397,7 +526,7 @@ class TestConversationBranching:
         assert "Summarize" in llm_query_sent
         assert await_args.kwargs["tool_retrieval_query"] == "Summarize"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_submit_query_routes_image_attachment_to_image_paths(
         self, db_manager, monkeypatch, tmp_path
     ):
@@ -441,7 +570,7 @@ class TestConversationBranching:
         assert str(image_path) in image_paths_sent
         assert await_args.kwargs["tool_retrieval_query"] == "Describe"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_submit_query_includes_read_file_payload_for_document_attachment(
         self, db_manager, monkeypatch, tmp_path
     ):
@@ -704,5 +833,9 @@ class TestConversationBranching:
         assert messages[1]["content_blocks"][0]["artifact_id"] == "artifact-new"
         broadcast_mock.assert_any_call(
             "artifact_deleted",
-            {"artifact_id": "artifact-old"},
+            {
+                "artifact_id": "artifact-old",
+                "conversation_id": cid,
+                "message_id": assistant_message["message_id"],
+            },
         )

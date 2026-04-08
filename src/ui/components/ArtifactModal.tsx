@@ -79,7 +79,8 @@ function renderPreview(artifact: ArtifactBlockData, content: string, previewMode
     <iframe
       title={artifact.title}
       className="artifact-modal-html-frame"
-      sandbox="allow-scripts"
+      sandbox=""
+      referrerPolicy="no-referrer"
       srcDoc={content || ''}
     />
   );

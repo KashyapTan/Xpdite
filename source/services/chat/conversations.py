@@ -11,6 +11,7 @@ import logging
 import re
 import uuid
 import asyncio
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ...infrastructure.config import MAX_TOOL_RESULT_LENGTH
@@ -93,6 +94,16 @@ async def _run_read_file_for_attachment(path: str) -> str | dict[str, Any]:
     return await run_in_thread(read_file, path, 0, _ATTACHMENT_READ_FILE_MAX_CHARS)
 
 
+@lru_cache(maxsize=1)
+def _get_thumbnail_creator():
+    try:
+        from ...infrastructure.screenshot_runtime import create_thumbnail
+    except Exception as exc:
+        logger.warning("Screenshot thumbnail support unavailable: %s", exc)
+        return None
+    return create_thumbnail
+
+
 class ConversationService:
     """Manages conversation lifecycle and query processing."""
 
@@ -117,12 +128,12 @@ class ConversationService:
         if not images or not all(isinstance(image, str) for image in images):
             return hydrated_message
 
-        from ...infrastructure.screenshot_runtime import create_thumbnail
+        create_thumbnail = _get_thumbnail_creator()
 
         thumbnails = []
         for image_path in images:
             thumbnail = None
-            if os.path.exists(image_path):
+            if create_thumbnail is not None and os.path.exists(image_path):
                 thumbnail = await run_in_thread(create_thumbnail, image_path)
 
             thumbnails.append(
@@ -221,9 +232,37 @@ class ConversationService:
         ]
 
     @staticmethod
-    async def _broadcast_deleted_artifacts(artifact_ids: List[str]) -> None:
-        for artifact_id in artifact_ids:
-            await broadcast_message("artifact_deleted", {"artifact_id": artifact_id})
+    def _artifact_deleted_payload(
+        artifact: Dict[str, Any] | str,
+    ) -> Dict[str, Any] | None:
+        if isinstance(artifact, str):
+            artifact_id = artifact.strip()
+            return {"artifact_id": artifact_id} if artifact_id else None
+
+        artifact_id = str(
+            artifact.get("id") or artifact.get("artifact_id") or ""
+        ).strip()
+        if not artifact_id:
+            return None
+
+        payload: Dict[str, Any] = {"artifact_id": artifact_id}
+        if artifact.get("conversation_id") is not None:
+            payload["conversation_id"] = artifact.get("conversation_id")
+        if artifact.get("message_id") is not None:
+            payload["message_id"] = artifact.get("message_id")
+        if artifact.get("reason") is not None:
+            payload["reason"] = artifact.get("reason")
+        return payload
+
+    @staticmethod
+    async def _broadcast_deleted_artifacts(
+        artifacts: List[Dict[str, Any] | str],
+    ) -> None:
+        for artifact in artifacts:
+            payload = ConversationService._artifact_deleted_payload(artifact)
+            if payload is None:
+                continue
+            await broadcast_message("artifact_deleted", payload)
 
     @staticmethod
     def _resolve_turn_context(target_message_id: str) -> Dict[str, Any]:
@@ -245,26 +284,15 @@ class ConversationService:
         if assistant_message is None:
             raise ValueError("Selected turn does not have an assistant response yet.")
 
-        history_before_turn: List[Dict[str, Any]] = []
-        for message in db.get_full_conversation(conversation_id):
-            if message.get("turn_id") == turn_id:
-                break
-            entry: Dict[str, Any] = {
-                "role": message["role"],
-                "content": message["content"],
-            }
-            if message.get("images"):
-                entry["images"] = message["images"]
-            if message.get("model"):
-                entry["model"] = message["model"]
-            history_before_turn.append(entry)
-
         return {
             "conversation_id": conversation_id,
             "turn_id": turn_id,
             "user_message": user_message,
             "assistant_message": assistant_message,
-            "history_before_turn": history_before_turn,
+            "history_before_turn": db.get_active_chat_history(
+                conversation_id,
+                stop_before_turn_id=turn_id,
+            ),
             "image_paths": user_message.get("images", []),
         }
 
@@ -323,14 +351,7 @@ class ConversationService:
         else:
             app_state.conversation_id = conversation_id
 
-        # Rebuild in-memory chat history
-        for msg in raw_messages:
-            entry = {"role": msg["role"], "content": msg["content"]}
-            if msg.get("model"):
-                entry["model"] = msg["model"]
-            if msg.get("images"):
-                entry["images"] = msg["images"]
-            chat_history_target.append(entry)
+        ConversationService._set_chat_history(conversation_id, tab_state=tab_state)
 
         chat_history_len = (
             len(tab_state.chat_history) if tab_state else len(app_state.chat_history)
@@ -676,18 +697,18 @@ class ConversationService:
                             for assistant_message_id in later_assistant_ids
                         ]
                     )
-                    for deleted_ids in deleted_batches:
+                    for deleted_artifacts in deleted_batches:
                         await ConversationService._broadcast_deleted_artifacts(
-                            deleted_ids
+                            deleted_artifacts
                         )
 
                 if action == "edit":
-                    deleted_ids = await run_in_thread(
+                    deleted_artifacts = await run_in_thread(
                         artifact_service.delete_artifacts_for_message,
                         turn_context["assistant_message"]["message_id"],
                     )
                     await ConversationService._broadcast_deleted_artifacts(
-                        deleted_ids
+                        deleted_artifacts
                     )
 
             if content_blocks_data:

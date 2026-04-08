@@ -16,7 +16,7 @@ import {
   formatMessageTimestamp,
   serializeMessageForCopy,
 } from '../../utils/chatMessages';
-import type { ChatMessage as ChatMessageType } from '../../types';
+import type { ArtifactBlockData, ChatMessage as ChatMessageType } from '../../types';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -25,6 +25,8 @@ interface ChatMessageProps {
   onRetryMessage: (message: ChatMessageType) => void;
   onEditMessage: (message: ChatMessageType, content: string) => void;
   onSetActiveResponse: (message: ChatMessageType, responseIndex: number) => void;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
 }
 
 interface ActionButtonProps {
@@ -97,6 +99,8 @@ function ChatMessageComponent({
   onRetryMessage,
   onEditMessage,
   onSetActiveResponse,
+  onArtifactUpdated,
+  onArtifactDeleted,
 }: ChatMessageProps) {
   const [thinkingCollapsed, setThinkingCollapsed] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -210,6 +214,8 @@ function ChatMessageComponent({
               ? () => setThinkingCollapsed((prev) => !prev)
               : undefined
           }
+          onArtifactUpdated={onArtifactUpdated}
+          onArtifactDeleted={onArtifactDeleted}
         />
       );
     }

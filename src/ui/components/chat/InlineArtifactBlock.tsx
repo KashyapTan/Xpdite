@@ -20,9 +20,15 @@ function formatBytes(sizeBytes: number): string {
 
 interface InlineArtifactBlockProps {
   artifact: ArtifactBlockData;
+  onArtifactUpdated?: (artifact: ArtifactBlockData) => void;
+  onArtifactDeleted?: (artifactId: string) => void;
 }
 
-export function InlineArtifactBlock({ artifact }: InlineArtifactBlockProps) {
+export function InlineArtifactBlock({
+  artifact,
+  onArtifactUpdated,
+  onArtifactDeleted,
+}: InlineArtifactBlockProps) {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [localArtifact, setLocalArtifact] = useState(artifact);
 
@@ -77,13 +83,17 @@ export function InlineArtifactBlock({ artifact }: InlineArtifactBlockProps) {
         <ArtifactModal
           artifact={localArtifact}
           onClose={() => setIsModalOpen(false)}
-          onUpdated={setLocalArtifact}
+          onUpdated={(updatedArtifact) => {
+            setLocalArtifact(updatedArtifact);
+            onArtifactUpdated?.(updatedArtifact);
+          }}
           onDeleted={(artifactId) => {
             setLocalArtifact((current) =>
               current.artifactId === artifactId
                 ? { ...current, status: 'deleted', content: undefined }
                 : current,
             );
+            onArtifactDeleted?.(artifactId);
           }}
         />
       ) : null}

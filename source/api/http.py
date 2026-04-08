@@ -11,11 +11,12 @@ Use for:
 import json
 import logging
 import os
+import secrets
 import time
 import uuid
 
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from ollama import AsyncClient as OllamaAsyncClient
 from pydantic import BaseModel
@@ -23,6 +24,7 @@ from typing import Any, Awaitable, Callable, List, Optional
 
 from ..core.thread_pool import run_in_thread as _run_in_thread
 from ..core.connection import manager
+from ..infrastructure.config import SERVER_SESSION_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +163,8 @@ async def health_check():
 
 _VALID_ARTIFACT_TYPES = {"code", "markdown", "html"}
 _VALID_ARTIFACT_STATUSES = {"ready", "deleted"}
+_ARTIFACT_AUTH_HEADER = "X-Xpdite-Server-Token"
+_LOOPBACK_CLIENT_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
 
 
 class ArtifactCreateRequest(BaseModel):
@@ -180,6 +184,37 @@ class ArtifactUpdateRequest(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     language: Optional[str] = None
+
+
+def _artifact_deleted_payload(artifact: dict[str, Any]) -> dict[str, Any]:
+    payload: dict[str, Any] = {"artifact_id": artifact["id"]}
+    if artifact.get("conversation_id") is not None:
+        payload["conversation_id"] = artifact.get("conversation_id")
+    if artifact.get("message_id") is not None:
+        payload["message_id"] = artifact.get("message_id")
+    return payload
+
+
+def _is_loopback_request(request: Request) -> bool:
+    client = request.client
+    return bool(client and client.host in _LOOPBACK_CLIENT_HOSTS)
+
+
+async def _require_artifact_access(
+    request: Request,
+    artifact_token: Optional[str] = Header(
+        default=None,
+        alias=_ARTIFACT_AUTH_HEADER,
+    ),
+) -> None:
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="Artifact access denied")
+
+    if SERVER_SESSION_TOKEN and not (
+        artifact_token
+        and secrets.compare_digest(artifact_token, SERVER_SESSION_TOKEN)
+    ):
+        raise HTTPException(status_code=403, detail="Artifact access denied")
 
 
 def _validate_artifact_type(artifact_type: Optional[str]) -> Optional[str]:
@@ -213,6 +248,7 @@ async def list_artifacts(
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    _artifact_access: None = Depends(_require_artifact_access),
 ):
     """List stored artifacts with optional search and filtering."""
     from ..services.artifacts import artifact_service
@@ -235,6 +271,7 @@ async def list_artifacts_for_conversation(
     status: Optional[str] = None,
     page: int = 1,
     page_size: int = 50,
+    _artifact_access: None = Depends(_require_artifact_access),
 ):
     """List artifacts associated with a conversation."""
     from ..services.artifacts import artifact_service
@@ -251,7 +288,10 @@ async def list_artifacts_for_conversation(
 
 
 @router.get("/artifacts/{artifact_id}")
-async def get_artifact(artifact_id: str):
+async def get_artifact(
+    artifact_id: str,
+    _artifact_access: None = Depends(_require_artifact_access),
+):
     """Fetch a single artifact including full content."""
     from ..services.artifacts import artifact_service
 
@@ -262,7 +302,10 @@ async def get_artifact(artifact_id: str):
 
 
 @router.post("/artifacts")
-async def create_artifact(payload: ArtifactCreateRequest):
+async def create_artifact(
+    payload: ArtifactCreateRequest,
+    _artifact_access: None = Depends(_require_artifact_access),
+):
     """Create a new artifact record."""
     from ..services.artifacts import artifact_service
 
@@ -282,7 +325,11 @@ async def create_artifact(payload: ArtifactCreateRequest):
 
 
 @router.put("/artifacts/{artifact_id}")
-async def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest):
+async def update_artifact(
+    artifact_id: str,
+    payload: ArtifactUpdateRequest,
+    _artifact_access: None = Depends(_require_artifact_access),
+):
     """Update artifact metadata or content."""
     from ..services.artifacts import artifact_service
 
@@ -307,15 +354,19 @@ async def update_artifact(artifact_id: str, payload: ArtifactUpdateRequest):
 
 
 @router.delete("/artifacts/{artifact_id}")
-async def delete_artifact(artifact_id: str):
+async def delete_artifact(
+    artifact_id: str,
+    _artifact_access: None = Depends(_require_artifact_access),
+):
     """Delete an artifact and notify connected clients."""
     from ..services.artifacts import artifact_service
 
     deleted = await _run_in_thread(artifact_service.delete_artifact, artifact_id)
-    if not deleted:
+    if deleted is None:
         raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
 
-    await manager.broadcast_json("artifact_deleted", {"artifact_id": artifact_id})
+    payload = _artifact_deleted_payload(deleted)
+    await manager.broadcast_json("artifact_deleted", payload)
     return {"success": True, "artifact_id": artifact_id}
 
 

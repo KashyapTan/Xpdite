@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
@@ -75,6 +76,12 @@ def _write_text_file(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(content)
+
+
+def _write_temp_text_file(path: Path, content: str) -> Path:
+    temp_path = path.with_name(f"{path.name}.{uuid.uuid4().hex}.tmp")
+    _write_text_file(temp_path, content)
+    return temp_path
 
 
 def _remove_file(path: Optional[str]) -> None:
@@ -281,6 +288,9 @@ class ArtifactService:
         size_bytes, line_count = _compute_stats(next_content)
         storage_path = existing.get("storage_path")
         inline_content = None
+        original_storage_path = storage_path
+        next_path: Optional[Path] = None
+        temp_path: Optional[Path] = None
 
         if existing["storage_kind"] == "file":
             next_path = _artifact_path(
@@ -289,46 +299,63 @@ class ArtifactService:
                 next_title,
                 next_language,
             )
-            if storage_path and str(next_path) != storage_path:
-                _remove_file(storage_path)
-            _write_text_file(next_path, next_content)
+            temp_path = _write_temp_text_file(next_path, next_content)
+            os.replace(temp_path, next_path)
             storage_path = str(next_path)
         else:
             inline_content = next_content
 
-        db.update_artifact(
-            artifact_id=artifact_id,
-            title=next_title,
-            language=next_language,
-            storage_path=storage_path,
-            inline_content=inline_content,
-            searchable_text=next_content,
-            size_bytes=size_bytes,
-            line_count=line_count,
-        )
+        try:
+            db.update_artifact(
+                artifact_id=artifact_id,
+                title=next_title,
+                language=next_language,
+                storage_path=storage_path,
+                inline_content=inline_content,
+                searchable_text=next_content,
+                size_bytes=size_bytes,
+                line_count=line_count,
+            )
+        except Exception:
+            if temp_path is not None and temp_path.exists():
+                _remove_file(str(temp_path))
+            if (
+                next_path is not None
+                and original_storage_path
+                and str(next_path) != original_storage_path
+            ):
+                _remove_file(str(next_path))
+            raise
+
+        if (
+            original_storage_path
+            and next_path is not None
+            and str(next_path) != original_storage_path
+        ):
+            _remove_file(original_storage_path)
         return ArtifactService.get_artifact(artifact_id)
 
     @staticmethod
-    def delete_artifact(artifact_id: str) -> bool:
+    def delete_artifact(artifact_id: str) -> Optional[Dict[str, Any]]:
         deleted = db.delete_artifact(artifact_id)
         if deleted is None:
-            return False
+            return None
         _remove_file(deleted.get("storage_path"))
-        return True
+        return deleted
 
     @staticmethod
-    def delete_artifacts_for_message(message_id: str) -> list[str]:
+    def delete_artifacts_for_message(message_id: str) -> list[Dict[str, Any]]:
         deleted_rows = db.delete_artifacts_for_message(message_id)
         for row in deleted_rows:
             _remove_file(row.get("storage_path"))
-        return [str(row.get("id") or "") for row in deleted_rows if row.get("id")]
+        return deleted_rows
 
     @staticmethod
-    def delete_artifacts_for_conversation(conversation_id: str) -> list[str]:
+    def delete_artifacts_for_conversation(conversation_id: str) -> list[Dict[str, Any]]:
         deleted_rows = db.delete_artifacts_for_conversation(conversation_id)
         for row in deleted_rows:
             _remove_file(row.get("storage_path"))
-        return [str(row.get("id") or "") for row in deleted_rows if row.get("id")]
+        return deleted_rows
 
 
 artifact_service = ArtifactService()

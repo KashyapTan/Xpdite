@@ -37,6 +37,7 @@ import '../CSS/QueueDropdown.css';
 
 // Types
 import type {
+  ArtifactBlockData,
   WebSocketMessage,
   TabSnapshot,
   Screenshot,
@@ -237,6 +238,82 @@ function upsertArtifactBlock(
   return nextBlocks;
 }
 
+type ArtifactDeletedPayload = {
+  artifact_id: string;
+  conversation_id?: string | null;
+  message_id?: string | null;
+  reason?: string;
+};
+
+function updateArtifactInBlocks(
+  blocks: ContentBlock[],
+  artifact: ArtifactBlockData,
+  appendIfMissing: boolean = true,
+): ContentBlock[] {
+  const nextBlocks = [...blocks];
+  const existingIndex = nextBlocks.findIndex(
+    (block) => block.type === 'artifact' && block.artifact.artifactId === artifact.artifactId,
+  );
+
+  if (existingIndex >= 0) {
+    const existingBlock = nextBlocks[existingIndex];
+    if (existingBlock.type === 'artifact') {
+      nextBlocks[existingIndex] = {
+        type: 'artifact',
+        artifact: {
+          ...existingBlock.artifact,
+          ...artifact,
+        },
+      };
+    }
+  } else if (appendIfMissing) {
+    nextBlocks.push({ type: 'artifact', artifact });
+  }
+
+  return nextBlocks;
+}
+
+function updateArtifactInMessage(
+  message: ChatMessage,
+  artifact: ArtifactBlockData,
+): ChatMessage {
+  const shouldUpdateMessageBlocks = !!message.contentBlocks && (
+    blocksContainArtifact(message.contentBlocks, artifact.artifactId, artifact.messageId)
+    || (artifact.messageId != null && message.messageId === artifact.messageId)
+  );
+  const nextContentBlocks = shouldUpdateMessageBlocks && message.contentBlocks
+    ? updateArtifactInBlocks(
+        message.contentBlocks,
+        artifact,
+        artifact.messageId != null && message.messageId === artifact.messageId,
+      )
+    : message.contentBlocks;
+
+  const nextResponseVersions = message.responseVersions?.map((variant) => ({
+    ...variant,
+    contentBlocks: variant.contentBlocks
+      ? updateArtifactInBlocks(
+          variant.contentBlocks,
+          artifact,
+          false,
+        )
+      : variant.contentBlocks,
+  }));
+
+  return {
+    ...message,
+    contentBlocks: nextContentBlocks,
+    responseVersions: nextResponseVersions,
+  };
+}
+
+function updateArtifactInHistory(
+  history: ChatMessage[],
+  artifact: ArtifactBlockData,
+): ChatMessage[] {
+  return history.map((message) => updateArtifactInMessage(message, artifact));
+}
+
 function markArtifactDeletedInBlocks(
   blocks: ContentBlock[],
   artifactId: string,
@@ -284,6 +361,56 @@ function markArtifactDeletedInHistory(
   artifactId: string,
 ): ChatMessage[] {
   return history.map((message) => markArtifactDeletedInMessage(message, artifactId));
+}
+
+function blocksContainArtifact(
+  blocks: ContentBlock[],
+  artifactId: string,
+  messageId?: string | null,
+): boolean {
+  return blocks.some((block) => (
+    block.type === 'artifact'
+    && (
+      block.artifact.artifactId === artifactId
+      || (!!messageId && block.artifact.messageId === messageId)
+    )
+  ));
+}
+
+function messageContainsArtifactContext(
+  message: ChatMessage,
+  payload: ArtifactDeletedPayload,
+): boolean {
+  if (payload.message_id && message.messageId === payload.message_id) {
+    return true;
+  }
+
+  if (blocksContainArtifact(message.contentBlocks ?? [], payload.artifact_id, payload.message_id)) {
+    return true;
+  }
+
+  return message.responseVersions?.some((variant) =>
+    blocksContainArtifact(variant.contentBlocks ?? [], payload.artifact_id, payload.message_id),
+  ) ?? false;
+}
+
+function chatMatchesArtifactContext(
+  chat: TabSnapshot['chat'],
+  payload: ArtifactDeletedPayload,
+): boolean {
+  if (payload.conversation_id && chat.conversationId !== payload.conversation_id) {
+    return false;
+  }
+
+  if (payload.message_id) {
+    if (blocksContainArtifact(chat.contentBlocks, payload.artifact_id, payload.message_id)) {
+      return true;
+    }
+
+    return chat.chatHistory.some((message) => messageContainsArtifactContext(message, payload));
+  }
+
+  return true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1063,9 +1190,12 @@ function App() {
       }
 
       case 'artifact_deleted': {
-        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'background:artifact_deleted');
+        const artifactDeleted = parseWsPayload<ArtifactDeletedPayload>(data, 'background:artifact_deleted');
         if (!artifactDeleted?.artifact_id) {
           return;
+        }
+        if (!chatMatchesArtifactContext(chat, artifactDeleted)) {
+          break;
         }
         chat.contentBlocks = markArtifactDeletedInBlocks(
           chat.contentBlocks,
@@ -1257,13 +1387,16 @@ function App() {
       }
 
       case 'artifact_deleted': {
-        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'global:artifact_deleted');
+        const artifactDeleted = parseWsPayload<ArtifactDeletedPayload>(data, 'global:artifact_deleted');
         if (!artifactDeleted?.artifact_id) {
           return true;
         }
 
         for (const tab of tabsRef.current) {
           const snapshot = getTabSnapshot(tab.id) ?? freshSnapshot();
+          if (!chatMatchesArtifactContext(snapshot.chat, artifactDeleted)) {
+            continue;
+          }
           setTabSnapshot(tab.id, {
             ...snapshot,
             chat: {
@@ -1280,7 +1413,7 @@ function App() {
           });
         }
 
-        if (activeTabIdRef.current) {
+        if (chatMatchesArtifactContext(chatState.getSnapshot(), artifactDeleted)) {
           chatState.markArtifactDeleted(artifactDeleted.artifact_id);
           chatState.setChatHistory((previousHistory) =>
             markArtifactDeletedInHistory(previousHistory, artifactDeleted.artifact_id),
@@ -1694,8 +1827,11 @@ function App() {
       }
 
       case 'artifact_deleted': {
-        const artifactDeleted = parseWsPayload<{ artifact_id: string }>(data, 'active:artifact_deleted');
+        const artifactDeleted = parseWsPayload<ArtifactDeletedPayload>(data, 'active:artifact_deleted');
         if (!artifactDeleted?.artifact_id) {
+          break;
+        }
+        if (!chatMatchesArtifactContext(chatState.getSnapshot(), artifactDeleted)) {
           break;
         }
         chatState.markArtifactDeleted(artifactDeleted.artifact_id);
@@ -2093,6 +2229,51 @@ function App() {
 
   const setChatHistory = chatState.setChatHistory;
 
+  const syncActiveTabArtifactSnapshot = useCallback((
+    nextContentBlocks: ContentBlock[],
+    nextHistory: ChatMessage[],
+  ) => {
+    const activeTabId = activeTabIdRef.current;
+    if (!activeTabId) {
+      return;
+    }
+
+    const snapshot = getTabSnapshot(activeTabId) ?? freshSnapshot();
+    setTabSnapshot(activeTabId, {
+      ...snapshot,
+      chat: {
+        ...chatState.getSnapshot(),
+        contentBlocks: nextContentBlocks,
+        chatHistory: nextHistory,
+      },
+    });
+  }, [chatState, freshSnapshot, getTabSnapshot, setTabSnapshot]);
+
+  const handleArtifactUpdated = useCallback((artifact: ArtifactBlockData) => {
+    const nextContentBlocks = updateArtifactInBlocks(
+      chatState.contentBlocksRef.current,
+      artifact,
+      false,
+    );
+    const nextHistory = updateArtifactInHistory(chatState.chatHistory, artifact);
+
+    chatState.updateArtifactBlock(artifact);
+    chatState.setChatHistory(nextHistory);
+    syncActiveTabArtifactSnapshot(nextContentBlocks, nextHistory);
+  }, [chatState, syncActiveTabArtifactSnapshot]);
+
+  const handleArtifactDeleted = useCallback((artifactId: string) => {
+    const nextContentBlocks = markArtifactDeletedInBlocks(
+      chatState.contentBlocksRef.current,
+      artifactId,
+    );
+    const nextHistory = markArtifactDeletedInHistory(chatState.chatHistory, artifactId);
+
+    chatState.markArtifactDeleted(artifactId);
+    chatState.setChatHistory(nextHistory);
+    syncActiveTabArtifactSnapshot(nextContentBlocks, nextHistory);
+  }, [chatState, syncActiveTabArtifactSnapshot]);
+
   const handleSetActiveResponse = useCallback(async (message: ChatMessage, responseIndex: number) => {
     if (!message.messageId || !message.responseVersions) {
       return;
@@ -2318,6 +2499,8 @@ function App() {
         onRetryMessage={handleRetryMessage}
         onEditMessage={handleEditMessage}
         onSetActiveResponse={handleSetActiveResponse}
+        onArtifactUpdated={handleArtifactUpdated}
+        onArtifactDeleted={handleArtifactDeleted}
         onToggleThinking={handleToggleThinking}
         onScroll={handleScroll}
         onScrollToBottom={scrollToBottom}

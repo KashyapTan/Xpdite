@@ -14,6 +14,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getServerPort: () => {
         return ipcRenderer.invoke('get-server-port');
     },
+    getServerToken: () => {
+        return ipcRenderer.invoke('get-server-token');
+    },
     getBootState: () => {
         return ipcRenderer.invoke('get-boot-state');
     },

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from 'e
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
-import { startPythonServer, stopPythonServer, getServerPort, onBootMarker } from './pythonApi.js';
+import { startPythonServer, stopPythonServer, getServerPort, getServerToken, onBootMarker } from './pythonApi.js';
 import { 
     startChannelBridge, 
     stopChannelBridge, 
@@ -518,6 +518,14 @@ app.on('ready', async () => {
         }
 
         return getServerPort();
+    });
+
+    ipcMain.handle('get-server-token', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return '';
+        }
+
+        return getServerToken();
     });
 
     // Channel Bridge IPC handlers
