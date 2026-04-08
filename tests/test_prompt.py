@@ -7,6 +7,7 @@ from source.llm.core.prompt import (
     _BASE_TEMPLATE,
     _get_datetime,
     _get_os_info,
+    build_artifacts_prompt_block,
     build_memory_prompt_block,
     build_system_prompt,
     build_user_profile_block,
@@ -133,6 +134,15 @@ class TestBuildSystemPrompt:
         assert "MEMORY BLOCK" in prompt
         assert "PROFILE BLOCK" in prompt
 
+    def test_legacy_custom_template_auto_appends_artifacts_block(self):
+        prompt = build_system_prompt(
+            template="Today is {{current_datetime}} on {{os_info}}.",
+            artifacts_block=build_artifacts_prompt_block(),
+        )
+
+        assert "## Artifacts" in prompt
+        assert "<artifact type=" in prompt
+
     def test_explicit_placeholders_are_replaced_in_place(self):
         prompt = build_system_prompt(
             template="A{{memory_block}}B{{user_profile_block}}C",
@@ -141,3 +151,11 @@ class TestBuildSystemPrompt:
         )
 
         assert prompt == "A MEMORY B PROFILE C"
+
+    def test_explicit_artifacts_placeholder_is_replaced_in_place(self):
+        prompt = build_system_prompt(
+            template="A{{artifacts_block}}B",
+            artifacts_block=" ARTIFACTS ",
+        )
+
+        assert prompt == "A ARTIFACTS B"

@@ -13,6 +13,11 @@ from source.services.skills_runtime.skills import Skill
 from source.services.chat.tab_manager import TabState
 
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 def _make_skill(name, slash_command, enabled=True):
     return Skill(
         name=name,
@@ -513,3 +518,191 @@ class TestConversationBranching:
         assert '"extracted_images"' in llm_query_sent
         assert str(extracted_image_path).replace("\\", "\\\\") in llm_query_sent
         assert await_args.kwargs["tool_retrieval_query"] == "What is on slide 1 image?"
+
+    @pytest.mark.anyio
+    async def test_submit_query_persists_artifact_only_assistant_response(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        from source.services.artifacts import artifact_service
+
+        cid = db_manager.start_new_conversation("Artifact only")
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = []
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.ARTIFACTS_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(
+            "source.services.chat.conversations.route_chat",
+            AsyncMock(
+                return_value=(
+                    "",
+                    {"prompt_eval_count": 2, "eval_count": 4},
+                    [],
+                    [
+                        {
+                            "type": "artifact",
+                            "artifact_id": "artifact-1",
+                            "artifact_type": "code",
+                            "title": "demo.py",
+                            "language": "python",
+                            "content": 'print("hi")',
+                        }
+                    ],
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.run_in_thread",
+            fake_run_in_thread,
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
+        )
+
+        conversation_id = await ConversationService.submit_query(
+            user_query="Build it",
+            llm_query="Build it",
+            tab_state=tab_state,
+            model="model-a",
+        )
+
+        assert conversation_id == cid
+        messages = db_manager.get_full_conversation(cid)
+        assert [message["content"] for message in messages] == ["Build it", ""]
+        assistant = messages[1]
+        assert assistant["content_blocks"] == [
+            {
+                "type": "artifact",
+                "artifact_id": "artifact-1",
+                "artifact_type": "code",
+                "title": "demo.py",
+                "language": "python",
+                "size_bytes": 11,
+                "line_count": 1,
+                "status": "ready",
+            }
+        ]
+        assert assistant["response_variants"][0]["content"] == ""
+
+        artifact = artifact_service.get_artifact("artifact-1")
+        assert artifact is not None
+        assert artifact["content"] == 'print("hi")'
+        assert artifact["message_id"] == assistant["message_id"]
+
+    @pytest.mark.anyio
+    async def test_edit_message_replaces_existing_artifacts_and_broadcasts_deletion(
+        self, db_manager, monkeypatch, tmp_path
+    ):
+        cid = db_manager.start_new_conversation("Original prompt")
+        user_message = db_manager.add_message(cid, "user", "Original prompt")
+
+        old_blocks = [
+            {
+                "type": "artifact",
+                "artifact_id": "artifact-old",
+                "artifact_type": "markdown",
+                "title": "Old spec",
+                "language": None,
+                "size_bytes": 5,
+                "line_count": 1,
+                "status": "ready",
+            }
+        ]
+        assistant_message = db_manager.add_message(
+            cid,
+            "assistant",
+            "",
+            model="model-a",
+            content_blocks=old_blocks,
+            turn_id=user_message["turn_id"],
+        )
+        db_manager.create_artifact(
+            artifact_id="artifact-old",
+            conversation_id=cid,
+            message_id=assistant_message["message_id"],
+            artifact_type="markdown",
+            title="Old spec",
+            language=None,
+            storage_kind="inline",
+            storage_path=None,
+            inline_content="# old",
+            searchable_text="# old",
+            size_bytes=5,
+            line_count=1,
+        )
+        db_manager.save_response_version(
+            cid,
+            assistant_message["message_id"],
+            "",
+            model="model-a",
+            content_blocks=old_blocks,
+            replace_history=True,
+        )
+
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = db_manager.get_active_chat_history(cid)
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        broadcast_mock = AsyncMock()
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.db", db_manager)
+        monkeypatch.setattr("source.services.artifacts.ARTIFACTS_DIR", tmp_path / "artifacts")
+        monkeypatch.setattr(
+            "source.services.chat.conversations.route_chat",
+            AsyncMock(
+                return_value=(
+                    "",
+                    {"prompt_eval_count": 2, "eval_count": 4},
+                    [],
+                    [
+                        {
+                            "type": "artifact",
+                            "artifact_id": "artifact-new",
+                            "artifact_type": "markdown",
+                            "title": "New spec",
+                            "language": None,
+                            "content": "# new",
+                        }
+                    ],
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.run_in_thread",
+            fake_run_in_thread,
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message", broadcast_mock
+        )
+
+        conversation_id = await ConversationService.submit_query(
+            user_query="Edited prompt",
+            llm_query="Edited prompt",
+            tab_state=tab_state,
+            model="model-b",
+            action="edit",
+            target_message_id=user_message["message_id"],
+        )
+
+        assert conversation_id == cid
+        deleted_old_artifact = db_manager.get_artifact("artifact-old")
+        assert deleted_old_artifact is not None
+        assert deleted_old_artifact["status"] == "deleted"
+        assert deleted_old_artifact["storage_path"] is None
+        assert db_manager.get_artifact("artifact-new") is not None
+
+        messages = db_manager.get_full_conversation(cid)
+        assert [message["content"] for message in messages] == ["Edited prompt", ""]
+        assert messages[1]["content_blocks"][0]["artifact_id"] == "artifact-new"
+        broadcast_mock.assert_any_call(
+            "artifact_deleted",
+            {"artifact_id": "artifact-old"},
+        )

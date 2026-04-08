@@ -634,6 +634,131 @@ class TestMessageContentBlocks:
 
 
 # ------------------------------------------------------------------
+# Artifacts
+# ------------------------------------------------------------------
+
+
+class TestArtifacts:
+    def test_artifact_crud_and_fts_search(self, db_manager, tmp_path):
+        cid = db_manager.start_new_conversation("Artifacts")
+        artifact_id = "artifact-1"
+        artifact_path = tmp_path / "demo.py"
+
+        created = db_manager.create_artifact(
+            artifact_id=artifact_id,
+            conversation_id=cid,
+            message_id=None,
+            artifact_type="code",
+            title="FastAPI demo",
+            language="python",
+            storage_kind="file",
+            storage_path=str(artifact_path),
+            inline_content=None,
+            searchable_text="from fastapi import FastAPI\napp = FastAPI()",
+            size_bytes=42,
+            line_count=2,
+        )
+
+        assert created["id"] == artifact_id
+        fetched = db_manager.get_artifact(artifact_id)
+        assert fetched is not None
+        assert fetched["title"] == "FastAPI demo"
+        assert fetched["artifact_type"] == "code"
+
+        rows, total = db_manager.list_artifacts(query="FastAPI")
+        assert total == 1
+        assert rows[0]["id"] == artifact_id
+
+        rows, total = db_manager.list_artifacts(
+            query="app = FastAPI()",
+            artifact_type="code",
+            conversation_id=cid,
+        )
+        assert total == 1
+        assert rows[0]["title"] == "FastAPI demo"
+
+        updated = db_manager.update_artifact(
+            artifact_id=artifact_id,
+            title="Updated demo",
+            language="python",
+            storage_path=str(artifact_path),
+            inline_content=None,
+            searchable_text="updated endpoint handler",
+            size_bytes=23,
+            line_count=1,
+        )
+        assert updated is not None
+
+        rows, total = db_manager.list_artifacts(query="updated endpoint")
+        assert total == 1
+        assert rows[0]["title"] == "Updated demo"
+
+    def test_missing_artifact_resolves_to_deleted_tombstone(self, db_manager):
+        cid = db_manager.start_new_conversation("Artifact history")
+        user_message = db_manager.add_message(cid, "user", "Create a demo")
+
+        db_manager.create_artifact(
+            artifact_id="artifact-2",
+            conversation_id=cid,
+            message_id=None,
+            artifact_type="markdown",
+            title="Demo spec",
+            language=None,
+            storage_kind="inline",
+            storage_path=None,
+            inline_content="# Demo",
+            searchable_text="# Demo",
+            size_bytes=6,
+            line_count=1,
+        )
+
+        content_blocks = [
+            {
+                "type": "artifact",
+                "artifact_id": "artifact-2",
+                "artifact_type": "markdown",
+                "title": "Demo spec",
+                "language": None,
+                "size_bytes": 6,
+                "line_count": 1,
+                "status": "ready",
+            }
+        ]
+        assistant_message = db_manager.add_message(
+            cid,
+            "assistant",
+            "",
+            model="model-a",
+            content_blocks=content_blocks,
+            turn_id=user_message["turn_id"],
+        )
+        db_manager.save_response_version(
+            cid,
+            assistant_message["message_id"],
+            "",
+            model="model-a",
+            content_blocks=content_blocks,
+            replace_history=True,
+        )
+
+        initial_messages = db_manager.get_full_conversation(cid)
+        assert initial_messages[1]["content_blocks"][0]["status"] == "ready"
+
+        db_manager.delete_artifact("artifact-2")
+
+        deleted_rows, deleted_total = db_manager.list_artifacts(status="deleted")
+        assert deleted_total == 1
+        assert deleted_rows[0]["id"] == "artifact-2"
+
+        messages = db_manager.get_full_conversation(cid)
+        artifact_block = messages[1]["content_blocks"][0]
+        assert artifact_block["type"] == "artifact"
+        assert artifact_block["artifact_id"] == "artifact-2"
+        assert artifact_block["status"] == "deleted"
+        assert artifact_block["title"] == "Demo spec"
+
+
+# ------------------------------------------------------------------
 # Schema constraints
 # ------------------------------------------------------------------
 

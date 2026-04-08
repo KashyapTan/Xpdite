@@ -13,6 +13,11 @@ from fastapi.testclient import TestClient
 import source.api.http as http_api
 
 
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
 class TestHttpApiHelpers:
     def test_extract_openrouter_error_prefers_nested_error_message(self):
         response = MagicMock()
@@ -64,6 +69,155 @@ class TestHttpApiHelpers:
         assert refreshed == [{"id": "second"}]
         first_fetcher.assert_awaited_once()
         second_fetcher.assert_awaited_once()
+
+
+class TestArtifactApiEndpoints:
+    @pytest.mark.anyio
+    async def test_list_artifacts_normalizes_filters_and_delegates(self):
+        service = MagicMock()
+        service.list_artifacts.return_value = {"artifacts": [], "total": 0}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.list_artifacts(
+                query=" roadmap ",
+                type=" CODE ",
+                status=" READY ",
+                page=2,
+                page_size=25,
+            )
+
+        assert result == {"artifacts": [], "total": 0}
+        service.list_artifacts.assert_called_once_with(
+            query=" roadmap ",
+            artifact_type="code",
+            status="ready",
+            page=2,
+            page_size=25,
+        )
+
+    @pytest.mark.anyio
+    async def test_list_artifacts_for_conversation_passes_conversation_scope(self):
+        service = MagicMock()
+        service.list_artifacts.return_value = {"artifacts": [{"id": "artifact-1"}], "total": 1}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.list_artifacts_for_conversation("conv-123", type="html")
+
+        assert result["total"] == 1
+        service.list_artifacts.assert_called_once_with(
+            query="",
+            artifact_type="html",
+            status=None,
+            page=1,
+            page_size=50,
+            conversation_id="conv-123",
+        )
+
+    @pytest.mark.anyio
+    async def test_create_artifact_validates_title_and_delegates(self):
+        service = MagicMock()
+        service.create_artifact.return_value = {"id": "artifact-1", "type": "code"}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.create_artifact(
+                http_api.ArtifactCreateRequest(
+                    type="CODE",
+                    title=" Demo ",
+                    content='print("hi")',
+                    language="python",
+                    conversation_id="conv-123",
+                    message_id="msg-123",
+                )
+            )
+
+        assert result == {"id": "artifact-1", "type": "code"}
+        service.create_artifact.assert_called_once_with(
+            artifact_type="code",
+            title=" Demo ",
+            content='print("hi")',
+            language="python",
+            conversation_id="conv-123",
+            message_id="msg-123",
+        )
+
+    @pytest.mark.anyio
+    async def test_update_artifact_without_changes_returns_existing_record(self):
+        service = MagicMock()
+        service.get_artifact.return_value = {"id": "artifact-1", "title": "Demo"}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.update_artifact(
+                "artifact-1",
+                http_api.ArtifactUpdateRequest(),
+            )
+
+        assert result == {"id": "artifact-1", "title": "Demo"}
+        service.get_artifact.assert_called_once_with("artifact-1")
+        service.update_artifact.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_delete_artifact_broadcasts_deletion(self):
+        service = MagicMock()
+        service.delete_artifact.return_value = True
+        broadcast_mock = AsyncMock()
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api.manager, "broadcast_json", broadcast_mock),
+        ):
+            result = await http_api.delete_artifact("artifact-1")
+
+        assert result == {"success": True, "artifact_id": "artifact-1"}
+        service.delete_artifact.assert_called_once_with("artifact-1")
+        broadcast_mock.assert_awaited_once_with(
+            "artifact_deleted",
+            {"artifact_id": "artifact-1"},
+        )
+
+    @pytest.mark.anyio
+    async def test_delete_artifact_raises_404_when_missing(self):
+        service = MagicMock()
+        service.delete_artifact.return_value = False
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.delete_artifact("missing")
+
+        assert exc.value.status_code == 404
 
 
 class TestHttpApiEndpoints:
