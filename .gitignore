@@ -45,3 +45,4 @@ coverage/
 backend-coverage.json
 claude-code-reference-implementations/
 scripts/benchmark_results
+scripts/quality_test_results
