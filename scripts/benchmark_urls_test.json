@@ -1,0 +1,21 @@
+{
+  "metadata": {
+    "description": "Quick test URL list for benchmark verification",
+    "version": "1.0",
+    "total_urls": 10
+  },
+  "urls": {
+    "test_urls": [
+      "https://www.wikipedia.org",
+      "https://www.bbc.com/news",
+      "https://docs.python.org/3/",
+      "https://github.com",
+      "https://www.google.com",
+      "https://stackoverflow.com",
+      "https://www.reddit.com",
+      "https://httpbin.org/html",
+      "https://example.com",
+      "https://www.nytimes.com"
+    ]
+  }
+}

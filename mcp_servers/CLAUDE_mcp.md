@@ -11,7 +11,7 @@ MCP (Model Context Protocol) extends the LLM with callable tools. Each server is
 | `filesystem` | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file`, `glob_files`, `grep_files` | Sandboxed — paths are validated |
 | `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
 | `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
-| `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + HTTP scraping |
+| `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + multi-tier HTTP/browser scraping with concurrent execution |
 | `windows_mcp` | ✅ Active | `list_windows`, `focus_window`, `minimize_window`, `maximize_window`, `close_window`, `take_screenshot` | Windows automation via uvx |
 | `terminal` | ✅ Active (inline) | `run_command`, `find_files`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Schemas live in `terminal/inline_tools.py`; execution is inline via `terminal_executor.py` with approval UI. |
 | `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Schema lives in `sub_agent/inline_tools.py`; registration remains in `manager.py`, interception in `cloud_provider.py` and `handlers.py`, execution is in `services/sub_agent.py`. |
@@ -212,3 +212,66 @@ If the new server's tool calls should display nicely in the chat timeline, updat
 **The `video_watcher` server is also inline-only.** The `watch_youtube_video` schema lives in `mcp_servers/servers/video_watcher/inline_tools.py` and is registered in `manager.py` via `register_inline_tools("video_watcher", VIDEO_WATCHER_INLINE_TOOLS)`. Execution is intercepted in `cloud_provider.py` and `mcp_integration/handlers.py` and handled by `source/mcp_integration/executors/video_watcher_executor.py` + `source/services/media/video_watcher.py`. When captions are unavailable, it emits a `youtube_transcription_approval` chat block and waits for user approval before Whisper transcription.
 
 **The `skills` server is inline-only and retrieval-enabled.** `list_skills` and `use_skill` are registered via `register_inline_tools("skills", SKILLS_INLINE_TOOLS, skip_embed=False)` so they can be semantically retrieved by the tool retriever. Execution is handled inline by `source/mcp_integration/executors/skills_executor.py` (no subprocess).
+
+---
+
+## Websearch Architecture
+
+The `websearch` MCP server provides two tools: `search_web_pages` (DuckDuckGo search) and `read_website` (web scraping). The scraping system uses a multi-tier architecture with concurrent execution for optimal performance.
+
+### Tier System
+
+| Tier | Method | Timeout | Use Case |
+|------|--------|---------|----------|
+| **Tier 1 (curl)** | httpx + curl_cffi | 7s | Fast HTTP fetch for static sites |
+| **Tier 2 (camoufox)** | Camoufox browser | 10s | JS-heavy sites, anti-bot bypass |
+| **Tier 3 (nodriver)** | undetected-chromedriver | 12s | Maximum stealth (disabled by default) |
+
+### Concurrent Execution Flow
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  scrape_concurrent(url, mode)                           │
+├─────────────────────────────────────────────────────────┤
+│  1. Special handlers (Twitter/Medium) tried first       │
+│  2. Tier 1 starts immediately                           │
+│  3. After 1.5s stagger delay, browser tiers start       │
+│  4. First result > 5000 chars wins (early return)       │
+│  5. If all finish, best result is selected              │
+│  6. Access restriction detection on final content       │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Thresholds (benchmarked on 260 URLs)
+
+| Threshold | Value | Source |
+|-----------|-------|--------|
+| Success (early return) | 5,000 chars | P25 of successful extractions |
+| Sparse content warning | 500 chars | P10 of successful extractions |
+| Global timeout | 12s | P99 latency + buffer |
+
+### Access Restriction Detection
+
+The scraper detects 30+ signals indicating login walls, paywalls, and CAPTCHAs. When detected:
+- Warning is added to output metadata
+- Suggestions offered (try different mode, check credentials, etc.)
+- Content still returned if available (some paywalled sites show partial content)
+
+### Browser Pool
+
+Camoufox browser instances are pooled (default 2) for faster subsequent requests. Pool management is automatic via `_get_camoufox_browser()` / `_return_camoufox_browser()`.
+
+### Key Files
+
+- `mcp_servers/servers/websearch/server.py` — main implementation
+- `mcp_servers/servers/websearch/websearch_descriptions.py` — tool descriptions
+- `scripts/benchmark_websearch.py` — benchmark script for tuning thresholds
+- `scripts/benchmark_urls.json` — 260 URLs across 11 categories for benchmarking
+- `tests/test_websearch_server.py` — unit tests (32 tests)
+
+### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WEBSEARCH_ENABLE_EXTERNAL_RELAYS` | false | Enable Freedium/Archive.is relays for Medium |
+| `WEBSEARCH_ENABLE_UNSAFE_TIER3_BROWSER` | false | Enable nodriver tier (requires manual setup) |
