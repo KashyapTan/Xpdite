@@ -75,7 +75,9 @@ class TestConnectGoogleServers:
         manager = reset_mcp_manager_state
 
         with (
-            patch("source.mcp_integration.core.manager.os.path.exists", return_value=True),
+            patch(
+                "source.mcp_integration.core.manager.os.path.exists", return_value=True
+            ),
             patch.object(
                 manager,
                 "is_server_connected",
@@ -89,6 +91,36 @@ class TestConnectGoogleServers:
             await manager.connect_google_servers()
 
         assert connect_server.await_count == 2
+        embed_tools.assert_called_once_with([])
+
+    @pytest.mark.asyncio
+    async def test_google_connect_timeout_is_handled(self, reset_mcp_manager_state):
+        manager = reset_mcp_manager_state
+
+        async def _timeout_wait_for(coro, timeout):
+            if hasattr(coro, "close"):
+                coro.close()
+            raise asyncio.TimeoutError
+
+        with (
+            patch(
+                "source.mcp_integration.core.manager.os.path.exists", return_value=True
+            ),
+            patch.object(
+                manager,
+                "is_server_connected",
+                side_effect=[False, False],
+            ),
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
+            patch.object(manager_module.asyncio, "wait_for", new=_timeout_wait_for),
+            patch.object(manager_module.retriever, "embed_tools") as embed_tools,
+        ):
+            await manager.connect_google_servers()
+
+        # connect coroutines were attempted but timed out via wait_for wrapper
+        assert connect_server.await_count == 0
         embed_tools.assert_called_once_with([])
 
 
@@ -211,6 +243,66 @@ class TestCallTool:
         assert (
             result
             == "Error: Tool 'slow_tool' (server 'filesystem') timed out after 90s"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_timeout_branch_websearch_uses_shorter_timeout(self):
+        manager = manager_module.McpToolManager()
+
+        async def _timeout_wait_for(*_args, **_kwargs):
+            raise asyncio.TimeoutError
+
+        session = SimpleNamespace(call_tool=Mock(return_value="ignored-by-timeout"))
+        manager._tool_registry["read_website"] = {
+            "session": session,
+            "server_name": "websearch",
+        }
+
+        with patch.object(
+            manager_module.asyncio,
+            "wait_for",
+            new=_timeout_wait_for,
+        ):
+            result = await manager.call_tool(
+                "read_website", {"url": "https://example.com"}
+            )
+
+        assert (
+            result
+            == "Error: Tool 'read_website' (server 'websearch') timed out after 25s"
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_websearch_uses_shorter_wait_and_read_timeouts(self):
+        manager = manager_module.McpToolManager()
+
+        captured = {"wait_for_timeout": None}
+
+        async def _capturing_wait_for(coro, timeout):
+            captured["wait_for_timeout"] = timeout
+            return await coro
+
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(content=[SimpleNamespace(text="ok")])
+            )
+        )
+        manager._tool_registry["read_website"] = {
+            "session": session,
+            "server_name": "websearch",
+        }
+
+        with patch.object(manager_module.asyncio, "wait_for", new=_capturing_wait_for):
+            result = await manager.call_tool(
+                "read_website", {"url": "https://example.com"}
+            )
+
+        assert result == "ok"
+        assert captured["wait_for_timeout"] == 30.0
+        session.call_tool.assert_awaited_once_with(
+            "read_website",
+            arguments={"url": "https://example.com"},
+            read_timeout_seconds=timedelta(seconds=25),
         )
 
     @pytest.mark.asyncio

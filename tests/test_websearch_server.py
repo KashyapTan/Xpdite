@@ -45,6 +45,74 @@ async def test_read_website_rejects_missing_scheme():
     assert "URL must start with http:// or https://" in result
 
 
+async def test_read_website_validation_timeout(monkeypatch):
+    import time
+
+    def _slow_validate(_url: str):
+        time.sleep(0.05)
+        return None
+
+    monkeypatch.setattr(websearch_server, "_validate_read_website_url", _slow_validate)
+    monkeypatch.setattr(websearch_server, "_URL_VALIDATION_TIMEOUT", 0.01)
+
+    result = await websearch_server.read_website("https://example.com")
+
+    assert result.startswith("ERROR: URL validation timed out")
+
+
+async def test_validate_read_website_url_async_caches_by_host(monkeypatch):
+    calls = {"count": 0}
+
+    def _counting_validate(_url: str):
+        calls["count"] += 1
+        return None
+
+    websearch_server._url_validation_cache.clear()
+    monkeypatch.setattr(
+        websearch_server, "_validate_read_website_url", _counting_validate
+    )
+    monkeypatch.setattr(websearch_server, "_URL_VALIDATION_TIMEOUT", 1.0)
+
+    first = await websearch_server._validate_read_website_url_async(
+        "https://example.com/a"
+    )
+    second = await websearch_server._validate_read_website_url_async(
+        "https://example.com/b"
+    )
+
+    assert first is None
+    assert second is None
+    assert calls["count"] == 1
+
+
+async def test_validate_read_website_url_async_timeout_not_cached(monkeypatch):
+    import time
+
+    def _slow_validate(_url: str):
+        time.sleep(0.05)
+        return None
+
+    def _fast_validate(_url: str):
+        return None
+
+    websearch_server._url_validation_cache.clear()
+    monkeypatch.setattr(websearch_server, "_URL_VALIDATION_TIMEOUT", 0.01)
+    monkeypatch.setattr(websearch_server, "_validate_read_website_url", _slow_validate)
+
+    first = await websearch_server._validate_read_website_url_async(
+        "https://example.com"
+    )
+    assert isinstance(first, str)
+    assert "timed out" in first.lower()
+
+    # If timeout was incorrectly cached, this second call would still return timeout.
+    monkeypatch.setattr(websearch_server, "_validate_read_website_url", _fast_validate)
+    second = await websearch_server._validate_read_website_url_async(
+        "https://example.com"
+    )
+    assert second is None
+
+
 def test_validate_read_website_url_rejects_loopback_ip():
     result = websearch_server._validate_read_website_url(
         "http://127.0.0.1:8000/private"

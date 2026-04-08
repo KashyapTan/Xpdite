@@ -17,6 +17,13 @@ from .retriever import retriever
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_MCP_TOOL_TIMEOUT_SECONDS = 90
+_SERVER_TOOL_TIMEOUT_SECONDS: Dict[str, int] = {
+    # read_website/search_web_pages should fail fast instead of blocking an agent turn.
+    "websearch": 25,
+}
+_MCP_TOOL_TIMEOUT_BUFFER_SECONDS = 5
+
 
 class McpToolManager:
     """
@@ -138,13 +145,31 @@ class McpToolManager:
                 _server_lifecycle(), name=f"mcp-server-{server_name}"
             )
 
+            async def _cleanup_untracked_lifecycle_task() -> None:
+                shutdown_event.set()
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=5.0)
+                except Exception:
+                    pass
+
             # Wait for the session to become available (or for an error)
-            await connected_event.wait()
+            try:
+                await connected_event.wait()
+            except asyncio.CancelledError:
+                await _cleanup_untracked_lifecycle_task()
+                raise
 
             if "error" in connection_data:
+                await _cleanup_untracked_lifecycle_task()
                 raise connection_data["error"]
 
-            session = connection_data["session"]
+            session = connection_data.get("session")
+            if session is None:
+                await _cleanup_untracked_lifecycle_task()
+                raise RuntimeError(
+                    f"MCP server '{server_name}' did not provide a valid session"
+                )
 
             self._connections[server_name] = {
                 "session": session,
@@ -273,17 +298,27 @@ class McpToolManager:
             )
 
         try:
+            server = str(entry.get("server_name", "unknown"))
+            read_timeout_s = _SERVER_TOOL_TIMEOUT_SECONDS.get(
+                server, _DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
+            )
             result = await asyncio.wait_for(
                 session.call_tool(
                     tool_name,
                     arguments=arguments,
-                    read_timeout_seconds=timedelta(seconds=90),
+                    read_timeout_seconds=timedelta(seconds=read_timeout_s),
                 ),
-                timeout=95.0,  # slightly above MCP SDK read timeout so it fires first
+                timeout=float(read_timeout_s + _MCP_TOOL_TIMEOUT_BUFFER_SECONDS),
             )
         except asyncio.TimeoutError:
             server = entry.get("server_name", "unknown")
-            return f"Error: Tool '{tool_name}' (server '{server}') timed out after 90s"
+            timeout_s = _SERVER_TOOL_TIMEOUT_SECONDS.get(
+                str(server), _DEFAULT_MCP_TOOL_TIMEOUT_SECONDS
+            )
+            return (
+                f"Error: Tool '{tool_name}' (server '{server}') timed out "
+                f"after {timeout_s}s"
+            )
         except (ConnectionError, BrokenPipeError, OSError) as e:
             server = entry.get("server_name", "unknown")
             logger.error(
@@ -447,51 +482,66 @@ class McpToolManager:
             "GOOGLE_TOKEN_FILE": str(GOOGLE_TOKEN_FILE),
         }
 
+        async def _connect_with_timeout(coro, name: str, timeout_s: float = 30.0):
+            try:
+                await asyncio.wait_for(coro, timeout=timeout_s)
+                return None
+            except asyncio.TimeoutError:
+                return f"Google server '{name}' timed out after {timeout_s:.0f}s"
+            except Exception as exc:
+                return f"Google server '{name}' failed: {type(exc).__name__}: {exc}"
+
         # Connect Gmail and Calendar servers in parallel
         connect_tasks = []
         if not self.is_server_connected("gmail"):
             connect_tasks.append(
-                self.connect_server(
+                _connect_with_timeout(
+                    self.connect_server(
+                        "gmail",
+                        sys.executable,
+                        [
+                            str(
+                                PROJECT_ROOT
+                                / "mcp_servers"
+                                / "servers"
+                                / "gmail"
+                                / "server.py"
+                            )
+                        ],
+                        env=env,
+                        skip_embed=True,
+                    ),
                     "gmail",
-                    sys.executable,
-                    [
-                        str(
-                            PROJECT_ROOT
-                            / "mcp_servers"
-                            / "servers"
-                            / "gmail"
-                            / "server.py"
-                        )
-                    ],
-                    env=env,
-                    skip_embed=True,
                 )
             )
 
         if not self.is_server_connected("calendar"):
             connect_tasks.append(
-                self.connect_server(
+                _connect_with_timeout(
+                    self.connect_server(
+                        "calendar",
+                        sys.executable,
+                        [
+                            str(
+                                PROJECT_ROOT
+                                / "mcp_servers"
+                                / "servers"
+                                / "calendar"
+                                / "server.py"
+                            )
+                        ],
+                        env=env,
+                        skip_embed=True,
+                    ),
                     "calendar",
-                    sys.executable,
-                    [
-                        str(
-                            PROJECT_ROOT
-                            / "mcp_servers"
-                            / "servers"
-                            / "calendar"
-                            / "server.py"
-                        )
-                    ],
-                    env=env,
-                    skip_embed=True,
                 )
             )
 
         if connect_tasks:
-            results = await asyncio.gather(*connect_tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.warning("Google server connection failed: %s", result)
+            results = await asyncio.gather(*connect_tasks)
+            for result in results:
+                if isinstance(result, str) and result:
+                    logger.warning("%s", result)
 
         self.refresh_tool_embeddings()
         logger.info(

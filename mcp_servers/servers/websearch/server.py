@@ -40,6 +40,7 @@ _TIER2_TIMEOUT = 10.0  # Timeout for tier 2 (camoufox)
 _TIER3_TIMEOUT = 12.0  # Timeout for tier 3 (nodriver)
 _GLOBAL_TIMEOUT = 12.0  # Overall timeout for entire scrape operation
 _STAGGER_DELAY = 1.5  # Delay before starting browser tiers if tier1 hasn't returned
+_URL_VALIDATION_TIMEOUT = 3.0  # Guard DNS/host validation to avoid long hangs
 
 # ── Connection pooling ──────────────────────────────────────────────
 # Reuse HTTP sessions across multiple requests to avoid connection setup overhead
@@ -57,6 +58,11 @@ _httpx_noredirect_client_lock = asyncio.Lock()
 _camoufox_pool: asyncio.Queue | None = None
 _camoufox_pool_lock = asyncio.Lock()
 _CAMOUFOX_POOL_SIZE = 2  # Number of warm browser instances to maintain
+
+# Cache host validation results to avoid repeated DNS lookups per resource.
+_url_validation_cache: dict[tuple[str, str, int], str | None] = {}
+_url_validation_cache_lock = asyncio.Lock()
+_URL_VALIDATION_CACHE_MAX = 1024
 
 
 @dataclass
@@ -491,7 +497,7 @@ async def _resolve_safe_redirect_chain(
                 return None
             seen_urls.add(current_url)
 
-            if _validate_read_website_url(current_url):
+            if await _validate_read_website_url_async(current_url):
                 return None
 
             response = await client.get(
@@ -510,13 +516,51 @@ async def _resolve_safe_redirect_chain(
                 return str(response.request.url)
 
             next_url = urljoin(str(response.request.url), location)
-            if _validate_read_website_url(next_url):
+            if await _validate_read_website_url_async(next_url):
                 return None
             current_url = next_url
     except Exception:
         return url if fail_open else None
 
     return None
+
+
+async def _validate_read_website_url_async(url: str) -> str | None:
+    """Async wrapper for URL validation with timeout and caching.
+
+    Keeps DNS/host validation bounded so it cannot stall tool execution.
+    """
+    parsed = urlparse(url)
+    scheme = parsed.scheme or ""
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    port = parsed.port or (443 if scheme == "https" else 80)
+    cache_key = (host, scheme, port)
+
+    async with _url_validation_cache_lock:
+        if cache_key in _url_validation_cache:
+            return _url_validation_cache[cache_key]
+
+    try:
+        validation_result = await asyncio.wait_for(
+            asyncio.to_thread(_validate_read_website_url, url),
+            timeout=_URL_VALIDATION_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        return (
+            f"ERROR: URL validation timed out after {_URL_VALIDATION_TIMEOUT:.1f}s for "
+            f"{url}. This is usually a DNS/network issue."
+        )
+
+    async with _url_validation_cache_lock:
+        should_cache = validation_result is None or (
+            isinstance(validation_result, str) and "not allowed" in validation_result
+        )
+        if should_cache:
+            if len(_url_validation_cache) >= _URL_VALIDATION_CACHE_MAX:
+                _url_validation_cache.pop(next(iter(_url_validation_cache)))
+            _url_validation_cache[cache_key] = validation_result
+
+    return validation_result
 
 
 def is_twitter(url: str) -> bool:
@@ -629,7 +673,7 @@ async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
                 return None
             seen_urls.add(current_url)
 
-            if _validate_read_website_url(current_url):
+            if await _validate_read_website_url_async(current_url):
                 return None
 
             response = await session.get(
@@ -652,7 +696,7 @@ async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
                 break
 
             next_url = urljoin(str(getattr(response, "url", current_url)), location)
-            if _validate_read_website_url(next_url):
+            if await _validate_read_website_url_async(next_url):
                 return None
             current_url = next_url
         else:
@@ -663,7 +707,7 @@ async def tier1_curl(url: str, mode: str) -> tuple[str, str] | None:
 
         if response.status_code == 200 and len(response.text) > 500:
             final_url = str(getattr(response, "url", url))
-            if _validate_read_website_url(final_url):
+            if await _validate_read_website_url_async(final_url):
                 return None
             if has_js_wall(response.text):
                 return None
@@ -736,7 +780,7 @@ async def tier2_camoufox(url: str, mode: str) -> str | None:
                         await route.continue_()
                         return
 
-                    if _validate_read_website_url(request_url):
+                    if await _validate_read_website_url_async(request_url):
                         await route.abort()
                         return
                     await route.continue_()
@@ -749,7 +793,9 @@ async def tier2_camoufox(url: str, mode: str) -> str | None:
                 final_url = getattr(page, "url", safe_url)
                 await page.close()
 
-            if isinstance(final_url, str) and _validate_read_website_url(final_url):
+            if isinstance(final_url, str) and await _validate_read_website_url_async(
+                final_url
+            ):
                 return None
             if has_js_wall(html):
                 return None
@@ -769,7 +815,7 @@ async def tier2_camoufox(url: str, mode: str) -> str | None:
                 await route.continue_()
                 return
 
-            if _validate_read_website_url(request_url):
+            if await _validate_read_website_url_async(request_url):
                 await route.abort()
                 return
             await route.continue_()
@@ -784,7 +830,9 @@ async def tier2_camoufox(url: str, mode: str) -> str | None:
         await _return_camoufox_browser(browser)
         browser = None  # Mark as returned
 
-        if isinstance(final_url, str) and _validate_read_website_url(final_url):
+        if isinstance(final_url, str) and await _validate_read_website_url_async(
+            final_url
+        ):
             return None
         if has_js_wall(html):
             return None
@@ -814,7 +862,9 @@ async def tier3_nodriver(url: str, mode: str) -> str | None:
         page = await asyncio.wait_for(browser.get(safe_url), timeout=_TIER3_TIMEOUT)
         html = await asyncio.wait_for(page.get_content(), timeout=10.0)
         final_url = getattr(page, "url", safe_url)
-        if isinstance(final_url, str) and _validate_read_website_url(final_url):
+        if isinstance(final_url, str) and await _validate_read_website_url_async(
+            final_url
+        ):
             return None
         if not html or has_js_wall(html):
             return None
@@ -1015,6 +1065,8 @@ async def scrape_concurrent(
 
     result = ScrapeResult(url=url, mode=mode, success=False)
     best_attempt: TierAttempt | None = None  # Initialize before try block
+    pending_tasks: dict[asyncio.Task, str] = {}
+    stagger_task: asyncio.Task | None = None
 
     # Wrap EVERYTHING in the global timeout to prevent any path from hanging
     try:
@@ -1121,9 +1173,7 @@ async def scrape_concurrent(
                 return result
 
             # Run tiers with staggered start
-            pending_tasks: dict[asyncio.Task, str] = {}
             completed_attempts: list[TierAttempt] = []
-            best_attempt: TierAttempt | None = None
 
             # Start first tier immediately
             first_tier = tiers_to_run[0]
@@ -1136,7 +1186,6 @@ async def scrape_concurrent(
 
             # Schedule remaining tiers with stagger delay
             remaining_tiers = tiers_to_run[1:]
-            stagger_task: asyncio.Task | None = None
 
             if remaining_tiers:
 
@@ -1236,6 +1285,10 @@ async def scrape_concurrent(
 
     except asyncio.TimeoutError:
         # Global timeout reached, cancel all pending
+        for task in list(pending_tasks.keys()):
+            task.cancel()
+        if stagger_task and not stagger_task.done():
+            stagger_task.cancel()
         result.warnings.append(f"Global timeout ({_GLOBAL_TIMEOUT}s) reached")
 
     # Finalize result
@@ -1422,7 +1475,7 @@ async def read_website(
     normalized_url = (url or "").strip()
     if not normalized_url:
         return "ERROR: URL is required."
-    url_validation_error = _validate_read_website_url(normalized_url)
+    url_validation_error = await _validate_read_website_url_async(normalized_url)
     if url_validation_error:
         return url_validation_error
 
