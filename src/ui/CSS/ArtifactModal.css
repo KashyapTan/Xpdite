@@ -402,7 +402,7 @@
 
 .artifact-modal-html-frame {
   width: 100%;
-  min-height: 560px;
+  min-height: 100vh;
   border: none;
   border-radius: 10px;
   background: #fff;

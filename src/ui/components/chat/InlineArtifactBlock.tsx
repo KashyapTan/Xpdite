@@ -104,7 +104,7 @@ export function InlineArtifactBlock({
         </div>
       </div>
 
-      {/* {hasPreview ? (
+      {hasPreview ? (
         <div className="inline-artifact-preview-shell">
           <div className="inline-artifact-preview-header">
             <span>{previewLabel}</span>
@@ -118,7 +118,7 @@ export function InlineArtifactBlock({
             {artifactContent}
           </pre>
         </div>
-      ) : null} */}
+      ) : null}
 
       {isStreaming && !hasPreview ? (
         <div className="inline-artifact-placeholder">
