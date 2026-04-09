@@ -158,38 +158,46 @@ export default function SettingsArtifacts() {
   return (
     <div className="settings-artifacts">
       <div className="settings-artifacts-header">
-        <div>
-          <h2>Artifacts</h2>
-          <p>Browse generated code, markdown, and HTML artifacts. Open any artifact to inspect, edit, or delete it.</p>
+        <div className="settings-artifacts-header-row">
+          <div className="settings-artifacts-header-copy">
+            <h2>Artifacts</h2>
+            <p>Browse generated code, markdown, and HTML artifacts. Open any artifact to inspect, edit, or delete it.</p>
+            <div className="settings-artifacts-summary">
+              {loading ? 'Refreshing artifact library…' : `${total} artifact${total === 1 ? '' : 's'} indexed`}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="secondary-button settings-artifacts-refresh"
+            onClick={() => void refreshSelectedPage()}
+            disabled={loading}
+          >
+            Refresh
+          </button>
         </div>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => void refreshSelectedPage()}
-          disabled={loading}
-        >
-          Refresh
-        </button>
+        <div className="settings-artifacts-hint">Filter by type, status, or title</div>
       </div>
 
-      <div className="settings-artifacts-filters">
-        <input
-          type="search"
-          placeholder="Search artifacts..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TypeFilter)}>
-          <option value="all">All types</option>
-          <option value="code">Code</option>
-          <option value="markdown">Markdown</option>
-          <option value="html">HTML</option>
-        </select>
-        <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-          <option value="all">All statuses</option>
-          <option value="ready">Ready</option>
-          <option value="deleted">Deleted</option>
-        </select>
+      <div className="settings-artifacts-toolbar">
+        <div className="settings-artifacts-filters">
+          <input
+            type="search"
+            placeholder="Search artifacts..."
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value as TypeFilter)}>
+            <option value="all">All types</option>
+            <option value="code">Code</option>
+            <option value="markdown">Markdown</option>
+            <option value="html">HTML</option>
+          </select>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
+            <option value="all">All statuses</option>
+            <option value="ready">Ready</option>
+            <option value="deleted">Deleted</option>
+          </select>
+        </div>
       </div>
 
       {error ? <div className="settings-artifacts-error">{error}</div> : null}
@@ -213,20 +221,24 @@ export default function SettingsArtifacts() {
                 onClick={() => setSelectedArtifact(toArtifactBlockData(artifact))}
               >
                 <div className="settings-artifacts-item-top">
-                  <strong>{artifact.title}</strong>
-                  <span className={`settings-artifacts-status status-${artifact.status}`}>
-                    {artifact.status}
-                  </span>
-                </div>
-                <div className="settings-artifacts-item-meta">
-                  <span>{artifact.type}</span>
-                  {artifact.language ? <span>{artifact.language}</span> : null}
-                  <span>{formatBytes(artifact.sizeBytes)}</span>
-                  <span>{artifact.lineCount} lines</span>
+                  <div className="settings-artifacts-item-title-group">
+                    <strong>{artifact.title}</strong>
+                    <div className="settings-artifacts-item-meta">
+                      <span>{artifact.type}</span>
+                      {artifact.language ? <span>{artifact.language}</span> : null}
+                      <span>{formatBytes(artifact.sizeBytes)}</span>
+                      <span>{artifact.lineCount} lines</span>
+                    </div>
+                  </div>
+                  <div className="settings-artifacts-item-status-group">
+                    <span className={`settings-artifacts-status status-${artifact.status}`}>
+                      {artifact.status}
+                    </span>
+                  </div>
                 </div>
                 <div className="settings-artifacts-item-footer">
                   <span>{formatDate(artifact.updatedAt)}</span>
-                  {artifact.conversationId ? <span>Conversation linked</span> : <span>Standalone</span>}
+                  {artifact.conversationId ? <span>Linked to conversation</span> : <span>Standalone artifact</span>}
                 </div>
               </button>
             ))}

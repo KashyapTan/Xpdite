@@ -2,7 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  padding: 16px 20px 24px;
+  padding: 16px 20px;
   box-sizing: border-box;
   color: #eee;
   overflow: hidden;
@@ -10,148 +10,255 @@
 
 .settings-artifacts-header {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  margin-bottom: 14px;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
   flex-shrink: 0;
 }
 
-.settings-artifacts-header h2 {
-  margin: 0 0 4px;
+.settings-artifacts-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
 }
 
-.settings-artifacts-header p {
+.settings-artifacts-header-copy h2 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+}
+
+.settings-artifacts-header-copy p {
   margin: 0;
-  max-width: 560px;
-  color: rgba(255, 255, 255, 0.56);
-  font-size: 0.84rem;
-  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 540px;
+}
+
+.settings-artifacts-summary,
+.settings-artifacts-hint {
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 0.8rem;
+}
+
+.settings-artifacts-summary {
+  margin-top: 8px;
+}
+
+.settings-artifacts-refresh {
+  width: fit-content;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-toolbar {
+  flex-shrink: 0;
+  margin-bottom: 12px;
 }
 
 .settings-artifacts-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 180px 180px;
+  grid-template-columns: minmax(0, 1fr) 170px 170px;
   gap: 10px;
-  margin-bottom: 14px;
-  flex-shrink: 0;
 }
 
 .settings-artifacts-filters input,
 .settings-artifacts-filters select {
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: #fff;
+  background-color: rgba(0, 0, 0, 0.2);
+  color: white;
   padding: 10px 12px;
+  font-family: inherit;
   font-size: 0.9rem;
+}
+
+.settings-artifacts-filters input:focus,
+.settings-artifacts-filters select:focus {
+  outline: none;
+  border-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(0, 0, 0, 0.3);
 }
 
 .settings-artifacts-error,
 .settings-artifacts-empty {
-  border-radius: 10px;
-  padding: 14px;
-  font-size: 0.9rem;
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  flex-shrink: 0;
 }
 
 .settings-artifacts-error {
-  background: rgba(239, 68, 68, 0.12);
-  color: #fca5a5;
   margin-bottom: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background-color: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.76);
 }
 
 .settings-artifacts-empty {
-  background: rgba(255, 255, 255, 0.03);
-  color: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255, 255, 255, 0.55);
 }
 
 .settings-artifacts-list {
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
-  padding-right: 4px;
-}
-
-.settings-artifacts-item {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.03);
-  color: inherit;
-  text-align: left;
-  border-radius: 14px;
-  padding: 14px;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-right: 4px;
+  padding-bottom: 12px;
+}
+
+.settings-artifacts-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-artifacts-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+.settings-artifacts-item {
+  appearance: none;
+  width: 100%;
+  min-height: 104px;
+  background-color: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  color: inherit;
+  text-align: left;
   cursor: pointer;
-  transition: background-color 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font: inherit;
 }
 
 .settings-artifacts-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  border-color: rgba(255, 255, 255, 0.16);
-  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
 }
 
-.settings-artifacts-item-top,
-.settings-artifacts-item-footer,
-.settings-artifacts-item-meta {
+.settings-artifacts-item:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+
+.settings-artifacts-item-top {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.settings-artifacts-item-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
 }
 
 .settings-artifacts-item-top strong {
-  font-size: 0.95rem;
+  font-size: 0.98rem;
+  font-weight: 600;
   color: #fff;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.settings-artifacts-item-status-group {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .settings-artifacts-item-meta span,
-.settings-artifacts-item-footer span,
 .settings-artifacts-status {
-  font-size: 0.74rem;
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings-artifacts-item-meta span {
+  background: rgba(255, 255, 255, 0.08);
   color: rgba(255, 255, 255, 0.62);
 }
 
-.settings-artifacts-item-meta span,
 .settings-artifacts-status {
-  padding: 4px 8px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .settings-artifacts-status.status-ready {
-  background: rgba(59, 130, 246, 0.16);
-  color: #93c5fd;
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .settings-artifacts-status.status-deleted {
-  background: rgba(239, 68, 68, 0.16);
-  color: #fca5a5;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.settings-artifacts-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.settings-artifacts-item-footer span {
+  color: rgba(255, 255, 255, 0.42);
+  font-size: 0.76rem;
 }
 
 .settings-artifacts-pagination {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 10px;
   flex-shrink: 0;
 }
 
 .settings-artifacts-pagination button {
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.05);
-  color: #fff;
-  border-radius: 8px;
-  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background-color: transparent;
+  color: rgba(255, 255, 255, 0.7);
+  padding: 8px 14px;
+  border-radius: 6px;
   cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+  font: inherit;
+}
+
+.settings-artifacts-pagination button:hover:not(:disabled) {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 .settings-artifacts-pagination button:disabled {
@@ -160,20 +267,35 @@
 }
 
 .settings-artifacts-pagination span {
-  font-size: 0.82rem;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 860px) {
   .settings-artifacts {
-    overflow: auto;
+    overflow-y: auto;
+  }
+
+  .settings-artifacts-header-row {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .settings-artifacts-filters {
     grid-template-columns: 1fr;
   }
 
-  .settings-artifacts-list {
-    overflow: visible;
+  .settings-artifacts-item-top,
+  .settings-artifacts-item-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .settings-artifacts-item-status-group {
+    width: 100%;
+  }
+
+  .settings-artifacts-pagination {
+    gap: 8px;
   }
 }

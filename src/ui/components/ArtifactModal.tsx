@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { api } from '../services/api';
 import type { ArtifactRecord } from '../services/api';
-import type { ArtifactBlockData } from '../types';
+import type { ArtifactBlockData, ArtifactKind } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
 import '../CSS/ArtifactModal.css';
 
@@ -53,25 +51,34 @@ function formatBytes(sizeBytes: number): string {
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+function getDefaultPreviewMode(artifactType: ArtifactKind): PreviewMode {
+  return artifactType === 'html' || artifactType === 'markdown' ? 'preview' : 'source';
+}
+
+function getStatusLabel(status: ArtifactBlockData['status']): string {
+  return `${status.slice(0, 1).toUpperCase()}${status.slice(1)}`;
+}
+
+function renderSourceView(artifact: ArtifactBlockData, content: string) {
+  return (
+    <pre className={`artifact-modal-source artifact-modal-source-${artifact.artifactType}`}>
+      <code>{content || ''}</code>
+    </pre>
+  );
+}
+
 function renderPreview(artifact: ArtifactBlockData, content: string, previewMode: PreviewMode) {
   if (artifact.artifactType === 'code' || previewMode === 'source') {
-    return (
-      <SyntaxHighlighter
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        style={vscDarkPlus as any}
-        language={artifact.language || 'text'}
-        PreTag="div"
-      >
-        {content || ''}
-      </SyntaxHighlighter>
-    );
+    return renderSourceView(artifact, content);
   }
 
   if (artifact.artifactType === 'markdown') {
     return (
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-        {content || ''}
-      </ReactMarkdown>
+      <div className="artifact-modal-markdown">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          {content || ''}
+        </ReactMarkdown>
+      </div>
     );
   }
 
@@ -86,6 +93,39 @@ function renderPreview(artifact: ArtifactBlockData, content: string, previewMode
   );
 }
 
+function PreviewModeControls({
+  artifactType,
+  previewMode,
+  onChange,
+}: {
+  artifactType: ArtifactKind;
+  previewMode: PreviewMode;
+  onChange: (mode: PreviewMode) => void;
+}) {
+  if (artifactType !== 'markdown' && artifactType !== 'html') {
+    return null;
+  }
+
+  return (
+    <div className="artifact-modal-tab-strip">
+      <button
+        type="button"
+        className={previewMode === 'preview' ? 'active' : ''}
+        onClick={() => onChange('preview')}
+      >
+        Preview
+      </button>
+      <button
+        type="button"
+        className={previewMode === 'source' ? 'active' : ''}
+        onClick={() => onChange('source')}
+      >
+        Source
+      </button>
+    </div>
+  );
+}
+
 export function ArtifactModal({
   artifact,
   onClose,
@@ -97,11 +137,7 @@ export function ArtifactModal({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [isEditing, setIsEditing] = useState(false);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>(
-    artifact.artifactType === 'html' || artifact.artifactType === 'markdown'
-      ? 'preview'
-      : 'source',
-  );
+  const [previewMode, setPreviewMode] = useState<PreviewMode>(getDefaultPreviewMode(artifact.artifactType));
   const [draftTitle, setDraftTitle] = useState(artifact.title);
   const [draftLanguage, setDraftLanguage] = useState(artifact.language ?? '');
   const [draftContent, setDraftContent] = useState(artifact.content ?? '');
@@ -110,9 +146,11 @@ export function ArtifactModal({
 
   useEffect(() => {
     setResolvedArtifact(artifact);
+    setPreviewMode(getDefaultPreviewMode(artifact.artifactType));
     setDraftTitle(artifact.title);
     setDraftLanguage(artifact.language ?? '');
     setDraftContent(artifact.content ?? '');
+    setIsEditing(false);
   }, [artifact]);
 
   useEffect(() => {
@@ -167,7 +205,10 @@ export function ArtifactModal({
       && (
         draftTitle.trim() !== resolvedArtifact.title
         || draftContent !== (resolvedArtifact.content ?? '')
-        || (resolvedArtifact.artifactType === 'code' && draftLanguage.trim() !== (resolvedArtifact.language ?? ''))
+        || (
+          resolvedArtifact.artifactType === 'code'
+          && draftLanguage.trim() !== (resolvedArtifact.language ?? '')
+        )
       )
     );
   }, [draftContent, draftLanguage, draftTitle, resolvedArtifact]);
@@ -183,7 +224,9 @@ export function ArtifactModal({
       const updated = await api.updateArtifact(resolvedArtifact.artifactId, {
         title: draftTitle.trim(),
         content: draftContent,
-        language: resolvedArtifact.artifactType === 'code' ? draftLanguage.trim() || undefined : undefined,
+        language: resolvedArtifact.artifactType === 'code'
+          ? draftLanguage.trim() || undefined
+          : undefined,
       });
       const nextArtifact = toArtifactBlockData(updated);
       setResolvedArtifact(nextArtifact);
@@ -233,24 +276,11 @@ export function ArtifactModal({
     return (
       <div className="artifact-modal-read-view">
         <div className="artifact-modal-view-controls">
-          {(resolvedArtifact.artifactType === 'markdown' || resolvedArtifact.artifactType === 'html') && (
-            <div className="artifact-modal-tab-strip">
-              <button
-                type="button"
-                className={previewMode === 'preview' ? 'active' : ''}
-                onClick={() => setPreviewMode('preview')}
-              >
-                Preview
-              </button>
-              <button
-                type="button"
-                className={previewMode === 'source' ? 'active' : ''}
-                onClick={() => setPreviewMode('source')}
-              >
-                Source
-              </button>
-            </div>
-          )}
+          <PreviewModeControls
+            artifactType={resolvedArtifact.artifactType}
+            previewMode={previewMode}
+            onChange={setPreviewMode}
+          />
           <button
             type="button"
             className="artifact-modal-copy-button"
@@ -270,7 +300,9 @@ export function ArtifactModal({
     const previewArtifact: ArtifactBlockData = {
       ...resolvedArtifact,
       title: draftTitle,
-      language: resolvedArtifact.artifactType === 'code' ? draftLanguage.trim() || undefined : undefined,
+      language: resolvedArtifact.artifactType === 'code'
+        ? draftLanguage.trim() || undefined
+        : undefined,
       content: draftContent,
     };
 
@@ -305,7 +337,18 @@ export function ArtifactModal({
           />
         </div>
         <div className="artifact-modal-preview-pane">
-          <div className="artifact-modal-preview-header">Preview</div>
+          <div className="artifact-modal-preview-pane-header">
+            <span className="artifact-modal-preview-header">
+              {previewMode === 'source' || resolvedArtifact.artifactType === 'code'
+                ? 'Source preview'
+                : 'Live preview'}
+            </span>
+            <PreviewModeControls
+              artifactType={resolvedArtifact.artifactType}
+              previewMode={previewMode}
+              onChange={setPreviewMode}
+            />
+          </div>
           <div className="artifact-modal-preview-surface">
             {renderPreview(previewArtifact, draftContent, previewMode)}
           </div>
@@ -326,7 +369,7 @@ export function ArtifactModal({
               <span>{formatBytes(resolvedArtifact.sizeBytes)}</span>
               <span>{resolvedArtifact.lineCount} lines</span>
               <span className={`artifact-status artifact-status-${resolvedArtifact.status}`}>
-                {resolvedArtifact.status}
+                {getStatusLabel(resolvedArtifact.status)}
               </span>
             </div>
           </div>
@@ -351,7 +394,9 @@ export function ArtifactModal({
             >
               Open Conversation
             </button>
-          ) : null}
+          ) : (
+            <div />
+          )}
           <div className="artifact-modal-footer-actions">
             {resolvedArtifact.status === 'ready' && !isEditing ? (
               <button
@@ -372,6 +417,7 @@ export function ArtifactModal({
                     setDraftTitle(resolvedArtifact.title);
                     setDraftLanguage(resolvedArtifact.language ?? '');
                     setDraftContent(resolvedArtifact.content ?? '');
+                    setPreviewMode(getDefaultPreviewMode(resolvedArtifact.artifactType));
                   }}
                 >
                   Cancel

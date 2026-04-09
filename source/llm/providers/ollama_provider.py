@@ -30,7 +30,8 @@ logger = logging.getLogger(__name__)
 def _events_include_visible_artifact(events: List[Dict[str, Any]]) -> bool:
     """Return whether a parser event stream contains visible artifact output."""
     return any(
-        event.get("type") in {"artifact_start", "artifact_complete", "artifact_abandoned"}
+        event.get("type")
+        in {"artifact_start", "artifact_chunk", "artifact_complete", "artifact_abandoned"}
         for event in events
     )
 

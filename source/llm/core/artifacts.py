@@ -153,6 +153,19 @@ class ArtifactChunk:
             status="streaming",
         )
 
+    def progress_payload(self) -> Dict[str, Any]:
+        restored_content = restore_artifact_literals(self.content)
+        return _artifact_block_payload(
+            artifact_id=self.artifact_id,
+            artifact_type=self.artifact_type,
+            title=self.title,
+            language=self.language,
+            size_bytes=len(restored_content.encode("utf-8")),
+            line_count=_count_lines(restored_content),
+            status="streaming",
+            content=restored_content,
+        )
+
     def complete_payload(self) -> Dict[str, Any]:
         restored_content = restore_artifact_literals(self.content)
         return _artifact_block_payload(
@@ -232,6 +245,17 @@ class ArtifactStreamParser:
         self._active_artifact: Optional[ArtifactChunk] = None
         self._nested_depth = 0
 
+    def _emit_artifact_progress(self, events: List[Dict[str, Any]]) -> None:
+        if self._active_artifact is None:
+            return
+
+        events.append(
+            {
+                "type": "artifact_chunk",
+                "artifact": self._active_artifact.progress_payload(),
+            }
+        )
+
     def feed(self, chunk: str) -> List[Dict[str, Any]]:
         if not chunk:
             return []
@@ -285,12 +309,14 @@ class ArtifactStreamParser:
                 if flush_until > 0:
                     self._active_artifact.content += self._buffer[:flush_until]
                     self._buffer = self._buffer[flush_until:]
+                    self._emit_artifact_progress(events)
                 break
 
             next_index = min(candidates)
             if next_index > 0:
                 self._active_artifact.content += self._buffer[:next_index]
                 self._buffer = self._buffer[next_index:]
+                self._emit_artifact_progress(events)
                 continue
 
             if self._buffer.startswith(_OPEN_TAG_PREFIX):
@@ -301,6 +327,7 @@ class ArtifactStreamParser:
                 self._active_artifact.content += nested_open_tag
                 self._nested_depth += 1
                 self._buffer = self._buffer[tag_end + 1 :]
+                self._emit_artifact_progress(events)
                 continue
 
             if self._buffer.startswith(_CLOSE_TAG):
@@ -308,6 +335,7 @@ class ArtifactStreamParser:
                     self._active_artifact.content += _CLOSE_TAG
                     self._nested_depth -= 1
                     self._buffer = self._buffer[len(_CLOSE_TAG) :]
+                    self._emit_artifact_progress(events)
                     continue
 
                 events.append(
@@ -397,6 +425,10 @@ async def emit_artifact_stream_events(
 
         if event_type == "artifact_start":
             await broadcast_message("artifact_start", event["artifact"])
+            continue
+
+        if event_type == "artifact_chunk":
+            await broadcast_message("artifact_chunk", event["artifact"])
             continue
 
         if event_type == "artifact_complete":

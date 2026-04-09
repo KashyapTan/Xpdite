@@ -355,6 +355,107 @@ describe('App websocket-driven behavior', () => {
     );
   });
 
+  test('applies active artifact chunks to the chat state as streaming previews', () => {
+    render(<App />);
+    chatStateMock.addArtifactBlock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'artifact_chunk',
+      tab_id: 'tab-1',
+      content: {
+        artifact_id: 'artifact-1',
+        artifact_type: 'code',
+        title: 'demo.py',
+        language: 'python',
+        size_bytes: 11,
+        line_count: 1,
+        status: 'streaming',
+        content: 'print("hi")',
+      },
+    });
+
+    expect(chatStateMock.addArtifactBlock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactId: 'artifact-1',
+        artifactType: 'code',
+        title: 'demo.py',
+        language: 'python',
+        sizeBytes: 11,
+        lineCount: 1,
+        status: 'streaming',
+        content: 'print("hi")',
+      }),
+    );
+  });
+
+  test('stores background artifact chunks in tab snapshots without mutating active chat state', async () => {
+    tabSnapshots.set('tab-2', {
+      chat: {
+        chatHistory: [],
+        currentQuery: '',
+        response: '',
+        thinking: '',
+        isThinking: false,
+        thinkingCollapsed: true,
+        toolCalls: [],
+        contentBlocks: [],
+        conversationId: null,
+        query: '',
+        canSubmit: true,
+        status: 'Ready',
+        error: '',
+      },
+      screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      terminal: { terminalSessionActive: false, terminalSessionRequest: null },
+      generatingModel: 'openai/gpt-4o',
+    });
+
+    render(<App />);
+    chatStateMock.addArtifactBlock.mockClear();
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'artifact_chunk',
+      tab_id: 'tab-2',
+      content: {
+        artifact_id: 'artifact-bg',
+        artifact_type: 'markdown',
+        title: 'notes.md',
+        size_bytes: 14,
+        line_count: 2,
+        status: 'streaming',
+        content: '# Notes\nDraft',
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    expect(chatStateMock.addArtifactBlock).not.toHaveBeenCalled();
+    const latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    const nextSnapshot = latestCall?.[1] as {
+      chat: {
+        contentBlocks: Array<{
+          type: string;
+          artifact?: { artifactId?: string; content?: string; status?: string };
+        }>;
+      };
+    };
+
+    expect(nextSnapshot.chat.contentBlocks).toEqual([
+      {
+        type: 'artifact',
+        artifact: expect.objectContaining({
+          artifactId: 'artifact-bg',
+          content: '# Notes\nDraft',
+          status: 'streaming',
+        }),
+      },
+    ]);
+  });
+
   test('keeps pending retry flow until conversation_saved then resumes conversation', async () => {
     render(<App />);
 

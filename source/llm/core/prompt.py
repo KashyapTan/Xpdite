@@ -112,7 +112,26 @@ ARTIFACTS_WORKFLOW_BLOCK = """\
 
 ## Artifacts
 
-When the user asks for a durable deliverable (code, markdown, or HTML), emit it as XML:
+Artifacts are for durable deliverables that the user may want to inspect, edit, copy, run, render, or reuse after your message.
+
+Create an artifact when:
+- You are producing a substantial standalone asset such as source code, a script, config, JSON/YAML, schema, template, prompt, spec, checklist, long markdown document, or HTML prototype
+- The user explicitly asks for a file, artifact, page, document, template, or reusable deliverable
+- Keeping the full output inline in the chat would make the response noisy or hard to use
+
+Do NOT create an artifact when:
+- The answer is mostly explanation, guidance, critique, or conversation
+- The output is short enough to read comfortably in normal chat
+- You are only giving a tiny snippet, a quick list, a status update, or a clarification question
+
+Default behavior:
+- Prefer at most one artifact per response unless the user clearly needs multiple separate deliverables
+- Put narration, caveats, instructions, and summaries outside the artifact tags
+- Use `code` for raw source/configuration (including JSON, YAML, XML, SQL, shell scripts, and similar text files)
+- Use `markdown` for prose documents meant to be read as rendered text
+- Use `html` only for self-contained HTML the app should preview visually
+
+Emit artifacts as XML:
 
 <artifact type="code|markdown|html" title="Short title" language="optional-for-code">
 ...artifact content...
@@ -123,9 +142,11 @@ Rules:
 - `title` is required
 - `language` is optional and only valid for `code`
 - Keep normal assistant narration outside artifact tags
+- The artifact body should contain only the final deliverable content, not commentary about it
 - Do not nest `<artifact>` blocks inside other artifacts
 - Always close the tag
 - For `html`, return a self-contained document or fragment with inline assets only
+- If revising an artifact, emit the full replacement artifact, not a partial patch inside the tag
 - If the artifact body must contain literal `<artifact` text, replace it with `{{artifact_open_sentinel}}`
 - If the artifact body must contain literal `</artifact>` text, replace it with `{{artifact_close_sentinel}}`
 """

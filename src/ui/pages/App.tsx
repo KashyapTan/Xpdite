@@ -892,6 +892,18 @@ function App() {
         break;
       }
 
+      case 'artifact_chunk': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'background:artifact_chunk');
+        if (!artifactData) {
+          return;
+        }
+        chat.contentBlocks = upsertArtifactBlock(
+          chat.contentBlocks,
+          mapArtifactPayloadToBlock(artifactData),
+        );
+        break;
+      }
+
       case 'artifact_complete': {
         const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'background:artifact_complete');
         if (!artifactData) {
@@ -1651,6 +1663,15 @@ function App() {
 
       case 'artifact_start': {
         const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'active:artifact_start');
+        if (!artifactData) {
+          break;
+        }
+        chatState.addArtifactBlock(mapArtifactPayloadToBlock(artifactData).artifact);
+        break;
+      }
+
+      case 'artifact_chunk': {
+        const artifactData = parseWsPayload<ArtifactContentPayload>(data, 'active:artifact_chunk');
         if (!artifactData) {
           break;
         }

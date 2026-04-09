@@ -142,6 +142,9 @@ class TestBuildSystemPrompt:
 
         assert "## Artifacts" in prompt
         assert "<artifact type=" in prompt
+        assert "durable deliverables" in prompt
+        assert "Do NOT create an artifact when:" in prompt
+        assert "Prefer at most one artifact per response" in prompt
 
     def test_explicit_placeholders_are_replaced_in_place(self):
         prompt = build_system_prompt(
@@ -159,3 +162,13 @@ class TestBuildSystemPrompt:
         )
 
         assert prompt == "A ARTIFACTS B"
+
+    def test_artifacts_block_contains_decision_guidance_and_transport_rules(self):
+        artifacts_block = build_artifacts_prompt_block()
+
+        assert "Create an artifact when:" in artifacts_block
+        assert "Do NOT create an artifact when:" in artifacts_block
+        assert "Use `code` for raw source/configuration" in artifacts_block
+        assert "Use `html` only for self-contained HTML" in artifacts_block
+        assert "{{artifact_open_sentinel}}" in artifacts_block
+        assert "{{artifact_close_sentinel}}" in artifacts_block

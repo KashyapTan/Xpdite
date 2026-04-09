@@ -7,10 +7,12 @@ const PREPARED_CACHE_LIMIT = 900;
 const USER_FONT = '400 16px Montserrat';
 const ASSISTANT_FONT = '400 16px Montserrat';
 const THINKING_FONT = '400 13px Montserrat';
+const ARTIFACT_PREVIEW_FONT = '400 12px monospace';
 
 const USER_LINE_HEIGHT = 24;
 const ASSISTANT_LINE_HEIGHT = 24;
 const THINKING_LINE_HEIGHT = 20;
+const ARTIFACT_PREVIEW_LINE_HEIGHT = 18;
 
 const USER_BASE_CHROME_HEIGHT = 72;
 const ASSISTANT_BASE_CHROME_HEIGHT = 88;
@@ -18,9 +20,9 @@ const IMAGE_CHIPS_HEIGHT = 46;
 const CHAIN_GROUP_COLLAPSED_HEIGHT = 44;
 const THINKING_GROUP_BODY_PADDING = 14;
 const TEXT_BLOCK_GAP_HEIGHT = 8;
-const ARTIFACT_CARD_BASE_HEIGHT = 136;
-const ARTIFACT_CARD_STREAMING_HEIGHT = 116;
-const ARTIFACT_CARD_DELETED_HEIGHT = 92;
+const ARTIFACT_CARD_BASE_HEIGHT = 220;
+const ARTIFACT_CARD_STREAMING_HEIGHT = 206;
+const ARTIFACT_CARD_DELETED_HEIGHT = 126;
 
 const preparedCache = new Map<string, ReturnType<typeof prepare>>();
 
@@ -173,10 +175,6 @@ function estimateArtifactBlockHeight(block: ContentBlock & { type: 'artifact' },
     return ARTIFACT_CARD_DELETED_HEIGHT;
   }
 
-  if (block.artifact.status === 'streaming') {
-    return ARTIFACT_CARD_STREAMING_HEIGHT;
-  }
-
   const metadataHeight = block.artifact.language ? 22 : 18;
   const titleHeight = estimateTextHeight(
     block.artifact.title,
@@ -185,10 +183,26 @@ function estimateArtifactBlockHeight(block: ContentBlock & { type: 'artifact' },
     ASSISTANT_LINE_HEIGHT,
     'normal',
   );
+  const previewContent = block.artifact.content ?? '';
+  const previewHeight = previewContent
+    ? Math.min(
+      150,
+      Math.max(
+        102,
+        estimateTextHeight(
+          previewContent,
+          ARTIFACT_PREVIEW_FONT,
+          Math.max(160, maxTextWidth - 28),
+          ARTIFACT_PREVIEW_LINE_HEIGHT,
+          'pre-wrap',
+        ) + 28,
+      ),
+    )
+    : 64;
 
   return Math.max(
-    ARTIFACT_CARD_BASE_HEIGHT,
-    84 + metadataHeight + titleHeight,
+    block.artifact.status === 'streaming' ? ARTIFACT_CARD_STREAMING_HEIGHT : ARTIFACT_CARD_BASE_HEIGHT,
+    92 + metadataHeight + titleHeight + previewHeight,
   );
 }
 

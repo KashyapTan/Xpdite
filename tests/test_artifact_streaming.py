@@ -45,6 +45,7 @@ class TestArtifactStreamParser:
         assert [event["type"] for event in events] == [
             "text",
             "artifact_start",
+            "artifact_chunk",
             "artifact_complete",
             "text",
         ]
@@ -53,10 +54,12 @@ class TestArtifactStreamParser:
         assert events[1]["artifact"]["artifact_type"] == "code"
         assert events[1]["artifact"]["title"] == "Demo"
         assert events[1]["artifact"]["language"] == "python"
-        assert events[2]["artifact"]["status"] == "ready"
+        assert events[2]["artifact"]["status"] == "streaming"
         assert events[2]["artifact"]["content"] == 'print("hi")'
-        assert events[2]["artifact"]["line_count"] == 1
-        assert events[3]["content"] == " outro"
+        assert events[3]["artifact"]["status"] == "ready"
+        assert events[3]["artifact"]["content"] == 'print("hi")'
+        assert events[3]["artifact"]["line_count"] == 1
+        assert events[4]["content"] == " outro"
 
     def test_multiple_artifacts_preserve_order(self):
         events = _collect_events(
@@ -67,16 +70,18 @@ class TestArtifactStreamParser:
         assert [event["type"] for event in events] == [
             "text",
             "artifact_start",
+            "artifact_chunk",
             "artifact_complete",
             "text",
             "artifact_start",
+            "artifact_chunk",
             "artifact_complete",
             "text",
         ]
-        assert events[2]["artifact"]["artifact_type"] == "markdown"
-        assert events[2]["artifact"]["content"] == "# One"
-        assert events[5]["artifact"]["artifact_type"] == "html"
-        assert events[5]["artifact"]["content"] == "<div>Two</div>"
+        assert events[3]["artifact"]["artifact_type"] == "markdown"
+        assert events[3]["artifact"]["content"] == "# One"
+        assert events[7]["artifact"]["artifact_type"] == "html"
+        assert events[7]["artifact"]["content"] == "<div>Two</div>"
 
     def test_malformed_artifact_tag_falls_back_to_plain_text(self):
         raw = '<artifact title="Missing type">bad</artifact>'
@@ -91,10 +96,12 @@ class TestArtifactStreamParser:
 
         assert [event["type"] for event in events] == [
             "artifact_start",
+            "artifact_chunk",
             "artifact_abandoned",
             "text",
         ]
-        assert events[2]["content"] == raw
+        assert events[1]["artifact"]["content"] == "unfinished"
+        assert events[3]["content"] == raw
 
     def test_nested_artifact_markup_is_kept_literal_inside_parent(self):
         events = _collect_events(
@@ -103,11 +110,10 @@ class TestArtifactStreamParser:
             "</artifact>"
         )
 
-        assert [event["type"] for event in events] == [
-            "artifact_start",
-            "artifact_complete",
-        ]
-        assert events[1]["artifact"]["content"] == (
+        assert events[0]["type"] == "artifact_start"
+        assert any(event["type"] == "artifact_chunk" for event in events)
+        assert events[-1]["type"] == "artifact_complete"
+        assert events[-1]["artifact"]["content"] == (
             'before <artifact type="code" title="Inner">x</artifact> after'
         )
 
@@ -126,13 +132,23 @@ class TestArtifactStreamParser:
 
         events = _collect_events(serialized)
 
-        assert [event["type"] for event in events] == [
-            "artifact_start",
-            "artifact_complete",
-        ]
-        assert events[1]["artifact"]["content"] == (
+        assert events[0]["type"] == "artifact_start"
+        assert any(event["type"] == "artifact_chunk" for event in events)
+        assert events[-1]["type"] == "artifact_complete"
+        assert events[-1]["artifact"]["content"] == (
             "Use <artifact literal> and </artifact> literally."
         )
+
+    def test_streaming_progress_events_include_current_artifact_content(self):
+        parser = ArtifactStreamParser()
+
+        events = parser.feed('<artifact type="code" title="Demo">print("hi")')
+
+        assert [event["type"] for event in events] == ["artifact_start", "artifact_chunk"]
+        assert events[1]["artifact"]["status"] == "streaming"
+        assert events[1]["artifact"]["content"] == 'print("hi")'
+        assert events[1]["artifact"]["size_bytes"] == len('print("hi")'.encode("utf-8"))
+        assert events[1]["artifact"]["line_count"] == 1
 
 
 class TestEmitArtifactStreamEvents:
@@ -148,6 +164,10 @@ class TestEmitArtifactStreamEvents:
             "line_count": 1,
             "status": "ready",
             "content": 'print("hi")',
+        }
+        artifact_streaming_payload = {
+            **artifact_payload,
+            "status": "streaming",
         }
         broadcast_mock = AsyncMock()
         monkeypatch.setattr(
@@ -169,6 +189,7 @@ class TestEmitArtifactStreamEvents:
                         "line_count": 0,
                     },
                 },
+                {"type": "artifact_chunk", "artifact": artifact_streaming_payload},
                 {"type": "artifact_complete", "artifact": artifact_payload},
                 {"type": "artifact_abandoned", "artifact_id": "artifact-2"},
             ],
@@ -192,10 +213,14 @@ class TestEmitArtifactStreamEvents:
             },
         )
         assert broadcast_mock.await_args_list[2].args == (
+            "artifact_chunk",
+            artifact_streaming_payload,
+        )
+        assert broadcast_mock.await_args_list[3].args == (
             "artifact_complete",
             artifact_payload,
         )
-        assert broadcast_mock.await_args_list[3].args == (
+        assert broadcast_mock.await_args_list[4].args == (
             "artifact_deleted",
             {"artifact_id": "artifact-2", "reason": "abandoned"},
         )

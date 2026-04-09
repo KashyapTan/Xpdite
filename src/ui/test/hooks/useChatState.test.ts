@@ -406,6 +406,29 @@ describe('useChatState', () => {
       });
     });
 
+    test('should upsert streaming artifact chunks through addArtifactBlock', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addArtifactBlock(streamingArtifact);
+        result.current.addArtifactBlock({
+          ...streamingArtifact,
+          sizeBytes: 11,
+          lineCount: 1,
+          content: 'print("hi")',
+        });
+      });
+
+      expect(result.current.contentBlocks).toHaveLength(1);
+      const block = result.current.contentBlocks[0];
+      expect(block.type).toBe('artifact');
+      if (block.type === 'artifact') {
+        expect(block.artifact.status).toBe('streaming');
+        expect(block.artifact.content).toBe('print("hi")');
+        expect(block.artifact.sizeBytes).toBe(11);
+      }
+    });
+
     test('should complete artifact block in place', () => {
       const { result } = renderHook(() => useChatState());
 

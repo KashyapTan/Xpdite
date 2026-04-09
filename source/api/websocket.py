@@ -77,7 +77,8 @@ async def websocket_endpoint(websocket: WebSocket):
       - thinking_complete: Thinking finished
       - response_chunk: Streaming response token
       - response_complete: Response finished
-      - artifact_start: Artifact streaming placeholder created
+      - artifact_start: Artifact stream opened
+      - artifact_chunk: Artifact content updated during streaming
       - artifact_complete: Artifact content finished and metadata available
       - artifact_deleted: Artifact was deleted or abandoned
       - tool_call: MCP tool call event
