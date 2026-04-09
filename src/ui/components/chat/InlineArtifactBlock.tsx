@@ -97,14 +97,14 @@ export function InlineArtifactBlock({
             {localArtifact.language ? <span>{localArtifact.language}</span> : null}
             {!isDeleted ? <span>{formatBytes(displaySizeBytes)}</span> : null}
             {!isDeleted ? <span>{displayLineCount} lines</span> : null}
+            <span className={`inline-artifact-status inline-artifact-status-${localArtifact.status}`}>
+              {statusLabel}
+            </span>
           </div>
         </div>
-        <span className={`inline-artifact-status inline-artifact-status-${localArtifact.status}`}>
-          {statusLabel}
-        </span>
       </div>
 
-      {hasPreview ? (
+      {/* {hasPreview ? (
         <div className="inline-artifact-preview-shell">
           <div className="inline-artifact-preview-header">
             <span>{previewLabel}</span>
@@ -118,7 +118,7 @@ export function InlineArtifactBlock({
             {artifactContent}
           </pre>
         </div>
-      ) : null}
+      ) : null} */}
 
       {isStreaming && !hasPreview ? (
         <div className="inline-artifact-placeholder">
@@ -128,7 +128,7 @@ export function InlineArtifactBlock({
 
       {isDeleted ? (
         <div className="inline-artifact-placeholder">
-          This artifact was deleted. The chat keeps a tombstone so the original response still makes sense.
+          This artifact was deleted
         </div>
       ) : null}
     </>
