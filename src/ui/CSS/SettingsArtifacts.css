@@ -18,7 +18,6 @@
 
 .settings-artifacts-header-row {
   display: flex;
-  justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
 }
@@ -47,8 +46,18 @@
 }
 
 .settings-artifacts-refresh {
-  width: fit-content;
+  width: 36px;
+  height: 36px;
+  min-width: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+}
+
+.settings-artifacts-refresh .spin {
+  animation: spin 1s linear infinite;
 }
 
 .settings-artifacts-toolbar {
@@ -58,8 +67,9 @@
 
 .settings-artifacts-filters {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 170px;
+  grid-template-columns: minmax(0, 1fr) 148px 34px;
   gap: 10px;
+  align-items: center;
 }
 
 .settings-artifacts-filters input,
@@ -108,18 +118,10 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-right: 4px;
-  padding-bottom: 12px;
+  scrollbar-width: none;
+
 }
 
-.settings-artifacts-list::-webkit-scrollbar {
-  width: 4px;
-}
-
-.settings-artifacts-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
-}
 
 .settings-artifacts-item {
   appearance: none;
@@ -242,6 +244,8 @@
   gap: 10px;
   margin-top: 10px;
   flex-shrink: 0;
+    margin-bottom: 30px;
+
 }
 
 .settings-artifacts-pagination button {
@@ -276,13 +280,8 @@
     overflow-y: auto;
   }
 
-  .settings-artifacts-header-row {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
   .settings-artifacts-filters {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr) 140px 34px;
   }
 
   .settings-artifacts-item-top,

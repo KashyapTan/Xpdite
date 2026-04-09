@@ -1,6 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import {
+  CodeXmlIcon,
+  CopyIcon,
+  PencilIcon,
+  SquareArrowOutUpRightIcon,
+  TrashIcon,
+  ViewIcon,
+  XIcon,
+} from './icons/AppIcons';
 import { api } from '../services/api';
 import type { ArtifactRecord } from '../services/api';
 import type { ArtifactBlockData, ArtifactKind } from '../types';
@@ -111,16 +120,20 @@ function PreviewModeControls({
       <button
         type="button"
         className={previewMode === 'preview' ? 'active' : ''}
+        aria-label="Preview"
+        title="Preview"
         onClick={() => onChange('preview')}
       >
-        Preview
+        <ViewIcon size={18} />
       </button>
       <button
         type="button"
         className={previewMode === 'source' ? 'active' : ''}
+        aria-label="Source"
+        title="Source"
         onClick={() => onChange('source')}
       >
-        Source
+        <CodeXmlIcon size={18} />
       </button>
     </div>
   );
@@ -143,6 +156,14 @@ export function ArtifactModal({
   const [draftContent, setDraftContent] = useState(artifact.content ?? '');
   const [savePending, setSavePending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
+
+  const resetDraftState = () => {
+    setIsEditing(false);
+    setDraftTitle(resolvedArtifact.title);
+    setDraftLanguage(resolvedArtifact.language ?? '');
+    setDraftContent(resolvedArtifact.content ?? '');
+    setPreviewMode(getDefaultPreviewMode(resolvedArtifact.artifactType));
+  };
 
   useEffect(() => {
     setResolvedArtifact(artifact);
@@ -275,20 +296,15 @@ export function ArtifactModal({
 
     return (
       <div className="artifact-modal-read-view">
-        <div className="artifact-modal-view-controls">
-          <PreviewModeControls
-            artifactType={resolvedArtifact.artifactType}
-            previewMode={previewMode}
-            onChange={setPreviewMode}
-          />
-          <button
-            type="button"
-            className="artifact-modal-copy-button"
-            onClick={() => void copyToClipboard(resolvedArtifact.content ?? '')}
-          >
-            Copy
-          </button>
-        </div>
+        {(resolvedArtifact.artifactType === 'markdown' || resolvedArtifact.artifactType === 'html') ? (
+          <div className="artifact-modal-view-controls">
+            <PreviewModeControls
+              artifactType={resolvedArtifact.artifactType}
+              previewMode={previewMode}
+              onChange={setPreviewMode}
+            />
+          </div>
+        ) : null}
         <div className="artifact-modal-preview-surface">
           {renderPreview(resolvedArtifact, resolvedArtifact.content ?? '', previewMode)}
         </div>
@@ -357,11 +373,14 @@ export function ArtifactModal({
     );
   };
 
+  const showHeaderActionIcons = !isEditing && !loading && resolvedArtifact.status !== 'deleted';
+  const showFooter = resolvedArtifact.status === 'ready' && isEditing;
+
   return (
     <div className="artifact-modal-overlay" onClick={onClose}>
       <div className="artifact-modal-shell" onClick={(event) => event.stopPropagation()}>
         <div className="artifact-modal-header">
-          <div>
+          <div className="artifact-modal-header-content">
             <h3>{resolvedArtifact.title}</h3>
             <div className="artifact-modal-meta">
               <span>{resolvedArtifact.artifactType}</span>
@@ -373,9 +392,62 @@ export function ArtifactModal({
               </span>
             </div>
           </div>
-          <button type="button" className="artifact-modal-close" onClick={onClose}>
-            &times;
-          </button>
+          <div className="artifact-modal-header-actions">
+            {showHeaderActionIcons && resolvedArtifact.conversationId && onOpenConversation ? (
+              <button
+                type="button"
+                className="artifact-modal-icon-button"
+                aria-label="Open conversation"
+                title="Open conversation"
+                onClick={() => onOpenConversation(resolvedArtifact.conversationId!)}
+              >
+                <SquareArrowOutUpRightIcon size={14} />
+              </button>
+            ) : null}
+            {showHeaderActionIcons ? (
+              <button
+                type="button"
+                className="artifact-modal-icon-button"
+                aria-label="Copy artifact"
+                title="Copy artifact"
+                onClick={() => void copyToClipboard(resolvedArtifact.content ?? '')}
+              >
+                <CopyIcon size={14} />
+              </button>
+            ) : null}
+            {resolvedArtifact.status === 'ready' && !isEditing && !loading ? (
+              <button
+                type="button"
+                className="artifact-modal-icon-button"
+                aria-label="Edit artifact"
+                title="Edit artifact"
+                onClick={() => setIsEditing(true)}
+              >
+                <PencilIcon size={14} />
+              </button>
+            ) : null}
+            {showHeaderActionIcons ? (
+              <button
+                type="button"
+                className="artifact-modal-icon-button artifact-modal-delete-button"
+                aria-label="Delete artifact"
+                title="Delete artifact"
+                onClick={() => void handleDelete()}
+                disabled={deletePending}
+              >
+                <TrashIcon size={14} />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="artifact-modal-icon-button artifact-modal-close"
+              aria-label="Close artifact"
+              title="Close artifact"
+              onClick={onClose}
+            >
+              <XIcon size={14} />
+            </button>
+          </div>
         </div>
 
         {error ? <div className="artifact-modal-error">{error}</div> : null}
@@ -385,65 +457,28 @@ export function ArtifactModal({
           {!loading && (isEditing ? renderEditPreview() : renderReadView())}
         </div>
 
-        <div className="artifact-modal-footer">
-          {resolvedArtifact.conversationId && onOpenConversation ? (
-            <button
-              type="button"
-              className="artifact-modal-secondary"
-              onClick={() => onOpenConversation(resolvedArtifact.conversationId!)}
-            >
-              Open Conversation
-            </button>
-          ) : (
+        {showFooter ? (
+          <div className="artifact-modal-footer">
             <div />
-          )}
-          <div className="artifact-modal-footer-actions">
-            {resolvedArtifact.status === 'ready' && !isEditing ? (
+            <div className="artifact-modal-footer-actions">
               <button
                 type="button"
                 className="artifact-modal-secondary"
-                onClick={() => setIsEditing(true)}
+                onClick={resetDraftState}
               >
-                Edit
+                Cancel
               </button>
-            ) : null}
-            {resolvedArtifact.status === 'ready' && isEditing ? (
-              <>
-                <button
-                  type="button"
-                  className="artifact-modal-secondary"
-                  onClick={() => {
-                    setIsEditing(false);
-                    setDraftTitle(resolvedArtifact.title);
-                    setDraftLanguage(resolvedArtifact.language ?? '');
-                    setDraftContent(resolvedArtifact.content ?? '');
-                    setPreviewMode(getDefaultPreviewMode(resolvedArtifact.artifactType));
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="artifact-modal-primary"
-                  disabled={!canSave || savePending}
-                  onClick={() => void handleSave()}
-                >
-                  {savePending ? 'Saving…' : 'Save'}
-                </button>
-              </>
-            ) : null}
-            {resolvedArtifact.status !== 'deleted' ? (
               <button
                 type="button"
-                className="artifact-modal-danger"
-                onClick={() => void handleDelete()}
-                disabled={deletePending}
+                className="artifact-modal-primary"
+                disabled={!canSave || savePending}
+                onClick={() => void handleSave()}
               >
-                {deletePending ? 'Deleting…' : 'Delete'}
+                {savePending ? 'Saving…' : 'Save'}
               </button>
-            ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
       </div>
     </div>
   );

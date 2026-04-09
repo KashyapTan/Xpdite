@@ -66,7 +66,7 @@ describe('ArtifactModal', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Edit'));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit artifact' }));
     fireEvent.change(screen.getByLabelText('Title'), {
       target: { value: 'updated.html' },
     });
@@ -105,7 +105,7 @@ describe('ArtifactModal', () => {
       />,
     );
 
-    fireEvent.click(screen.getByText('Delete'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete artifact' }));
 
     await waitFor(() => {
       expect(api.deleteArtifact).toHaveBeenCalledWith('artifact-1');

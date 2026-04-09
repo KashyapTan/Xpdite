@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTabs } from '../../contexts/TabContext';
 import { ArtifactModal } from '../ArtifactModal';
+import { RotateCcwIcon } from '../icons/AppIcons';
 import { api } from '../../services/api';
 import type { ArtifactListResponse, ArtifactRecord } from '../../services/api';
-import type { ArtifactBlockData, ArtifactKind, ArtifactStatus } from '../../types';
+import type { ArtifactBlockData, ArtifactKind } from '../../types';
 import '../../CSS/SettingsArtifacts.css';
 
 const PAGE_SIZE = 24;
@@ -53,7 +54,6 @@ function formatDate(value?: number): string {
 }
 
 type TypeFilter = 'all' | ArtifactKind;
-type StatusFilter = 'all' | Exclude<ArtifactStatus, 'streaming'>;
 
 export default function SettingsArtifacts() {
   const navigate = useNavigate();
@@ -64,7 +64,6 @@ export default function SettingsArtifacts() {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedArtifact, setSelectedArtifact] = useState<ArtifactBlockData | null>(null);
@@ -86,7 +85,6 @@ export default function SettingsArtifacts() {
     void api.listArtifacts({
       query: debouncedQuery,
       type: typeFilter === 'all' ? undefined : typeFilter,
-      status: statusFilter === 'all' ? undefined : statusFilter,
       page,
       pageSize: PAGE_SIZE,
     })
@@ -113,13 +111,13 @@ export default function SettingsArtifacts() {
     return () => {
       cancelled = true;
     };
-  }, [debouncedQuery, page, statusFilter, typeFilter]);
+  }, [debouncedQuery, page, typeFilter]);
 
   const totalPages = useMemo(() => Math.max(1, Math.ceil(total / PAGE_SIZE)), [total]);
 
   useEffect(() => {
     setPage(1);
-  }, [statusFilter, typeFilter]);
+  }, [typeFilter]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -134,7 +132,6 @@ export default function SettingsArtifacts() {
       const response = await api.listArtifacts({
         query: debouncedQuery,
         type: typeFilter === 'all' ? undefined : typeFilter,
-        status: statusFilter === 'all' ? undefined : statusFilter,
         page,
         pageSize: PAGE_SIZE,
       });
@@ -163,19 +160,11 @@ export default function SettingsArtifacts() {
             <h2>Artifacts</h2>
             <p>Browse generated code, markdown, and HTML artifacts. Open any artifact to inspect, edit, or delete it.</p>
             <div className="settings-artifacts-summary">
-              {loading ? 'Refreshing artifact library…' : `${total} artifact${total === 1 ? '' : 's'} indexed`}
+              {/* {loading ? 'Refreshing artifact library…' : `${total} artifact${total === 1 ? '' : 's'} indexed`} */}
             </div>
           </div>
-          <button
-            type="button"
-            className="secondary-button settings-artifacts-refresh"
-            onClick={() => void refreshSelectedPage()}
-            disabled={loading}
-          >
-            Refresh
-          </button>
         </div>
-        <div className="settings-artifacts-hint">Filter by type, status, or title</div>
+        {/* <div className="settings-artifacts-hint">Filter by type or title</div> */}
       </div>
 
       <div className="settings-artifacts-toolbar">
@@ -192,11 +181,16 @@ export default function SettingsArtifacts() {
             <option value="markdown">Markdown</option>
             <option value="html">HTML</option>
           </select>
-          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}>
-            <option value="all">All statuses</option>
-            <option value="ready">Ready</option>
-            <option value="deleted">Deleted</option>
-          </select>
+          <button
+            type="button"
+            className="secondary-button settings-artifacts-refresh"
+            onClick={() => void refreshSelectedPage()}
+            disabled={loading}
+            title={loading ? 'Refreshing artifacts...' : 'Refresh artifacts'}
+            aria-label={loading ? 'Refreshing artifacts' : 'Refresh artifacts'}
+          >
+            <RotateCcwIcon className={loading ? 'spin' : undefined} size={14} />
+          </button>
         </div>
       </div>
 
@@ -292,14 +286,8 @@ export default function SettingsArtifacts() {
               ),
             );
           }}
-          onDeleted={(artifactId) => {
+          onDeleted={() => {
             setSelectedArtifact(null);
-            if (statusFilter === 'ready') {
-              setArtifacts((currentArtifacts) => currentArtifacts.filter((artifact) => artifact.id !== artifactId));
-              setTotal((currentTotal) => Math.max(0, currentTotal - 1));
-              return;
-            }
-
             void refreshSelectedPage();
           }}
           onOpenConversation={openConversation}

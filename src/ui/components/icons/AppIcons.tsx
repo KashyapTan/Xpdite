@@ -192,6 +192,64 @@ export function ClipboardListIcon(props: AppIconProps) {
   );
 }
 
+export function CopyIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <rect x="9" y="9" width="11" height="11" rx="2" />
+      <path d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" />
+    </BaseIcon>
+  );
+}
+
+export function PencilIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 20h9" />
+      <path d="m16.5 3.5 4 4" />
+      <path d="M4 20l4.5-1 9.5-9.5a2.12 2.12 0 1 0-3-3L5.5 16 4 20Z" />
+    </BaseIcon>
+  );
+}
+
+export function ViewIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+      <circle cx="12" cy="12" r="3" />
+    </BaseIcon>
+  );
+}
+
+export function CodeXmlIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="m18 16 4-4-4-4" />
+      <path d="m6 8-4 4 4 4" />
+      <path d="m14.5 4-5 16" />
+    </BaseIcon>
+  );
+}
+
+export function TrashIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+      <path d="M3 6h18" />
+      <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </BaseIcon>
+  );
+}
+
+export function SquareArrowOutUpRightIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+      <path d="m21 3-9 9" />
+      <path d="M15 3h6v6" />
+    </BaseIcon>
+  );
+}
+
 export function RotateCcwIcon(props: AppIconProps) {
   return (
     <BaseIcon {...props}>

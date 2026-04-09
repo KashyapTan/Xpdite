@@ -18,7 +18,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.1);
   background:
     linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.8)),
@@ -33,13 +33,16 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   padding: 18px 22px;
   flex-shrink: 0;
 }
 
 .artifact-modal-header {
+  position: relative;
+  display: block;
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  padding-right: 218px;
 }
 
 .artifact-modal-footer {
@@ -52,6 +55,13 @@
   font-size: 1.14rem;
   font-weight: 600;
   letter-spacing: 0.01em;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
+
+.artifact-modal-header-content {
+  min-width: 0;
+  width: 100%;
 }
 
 .artifact-modal-meta {
@@ -71,7 +81,6 @@
   background: rgba(255, 255, 255, 0.05);
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.72rem;
-  line-height: 1;
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -94,15 +103,26 @@
   color: rgba(255, 255, 255, 0.58);
 }
 
-.artifact-modal-close {
-  width: 36px;
-  height: 36px;
+.artifact-modal-header-actions {
+  position: absolute;
+  top: 18px;
+  right: 22px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.artifact-modal-icon-button {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 999px;
+  border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
   color: #fff;
-  font-size: 1.45rem;
-  line-height: 1;
   cursor: pointer;
   transition:
     background-color 0.2s ease,
@@ -110,10 +130,20 @@
     transform 0.2s ease;
 }
 
-.artifact-modal-close:hover {
+.artifact-modal-icon-button:hover {
   background: rgba(255, 255, 255, 0.1);
   border-color: rgba(255, 255, 255, 0.2);
   transform: translateY(-1px);
+}
+
+.artifact-modal-icon-button svg {
+  display: block;
+}
+
+.artifact-modal-delete-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .artifact-modal-error,
@@ -163,35 +193,34 @@
 .artifact-modal-read-view {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .artifact-modal-view-controls,
 .artifact-modal-preview-pane-header {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
   gap: 12px;
 }
 
 .artifact-modal-tab-strip {
+  margin-top: 8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   padding: 4px;
-  border-radius: 999px;
+  border-radius: 8px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
+  width: fit-content;
 }
 
 .artifact-modal-tab-strip button,
-.artifact-modal-copy-button,
 .artifact-modal-secondary,
 .artifact-modal-primary,
 .artifact-modal-danger {
   border-radius: 8px;
-  font-size: 0.84rem;
-  font-weight: 500;
   cursor: pointer;
   transition:
     background-color 0.2s ease,
@@ -204,7 +233,12 @@
   border: none;
   background: transparent;
   color: rgba(255, 255, 255, 0.68);
-  padding: 8px 13px;
+  width: 42px;
+  height: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
 }
 
 .artifact-modal-tab-strip button.active {
@@ -212,7 +246,10 @@
   color: #fff;
 }
 
-.artifact-modal-copy-button,
+.artifact-modal-tab-strip button svg {
+  display: block;
+}
+
 .artifact-modal-secondary,
 .artifact-modal-primary,
 .artifact-modal-danger {
@@ -222,7 +259,6 @@
   padding: 9px 14px;
 }
 
-.artifact-modal-copy-button:hover,
 .artifact-modal-secondary:hover,
 .artifact-modal-primary:hover,
 .artifact-modal-danger:hover {
@@ -253,7 +289,6 @@
 }
 
 .artifact-modal-tab-strip button:disabled,
-.artifact-modal-copy-button:disabled,
 .artifact-modal-secondary:disabled,
 .artifact-modal-primary:disabled,
 .artifact-modal-danger:disabled {
@@ -266,11 +301,11 @@
   min-height: 430px;
   overflow: auto;
   padding: 18px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background:
+  border-radius: 8px;
+  /* border: 1px solid rgba(255, 255, 255, 0.08); */
+  /* background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.015)),
-    rgba(0, 0, 0, 0.82);
+    rgba(0, 0, 0, 0.82); */
 }
 
 .artifact-modal-source {
@@ -462,6 +497,10 @@
     padding: 16px;
   }
 
+  .artifact-modal-header {
+    padding-right: 190px;
+  }
+
   .artifact-modal-body {
     padding: 0 16px 16px;
   }
@@ -477,6 +516,11 @@
   .artifact-modal-footer {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .artifact-modal-header-actions {
+    top: 16px;
+    right: 16px;
   }
 
   .artifact-modal-preview-surface {
