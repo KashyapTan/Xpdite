@@ -150,6 +150,7 @@ Rules:
 - If revising an artifact, emit the full replacement artifact, not a partial patch inside the tag
 - If the artifact body must contain literal `<artifact` text, replace it with `{{artifact_open_sentinel}}`
 - If the artifact body must contain literal `</artifact>` text, replace it with `{{artifact_close_sentinel}}`
+- Use vanilla CSS and JS for styling and animations in the HTML
 """
 
 
