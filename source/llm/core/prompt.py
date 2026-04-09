@@ -130,6 +130,7 @@ Default behavior:
 - Use `code` for raw source/configuration (including JSON, YAML, XML, SQL, shell scripts, and similar text files)
 - Use `markdown` for prose documents meant to be read as rendered text
 - Use `html` only for self-contained HTML the app should preview visually
+- Artifacts you make are stored in user_data/artifacts
 
 Emit artifacts as XML:
 
