@@ -47,11 +47,17 @@ class TestNormalizeCommand:
     def test_python_returns_first_token(self):
         assert _normalize_command("python script.py arg1") == "python"
 
+    def test_python_module_signature(self):
+        assert _normalize_command("python -m pytest tests/test_terminal.py") == "python -m pytest"
+
     def test_ls_returns_first_token(self):
         assert _normalize_command("ls -la") == "ls"
 
     def test_single_word_command(self):
         assert _normalize_command("whoami") == "whoami"
+
+    def test_powershell_alias_normalizes_to_canonical_cmdlet(self):
+        assert _normalize_command("ls -Force", shell="powershell") == "get-childitem"
 
     # ---- Edge cases ----
 

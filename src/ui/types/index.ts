@@ -68,6 +68,10 @@ export interface TerminalCommandBlock {
   requestId: string;
   /** The shell command being executed */
   command: string;
+  /** Selected shell for this command when known */
+  shell?: string;
+  /** Approval-time warning for risky but allowed commands */
+  warning?: string;
   /** Working directory */
   cwd: string;
   /** Lifecycle state */
@@ -219,6 +223,8 @@ export interface TerminalApprovalRequest {
   command: string;
   cwd: string;
   request_id: string;
+  shell?: string;
+  warning?: string;
 }
 
 export interface TerminalSessionRequest {

@@ -125,10 +125,13 @@ GLOB_FILES_DESCRIPTION = build_tool_description(
         "(defaults to the current directory); include_hidden = optional boolean "
         "for dotfiles and hidden directories."
     ),
-    returns=("A JSON string with matches (relative paths), total, and truncated."),
+    returns=(
+        "A JSON string with matches (relative paths), total, truncated, and optional applied_limit metadata. "
+        "Results are ordered by most recently modified first."
+    ),
     notes=(
-        "Results are capped at 500 matches. If truncated is true, narrow the "
-        "pattern or base_path and try again. This tool is sandboxed to "
+        "Results are capped at 500 matches. Version-control metadata directories such as .git are skipped automatically. "
+        "If truncated is true, narrow the pattern or base_path and try again. This tool is sandboxed to "
         f"{BASE_PATH} for user {USERNAME}."
     ),
 )
@@ -145,15 +148,19 @@ GREP_FILES_DESCRIPTION = build_tool_description(
         "directory); file_glob = optional relative glob filter such as "
         "**/*.py; is_regex and case_sensitive = optional booleans; "
         "context_lines = optional integer up to 10; max_results = optional "
-        "integer up to 500; include_hidden = optional boolean."
+        "legacy content-mode cap; include_hidden = optional boolean; "
+        "output_mode = optional content, files_with_matches, or count; "
+        "head_limit = optional pagination size (0 means unlimited); "
+        "offset = optional pagination offset."
     ),
     returns=(
-        "A JSON string with matches, total_matches, files_searched, skipped "
-        "binary and large file counts, truncated, pattern, and is_regex."
+        "A JSON string with structured search results. "
+        "content mode returns matches with context lines; files_with_matches mode returns matching file paths; "
+        "count mode returns per-file match counts. All modes include traversal stats, truncation metadata, pattern, and is_regex."
     ),
     notes=(
-        "Binary files and files larger than 1 MB are skipped and counted in the "
-        "response. If truncated is true, narrow the path, file_glob, or pattern "
-        "before retrying."
+        "Binary files, files larger than 1 MB, and version-control metadata directories such as .git are skipped automatically and counted in the "
+        "response when applicable. If truncated is true, narrow the path, file_glob, or pattern "
+        "before retrying, or continue with offset/head_limit pagination."
     ),
 )

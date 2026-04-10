@@ -29,6 +29,12 @@ from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from source.services.shell.command_analysis import (
+    analyze_command,
+    build_subprocess_argv,
+    interpret_command_result,
+    resolve_shell,
+)
 from mcp_servers.servers.terminal.blocklist import check_blocklist
 from mcp_servers.servers.terminal.terminal_descriptions import (
     GET_ENVIRONMENT_DESCRIPTION,
@@ -163,10 +169,21 @@ def get_environment() -> str:
     if not tools_str:
         tools_str = "  (no common tools detected)"
 
+    available_shells: list[str] = []
+    for candidate in ("cmd", "powershell", "bash", "sh"):
+        try:
+            spec = resolve_shell(candidate)
+        except ValueError:
+            continue
+        available_shells.append(f"  {candidate}: {spec.display_name}")
+    shells_str = "\n".join(available_shells) if available_shells else "  (no alternate shells detected)"
+
     return f"""OS: {platform.system()} {platform.release()} ({platform.machine()})
 Python: {sys.version.split()[0]}
 Shell: {_get_shell()}
 CWD: {os.getcwd()}
+Runnable shells:
+{shells_str}
 Available tools:
 {tools_str}"""
 
@@ -175,6 +192,7 @@ Available tools:
 def run_command(
     command: str,
     cwd: Optional[str] = None,
+    shell: str = "auto",
     timeout: int = 120,
     pty: bool = False,
     background: bool = False,
@@ -190,6 +208,15 @@ def run_command(
     if not os.path.isdir(work_dir):
         return f"Error: Working directory does not exist: {work_dir}"
 
+    try:
+        shell_spec = resolve_shell(shell)
+    except ValueError as exc:
+        return f"Error: {exc}"
+
+    analysis = analyze_command(command, shell_spec.name)
+    if analysis.hard_block_reason:
+        return f"BLOCKED: {analysis.hard_block_reason}"
+
     # Security: check blocklist
     blocked, reason = check_blocklist(command)
     if blocked:
@@ -202,8 +229,8 @@ def run_command(
     # Execute command
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            build_subprocess_argv(shell_spec, command),
+            shell=False,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -223,8 +250,14 @@ def run_command(
         if not output:
             output = "(no output)"
 
-        if result.returncode != 0:
+        semantics = interpret_command_result(command, result.returncode, shell_spec.name)
+        if semantics.is_error and result.returncode != 0:
             output += f"\n[exit code: {result.returncode}]"
+        elif semantics.message:
+            if output == "(no output)":
+                output = semantics.message
+            elif semantics.message not in output:
+                output += f"\n[{semantics.message}]"
 
         return output
 
@@ -252,19 +285,42 @@ def find_files(pattern: str, directory: Optional[str] = None) -> str:
     search_pattern = os.path.join(search_dir, pattern)
 
     try:
-        matches = glob.glob(search_pattern, recursive=True)
+        matches_with_mtime: list[tuple[str, float]] = []
+        total_count = 0
+        for candidate in glob.iglob(search_pattern, recursive=True):
+            candidate_real = os.path.realpath(candidate)
+            try:
+                if os.path.commonpath([os.path.realpath(search_dir), candidate_real]) != os.path.realpath(search_dir):
+                    continue
+            except ValueError:
+                continue
+
+            parts = os.path.relpath(candidate_real, os.path.realpath(search_dir)).replace("\\", "/").split("/")
+            if any(part in {".git", ".svn", ".hg", ".bzr", ".jj", ".sl"} for part in parts):
+                continue
+
+            total_count += 1
+            if len(matches_with_mtime) < 200:
+                try:
+                    mtime = os.path.getmtime(candidate_real)
+                except OSError:
+                    mtime = 0.0
+                matches_with_mtime.append((candidate_real, mtime))
+
+        matches_with_mtime.sort(key=lambda item: (-item[1], item[0]))
+        matches = [path for path, _mtime in matches_with_mtime]
 
         if not matches:
             return f"No files found matching '{pattern}' in {search_dir}"
 
         # Limit output to prevent overwhelming the LLM
-        if len(matches) > 200:
+        if total_count > 200:
             return (
-                f"Found {len(matches)} files. Showing first 200:\n"
+                f"Found {total_count} files. Showing first 200:\n"
                 + "\n".join(matches[:200])
             )
 
-        return f"Found {len(matches)} file(s):\n" + "\n".join(matches)
+        return f"Found {total_count} file(s):\n" + "\n".join(matches)
 
     except Exception as e:
         return f"Error searching for files: {str(e)}"

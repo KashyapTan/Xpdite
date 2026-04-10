@@ -15,9 +15,11 @@ import glob
 import logging
 import os
 import shlex
+import shutil
 
 from ...core.state import app_state
 from ...core.thread_pool import run_in_thread
+from ...services.shell.command_analysis import analyze_command, resolve_shell
 from ...services.shell.terminal import terminal_service
 
 
@@ -33,7 +35,6 @@ TERMINAL_TOOLS = {
     "read_output",
     "kill_process",
     "get_environment",
-    "find_files",
 }
 
 
@@ -71,8 +72,6 @@ async def execute_terminal_tool(
         return await _handle_kill_process(fn_args)
     elif fn_name == "get_environment":
         return await run_in_thread(_handle_get_environment)
-    elif fn_name == "find_files":
-        return await run_in_thread(_handle_find_files, fn_args)
     return f"Unknown terminal tool: {fn_name}"
 
 
@@ -87,9 +86,40 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
     use_pty = fn_args.get("pty", False)
     background = fn_args.get("background", False)
     yield_ms = fn_args.get("yield_ms", 10000)
+    requested_shell = fn_args.get("shell")
+
+    try:
+        analysis = analyze_command(command, requested_shell)
+    except ValueError as exc:
+        _save_terminal_event(
+            command=command,
+            exit_code=-1,
+            output=f"Error: {exc}",
+            cwd=cwd,
+            duration_ms=0,
+            denied=True,
+        )
+        return f"Error: {exc}"
+
+    if analysis.hard_block_reason:
+        blocked_message = f"BLOCKED: {analysis.hard_block_reason}"
+        _save_terminal_event(
+            command=command,
+            exit_code=-1,
+            output=blocked_message,
+            cwd=cwd,
+            duration_ms=0,
+            denied=True,
+        )
+        return blocked_message
 
     # Check approval (blocks until user responds if needed)
-    approved, request_id = await terminal_service.check_approval(command, cwd)
+    approved, request_id = await terminal_service.check_approval(
+        command,
+        cwd,
+        shell=analysis.shell.name,
+        warning=analysis.destructive_warning,
+    )
 
     if not approved:
         _save_terminal_event(
@@ -132,6 +162,7 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
                 request_id=request_id,
                 background=background,
                 yield_ms=yield_ms,
+                shell=analysis.shell.name,
             )
         else:
             (
@@ -144,6 +175,7 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
                 cwd=cwd,
                 timeout=timeout,
                 request_id=request_id,
+                shell=analysis.shell.name,
             )
             session_id = None
     finally:
@@ -216,7 +248,6 @@ async def _handle_kill_process(fn_args: dict) -> str:
 def _handle_get_environment() -> str:
     """Return environment info without going through MCP subprocess."""
     import platform
-    import shutil
     import subprocess
     import sys
 
@@ -258,72 +289,24 @@ def _handle_get_environment() -> str:
         if platform.system() == "Windows"
         else os.environ.get("SHELL", "/bin/bash")
     )
+    available_shells: list[str] = []
+    for candidate in ("cmd", "powershell", "bash", "sh"):
+        try:
+            spec = resolve_shell(candidate)
+        except ValueError:
+            continue
+        available_shells.append(f"  {candidate}: {spec.display_name}")
+
+    shells_str = "\n".join(available_shells) if available_shells else "  (no alternate shells detected)"
 
     return (
         f"OS: {platform.system()} {platform.release()} ({platform.machine()})\n"
         f"Python: {sys.version.split()[0]}\n"
         f"Shell: {shell}\n"
         f"CWD: {os.getcwd()}\n"
+        f"Runnable shells:\n{shells_str}\n"
         f"Available tools:\n{tools_str}"
     )
-
-
-def _handle_find_files(fn_args: dict) -> str:
-    """Find files matching a glob pattern - executed inline."""
-    pattern = fn_args.get("pattern", "")
-    directory = fn_args.get("directory", "") or os.getcwd()
-
-    # Reject absolute patterns and parent traversal to keep search bounded.
-    if os.path.isabs(pattern):
-        return "Error: pattern must be relative to the selected directory"
-
-    pattern_parts = pattern.replace("\\", "/").split("/")
-    if any(part == ".." for part in pattern_parts):
-        return "Error: pattern cannot include parent-directory traversal ('..')"
-
-    if not os.path.isabs(directory):
-        directory = os.path.abspath(directory)
-    if not os.path.isdir(directory):
-        return f"Error: Directory does not exist: {directory}"
-
-    # Path traversal protection: restrict to CWD subtree
-    resolved = os.path.realpath(directory)
-    cwd = os.path.realpath(os.getcwd())
-    try:
-        if os.path.commonpath([cwd, resolved]) != cwd:
-            return (
-                "Error: find_files is restricted to the current working directory tree."
-            )
-    except ValueError:
-        return "Error: find_files is restricted to the current working directory tree."
-
-    search_pattern = os.path.join(resolved, pattern)
-    try:
-        matches: list[str] = []
-        total_count = 0
-        for candidate in glob.iglob(search_pattern, recursive=True):
-            candidate_real = os.path.realpath(candidate)
-            try:
-                if os.path.commonpath([resolved, candidate_real]) != resolved:
-                    continue
-            except ValueError:
-                continue
-
-            total_count += 1
-            if len(matches) < 200:
-                matches.append(candidate_real)
-
-        if total_count == 0:
-            return f"No files found matching '{pattern}' in {directory}"
-        if total_count > 200:
-            return f"Found {total_count} files. Showing first 200:\n" + "\n".join(
-                matches
-            )
-        return f"Found {total_count} file(s):\n" + "\n".join(matches)
-    except Exception as e:
-        logger.warning("find_files failed: %s", e)
-        return "Error searching for files"
-
 
 # ─── DB persistence helper ──────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import regex as regexlib
 from mcp.server.fastmcp import FastMCP
@@ -77,8 +77,11 @@ _GREP_DEFAULT_MAX_RESULTS = 100
 _GREP_MAX_RESULTS = 500
 _GREP_MAX_FILE_BYTES = 1_000_000
 _GREP_MAX_FILES = 10_000
+_GREP_DEFAULT_HEAD_LIMIT = 250
 _REGEX_MATCH_TIMEOUT_SECONDS = 0.05
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[A-Za-z]:")
+_VCS_DIRECTORY_NAMES = frozenset({".git", ".svn", ".hg", ".bzr", ".jj", ".sl"})
+_T = TypeVar("_T")
 
 
 def _get_safe_path(path: str) -> str:
@@ -129,6 +132,27 @@ def _has_hidden_part(relative_path: str | Path) -> bool:
     return any(part.startswith(".") for part in parts if part not in ("", ".", ".."))
 
 
+def _has_vcs_part(relative_path: str | Path) -> bool:
+    parts = (
+        relative_path.parts
+        if isinstance(relative_path, Path)
+        else Path(relative_path).parts
+    )
+    return any(part in _VCS_DIRECTORY_NAMES for part in parts)
+
+
+def _should_skip_relative_path(
+    relative_path: str | Path,
+    *,
+    include_hidden: bool,
+) -> bool:
+    if _has_vcs_part(relative_path):
+        return True
+    if not include_hidden and _has_hidden_part(relative_path):
+        return True
+    return False
+
+
 def _is_within_search_root(candidate_path: str, search_root: str) -> bool:
     resolved_candidate = os.path.realpath(candidate_path)
     resolved_root = os.path.realpath(search_root)
@@ -157,6 +181,7 @@ def _glob_payload(
     matches: list[str],
     *,
     truncated: bool,
+    applied_limit: int | None = None,
     error: dict[str, str] | None = None,
     truncation_reason: str | None = None,
 ) -> str:
@@ -165,6 +190,8 @@ def _glob_payload(
         "total": len(matches),
         "truncated": truncated,
     }
+    if applied_limit is not None:
+        payload["applied_limit"] = applied_limit
     if truncation_reason is not None:
         payload["truncation_reason"] = truncation_reason
     if error is not None:
@@ -173,8 +200,9 @@ def _glob_payload(
 
 
 def _grep_payload(
-    matches: list[dict[str, Any]],
+    matches: list[dict[str, Any]] | None,
     *,
+    mode: str = "content",
     pattern: str,
     is_regex: bool,
     files_searched: int,
@@ -183,12 +211,15 @@ def _grep_payload(
     skipped_binary_files: int,
     skipped_large_files: int,
     skipped_permission_denied_files: int,
+    files: list[str] | None = None,
+    counts: list[dict[str, Any]] | None = None,
+    applied_limit: int | None = None,
+    applied_offset: int | None = None,
     error: dict[str, str] | None = None,
     truncation_reason: str | None = None,
 ) -> str:
     payload: dict[str, Any] = {
-        "matches": matches,
-        "total_matches": len(matches),
+        "mode": mode,
         "files_searched": files_searched,
         "files_traversed": files_traversed,
         "skipped_binary_files": skipped_binary_files,
@@ -198,11 +229,47 @@ def _grep_payload(
         "pattern": pattern,
         "is_regex": is_regex,
     }
+    if matches is not None:
+        payload["matches"] = matches
+        payload["total_matches"] = len(matches)
+    if files is not None:
+        payload["files"] = files
+        payload["total_files"] = len(files)
+    if counts is not None:
+        payload["counts"] = counts
+        payload["total_files"] = len(counts)
+        payload["total_matches"] = sum(item.get("count", 0) for item in counts)
+    if applied_limit is not None:
+        payload["applied_limit"] = applied_limit
+    if applied_offset:
+        payload["applied_offset"] = applied_offset
     if truncation_reason is not None:
         payload["truncation_reason"] = truncation_reason
     if error is not None:
         payload["error"] = error
     return _json_response(payload)
+
+
+def _safe_mtime(path: str) -> float:
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def _apply_offset_limit(
+    items: list[_T],
+    *,
+    offset: int,
+    limit: int | None,
+) -> tuple[list[_T], bool, int | None]:
+    sliced = items[offset:] if offset else items
+    if limit is None:
+        return sliced, False, None
+    if limit == 0:
+        return sliced, False, None
+    truncated = len(sliced) > limit
+    return sliced[:limit], truncated, limit if truncated else None
 
 
 @mcp.tool(description=LIST_DIRECTORY_DESCRIPTION)
@@ -497,9 +564,8 @@ def glob_files(
                 ),
             )
 
-        matches: list[str] = []
+        matches_with_mtime: list[tuple[str, float]] = []
         seen: set[str] = set()
-        truncated = False
 
         for relative_match in globlib.iglob(
             pattern,
@@ -511,7 +577,7 @@ def glob_files(
                 continue
 
             relative_path = Path(relative_match)
-            if not include_hidden and _has_hidden_part(relative_path):
+            if _should_skip_relative_path(relative_path, include_hidden=include_hidden):
                 continue
 
             candidate_path = os.path.join(clean_base, relative_match)
@@ -528,15 +594,15 @@ def glob_files(
                 continue
 
             seen.add(display_path)
-            matches.append(display_path)
-            if len(matches) >= _GLOB_RESULTS_CAP:
-                truncated = True
-                break
+            matches_with_mtime.append((display_path, _safe_mtime(clean_candidate)))
 
-        matches.sort()
+        matches_with_mtime.sort(key=lambda item: (-item[1], item[0]))
+        truncated = len(matches_with_mtime) > _GLOB_RESULTS_CAP
+        matches = [path for path, _mtime in matches_with_mtime[:_GLOB_RESULTS_CAP]]
         return _glob_payload(
             matches,
             truncated=truncated,
+            applied_limit=_GLOB_RESULTS_CAP if truncated else None,
             truncation_reason="result_limit" if truncated else None,
         )
     except PermissionError as exc:
@@ -563,6 +629,9 @@ def grep_files(
     context_lines: int = _GREP_DEFAULT_CONTEXT_LINES,
     max_results: int = _GREP_DEFAULT_MAX_RESULTS,
     include_hidden: bool = False,
+    output_mode: str = "content",
+    head_limit: int | None = None,
+    offset: int = 0,
 ) -> str:
     if not pattern.strip():
         return _grep_payload(
@@ -612,9 +681,68 @@ def grep_files(
             ),
         )
 
+    if output_mode not in {"content", "files_with_matches", "count"}:
+        return _grep_payload(
+            [],
+            pattern=pattern,
+            is_regex=is_regex,
+            files_searched=0,
+            files_traversed=0,
+            truncated=False,
+            skipped_binary_files=0,
+            skipped_large_files=0,
+            skipped_permission_denied_files=0,
+            error=_build_error(
+                "invalid_output_mode",
+                "output_mode must be one of: content, files_with_matches, count.",
+            ),
+        )
+
+    if head_limit is not None and head_limit < 0:
+        return _grep_payload(
+            [],
+            pattern=pattern,
+            is_regex=is_regex,
+            files_searched=0,
+            files_traversed=0,
+            truncated=False,
+            skipped_binary_files=0,
+            skipped_large_files=0,
+            skipped_permission_denied_files=0,
+            error=_build_error(
+                "invalid_head_limit",
+                "head_limit must be zero or greater.",
+            ),
+        )
+
+    if offset < 0:
+        return _grep_payload(
+            [],
+            pattern=pattern,
+            is_regex=is_regex,
+            files_searched=0,
+            files_traversed=0,
+            truncated=False,
+            skipped_binary_files=0,
+            skipped_large_files=0,
+            skipped_permission_denied_files=0,
+            error=_build_error(
+                "invalid_offset",
+                "offset must be zero or greater.",
+            ),
+        )
+
     effective_context_lines = min(context_lines, _GREP_MAX_CONTEXT_LINES)
     effective_max_results = min(max_results, _GREP_MAX_RESULTS)
     effective_file_glob = file_glob or "**/*"
+    default_head_limit = (
+        effective_max_results if output_mode == "content" else _GREP_DEFAULT_HEAD_LIMIT
+    )
+    effective_head_limit = default_head_limit if head_limit is None else head_limit
+    pagination_limit = None if effective_head_limit == 0 else effective_head_limit
+    required_result_count = (
+        None if pagination_limit is None else offset + pagination_limit
+    )
 
     file_glob_error = _validate_relative_glob_pattern(effective_file_glob, "file_glob")
     if file_glob_error is not None:
@@ -696,6 +824,8 @@ def grep_files(
                 return needle in haystack
 
         matches: list[dict[str, Any]] = []
+        matched_files_with_mtime: list[tuple[str, float]] = []
+        match_counts_with_mtime: list[tuple[str, int, float]] = []
         files_searched = 0
         files_traversed = 0
         skipped_binary_files = 0
@@ -715,7 +845,7 @@ def grep_files(
                 continue
 
             relative_path = Path(relative_match)
-            if not include_hidden and _has_hidden_part(relative_path):
+            if _should_skip_relative_path(relative_path, include_hidden=include_hidden):
                 continue
 
             candidate_path = os.path.join(clean_root, relative_match)
@@ -760,12 +890,14 @@ def grep_files(
                 continue
 
             files_searched += 1
+            matched_count_for_file = 0
             for line_number, line in enumerate(lines, start=1):
                 try:
                     is_match = line_matches(line)
                 except TimeoutError:
                     return _grep_payload(
                         matches,
+                        mode=output_mode,
                         pattern=pattern,
                         is_regex=is_regex,
                         files_searched=files_searched,
@@ -784,6 +916,17 @@ def grep_files(
                 if not is_match:
                     continue
 
+                matched_count_for_file += 1
+
+                if output_mode == "files_with_matches":
+                    matched_files_with_mtime.append(
+                        (display_path, _safe_mtime(clean_candidate))
+                    )
+                    break
+
+                if output_mode == "count":
+                    continue
+
                 start_index = max(0, line_number - 1 - effective_context_lines)
                 end_index = min(len(lines), line_number + effective_context_lines)
                 matches.append(
@@ -796,16 +939,126 @@ def grep_files(
                     }
                 )
 
-                if len(matches) >= effective_max_results:
+                if (
+                    required_result_count is not None
+                    and len(matches) >= required_result_count
+                ):
                     truncated = True
-                    truncation_reason = "max_results"
+                    truncation_reason = "head_limit" if head_limit is not None else "max_results"
                     break
 
-            if truncated and truncation_reason == "max_results":
+            if output_mode == "count" and matched_count_for_file > 0:
+                match_counts_with_mtime.append(
+                    (display_path, matched_count_for_file, _safe_mtime(clean_candidate))
+                )
+                if (
+                    required_result_count is not None
+                    and len(match_counts_with_mtime) >= required_result_count
+                ):
+                    truncated = True
+                    truncation_reason = (
+                        "head_limit" if head_limit is not None else "default_limit"
+                    )
+                    break
+
+            if output_mode == "files_with_matches" and matched_count_for_file > 0:
+                if (
+                    required_result_count is not None
+                    and len(matched_files_with_mtime) >= required_result_count
+                ):
+                    truncated = True
+                    truncation_reason = (
+                        "head_limit" if head_limit is not None else "default_limit"
+                    )
+                    break
+
+            if truncated and truncation_reason in {"max_results", "head_limit", "default_limit"}:
                 break
 
-        return _grep_payload(
+        if output_mode == "files_with_matches":
+            matched_files_with_mtime.sort(key=lambda item: (-item[1], item[0]))
+            paged_files, pagination_truncated, applied_limit = _apply_offset_limit(
+                [path for path, _mtime in matched_files_with_mtime],
+                offset=offset,
+                limit=pagination_limit,
+            )
+            if pagination_truncated:
+                truncated = True
+                if truncation_reason is None:
+                    truncation_reason = (
+                        "head_limit" if head_limit is not None else "default_limit"
+                    )
+            elif truncated and applied_limit is None and pagination_limit is not None:
+                applied_limit = pagination_limit
+            return _grep_payload(
+                None,
+                mode=output_mode,
+                pattern=pattern,
+                is_regex=is_regex,
+                files_searched=files_searched,
+                files_traversed=files_traversed,
+                truncated=truncated,
+                skipped_binary_files=skipped_binary_files,
+                skipped_large_files=skipped_large_files,
+                skipped_permission_denied_files=skipped_permission_denied_files,
+                files=paged_files,
+                applied_limit=applied_limit,
+                applied_offset=offset,
+                truncation_reason=truncation_reason,
+            )
+
+        if output_mode == "count":
+            match_counts_with_mtime.sort(key=lambda item: (-item[2], item[0]))
+            paged_counts, pagination_truncated, applied_limit = _apply_offset_limit(
+                [
+                    {"file": path, "count": count}
+                    for path, count, _mtime in match_counts_with_mtime
+                ],
+                offset=offset,
+                limit=pagination_limit,
+            )
+            if pagination_truncated:
+                truncated = True
+                if truncation_reason is None:
+                    truncation_reason = (
+                        "head_limit" if head_limit is not None else "default_limit"
+                    )
+            elif truncated and applied_limit is None and pagination_limit is not None:
+                applied_limit = pagination_limit
+            return _grep_payload(
+                None,
+                mode=output_mode,
+                pattern=pattern,
+                is_regex=is_regex,
+                files_searched=files_searched,
+                files_traversed=files_traversed,
+                truncated=truncated,
+                skipped_binary_files=skipped_binary_files,
+                skipped_large_files=skipped_large_files,
+                skipped_permission_denied_files=skipped_permission_denied_files,
+                counts=paged_counts,
+                applied_limit=applied_limit,
+                applied_offset=offset,
+                truncation_reason=truncation_reason,
+            )
+
+        paged_matches, pagination_truncated, applied_limit = _apply_offset_limit(
             matches,
+            offset=offset,
+            limit=pagination_limit,
+        )
+        if pagination_truncated:
+            truncated = True
+            if truncation_reason is None:
+                truncation_reason = (
+                    "head_limit" if head_limit is not None else "max_results"
+                )
+        elif truncated and applied_limit is None and pagination_limit is not None:
+            applied_limit = pagination_limit
+
+        return _grep_payload(
+            paged_matches,
+            mode=output_mode,
             pattern=pattern,
             is_regex=is_regex,
             files_searched=files_searched,
@@ -814,6 +1067,8 @@ def grep_files(
             skipped_binary_files=skipped_binary_files,
             skipped_large_files=skipped_large_files,
             skipped_permission_denied_files=skipped_permission_denied_files,
+            applied_limit=applied_limit,
+            applied_offset=offset,
             truncation_reason=truncation_reason,
         )
     except PermissionError as exc:

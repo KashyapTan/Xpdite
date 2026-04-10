@@ -77,7 +77,7 @@ export function InlineTerminalBlock({
   const fitAddonRef = useRef<FitAddon | null>(null);
   const writtenChunksRef = useRef<number>(0);
   const isInitialFlushPendingRef = useRef(false);
-  const { requestId, command, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
+  const { requestId, command, shell, warning, cwd, status, output, outputChunks, isPty, exitCode, durationMs, timedOut } = terminal;
   const boundedOutputChunks = useMemo(
     () => (
       outputChunks.length > MAX_RENDERABLE_OUTPUT_CHUNKS
@@ -374,7 +374,9 @@ export function InlineTerminalBlock({
             <div className="terminal-inline-approval">
               <div className="terminal-inline-approval-info">
                 <div className="terminal-inline-approval-label">Xpdite wants to run this command</div>
+                {shell && <div className="terminal-inline-approval-cwd">shell: {shell}</div>}
                 {cwd && <div className="terminal-inline-approval-cwd">in: {cwd}</div>}
+                {warning && <div className="terminal-inline-warning">{warning}</div>}
               </div>
               <div className="terminal-inline-approval-actions">
                 {onDeny && (

@@ -269,6 +269,7 @@ class TestExecuteTerminalTool:
             cwd="C:/repo",
             timeout=30,
             request_id="req-1",
+            shell="cmd",
         )
         mock_complete.assert_awaited_once_with("req-1", 0, 25)
         assert mock_save.call_args.kwargs["pty"] is False
@@ -322,6 +323,7 @@ class TestExecuteTerminalTool:
             request_id="req-pty",
             background=True,
             yield_ms=2500,
+            shell="cmd",
         )
         mock_complete.assert_not_awaited()
         assert mock_save.call_args.kwargs["pty"] is True

@@ -439,7 +439,7 @@ class TestCheckApproval:
             approved, request_id = await ts.check_approval("echo hello", "/tmp")
 
         assert approved is True
-        mock_remember.assert_called_once_with("echo hello")
+        mock_remember.assert_called_once_with("echo hello", shell=None)
         assert request_id not in ts._approval_events
         assert request_id not in ts._approval_results
         assert request_id not in ts._approval_remember
@@ -576,7 +576,7 @@ class TestExecuteCommand:
             patch("source.services.shell.terminal.os.path.isdir", return_value=True),
             patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.shell.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
@@ -611,7 +611,7 @@ class TestExecuteCommand:
             patch("source.services.shell.terminal.os.path.isdir", return_value=True),
             patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.shell.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
@@ -637,7 +637,7 @@ class TestExecuteCommand:
             patch("source.services.shell.terminal.os.path.isdir", return_value=True),
             patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.shell.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 return_value=fake_process,
             ),
@@ -665,7 +665,7 @@ class TestExecuteCommand:
             patch("source.services.shell.terminal.os.path.isdir", return_value=True),
             patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
             patch(
-                "source.services.shell.terminal.asyncio.create_subprocess_shell",
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("boom"),
             ),
@@ -677,6 +677,58 @@ class TestExecuteCommand:
         assert output.startswith("Error executing command:")
         assert exit_code == 1
         assert timed_out is False
+
+    @pytest.mark.asyncio
+    async def test_non_error_exit_code_semantics_are_rendered_without_failure_suffix(self):
+        ts = TerminalService()
+        ts.broadcast_output = AsyncMock()
+
+        fake_process = _FakeProcess(
+            _FakeStdout([b""]),
+            wait_result=1,
+            pid=224,
+        )
+
+        with (
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
+            patch(
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=fake_process,
+            ),
+        ):
+            output, exit_code, _, timed_out = await ts.execute_command(
+                "grep needle README.md", "C:/repo", request_id="req-grep"
+            )
+
+        assert output == "No matches found."
+        assert exit_code == 1
+        assert timed_out is False
+
+    @pytest.mark.asyncio
+    async def test_high_risk_shell_patterns_are_blocked_before_subprocess(self):
+        ts = TerminalService()
+
+        with (
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch(
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+            ) as mock_create,
+        ):
+            output, exit_code, duration_ms, timed_out = await ts.execute_command(
+                "Invoke-Expression $payload",
+                "C:/repo",
+                shell="powershell",
+            )
+
+        assert output.startswith("BLOCKED:")
+        assert "Invoke-Expression" in output
+        assert exit_code == 1
+        assert duration_ms == 0
+        assert timed_out is False
+        mock_create.assert_not_called()
 
 
 class TestKillRunningCommand:

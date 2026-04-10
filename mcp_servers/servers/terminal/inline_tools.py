@@ -3,7 +3,6 @@ from typing import Any
 from mcp_servers.servers.description_format import build_inline_tool_definition
 from mcp_servers.servers.terminal.terminal_descriptions import (
     END_SESSION_MODE_DESCRIPTION,
-    FIND_FILES_DESCRIPTION,
     GET_ENVIRONMENT_DESCRIPTION,
     KILL_PROCESS_DESCRIPTION,
     READ_OUTPUT_DESCRIPTION,
@@ -33,6 +32,12 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
                     "type": "string",
                     "description": "Working directory (absolute path)",
                 },
+                "shell": {
+                    "type": "string",
+                    "enum": ["auto", "cmd", "powershell", "bash", "sh"],
+                    "description": "Shell to run the command in. Use powershell for PowerShell syntax and bash/sh for POSIX shell syntax. Defaults to auto.",
+                    "default": "auto",
+                },
                 "timeout": {
                     "type": "integer",
                     "description": "Seconds before force-killing (max 120 foreground, 1800 background)",
@@ -55,24 +60,6 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
                 },
             },
             "required": ["command"],
-        },
-    ),
-    build_inline_tool_definition(
-        "find_files",
-        FIND_FILES_DESCRIPTION,
-        {
-            "type": "object",
-            "properties": {
-                "pattern": {
-                    "type": "string",
-                    "description": "Glob pattern (e.g. '*.py', '**/*.ts')",
-                },
-                "directory": {
-                    "type": "string",
-                    "description": "Directory to search in",
-                },
-            },
-            "required": ["pattern"],
         },
     ),
     build_inline_tool_definition(

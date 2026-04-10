@@ -29,12 +29,20 @@ import asyncio
 import os
 import platform
 import re
-import uuid
+import subprocess
 import time
+import uuid
 from typing import Optional
 
 from ...core.connection import broadcast_message
 from .approval_history import is_command_approved, remember_approval
+from .command_analysis import (
+    analyze_command,
+    build_pty_command,
+    build_subprocess_argv,
+    interpret_command_result,
+    resolve_shell,
+)
 
 # Import security checks from MCP terminal blocklist
 from mcp_servers.servers.terminal.blocklist import check_blocklist
@@ -190,7 +198,14 @@ class TerminalService:
     def session_mode(self) -> bool:
         return self._session_mode
 
-    async def check_approval(self, command: str, cwd: str) -> tuple[bool, str]:
+    async def check_approval(
+        self,
+        command: str,
+        cwd: str,
+        *,
+        shell: str | None = None,
+        warning: str | None = None,
+    ) -> tuple[bool, str]:
         """
         Check if a command needs approval and wait for user response if needed.
 
@@ -205,7 +220,7 @@ class TerminalService:
 
         # Ask=on-miss: check history
         if self._ask_level == "on-miss":
-            if is_command_approved(command):
+            if is_command_approved(command, shell=shell):
                 return True, request_id
 
         # Need user approval — broadcast request and wait
@@ -221,6 +236,8 @@ class TerminalService:
                 "command": command,
                 "cwd": cwd,
                 "request_id": request_id,
+                "shell": shell,
+                "warning": warning,
             },
         )
 
@@ -236,7 +253,7 @@ class TerminalService:
 
         # Save to approval history if "Allow & Remember"
         if approved and should_remember:
-            remember_approval(command)
+            remember_approval(command, shell=shell)
 
         self._cleanup_approval(request_id)
         return approved, request_id
@@ -370,6 +387,7 @@ class TerminalService:
         cwd: str,
         timeout: int = 120,
         request_id: Optional[str] = None,
+        shell: str | None = None,
     ) -> tuple[str, int, int, bool]:
         """
         Execute a command directly using asyncio subprocess with real-time
@@ -390,6 +408,15 @@ class TerminalService:
         """
         # Enforce timeout ceiling
         effective_timeout = min(timeout, _MAX_TIMEOUT)
+
+        try:
+            shell_spec = resolve_shell(shell)
+        except ValueError as exc:
+            return f"Error: {exc}", 1, 0, False
+
+        analysis = analyze_command(command, shell_spec.name)
+        if analysis.hard_block_reason:
+            return f"BLOCKED: {analysis.hard_block_reason}", 1, 0, False
 
         # Resolve working directory
         work_dir = cwd or os.getcwd()
@@ -415,14 +442,19 @@ class TerminalService:
         timed_out = False
 
         try:
-            # Use asyncio subprocess for non-blocking I/O
-            process = await asyncio.create_subprocess_shell(
-                command,
+            spawn_kwargs: dict[str, object] = {}
+            if platform.system() == "Windows":
+                spawn_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+
+            # Use asyncio subprocess for non-blocking I/O through the selected shell.
+            process = await asyncio.create_subprocess_exec(
+                *build_subprocess_argv(shell_spec, command),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 stdin=asyncio.subprocess.DEVNULL,
                 cwd=work_dir,
                 env=env,
+                **spawn_kwargs,
             )
 
             self._active_process = process
@@ -491,8 +523,16 @@ class TerminalService:
                 request_id, f"\x1b[31m{timeout_msg}\x1b[0m", stream=True
             )
 
-        if exit_code != 0 and not timed_out:
-            full_output += f"\n[exit code: {exit_code}]"
+        if not timed_out:
+            semantics = interpret_command_result(command, exit_code, shell_spec.name)
+            if semantics.is_error:
+                if exit_code != 0:
+                    full_output += f"\n[exit code: {exit_code}]"
+            elif semantics.message:
+                if full_output == "(no output)":
+                    full_output = semantics.message
+                elif semantics.message not in full_output:
+                    full_output += f"\n[{semantics.message}]"
 
         return full_output, exit_code, duration_ms, timed_out
 
@@ -537,6 +577,7 @@ class TerminalService:
         request_id: Optional[str] = None,
         background: bool = False,
         yield_ms: int = 10000,
+        shell: str | None = None,
     ) -> tuple[str, int, int, bool, Optional[str]]:
         """
         Execute a command in a PTY for full interactive TUI support.
@@ -573,6 +614,15 @@ class TerminalService:
                 None,
             )
 
+        try:
+            shell_spec = resolve_shell(shell)
+        except ValueError as exc:
+            return f"Error: {exc}", 1, 0, False, None
+
+        analysis = analyze_command(command, shell_spec.name)
+        if analysis.hard_block_reason:
+            return f"BLOCKED: {analysis.hard_block_reason}", 1, 0, False, None
+
         max_timeout = _MAX_BACKGROUND_TIMEOUT if background else _MAX_TIMEOUT
         timeout = min(timeout, max_timeout)
 
@@ -607,13 +657,8 @@ class TerminalService:
         session = TerminalSession(session_id, request_id, command, cwd)
 
         try:
-            # Build the command for ConPTY.
-            # On Windows, we use cmd /c to run the command so things like
-            # PATH resolution, pipes, and redirects work.
-            if platform.system() == "Windows":
-                spawn_cmd = f"cmd /c {command}"
-            else:
-                spawn_cmd = command
+            # Build the selected shell command for ConPTY.
+            spawn_cmd = build_pty_command(shell_spec, command)
 
             # Create PTY process
             # Use last known terminal size from frontend
@@ -714,6 +759,17 @@ class TerminalService:
                     # Clean up
                     self._background_sessions.pop(session_id, None)
 
+                    semantics = interpret_command_result(
+                        command,
+                        exit_code,
+                        shell_spec.name,
+                    )
+                    if semantics.message:
+                        if not output:
+                            output = semantics.message
+                        elif semantics.message not in output:
+                            output += f"\n[{semantics.message}]"
+
                     return output, exit_code, duration_ms, False, None
                 else:
                     # Still running — return session_id to LLM
@@ -737,6 +793,17 @@ class TerminalService:
 
                     await self.broadcast_complete(request_id, exit_code, duration_ms)
                     self._background_sessions.pop(session_id, None)
+
+                    semantics = interpret_command_result(
+                        command,
+                        exit_code,
+                        shell_spec.name,
+                    )
+                    if semantics.message:
+                        if not output:
+                            output = semantics.message
+                        elif semantics.message not in output:
+                            output += f"\n[{semantics.message}]"
 
                     return output, exit_code, duration_ms, False, None
                 else:

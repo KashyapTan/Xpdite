@@ -48,7 +48,7 @@ class TestGlobFiles:
 
         payload = _parse_result(filesystem_server.glob_files("**/*.py"))
 
-        assert payload["matches"] == ["root.py", "src/nested.py"]
+        assert payload["matches"] == ["src/nested.py", "root.py"]
         assert payload["total"] == 2
         assert payload["truncated"] is False
         assert "error" not in payload
@@ -267,6 +267,61 @@ class TestGrepFiles:
         assert payload["total_matches"] == 0
         assert payload["files_searched"] == 1
         assert payload["truncated"] is False
+
+    def test_files_with_matches_mode_returns_most_recent_files(self, filesystem_sandbox: Path):
+        first = filesystem_sandbox / "older.py"
+        second = filesystem_sandbox / "newer.py"
+        _write_text(first, "needle\n")
+        _write_text(second, "needle\n")
+
+        payload = _parse_result(
+            filesystem_server.grep_files(
+                "needle",
+                file_glob="**/*.py",
+                output_mode="files_with_matches",
+            )
+        )
+
+        assert payload["mode"] == "files_with_matches"
+        assert payload["files"] == ["newer.py", "older.py"]
+        assert payload["total_files"] == 2
+        assert payload["truncated"] is False
+
+    def test_count_mode_supports_offset_and_head_limit(self, filesystem_sandbox: Path):
+        _write_text(filesystem_sandbox / "a.py", "needle\nneedle\n")
+        _write_text(filesystem_sandbox / "b.py", "needle\n")
+        _write_text(filesystem_sandbox / "c.py", "needle\nneedle\nneedle\n")
+
+        payload = _parse_result(
+            filesystem_server.grep_files(
+                "needle",
+                file_glob="**/*.py",
+                output_mode="count",
+                head_limit=1,
+                offset=1,
+            )
+        )
+
+        assert payload["mode"] == "count"
+        assert payload["counts"] == [{"file": "b.py", "count": 1}]
+        assert payload["applied_limit"] == 1
+        assert payload["applied_offset"] == 1
+        assert payload["truncated"] is True
+
+    def test_skips_vcs_directories_even_when_hidden_files_allowed(self, filesystem_sandbox: Path):
+        _write_text(filesystem_sandbox / ".git" / "hooks" / "pre-commit", "needle\n")
+        _write_text(filesystem_sandbox / ".github" / "workflow.py", "needle\n")
+
+        payload = _parse_result(
+            filesystem_server.grep_files(
+                "needle",
+                file_glob="**/*",
+                include_hidden=True,
+                output_mode="files_with_matches",
+            )
+        )
+
+        assert payload["files"] == [".github/workflow.py"]
 
 
 class TestReadFilePagination:

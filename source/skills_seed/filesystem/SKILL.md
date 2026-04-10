@@ -23,6 +23,8 @@ trigger-servers: filesystem
 |---|---|---|
 | Find files by name or extension | `glob_files` | `pattern="**/*.py"` and optionally `base_path="source"` |
 | Search text inside code or docs | `grep_files` | `pattern="RequestContext"`, `file_glob="**/*.py"`, optionally `path="source"` |
+| List only files that match content | `grep_files` | `pattern="RequestContext"`, `output_mode="files_with_matches"`, `file_glob="**/*.py"` |
+| Get per-file hit counts | `grep_files` | `pattern="TODO"`, `output_mode="count"`, `file_glob="**/*.py"` |
 | Run a regex search | `grep_files` | `pattern="class\\s+\\w+"`, `is_regex=true`, `file_glob="**/*.py"` |
 | Inspect one directory | `list_directory` | `path="..."` |
 | Open a specific file | `read_file` | `path="..."` |
@@ -31,6 +33,7 @@ trigger-servers: filesystem
   - Reduce `base_path` or `path` to a smaller subtree.
   - Add or tighten `file_glob`.
   - Make the search pattern more specific.
+  - Use `head_limit` and `offset` to page through `grep_files` results instead of rerunning the same broad query.
   - Leave `include_hidden` off unless hidden files are required.
 
 ## Safety

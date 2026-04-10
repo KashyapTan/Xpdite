@@ -22,6 +22,13 @@ def test_terminal_inline_tools_match_expected_names_and_required_fields():
     )
     assert run_command["parameters"]["required"] == ["command"]
     assert run_command["parameters"]["properties"]["background"]["default"] is False
+    assert run_command["parameters"]["properties"]["shell"]["enum"] == [
+        "auto",
+        "cmd",
+        "powershell",
+        "bash",
+        "sh",
+    ]
 
 
 def test_sub_agent_inline_tool_schema_matches_expected_shape():

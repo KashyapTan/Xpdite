@@ -2,14 +2,14 @@ from mcp_servers.servers.description_format import build_tool_description
 
 
 GET_ENVIRONMENT_DESCRIPTION = build_tool_description(
-    purpose="Report the current OS, shell, working directory, and versions of common CLI tools.",
+    purpose="Report the current OS, current shell, runnable shell options, working directory, and versions of common CLI tools.",
     use_when=(
         "You need to understand the runtime before planning terminal work or "
         "checking whether a common tool is installed."
     ),
     inputs="None.",
     returns=(
-        "A text summary with OS, Python version, shell, CWD, and detected "
+        "A text summary with OS, Python version, active shell, runnable shell options, CWD, and detected "
         "versions for common tools on PATH such as python, node, npm, git, "
         "pip, uv, cargo, docker, and java."
     ),
@@ -20,12 +20,12 @@ GET_ENVIRONMENT_DESCRIPTION = build_tool_description(
 )
 
 RUN_COMMAND_DESCRIPTION = build_tool_description(
-    purpose="Run a shell command and return combined stdout and stderr.",
+    purpose="Run a terminal command in the selected shell and return combined stdout and stderr.",
     use_when=(
-        "You need to execute a CLI command, script, build step, or one-off shell task."
+        "You need to execute a CLI command, script, build step, or one-off shell task that is not better handled by the filesystem tools."
     ),
     inputs=(
-        "command, cwd (optional absolute path), timeout seconds (optional), "
+        "command, cwd (optional absolute path), shell (optional: auto, cmd, powershell, bash, sh), timeout seconds (optional), "
         "pty (optional for interactive TUIs), background (optional for PTY "
         "sessions that should keep running), yield_ms (optional wait before "
         "returning from a background PTY session)."
@@ -37,25 +37,14 @@ RUN_COMMAND_DESCRIPTION = build_tool_description(
     ),
     notes=(
         "ALWAYS RUN `request_session_mode` first before any run_command call."
+        "Use shell='powershell' for PowerShell syntax on Windows and bash/sh for POSIX shell syntax. "
         "Use pty=True for interactive CLIs. background is useful with PTY "
         "sessions. Quote Windows paths that contain spaces. Security: commands "
-        "touching OS system paths are always blocked, PATH overrides are "
-        "rejected, and user approval is required before execution. Do not use "
-        "run_command for grep, rg, ag, find, or shell globbing when the "
+        "touching OS system paths are always blocked, dangerous shell-evaluation/download patterns are rejected, "
+        "and user approval is required before execution. Do not use "
+        "run_command for grep, rg, ag, Select-String, find, dir recursion, or shell globbing when the "
         "filesystem server's grep_files or glob_files tools can handle the task."
     ),
-)
-
-FIND_FILES_DESCRIPTION = build_tool_description(
-    purpose="Return a simple text list of files that match a glob pattern under the current working directory tree.",
-    use_when=(
-        "You are already in a terminal-centric workflow and need a quick fallback file list. "
-        "Prefer the filesystem server's glob_files tool for normal file discovery because "
-        "it returns structured JSON and stronger sandbox guidance."
-    ),
-    inputs="pattern (for example *.py or **/*.ts) and directory (optional, must stay inside the current working directory tree).",
-    returns="A text list of matching file paths, capped at the first 200 matches.",
-    notes="Use this for file discovery only. It does not read file contents and does not require user approval. Use grep_files for content search and glob_files for the primary structured file-discovery workflow.",
 )
 
 REQUEST_SESSION_MODE_DESCRIPTION = build_tool_description(

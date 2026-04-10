@@ -15,6 +15,8 @@ import time
 import threading
 from pathlib import Path
 
+from .command_analysis import _extract_shell_signature
+
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _APPROVALS_FILE = str(_PROJECT_ROOT / "user_data" / "exec-approvals.json")
@@ -58,38 +60,33 @@ def _compute_hash(command_signature: str) -> str:
     return hashlib.sha256(command_signature.encode("utf-8")).hexdigest()[:16]
 
 
-def _normalize_command(command: str) -> str:
+def _normalize_command(command: str, shell: str | None = None) -> str:
     """
     Normalize a command to a signature for approval matching.
 
-    Strips arguments that are likely to change between invocations
-    (file paths, URLs, etc.) while keeping the base command.
-    For simplicity, we use the first token (the executable/command name).
+    Extracts a stable command prefix so remembered approvals survive
+    differences in file paths, URLs, and other volatile arguments.
     """
-    parts = command.strip().split()
-    if not parts:
+    if not command.strip():
         return command
-    # Use first 1-2 tokens as the signature
-    # e.g., "npm install", "git status", "python script.py" -> "npm install", "git status", "python"
-    if len(parts) >= 2 and parts[0] in ("npm", "npx", "pip", "git", "docker", "cargo", "uv"):
-        return f"{parts[0]} {parts[1]}"
-    return parts[0]
+    shell_name = "powershell" if (shell or "").strip().lower() == "powershell" else "bash"
+    return _extract_shell_signature(command, shell_name)
 
 
-def is_command_approved(command: str) -> bool:
+def is_command_approved(command: str, shell: str | None = None) -> bool:
     """
     Check if a command (or its normalized signature) has been
     previously approved and remembered.
     """
     with _approvals_lock:
         data = _load_approvals()
-        signature = _normalize_command(command)
+        signature = _normalize_command(command, shell=shell)
         sig_hash = _compute_hash(signature)
 
         return any(a["hash"] == sig_hash for a in data["approvals"])
 
 
-def remember_approval(command: str):
+def remember_approval(command: str, shell: str | None = None):
     """
     Save a command's approval so future identical commands auto-approve.
     Called when user clicks "Allow & Remember".
@@ -97,7 +94,7 @@ def remember_approval(command: str):
     global _approvals_cache
     with _approvals_lock:
         data = _load_approvals()
-        signature = _normalize_command(command)
+        signature = _normalize_command(command, shell=shell)
         sig_hash = _compute_hash(signature)
 
         # Don't duplicate

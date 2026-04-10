@@ -1178,7 +1178,17 @@ function App() {
         }
         chat.contentBlocks = [...chat.contentBlocks, {
           type: 'terminal_command',
-          terminal: { requestId: ar.request_id, command: ar.command, cwd: ar.cwd, status: 'pending_approval', output: '', outputChunks: [], isPty: false },
+          terminal: {
+            requestId: ar.request_id,
+            command: ar.command,
+            shell: ar.shell,
+            warning: ar.warning,
+            cwd: ar.cwd,
+            status: 'pending_approval',
+            output: '',
+            outputChunks: [],
+            isPty: false,
+          },
         }];
         break;
       }
