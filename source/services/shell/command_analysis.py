@@ -88,6 +88,22 @@ _POWERSHELL_ALIASES = {
     "where": "where-object",
 }
 
+_POWERSHELL_CMDLET_HINT_RE = re.compile(
+    r"(^|\s)(?:"
+    r"Get|Set|New|Remove|Rename|Move|Copy|Select|Where|ForEach|Test|Join|"
+    r"Start|Stop|Invoke|Write|Read|Clear|Format|Out"
+    r")-[A-Za-z]+\b"
+)
+_POWERSHELL_SYNTAX_RE = re.compile(
+    r"\$env:|\$_\b|\|\s*(?:Where-Object|ForEach-Object|\?|%)\b|@['\"]"
+)
+_POSIX_COMMAND_HINT_RE = re.compile(
+    r"(^|\s)(?:grep|rg|sed|awk|head|tail|chmod|find|xargs|cut|sort|uniq|wc)\b"
+)
+_POSIX_FLAGGY_COMMAND_RE = re.compile(
+    r"^\s*(?:ls|pwd|cat|touch|mkdir|rm|cp|mv)\b[^|;\r\n]*\s-[A-Za-z]"
+)
+
 
 @dataclass(frozen=True)
 class ResolvedShell:
@@ -160,13 +176,47 @@ def normalize_shell(shell: str | None) -> str:
     return value
 
 
-def resolve_shell(shell: str | None) -> ResolvedShell:
+def _looks_like_powershell(command: str) -> bool:
+    stripped = command.strip()
+    if not stripped:
+        return False
+    return bool(
+        _POWERSHELL_CMDLET_HINT_RE.search(stripped)
+        or _POWERSHELL_SYNTAX_RE.search(stripped)
+    )
+
+
+def _looks_like_posix(command: str) -> bool:
+    stripped = command.strip()
+    if not stripped:
+        return False
+    first_token = stripped.split(maxsplit=1)[0]
+    return bool(
+        _ENV_ASSIGNMENT_RE.match(first_token)
+        or _POSIX_COMMAND_HINT_RE.search(stripped)
+        or _POSIX_FLAGGY_COMMAND_RE.search(stripped)
+        or stripped.startswith(("./", "~/", "/bin/", "/usr/bin/"))
+        or re.search(r"\|\s*(?:grep|rg|sed|awk|head|tail|xargs)\b", stripped)
+    )
+
+
+def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShell:
     """Resolve a shell selection into an executable + argv prefix."""
 
     requested = normalize_shell(shell)
 
     if requested == "auto":
         if _IS_WINDOWS:
+            if command and _looks_like_powershell(command):
+                executable = _resolve_powershell_executable()
+                if executable:
+                    return resolve_shell("powershell")
+
+            if command and _looks_like_posix(command):
+                bash = shutil.which("bash")
+                if bash:
+                    return resolve_shell("bash")
+
             executable = os.environ.get("COMSPEC") or shutil.which("cmd.exe") or "cmd.exe"
             return ResolvedShell(
                 requested="auto",
@@ -456,7 +506,7 @@ def _find_first_match_warning(
 def analyze_command(command: str, shell: str | None) -> CommandAnalysis:
     """Analyze a terminal command before approval/execution."""
 
-    resolved_shell = resolve_shell(shell)
+    resolved_shell = resolve_shell(shell, command)
     shell_name = resolved_shell.name
     signature = _extract_shell_signature(command, "powershell" if shell_name == "powershell" else "bash")
 

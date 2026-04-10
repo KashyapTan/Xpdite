@@ -1,11 +1,8 @@
-import os
-from pathlib import Path
-
 from mcp_servers.servers.description_format import build_tool_description
+from mcp_servers.servers.filesystem.sandbox import DEFAULT_BASE_PATH, USERNAME
 
-# --- Configuration (dynamic — works on any machine / OS) ---
-USERNAME = os.getenv("USERNAME") or os.getenv("USER") or Path.home().name
-BASE_PATH = os.path.abspath(str(Path.home()))
+
+BASE_PATH = DEFAULT_BASE_PATH
 
 
 LIST_DIRECTORY_DESCRIPTION = build_tool_description(
@@ -113,54 +110,3 @@ RENAME_FILE_DESCRIPTION = build_tool_description(
     notes="Call list_directory first to confirm the source and check for name conflicts. Use move_file to change directories.",
 )
 
-GLOB_FILES_DESCRIPTION = build_tool_description(
-    purpose="Find files and directories that match a glob pattern inside the filesystem sandbox.",
-    use_when=(
-        "You need structured file discovery and should use this instead of "
-        "run_command with find, ls, dir, or shell glob expansion workflows."
-    ),
-    inputs=(
-        "pattern = relative glob such as **/*.py or src/**/*.ts; "
-        f"base_path = optional directory inside {BASE_PATH} to search from "
-        "(defaults to the current directory); include_hidden = optional boolean "
-        "for dotfiles and hidden directories."
-    ),
-    returns=(
-        "A JSON string with matches (relative paths), total, truncated, and optional applied_limit metadata. "
-        "Results are ordered by most recently modified first."
-    ),
-    notes=(
-        "Results are capped at 500 matches. Version-control metadata directories such as .git are skipped automatically. "
-        "If truncated is true, narrow the pattern or base_path and try again. This tool is sandboxed to "
-        f"{BASE_PATH} for user {USERNAME}."
-    ),
-)
-
-GREP_FILES_DESCRIPTION = build_tool_description(
-    purpose="Search text files for a literal string or regex pattern inside the filesystem sandbox.",
-    use_when=(
-        "You need structured content search and should use this instead of "
-        "run_command with grep, rg, ag, or similar terminal search commands."
-    ),
-    inputs=(
-        "pattern = string or regex to search for; path = optional directory "
-        f"inside {BASE_PATH} to search from (defaults to the current "
-        "directory); file_glob = optional relative glob filter such as "
-        "**/*.py; is_regex and case_sensitive = optional booleans; "
-        "context_lines = optional integer up to 10; max_results = optional "
-        "legacy content-mode cap; include_hidden = optional boolean; "
-        "output_mode = optional content, files_with_matches, or count; "
-        "head_limit = optional pagination size (0 means unlimited); "
-        "offset = optional pagination offset."
-    ),
-    returns=(
-        "A JSON string with structured search results. "
-        "content mode returns matches with context lines; files_with_matches mode returns matching file paths; "
-        "count mode returns per-file match counts. All modes include traversal stats, truncation metadata, pattern, and is_regex."
-    ),
-    notes=(
-        "Binary files, files larger than 1 MB, and version-control metadata directories such as .git are skipped automatically and counted in the "
-        "response when applicable. If truncated is true, narrow the path, file_glob, or pattern "
-        "before retrying, or continue with offset/head_limit pagination."
-    ),
-)

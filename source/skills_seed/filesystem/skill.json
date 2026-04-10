@@ -2,6 +2,6 @@
   "name": "filesystem",
   "description": "Guidance for safe file reading, writing, search, and directory navigation.",
   "slash_command": "filesystem",
-  "trigger_servers": ["filesystem"],
-  "version": "1.0.0"
+  "trigger_servers": ["filesystem", "glob", "grep"],
+  "version": "1.1.0"
 }

@@ -35,7 +35,7 @@ TERMINAL_INLINE_TOOLS: list[dict[str, Any]] = [
                 "shell": {
                     "type": "string",
                     "enum": ["auto", "cmd", "powershell", "bash", "sh"],
-                    "description": "Shell to run the command in. Use powershell for PowerShell syntax and bash/sh for POSIX shell syntax. Defaults to auto.",
+                    "description": "Shell to run the command in. Use powershell for PowerShell syntax and bash/sh for POSIX shell syntax. auto will try to detect obvious PowerShell or POSIX syntax on Windows before falling back to cmd.",
                     "default": "auto",
                 },
                 "timeout": {

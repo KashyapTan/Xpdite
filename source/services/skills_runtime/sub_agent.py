@@ -72,7 +72,6 @@ _EXCLUDED_TOOLS = {
     "read_output",
     "kill_process",
     "get_environment",
-    "find_files",
     # Prevent recursive spawning
     "spawn_agent",
 }

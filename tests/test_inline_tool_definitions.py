@@ -7,7 +7,6 @@ def test_terminal_inline_tools_match_expected_names_and_required_fields():
     expected_names = [
         "get_environment",
         "run_command",
-        "find_files",
         "request_session_mode",
         "end_session_mode",
         "send_input",

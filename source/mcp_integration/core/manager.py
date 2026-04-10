@@ -625,6 +625,16 @@ async def init_mcp_servers():
             ],
         ),
         _connect_with_timeout(
+            "glob",
+            sys.executable,
+            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "glob" / "server.py")],
+        ),
+        _connect_with_timeout(
+            "grep",
+            sys.executable,
+            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "grep" / "server.py")],
+        ),
+        _connect_with_timeout(
             "websearch",
             sys.executable,
             [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],

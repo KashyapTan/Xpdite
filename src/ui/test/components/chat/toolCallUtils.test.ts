@@ -21,6 +21,8 @@ describe('toolCallUtils', () => {
     test('summarizes known servers', () => {
       expect(getServerSummaryFragment('filesystem', 1)).toBe('accessed 1 file');
       expect(getServerSummaryFragment('filesystem', 2)).toBe('accessed 2 files');
+      expect(getServerSummaryFragment('glob', 1)).toBe('searched 1 glob search');
+      expect(getServerSummaryFragment('grep', 2)).toBe('searched 2 grep searches');
       expect(getServerSummaryFragment('websearch', 1)).toBe('searched the web');
       expect(getServerSummaryFragment('terminal', 2)).toBe('ran 2 terminal actions');
       expect(getServerSummaryFragment('skills', 3)).toBe('used 3 skill actions');
@@ -58,34 +60,50 @@ describe('toolCallUtils', () => {
         text: "Reading file 'C:\\tmp\\file.txt'",
       });
 
+    });
+
+    test('formats dedicated glob and grep server actions', () => {
       expect(
         getHumanReadableDescription(
           toolCall({
-            server: 'filesystem',
-            name: 'grep_files',
-            args: { pattern: 'boot', path: 'src', file_glob: '*.ts', is_regex: false },
+            server: 'glob',
+            name: 'glob_files',
+            args: { pattern: 'src/**/*.py', path: 'source', exclude: '**/__pycache__/**' },
           }),
         ),
       ).toEqual({
-        badge: 'FILE',
-        text: "Searching files for 'boot' in 'src' matching '*.ts'",
+        badge: 'GLOB',
+        text: "Finding files matching 'src/**/*.py' in 'source' excluding '**/__pycache__/**'",
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'grep',
+            name: 'grep_files',
+            args: { pattern: 'boot', path: 'src', file_glob: '*.ts', is_regex: false, output_mode: 'content' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'GREP',
+        text: "Searching files for 'boot' in 'src' matching '*.ts' with content matches",
+      });
+
+      expect(
+        getHumanReadableDescription(
+          toolCall({
+            server: 'grep',
+            name: 'grep_files',
+            args: { pattern: 'err.*', is_regex: true, type: 'py', output_mode: 'count' },
+          }),
+        ),
+      ).toEqual({
+        badge: 'GREP',
+        text: "Searching files for regex 'err.*' in 'py' files with counts",
       });
     });
 
-    test('covers filesystem branch fallbacks for glob and grep', () => {
-      expect(
-        getHumanReadableDescription(
-          toolCall({
-            server: 'filesystem',
-            name: 'glob_files',
-            args: { pattern: '   ', base_path: '.' },
-          }),
-        ),
-      ).toEqual({
-        badge: 'FILE',
-        text: 'Finding files matching this pattern',
-      });
-
+    test('keeps legacy filesystem glob/grep display paths for old transcripts', () => {
       expect(
         getHumanReadableDescription(
           toolCall({

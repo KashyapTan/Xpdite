@@ -272,7 +272,7 @@ class TestExcludedTools:
         terminal_tools = {
             "run_command", "request_session_mode", "end_session_mode",
             "send_input", "read_output", "kill_process",
-            "get_environment", "find_files",
+            "get_environment",
         }
         assert terminal_tools.issubset(_EXCLUDED_TOOLS)
 

@@ -41,7 +41,6 @@ from .command_analysis import (
     build_pty_command,
     build_subprocess_argv,
     interpret_command_result,
-    resolve_shell,
 )
 
 # Import security checks from MCP terminal blocklist
@@ -410,11 +409,11 @@ class TerminalService:
         effective_timeout = min(timeout, _MAX_TIMEOUT)
 
         try:
-            shell_spec = resolve_shell(shell)
+            analysis = analyze_command(command, shell)
         except ValueError as exc:
             return f"Error: {exc}", 1, 0, False
 
-        analysis = analyze_command(command, shell_spec.name)
+        shell_spec = analysis.shell
         if analysis.hard_block_reason:
             return f"BLOCKED: {analysis.hard_block_reason}", 1, 0, False
 
@@ -615,11 +614,11 @@ class TerminalService:
             )
 
         try:
-            shell_spec = resolve_shell(shell)
+            analysis = analyze_command(command, shell)
         except ValueError as exc:
             return f"Error: {exc}", 1, 0, False, None
 
-        analysis = analyze_command(command, shell_spec.name)
+        shell_spec = analysis.shell
         if analysis.hard_block_reason:
             return f"BLOCKED: {analysis.hard_block_reason}", 1, 0, False, None
 

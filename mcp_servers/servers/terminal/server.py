@@ -11,14 +11,12 @@ This server provides defense-in-depth via the OS blocklist.
 Tools:
 - get_environment: Reports OS, shell, cwd, available tools
 - run_command: Execute a shell command (sync, with optional PTY)
-- find_files: Find files matching a glob pattern
 - request_session_mode: Request autonomous operation (routed via main process)
 - end_session_mode: End autonomous session (routed via main process)
 """
 
 import os
 import sys
-import glob
 import shutil
 import platform
 import subprocess
@@ -39,7 +37,6 @@ from mcp_servers.servers.terminal.blocklist import check_blocklist
 from mcp_servers.servers.terminal.terminal_descriptions import (
     GET_ENVIRONMENT_DESCRIPTION,
     RUN_COMMAND_DESCRIPTION,
-    FIND_FILES_DESCRIPTION,
     REQUEST_SESSION_MODE_DESCRIPTION,
     END_SESSION_MODE_DESCRIPTION,
     SEND_INPUT_DESCRIPTION,
@@ -265,65 +262,6 @@ def run_command(
         return f"Error: Command timed out after {timeout} seconds"
     except Exception as e:
         return f"Error executing command: {str(e)}"
-
-
-@mcp.tool(description=FIND_FILES_DESCRIPTION)
-def find_files(pattern: str, directory: Optional[str] = None) -> str:
-    search_dir = directory or _DEFAULT_CWD
-
-    if not os.path.isabs(search_dir):
-        search_dir = os.path.abspath(search_dir)
-    if not os.path.isdir(search_dir):
-        return f"Error: Directory does not exist: {search_dir}"
-
-    try:
-        if os.path.commonpath([os.path.realpath(_DEFAULT_CWD), os.path.realpath(search_dir)]) != os.path.realpath(_DEFAULT_CWD):
-            return "Error: find_files is restricted to the current working directory tree."
-    except ValueError:
-        return "Error: find_files is restricted to the current working directory tree."
-
-    search_pattern = os.path.join(search_dir, pattern)
-
-    try:
-        matches_with_mtime: list[tuple[str, float]] = []
-        total_count = 0
-        for candidate in glob.iglob(search_pattern, recursive=True):
-            candidate_real = os.path.realpath(candidate)
-            try:
-                if os.path.commonpath([os.path.realpath(search_dir), candidate_real]) != os.path.realpath(search_dir):
-                    continue
-            except ValueError:
-                continue
-
-            parts = os.path.relpath(candidate_real, os.path.realpath(search_dir)).replace("\\", "/").split("/")
-            if any(part in {".git", ".svn", ".hg", ".bzr", ".jj", ".sl"} for part in parts):
-                continue
-
-            total_count += 1
-            if len(matches_with_mtime) < 200:
-                try:
-                    mtime = os.path.getmtime(candidate_real)
-                except OSError:
-                    mtime = 0.0
-                matches_with_mtime.append((candidate_real, mtime))
-
-        matches_with_mtime.sort(key=lambda item: (-item[1], item[0]))
-        matches = [path for path, _mtime in matches_with_mtime]
-
-        if not matches:
-            return f"No files found matching '{pattern}' in {search_dir}"
-
-        # Limit output to prevent overwhelming the LLM
-        if total_count > 200:
-            return (
-                f"Found {total_count} files. Showing first 200:\n"
-                + "\n".join(matches[:200])
-            )
-
-        return f"Found {total_count} file(s):\n" + "\n".join(matches)
-
-    except Exception as e:
-        return f"Error searching for files: {str(e)}"
 
 
 @mcp.tool(description=REQUEST_SESSION_MODE_DESCRIPTION)

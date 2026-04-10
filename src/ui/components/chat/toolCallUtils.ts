@@ -63,6 +63,45 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
   return `${count} ${count === 1 ? singular : plural}`;
 }
 
+function describeGlobSearch(args: ToolArgs): string {
+  const pattern = getStringArg(args, 'pattern');
+  const location = getStringArg(args, 'path') ?? getStringArg(args, 'base_path');
+  const exclude = getStringArg(args, 'exclude');
+  let text = addLocationSuffix(
+    `Finding files matching ${quote(pattern, 'this pattern')}`,
+    location,
+  );
+  if (exclude) {
+    text += ` excluding '${exclude}'`;
+  }
+  return text;
+}
+
+function describeGrepSearch(args: ToolArgs): string {
+  const pattern = getStringArg(args, 'pattern');
+  const isRegex = getBooleanArg(args, 'is_regex');
+  const fileGlob = getStringArg(args, 'file_glob') ?? getStringArg(args, 'glob');
+  const type = getStringArg(args, 'type');
+  const scope = getStringArg(args, 'path');
+  const outputMode = getStringArg(args, 'output_mode');
+
+  let text = addLocationSuffix(
+    `Searching files for ${isRegex ? `regex ${quote(pattern, 'this pattern')}` : quote(pattern, 'this text')}`,
+    scope,
+  );
+  if (type) {
+    text += ` in ${quote(type, 'this type')} files`;
+  } else if (fileGlob && fileGlob !== '**/*') {
+    text += ` matching '${fileGlob}'`;
+  }
+  if (outputMode === 'count') {
+    text += ' with counts';
+  } else if (outputMode === 'content') {
+    text += ' with content matches';
+  }
+  return text;
+}
+
 /**
  * Convert a snake_case or camelCase server name to a display-friendly badge.
  * E.g., "figma" -> "FIGMA", "windows_mcp" -> "WINDOWS", "myServer" -> "MY"
@@ -133,24 +172,26 @@ const TOOL_DISPLAY_CONFIG: Record<string, ToolDisplayConfig> = {
       create_folder: (args) => `Creating folder '${args.folder_name}' in '${args.path}'`,
       move_file: (args) => `Moving '${args.source_path}' to '${args.destination_folder}'`,
       rename_file: (args) => `Renaming '${args.source_path}' to '${args.new_name}'`,
-      glob_files: (args) => addLocationSuffix(
-        `Finding files matching ${quote(getStringArg(args, 'pattern'), 'this pattern')}`,
-        getStringArg(args, 'base_path'),
-      ),
-      grep_files: (args) => {
-        const pattern = getStringArg(args, 'pattern');
-        const isRegex = getBooleanArg(args, 'is_regex');
-        const fileGlob = getStringArg(args, 'file_glob');
-        const scope = getStringArg(args, 'path');
-        let text = addLocationSuffix(
-          `Searching files for ${isRegex ? `regex ${quote(pattern, 'this pattern')}` : quote(pattern, 'this text')}`,
-          scope,
-        );
-        if (fileGlob && fileGlob !== '**/*') {
-          text += ` matching '${fileGlob}'`;
-        }
-        return text;
-      },
+      glob_files: (args) => describeGlobSearch(args),
+      grep_files: (args) => describeGrepSearch(args),
+    },
+  },
+
+  glob: {
+    badge: 'GLOB',
+    summaryNoun: 'glob search',
+    summaryVerb: 'searched',
+    tools: {
+      glob_files: (args) => describeGlobSearch(args),
+    },
+  },
+
+  grep: {
+    badge: 'GREP',
+    summaryNoun: 'grep search',
+    summaryVerb: 'searched',
+    tools: {
+      grep_files: (args) => describeGrepSearch(args),
     },
   },
 
@@ -170,7 +211,6 @@ const TOOL_DISPLAY_CONFIG: Record<string, ToolDisplayConfig> = {
     summaryVerb: 'ran',
     tools: {
       run_command: (args) => `Running: ${args.command}`,
-      find_files: (args) => `Finding files: ${args.pattern}`,
       get_environment: () => 'Getting environment info',
       request_session_mode: () => 'Requesting terminal session',
       end_session_mode: () => 'Ending terminal session',
@@ -343,6 +383,12 @@ export function getServerSummaryFragment(server: string, count: number): string 
     }
     if (server === 'memory' && count === 1) {
       return 'checked memory';
+    }
+    if (server === 'glob') {
+      return `searched ${count} glob search${count === 1 ? '' : 'es'}`;
+    }
+    if (server === 'grep') {
+      return `searched ${count} grep search${count === 1 ? '' : 'es'}`;
     }
 
     return `${verb} ${pluralize(count, noun)}`;

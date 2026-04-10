@@ -22,7 +22,7 @@ GET_ENVIRONMENT_DESCRIPTION = build_tool_description(
 RUN_COMMAND_DESCRIPTION = build_tool_description(
     purpose="Run a terminal command in the selected shell and return combined stdout and stderr.",
     use_when=(
-        "You need to execute a CLI command, script, build step, or one-off shell task that is not better handled by the filesystem tools."
+        "You need to execute a CLI command, script, build step, or one-off shell task that is not better handled by the filesystem tools or dedicated search servers."
     ),
     inputs=(
         "command, cwd (optional absolute path), shell (optional: auto, cmd, powershell, bash, sh), timeout seconds (optional), "
@@ -36,14 +36,15 @@ RUN_COMMAND_DESCRIPTION = build_tool_description(
         "read_output, or kill_process."
     ),
     notes=(
-        "ALWAYS RUN `request_session_mode` first before any run_command call."
+        "ALWAYS RUN `request_session_mode` first before any run_command call. "
         "Use shell='powershell' for PowerShell syntax on Windows and bash/sh for POSIX shell syntax. "
+        "shell='auto' will try to detect obvious PowerShell or POSIX syntax on Windows before falling back to cmd. "
         "Use pty=True for interactive CLIs. background is useful with PTY "
         "sessions. Quote Windows paths that contain spaces. Security: commands "
         "touching OS system paths are always blocked, dangerous shell-evaluation/download patterns are rejected, "
         "and user approval is required before execution. Do not use "
         "run_command for grep, rg, ag, Select-String, find, dir recursion, or shell globbing when the "
-        "filesystem server's grep_files or glob_files tools can handle the task."
+        "dedicated grep_files or glob_files MCP tools can handle the task."
     ),
 )
 

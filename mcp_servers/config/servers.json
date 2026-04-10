@@ -10,6 +10,16 @@
             "description": "File system tools (read, write, move, rename files)",
             "module": "mcp_servers.servers.filesystem.server"
         },
+        "glob": {
+            "enabled": true,
+            "description": "Dedicated glob search tools for file and directory discovery",
+            "module": "mcp_servers.servers.glob.server"
+        },
+        "grep": {
+            "enabled": true,
+            "description": "Dedicated grep search tools for structured text search",
+            "module": "mcp_servers.servers.grep.server"
+        },
         "gmail": {
             "enabled": true,
             "description": "Gmail tools (search, read, send, reply, draft, trash, labels)",

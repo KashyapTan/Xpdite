@@ -84,6 +84,7 @@ class TestBuildSystemPrompt:
 
     def test_file_search_policy_is_present(self):
         prompt = build_system_prompt()
+        assert "dedicated `glob` and `grep` MCP servers" in prompt
         assert "glob_files" in prompt
         assert "grep_files" in prompt
         assert "Do NOT use `run_command`" in prompt

@@ -11,7 +11,6 @@ save logic.
 """
 
 import asyncio
-import glob
 import logging
 import os
 import shlex
@@ -307,6 +306,7 @@ def _handle_get_environment() -> str:
         f"Runnable shells:\n{shells_str}\n"
         f"Available tools:\n{tools_str}"
     )
+
 
 # ─── DB persistence helper ──────────────────────────────────────────────
 

@@ -35,10 +35,11 @@ Always run `request_session_mode` before any terminal commands to minimize user 
 </tool_philosophy>
 
 <file_search_policy>
-Use the filesystem MCP tools `glob_files` and `grep_files` for file discovery and
+Use the dedicated `glob` and `grep` MCP servers for file discovery and
 file-content search.
+Call `glob_files` for pathname discovery and `grep_files` for content search.
 Do NOT use `run_command` for `grep`, `rg`, `ag`, `find`, `ls`, `dir`, or shell
-glob expansion when those filesystem tools can handle the task.
+glob expansion when those search tools can handle the task.
 Prefer these tools because they provide structured output, avoid approval friction,
 and stay constrained to sandboxed paths.
 Only fall back to `run_command` for shell-only capabilities that MCP tools cannot

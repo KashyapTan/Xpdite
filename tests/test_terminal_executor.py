@@ -44,81 +44,6 @@ class TestTerminalToolSet:
 
     def test_info_tools_present(self):
         assert "get_environment" in TERMINAL_TOOLS
-        assert "find_files" in TERMINAL_TOOLS
-
-
-class TestHandleFindFiles:
-    """Test _handle_find_files synchronous logic."""
-
-    def _call(self, fn_args):
-        from source.mcp_integration.executors.terminal_executor import (
-            _handle_find_files,
-        )
-
-        return _handle_find_files(fn_args)
-
-    def test_finds_existing_files(self, tmp_path):
-        # Create test files
-        (tmp_path / "a.txt").write_text("hello")
-        (tmp_path / "b.txt").write_text("world")
-
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call({"pattern": "*.txt", "directory": str(tmp_path)})
-        assert "Found 2 file(s)" in result
-
-    def test_no_matches(self, tmp_path):
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call({"pattern": "*.xyz", "directory": str(tmp_path)})
-        assert "No files found" in result
-
-    def test_nonexistent_directory(self, tmp_path):
-        missing_dir = tmp_path / "definitely_missing"
-        result = self._call({"pattern": "*.txt", "directory": str(missing_dir)})
-        assert "Error" in result
-        assert "does not exist" in result
-
-    def test_restricts_outside_cwd(self, tmp_path):
-        """find_files should reject directories outside the CWD tree."""
-        outside = tmp_path / "outside"
-        outside.mkdir()
-        cwd = tmp_path / "project"
-        cwd.mkdir()
-
-        with patch("os.getcwd", return_value=str(cwd)):
-            result = self._call({"pattern": "*", "directory": str(outside)})
-        assert result == (
-            "Error: find_files is restricted to the current working directory tree."
-        )
-
-    def test_defaults_to_cwd(self, tmp_path):
-        (tmp_path / "file.py").write_text("pass")
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call({"pattern": "*.py", "directory": ""})
-        assert "Found 1 file(s):" in result
-        assert "file.py" in result
-
-    def test_rejects_absolute_pattern(self, tmp_path):
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call(
-                {"pattern": str(tmp_path / "*.py"), "directory": str(tmp_path)}
-            )
-        assert result == "Error: pattern must be relative to the selected directory"
-
-    def test_rejects_parent_traversal_pattern(self, tmp_path):
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call({"pattern": "../*.py", "directory": str(tmp_path)})
-        assert (
-            result == "Error: pattern cannot include parent-directory traversal ('..')"
-        )
-
-    def test_caps_large_match_sets(self, tmp_path):
-        for index in range(205):
-            (tmp_path / f"f{index}.txt").write_text("x")
-
-        with patch("os.getcwd", return_value=str(tmp_path)):
-            result = self._call({"pattern": "*.txt", "directory": str(tmp_path)})
-
-        assert "Found 205 files. Showing first 200:" in result
 
 
 class TestHandleGetEnvironment:
@@ -330,23 +255,17 @@ class TestExecuteTerminalTool:
         assert mock_save.call_args.kwargs["background"] is True
 
     @pytest.mark.asyncio
-    async def test_get_environment_and_find_files_use_run_in_thread(self):
+    async def test_get_environment_uses_run_in_thread(self):
         from source.mcp_integration import terminal_executor as terminal_executor
 
         with patch.object(
             terminal_executor,
             "run_in_thread",
-            new=AsyncMock(side_effect=["ENV", "FILES"]),
+            new=AsyncMock(return_value="ENV"),
         ) as mock_run:
             env_result = await terminal_executor.execute_terminal_tool(
                 "get_environment", {}, "terminal"
             )
-            files_result = await terminal_executor.execute_terminal_tool(
-                "find_files",
-                {"pattern": "*.py", "directory": "C:/repo"},
-                "terminal",
-            )
 
         assert env_result == "ENV"
-        assert files_result == "FILES"
-        assert mock_run.await_count == 2
+        mock_run.assert_awaited_once()

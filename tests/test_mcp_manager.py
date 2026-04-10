@@ -58,8 +58,8 @@ class TestInitMcpServers:
         ):
             await manager_module.init_mcp_servers()
 
-        # 3 servers: filesystem, websearch, windows_mcp
-        assert connect_server.await_count == 3
+        # 5 servers: filesystem, glob, grep, websearch, windows_mcp
+        assert connect_server.await_count == 5
         # 6 inline tool registrations: terminal, sub_agent, video_watcher,
         # skills, memory, scheduler
         assert register_inline_tools.call_count == 6
