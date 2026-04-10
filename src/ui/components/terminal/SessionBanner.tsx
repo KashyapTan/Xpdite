@@ -1,8 +1,5 @@
 /**
- * Session Banner Component.
- * 
- * Persistent banner shown when session mode is active.
- * Displays a Stop button to end autonomous operation.
+ * Session banner shown while autonomous mode is active.
  */
 import { BoltIcon } from '../icons/AppIcons';
 
@@ -15,7 +12,7 @@ export function SessionBanner({ onStop }: SessionBannerProps) {
     <div className="terminal-session-banner">
       <span className="session-banner-text">
         <BoltIcon size={14} className="session-banner-icon" />
-        <span>Session Mode Active — Xpdite is running autonomously</span>
+        <span>Autonomous mode active</span>
       </span>
       <button className="btn-stop-session" onClick={onStop}>
         Stop

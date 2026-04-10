@@ -1,6 +1,6 @@
 import React from 'react';
 import type { Skill } from '../../types';
-import '../../CSS/SlashCommandMenu.css';
+import '../../CSS/chat/SlashCommandMenu.css';
 
 interface SlashCommandMenuProps {
   skills: Skill[];

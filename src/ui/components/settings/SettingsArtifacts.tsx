@@ -6,7 +6,7 @@ import { RotateCcwIcon } from '../icons/AppIcons';
 import { api } from '../../services/api';
 import type { ArtifactListResponse, ArtifactRecord } from '../../services/api';
 import type { ArtifactBlockData, ArtifactKind } from '../../types';
-import '../../CSS/SettingsArtifacts.css';
+import '../../CSS/settings/SettingsArtifacts.css';
 
 const PAGE_SIZE = 24;
 

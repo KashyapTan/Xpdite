@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import type { Skill } from '../../types';
-import '../../CSS/SettingsSkills.css';
+import '../../CSS/settings/SettingsSkills.css';
 
 function getErrorMessage(error: unknown, fallback: string): string {
     return error instanceof Error ? error.message : fallback;

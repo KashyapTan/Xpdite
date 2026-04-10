@@ -88,7 +88,7 @@ src/
     │   └── index.ts
     ├── types/
     │   └── index.ts           # ChatMessage, ContentBlock, TerminalCommandBlock, TabSnapshot, ResponseVariant, Electron API bridge types…
-    ├── CSS/                   # Per-component stylesheets
+    ├── CSS/                   # Theme + stylesheets grouped by feature (base, boot, components, chat, input, pages, settings, terminal)
     ├── assets/                # App icons, provider SVGs, logos
     ├── test/                  # Vitest frontend behavioral & unit tests (matches ui structure)
     └── utils/

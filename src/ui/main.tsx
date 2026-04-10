@@ -4,6 +4,8 @@ import { createRoot } from 'react-dom/client'
 import { createHashRouter, RouterProvider } from 'react-router-dom'
 import { TabProvider } from './contexts/TabContext'
 import { BootProvider } from './contexts/BootContext'
+import './CSS/base/theme.css'
+import './CSS/base/global.css'
 import Layout from './components/Layout.tsx'
 import App from './pages/App.tsx'
 type PageModule = { default: ComponentType }
@@ -20,7 +22,7 @@ const ScheduledJobsResults = lazy(pageModules['./pages/ScheduledJobsResults.tsx'
 
 // eslint-disable-next-line react-refresh/only-export-components
 const LazyFallback = () => (
-  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'rgba(255,255,255,0.5)', fontFamily: 'Montserrat, sans-serif', fontSize: '13px' }}>
+  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-dim)', fontFamily: 'var(--font-family-ui)', fontSize: '13px' }}>
     Loading...
   </div>
 )
@@ -71,3 +73,4 @@ createRoot(document.getElementById('root')!).render(
     </BootProvider>
   </StrictMode>,
 )
+

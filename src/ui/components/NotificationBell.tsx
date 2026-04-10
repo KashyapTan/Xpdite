@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
-import '../CSS/NotificationBell.css';
+import '../CSS/components/NotificationBell.css';
 
 interface Notification {
   id: string;

@@ -1,0 +1,301 @@
+.settings-artifacts {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.settings-artifacts-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-header-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.settings-artifacts-header-copy h2 {
+  margin: 0 0 4px;
+  font-size: 1.5rem;
+}
+
+.settings-artifacts-header-copy p {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 540px;
+}
+
+.settings-artifacts-summary,
+.settings-artifacts-hint {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+}
+
+.settings-artifacts-summary {
+  margin-top: 8px;
+}
+
+.settings-artifacts-refresh {
+  width: 36px;
+  height: 36px;
+  min-width: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-refresh .spin {
+  animation: spin 1s linear infinite;
+}
+
+.settings-artifacts-toolbar {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.settings-artifacts-filters {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px 34px;
+  gap: 10px;
+  align-items: center;
+}
+
+.settings-artifacts-filters input,
+.settings-artifacts-filters select {
+  border-radius: 6px;
+  border: 1px solid var(--color-surface);
+  background-color: var(--color-surface);
+  color: white;
+  padding: 10px 12px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.settings-artifacts-filters input:focus,
+.settings-artifacts-filters select:focus {
+  outline: none;
+  border-color: var(--color-surface-strong);
+  background-color: var(--color-surface-strong);
+}
+
+.settings-artifacts-error,
+.settings-artifacts-empty {
+  border-radius: 6px;
+  padding: 12px 14px;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-error {
+  margin-bottom: 12px;
+  border: 1px solid var(--color-surface);
+  background-color: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.settings-artifacts-empty {
+  border: 1px solid var(--color-surface);
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+}
+
+.settings-artifacts-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: none;
+
+}
+
+
+.settings-artifacts-item {
+  appearance: none;
+  width: 100%;
+  min-height: 104px;
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  font: inherit;
+}
+
+.settings-artifacts-item:hover {
+  background: var(--color-surface);
+  border-color: var(--color-surface-strong);
+}
+
+.settings-artifacts-item:focus-visible {
+  outline: 2px solid var(--color-text-muted);
+  outline-offset: 2px;
+}
+
+.settings-artifacts-item-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.settings-artifacts-item-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.settings-artifacts-item-top strong {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--color-text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.settings-artifacts-item-status-group {
+  display: flex;
+  align-items: flex-start;
+  flex-shrink: 0;
+}
+
+.settings-artifacts-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-artifacts-item-meta span,
+.settings-artifacts-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.settings-artifacts-item-meta span {
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.settings-artifacts-status {
+  border: 1px solid var(--color-surface);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+}
+
+.settings-artifacts-status.status-ready {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.settings-artifacts-status.status-deleted {
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+}
+
+.settings-artifacts-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-artifacts-item-footer span {
+  color: var(--color-text-dim);
+  font-size: 0.76rem;
+}
+
+.settings-artifacts-pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-shrink: 0;
+    margin-bottom: 30px;
+
+}
+
+.settings-artifacts-pagination button {
+  border: 1px solid var(--color-surface-strong);
+  background-color: transparent;
+  color: var(--color-text-muted);
+  padding: 8px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 500;
+  transition: all 0.2s;
+  font: inherit;
+}
+
+.settings-artifacts-pagination button:hover:not(:disabled) {
+  background-color: var(--color-surface);
+  color: var(--color-text);
+}
+
+.settings-artifacts-pagination button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-artifacts-pagination span {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 860px) {
+  .settings-artifacts {
+    overflow-y: auto;
+  }
+
+  .settings-artifacts-filters {
+    grid-template-columns: minmax(0, 1fr) 140px 34px;
+  }
+
+  .settings-artifacts-item-top,
+  .settings-artifacts-item-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .settings-artifacts-item-status-group {
+    width: 100%;
+  }
+
+  .settings-artifacts-pagination {
+    gap: 8px;
+  }
+}
+

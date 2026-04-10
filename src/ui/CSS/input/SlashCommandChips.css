@@ -1,0 +1,67 @@
+.slash-command-chips-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    padding: 0 4px;
+}
+
+.slash-command-chip {
+    display: inline-flex;
+    align-items: center;
+    background-color: var(--color-surface-strong);
+    border: 1px solid var(--color-text-dim);
+    border-radius: 4px;
+    padding: 1px 1px 1px 6px;
+    font-size: 0.78rem;
+    color: white;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    max-width: 100%;
+}
+
+.slash-command-chip:hover {
+    background-color: var(--color-border-strong);
+    border-color: var(--color-text-muted);
+}
+
+.chip-text {
+    font-family: var(--font-family-mono);
+    font-weight: 500;
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.query-input-chip {
+    vertical-align: middle;
+}
+
+.chip-remove-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    opacity: 0.7;
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+}
+
+.chip-remove-btn svg {
+    display: block;
+}
+
+.chip-remove-btn:hover {
+    background-color: var(--color-surface);
+    color: var(--color-text);
+    opacity: 1;
+}
+
+

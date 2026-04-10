@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../../services/api';
-import '../../CSS/SettingsScheduledJobs.css';
+import '../../CSS/settings/SettingsScheduledJobs.css';
 
 interface ScheduledJob {
   id: string;

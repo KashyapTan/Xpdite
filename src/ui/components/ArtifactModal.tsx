@@ -14,7 +14,7 @@ import { api } from '../services/api';
 import type { ArtifactRecord } from '../services/api';
 import type { ArtifactBlockData, ArtifactKind } from '../types';
 import { copyToClipboard } from '../utils/clipboard';
-import '../CSS/ArtifactModal.css';
+import '../CSS/components/ArtifactModal.css';
 
 type PreviewMode = 'preview' | 'source';
 

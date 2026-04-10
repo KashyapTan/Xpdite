@@ -1,0 +1,152 @@
+.meeting-album-container {
+    width: 100%;
+    height: calc(100% - 30px);
+    margin-top: 60px;
+    display: flex;
+    flex-direction: column;
+}
+.meeting-album-search-box-container {
+    width: 100%;
+    height: 15%;
+}
+.meeting-album-search-box-form {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.meeting-album-search-box-input {
+    width: 95%;
+    height: 70%;
+    border: 2px solid var(--color-border-strong);
+    background-color: transparent;
+    font-family: var(--font-family-ui);
+    color: white;
+    font-size: 1rem;
+    border-radius: 8px;
+    padding-left: 8px;
+}
+.meeting-album-search-box-input:focus {
+    outline: none;
+}
+.meeting-album-list-title {
+    width: 100%;
+    height: 5%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 1em;
+    text-transform: uppercase;
+    padding: 0 5px 0 5px;
+}
+.meeting-album-list-container {
+    width: 100%;
+    height: 80%;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    position: relative;
+    padding-bottom: 20px;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.meeting-album-list-item {
+    width: 100%;
+    height: 60px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 15px 0 10px;
+    border-bottom: 1px solid var(--color-surface);
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+}
+.meeting-album-list-item:hover {
+    background-color: var(--color-surface);
+}
+.meeting-album-list-item:last-child {
+    border-bottom: none;
+}
+.meeting-album-list-item-description {
+    width: 55%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.meeting-album-list-item-date-section {
+    width: 45%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+.meeting-album-list-item-time {
+    display: flex;
+    align-items: center;
+    text-align: right;
+    font-size: 0.75em;
+    opacity: 0.6;
+    color: var(--color-text-dim);
+    white-space: nowrap;
+}
+.meeting-album-date-separator {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 5px 10px;
+}
+.meeting-album-date-separator::after {
+    content: "";
+    flex: 1;
+    margin-left: 5px;
+}
+.meeting-album-date-separator span {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-border-strong);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    white-space: nowrap;
+}
+.meeting-album-delete-btn {
+    background: none;
+    border: none;
+    color: var(--color-border-strong);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    line-height: 1;
+    opacity: 0;
+    transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.meeting-album-delete-btn svg {
+    display: block;
+}
+.meeting-album-list-item:hover .meeting-album-delete-btn {
+    opacity: 1;
+}
+.meeting-album-delete-btn:hover {
+    color: var(--color-red);
+    background-color: var(--color-red-soft);
+}
+.meeting-album-empty-state {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0.5;
+    font-size: 0.95em;
+    font-style: italic;
+}
+
+

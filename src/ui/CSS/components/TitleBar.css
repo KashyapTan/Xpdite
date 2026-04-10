@@ -1,0 +1,93 @@
+.title-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  z-index: 1000;
+  background-color: var(--color-surface);
+  /* background-color: blue; */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.nav-bar {
+  width: 115px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.blank-space-to-drag {
+  width: calc(100% - 155px);
+  height: 100%;
+  -webkit-app-region: drag;
+}
+
+.nav-bar-right-side {
+  display: flex;
+  justify-content: space-between;
+  width: 90px;
+  height: 100%;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.xpdite-logo-holder {
+  width: 30px;
+  height: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.xpdite-logo {
+  height: 22px;
+  width: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.settingsButton, .chatHistoryButton, .recordedMeetingsAlbumButton, .newChatButton, .scheduledJobsButton {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.settings-icon, .recorded-meetings-album-icon, .new-chat-icon, .scheduled-jobs-icon {
+  width: 70%;
+  height: 70%;
+  color: white;
+  stroke: currentColor;
+  fill: none;
+  border-radius: 8px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.chat-history-icon {
+  width: 70%;
+  height: 70%;
+  color: white;
+  stroke: currentColor;
+  fill: none;
+  border-radius: 8px;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.settings-icon:hover, .chat-history-icon:hover, .recorded-meetings-album-icon:hover, .new-chat-icon:hover {
+  cursor: pointer;
+}
+

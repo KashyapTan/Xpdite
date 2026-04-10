@@ -247,7 +247,7 @@ class ArtifactService:
                 "content": content,
             }
         ]
-        persisted = ArtifactService.persist_generated_artifacts(
+        ArtifactService.persist_generated_artifacts(
             blocks,
             conversation_id=conversation_id,
             message_id=message_id,

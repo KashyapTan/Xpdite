@@ -10,7 +10,7 @@ import { InlineYouTubeApprovalBlock } from './InlineYouTubeApprovalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
 import { StreamingTextBlock } from './StreamingTextBlock';
 import { getHumanReadableDescription, getServerSummaryFragment } from './toolCallUtils';
-import '../../CSS/InlineTerminal.css';
+import '../../CSS/chat/InlineTerminal.css';
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 

@@ -25,6 +25,7 @@ import type {
   TerminalSessionRequest,
   TerminalRunningNotice,
 } from '../../types';
+import { getTerminalTheme } from '../../utils/theme';
 
 const MAX_PENDING_WRITES = 5_000;
 const PENDING_FLUSH_BATCH_SIZE = 250;
@@ -95,15 +96,11 @@ export function TerminalPanel({
   useEffect(() => {
     if (!hasOutput || !terminalRef.current || xtermRef.current) return;
 
+    const terminalTheme = getTerminalTheme();
     const term = new Terminal({
-      theme: {
-        background: '#000000', // Matches app container background
-        foreground: '#ffffff', // Standard white text
-        cursor: '#ffffff',
-        selectionBackground: 'rgba(255, 255, 255, 0.3)',
-      },
+      theme: terminalTheme,
       fontSize: 13,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+      fontFamily: "'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
       cursorBlink: false,
       cursorStyle: 'bar',
       disableStdin: true,
@@ -327,7 +324,7 @@ export function TerminalPanel({
       {/* Session request */}
       {sessionRequest && (
         <div className="terminal-session-request">
-          <div className="session-request-header">&#9889; Xpdite wants autonomous mode</div>
+          <div className="session-request-header">Autonomous mode request</div>
           <div className="session-request-reason">{sessionRequest.reason}</div>
           <div className="session-request-actions">
             <button className="btn-deny" onClick={() => onSessionResponse(false)}>

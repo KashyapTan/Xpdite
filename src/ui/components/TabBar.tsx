@@ -8,7 +8,7 @@ import React from 'react';
 import { useTabs } from '../contexts/TabContext';
 import { XIcon } from './icons/AppIcons';
 import { MobilePlatformBadge } from './MobilePlatformBadge';
-import '../CSS/TabBar.css';
+import '../CSS/components/TabBar.css';
 
 interface TabBarProps {
   /** WebSocket send function — for notifying the backend about tab lifecycle. */

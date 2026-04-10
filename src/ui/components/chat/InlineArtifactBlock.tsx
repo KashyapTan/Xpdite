@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ArtifactBlockData } from '../../types';
 import { ArtifactModal } from '../ArtifactModal';
-import '../../CSS/InlineArtifact.css';
+import '../../CSS/chat/InlineArtifact.css';
 
 function countLines(content?: string): number {
   if (!content) {

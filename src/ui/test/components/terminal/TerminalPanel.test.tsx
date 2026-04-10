@@ -203,7 +203,7 @@ describe('TerminalPanel', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Stop' }))
 
-    expect(screen.getByText(/Session Mode Active/)).toBeInTheDocument()
+    expect(screen.getByText(/Autonomous mode active/i)).toBeInTheDocument()
     expect(onStopSession).toHaveBeenCalledTimes(1)
   })
 

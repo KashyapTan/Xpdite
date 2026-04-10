@@ -11,7 +11,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CodeBlock } from './CodeBlock';
 import { useStreamingAnimation } from '../../hooks/useStreamingAnimation';
-import '../../CSS/StreamingAnimation.css';
+import '../../CSS/chat/StreamingAnimation.css';
 
 interface StreamingTextBlockProps {
   /** The raw text content (may be incomplete during streaming) */

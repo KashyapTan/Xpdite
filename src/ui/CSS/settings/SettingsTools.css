@@ -1,0 +1,229 @@
+.settings-tools-container {
+  padding: 20px;
+  color: var(--color-text);
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.settings-tools-header {
+  margin-bottom: 30px;
+}
+
+.settings-tools-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+}
+
+.settings-tools-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.settings-tools-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-dim);
+}
+
+/* --- Top K Section --- */
+.settings-tools-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 30px;
+}
+
+.settings-tools-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+  font-weight: 500;
+}
+
+.settings-tools-value {
+  background: var(--color-surface);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-family-mono);
+}
+
+.settings-tools-slider-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-tools-slider {
+  -webkit-appearance: none;
+  width: 100%;
+  height: 6px;
+  background: var(--color-surface-strong);
+  border-radius: 3px;
+  outline: none;
+}
+
+.settings-tools-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--color-text);
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid var(--color-panel);
+}
+
+.settings-tools-desc {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+}
+
+/* --- Server List --- */
+.settings-tools-list h3 {
+  font-size: 1rem;
+  margin-bottom: 15px;
+  color: var(--color-text);
+}
+.settings-tools-list{
+  margin-bottom: 20px;
+}
+
+.settings-tools-server-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  margin-bottom: 15px;
+  overflow: hidden;
+}
+
+.settings-tools-server-header {
+  display: flex;
+  align-items: center;
+  padding: 15px;
+  cursor: pointer;
+  background: var(--color-surface);
+  transition: background 0.2s;
+}
+
+.settings-tools-server-header:hover {
+  background: var(--color-surface);
+}
+
+.settings-tools-expand-btn {
+  background: none;
+  border: none;
+  color: var(--color-text-dim);
+  margin-right: 15px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.settings-tools-expand-btn.expanded {
+  transform: rotate(90deg);
+}
+
+.settings-tools-expand-btn svg {
+  display: block;
+}
+
+.settings-tools-server-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.settings-tools-server-name {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.settings-tools-count {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+}
+
+/* --- Tool Item --- */
+.settings-tools-server-content {
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-tools-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 15px 12px 40px; /* Indented */
+  border-bottom: 1px solid var(--color-surface);
+  transition: background 0.2s;
+}
+
+.settings-tools-item:last-child {
+  border-bottom: none;
+}
+
+.settings-tools-item:hover {
+  background: var(--color-surface);
+}
+
+.settings-tools-name {
+  font-family: var(--font-family-mono);
+  font-size: 0.9rem;
+  color: var(--color-text);
+}
+
+/* --- Toggle Switch --- */
+.settings-tools-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.settings-tools-toggle-track {
+  width: 36px;
+  height: 20px;
+  background: var(--color-surface-strong);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.25s;
+  flex-shrink: 0;
+}
+
+.settings-tools-toggle.active .settings-tools-toggle-track {
+  background: var(--color-thumbtack-selected);
+}
+
+.settings-tools-toggle.partial .settings-tools-toggle-track {
+  background: var(--color-thumbtack-partial);
+}
+
+.settings-tools-toggle-thumb {
+  width: 14px;
+  height: 14px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  transition: transform 0.25s, background 0.25s;
+  box-shadow: 0 1px 2px var(--color-surface);
+}
+
+.settings-tools-toggle.active .settings-tools-toggle-thumb {
+  transform: translateX(16px);
+  background: var(--color-text);
+}
+
+.settings-tools-toggle.partial .settings-tools-toggle-thumb {
+  transform: translateX(8px);
+  background: var(--color-text);
+}
+
+

@@ -14,7 +14,7 @@ import SettingsOllama from '../components/settings/SettingsOllama';
 import SettingsSubAgents from '../components/settings/SettingsSubAgents';
 import SettingsMobileChannels from '../components/settings/SettingsMobileChannels';
 import SettingsScheduledJobs from '../components/settings/SettingsScheduledJobs';
-import '../CSS/Settings.css';
+import '../CSS/pages/Settings.css';
 import modelsIcon from '../assets/models.svg';
 import connectionsIcon from '../assets/mcp.svg';
 import toolsIcon from '../assets/context-window-icon.svg';

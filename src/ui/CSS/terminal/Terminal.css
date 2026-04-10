@@ -1,0 +1,485 @@
+/* ============================================
+   Terminal Panel Styles — Floating Overlay
+   ============================================ */
+
+.terminal-panel-overlay {
+  font-family: var(--font-family-ui);
+  position: absolute;
+  bottom: 125px;  /* sits above the input section */
+  left: 5px;
+  right: 5px;
+  z-index: 1100;  /* above the input section (z-index: 1000) */
+  background: var(--color-panel); /* Matches app styling */
+  border: 1px solid var(--color-surface-strong);
+  border-radius: 8px; /* Standard app border radius */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 4px 24px var(--color-surface-strong);
+  max-height: 200px;
+  animation: terminal-slide-up 0.2s ease-out;
+  backdrop-filter: blur(10px); /* Adds glass morphism effect common in modern UIs */
+}
+
+@keyframes terminal-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── Header ────────────────────────────────── */
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-surface);
+  min-height: 40px;
+  box-sizing: border-box;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-header:hover {
+  background: var(--color-surface);
+}
+
+.terminal-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--color-text);
+  font-family: var(--font-family-ui);
+  font-weight: 500;
+  overflow: hidden;
+}
+
+.terminal-icon {
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+.terminal-title {
+  font-weight: 500;
+  color: var(--color-text);
+  letter-spacing: 0.5px;
+}
+
+.terminal-ask-level {
+  color: var(--color-text-dim);
+  font-size: 11px;
+}
+
+.terminal-running {
+  color: var(--color-yellow);
+  font-size: 11px;
+  animation: pulse 2s ease-in-out infinite;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.terminal-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-kill {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--color-red);
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  transition: all 0.15s ease;
+  letter-spacing: 0.3px;
+}
+
+.btn-kill:hover {
+  background: var(--color-red);
+  border-color: var(--color-red);
+}
+
+.terminal-ask-select {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  outline: none;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-ask-select:hover {
+  background: var(--color-surface);
+}
+
+.terminal-ask-select option {
+  background: var(--color-panel);
+  color: white;
+}
+
+.terminal-toggle {
+  font-size: 10px;
+  color: var(--color-text-dim);
+}
+
+/* ── Terminal Body ─────────────────────────── */
+
+.terminal-body {
+  flex: 1;
+  overflow: auto; /* Hide overflow here, let xterm handle scrolling internally */
+  min-height: 120px;
+  position: relative; /* Ensure xterm is positioned relative to this container */
+  padding-left: 5px;
+  padding-top: 5px;
+}
+
+.terminal-xterm {
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+}
+
+/* Override xterm's default padding */
+.terminal-xterm .xterm-viewport {
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+/* Scrollbar styling for xterm viewport */
+.terminal-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 3px;
+}
+
+/* ── Approval Card ─────────────────────────── */
+
+.terminal-approval-card {
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin: 8px 12px;
+}
+
+.approval-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 8px;
+}
+
+.approval-command {
+  background: var(--color-surface-strong);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  overflow-x: auto;
+}
+
+.approval-command code {
+  font-family: var(--font-family-mono);
+  font-size: 13px;
+  color: var(--color-terminal-ansi-cyan);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.approval-cwd {
+  font-size: 11px;
+  color: var(--color-text-dim);
+  margin-bottom: 10px;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Buttons ───────────────────────────────── */
+
+.btn-deny {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-red);
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.btn-deny:hover {
+  background: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.btn-allow {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-button-primary-border);
+  background: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.btn-allow:hover {
+  background: var(--color-button-primary-background-hover);
+  border-color: var(--color-button-primary-border);
+}
+
+.btn-allow-remember {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-button-neutral-border);
+  background: var(--color-button-neutral-background);
+  color: var(--color-button-neutral-text);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.btn-allow-remember:hover {
+  background: var(--color-button-neutral-background-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* ── Session Banner ────────────────────────── */
+
+.terminal-session-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.session-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.session-banner-icon {
+  flex-shrink: 0;
+}
+
+.btn-stop-session {
+  padding: 3px 12px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--color-button-danger-border);
+  background: var(--color-button-danger-background);
+  color: var(--color-button-danger-text);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.btn-stop-session:hover {
+  background: var(--color-button-danger-background-hover);
+}
+
+/* ── Session Request ───────────────────────── */
+
+.terminal-session-request {
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  margin: 8px 12px;
+}
+
+.session-request-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 6px;
+  font-family: var(--font-family-ui);
+}
+
+.session-request-reason {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 10px;
+  line-height: 1.4;
+  font-family: var(--font-family-ui);
+}
+
+.session-request-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Terminal History Card ─────────────────── */
+
+.terminal-history-card {
+  margin: 8px 0;
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.terminal-history-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.terminal-history-header:hover {
+  background: var(--color-surface);
+}
+
+.terminal-history-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.terminal-history-title {
+  flex: 1;
+  font-weight: 500;
+}
+
+.terminal-history-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text-dim);
+}
+
+.terminal-history-body {
+  border-top: 1px solid var(--color-surface);
+}
+
+/* ── Terminal Event Row ────────────────────── */
+
+.terminal-event-row {
+  border-bottom: 1px solid var(--color-surface);
+}
+
+.terminal-event-row:last-child {
+  border-bottom: none;
+}
+
+.terminal-event-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.terminal-event-summary:hover {
+  background: var(--color-surface);
+}
+
+.terminal-event-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.terminal-event-icon.success { color: var(--color-green); }
+.terminal-event-icon.error { color: var(--color-red); }
+.terminal-event-icon.denied { color: var(--color-text-dim); }
+
+.terminal-event-command {
+  flex: 1;
+  font-family: var(--font-family-mono);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-event-duration {
+  color: var(--color-text-dim);
+  font-size: 11px;
+  min-width: 40px;
+  text-align: right;
+}
+
+.terminal-event-tag {
+  font-size: 10px;
+  color: var(--color-text-dim);
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: var(--color-surface);
+}
+
+.terminal-event-tag.timeout { color: var(--color-yellow); }
+.terminal-event-tag.error { color: var(--color-red); }
+
+.terminal-event-output {
+  padding: 8px 12px;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-surface);
+}
+
+.terminal-event-output pre {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--color-text-muted);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+

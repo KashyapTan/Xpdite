@@ -8,7 +8,7 @@ import {
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import { RotateCcwIcon } from '../icons/AppIcons';
-import '../../CSS/SettingsModels.css';
+import '../../CSS/settings/SettingsModels.css';
 
 type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
 type ProviderKey = CloudProvider | 'ollama';

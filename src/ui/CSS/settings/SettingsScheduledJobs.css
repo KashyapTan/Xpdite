@@ -1,0 +1,544 @@
+/* ── Container & Header ──────────────────────── */
+
+.settings-tasks-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  color: var(--color-text);
+  overflow: hidden;
+}
+
+.settings-tasks-header {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.settings-tasks-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 1.5rem;
+  color: var(--color-text);
+}
+
+.settings-tasks-header p {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 500px;
+}
+
+.settings-tasks-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  color: var(--color-text-dim);
+  font-size: 0.85rem;
+}
+
+.settings-tasks-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px;
+  margin-bottom: 12px;
+  background-color: var(--color-red-soft);
+  border: 1px solid var(--color-red-soft);
+  border-radius: 4px;
+  color: var(--color-red);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+}
+
+.settings-tasks-error button {
+  background: none;
+  border: none;
+  color: var(--color-red);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 4px 8px;
+}
+
+.settings-tasks-error button:hover {
+  text-decoration: underline;
+}
+
+/* ── Empty State ─────────────────────────────── */
+
+.settings-tasks-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.settings-tasks-empty-icon {
+  width: 48px;
+  height: 48px;
+  color: var(--color-border-strong);
+  margin-bottom: 16px;
+}
+
+.settings-tasks-empty-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.settings-tasks-empty p {
+  margin: 0;
+  color: var(--color-text-dim);
+  font-size: 0.85rem;
+}
+
+.settings-tasks-empty-hint {
+  margin-top: 8px !important;
+  font-size: 0.75rem !important;
+  color: var(--color-text-dim) !important;
+  max-width: 300px;
+}
+
+/* ── Tasks List ──────────────────────────────── */
+
+.settings-tasks-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.settings-tasks-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-tasks-list::-webkit-scrollbar-thumb {
+  background: var(--color-surface-strong);
+  border-radius: 4px;
+}
+
+.settings-tasks-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Task Card ───────────────────────────────── */
+
+.settings-task-item {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+  flex-shrink: 0;
+}
+
+.settings-task-item:hover {
+  border-color: var(--color-surface-strong);
+}
+
+.settings-task-item.paused {
+  opacity: 0.6;
+}
+
+.settings-task-item.expanded {
+  border-color: var(--color-border-strong);
+}
+
+.settings-task-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.settings-task-header:hover {
+  background: var(--color-surface);
+}
+
+.settings-task-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-task-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: white;
+  margin-bottom: 2px;
+}
+
+.settings-task-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  border-radius: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-task-badge.one-shot {
+  background-color: var(--color-surface-strong);
+  color: var(--color-text);
+}
+
+.settings-task-badge.paused {
+  background-color: var(--color-yellow-soft);
+  color: var(--color-yellow);
+}
+
+.settings-task-badge.missed {
+  background-color: var(--color-red-soft);
+  color: var(--color-red);
+}
+
+.settings-task-badge.forwarding {
+  background-color: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+.settings-task-schedule {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+}
+
+.settings-task-toggle {
+  flex-shrink: 0;
+  margin-left: 12px;
+}
+
+/* ── Toggle Switch ───────────────────────────── */
+
+.toggle-button {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--color-surface-strong);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.25s;
+}
+
+.toggle-button.enabled {
+  background: var(--color-thumbtack-selected);
+}
+
+.toggle-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  transition: transform 0.25s, background 0.25s;
+}
+
+.toggle-button.enabled .toggle-slider {
+  transform: translateX(16px);
+  background: var(--color-text);
+}
+
+/* ── Task Details ────────────────────────────── */
+
+.settings-task-details {
+  padding: 0 14px 14px;
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-task-detail-row {
+  display: flex;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--color-surface);
+}
+
+.settings-task-detail-row:last-of-type {
+  border-bottom: none;
+}
+
+.settings-task-detail-label {
+  flex: 0 0 100px;
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+}
+
+.settings-task-detail-value {
+  flex: 1;
+  font-size: 0.8rem;
+  color: var(--color-text);
+  word-break: break-word;
+}
+
+.settings-task-detail-value code {
+  background-color: var(--color-surface-strong);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+}
+
+/* ── Forwarding Section ──────────────────────── */
+
+.settings-task-forwarding-section {
+  margin-top: 12px;
+  padding: 12px;
+  background-color: var(--color-surface);
+  border-radius: 6px;
+  border: 1px solid var(--color-surface);
+}
+
+.settings-task-forwarding-header {
+  margin-bottom: 10px;
+}
+
+.settings-task-forwarding-header .settings-task-detail-label {
+  flex: none;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.settings-task-forwarding-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-task-forwarding-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-task-forwarding-field label {
+  font-size: 0.7rem;
+  color: var(--color-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.settings-task-forwarding-field select,
+.settings-task-forwarding-field input {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 6px;
+  color: white;
+  padding: 8px;
+  font-size: 0.85rem;
+  width: 100%;
+}
+
+.settings-task-forwarding-field select:focus,
+.settings-task-forwarding-field input:focus {
+  outline: none;
+  border-color: var(--color-border-strong);
+}
+
+.settings-task-forwarding-field select option {
+  background-color: var(--color-panel);
+  color: white;
+}
+
+.settings-task-forwarding-hint {
+  font-size: 0.7rem;
+  color: var(--color-yellow);
+  margin-top: 4px;
+}
+
+.settings-task-forwarding-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.settings-task-forwarding-display {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.settings-task-forwarding-current {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.forwarding-platform-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border-radius: 12px;
+  background-color: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+.forwarding-recipient {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  font-family: var(--font-family-mono);
+}
+
+.forwarding-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.settings-task-forwarding-none {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.forwarding-none-text {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+  font-style: italic;
+}
+
+/* ── Action Buttons ──────────────────────────── */
+
+.settings-task-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-task-action {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--font-family-ui);
+}
+
+.settings-task-action:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-task-action.run-now {
+  background-color: var(--color-button-primary-background);
+  border-color: var(--color-button-primary-border);
+  color: var(--color-button-primary-text);
+}
+
+.settings-task-action.run-now:hover:not(:disabled) {
+  background-color: var(--color-button-primary-background-hover);
+  border-color: var(--color-button-primary-border);
+}
+
+.settings-task-action.delete {
+  background: none;
+  border: 1px solid var(--color-red);
+  color: var(--color-red);
+}
+
+.settings-task-action.delete:hover:not(:disabled) {
+  background-color: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.settings-task-action.delete.confirm {
+  background-color: var(--color-red);
+  border-color: var(--color-red);
+  color: white;
+  animation: pulse-delete 1s infinite;
+}
+
+.settings-task-action.delete.confirm:hover:not(:disabled) {
+  background-color: var(--color-red);
+}
+
+@keyframes pulse-delete {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.settings-task-action.save {
+  background-color: var(--color-green);
+  color: white;
+}
+
+.settings-task-action.save:hover:not(:disabled) {
+  background-color: var(--color-green);
+}
+
+.settings-task-action.cancel {
+  background: none;
+  border: 1px solid var(--color-surface-strong);
+  color: var(--color-text);
+}
+
+.settings-task-action.cancel:hover:not(:disabled) {
+  background-color: var(--color-surface);
+}
+
+.settings-task-action.edit {
+  background: none;
+  border: 1px solid var(--color-surface-strong);
+  color: var(--color-text);
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.settings-task-action.edit:hover:not(:disabled) {
+  background-color: var(--color-surface);
+}
+
+.settings-task-action.remove {
+  background: none;
+  border: 1px solid var(--color-red);
+  color: var(--color-red);
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.settings-task-action.remove:hover:not(:disabled) {
+  background-color: var(--color-red-soft);
+}
+
+.settings-task-action.add-forwarding {
+  background: none;
+  border: 1px solid var(--color-green);
+  color: var(--color-green);
+  padding: 4px 10px;
+  font-size: 0.75rem;
+}
+
+.settings-task-action.add-forwarding:hover:not(:disabled) {
+  background-color: var(--color-green-soft);
+}
+
+

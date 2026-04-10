@@ -33,7 +33,7 @@ import { QueueDropdown } from '../components/input/QueueDropdown';
 import { ModeSelector } from '../components/input/ModeSelector';
 import { TokenUsagePopup } from '../components/input/TokenUsagePopup';
 import { ScreenshotChips } from '../components/input/ScreenshotChips';
-import '../CSS/QueueDropdown.css';
+import '../CSS/input/QueueDropdown.css';
 
 // Types
 import type {
@@ -65,7 +65,7 @@ import { ProviderLogo } from '../components/icons/ProviderLogos';
 import { hasProviderLogo } from '../utils/providerLogos';
 
 // Assets
-import '../CSS/App.css';
+import '../CSS/pages/App.css';
 import micSignSvg from '../assets/mic-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
@@ -2552,22 +2552,37 @@ function App() {
       <div className="main-interaction-section" ref={mainInteractionRef}>
         {/* Session mode indicators */}
         {terminalSessionRequest && (
-          <div className="terminal-session-chip">
+          <div className="terminal-session-chip terminal-session-chip--request">
             <span className="terminal-session-chip-label">
               <BoltIcon size={12} className="terminal-session-chip-icon" />
-              <span>Session mode requested</span>
+              <span>Autonomous mode requested</span>
             </span>
-            <button onClick={() => handleTerminalSessionResponse(true)}>Allow</button>
-            <button onClick={() => handleTerminalSessionResponse(false)}>Deny</button>
+            <button
+              className="terminal-session-chip-button terminal-session-chip-button--allow"
+              onClick={() => handleTerminalSessionResponse(true)}
+            >
+              Allow
+            </button>
+            <button
+              className="terminal-session-chip-button terminal-session-chip-button--deny"
+              onClick={() => handleTerminalSessionResponse(false)}
+            >
+              Deny
+            </button>
           </div>
         )}
         {terminalSessionActive && (
-          <div className="terminal-session-chip">
+          <div className="terminal-session-chip terminal-session-chip--active">
             <span className="terminal-session-chip-label">
               <BoltIcon size={12} className="terminal-session-chip-icon" />
-              <span>Session Mode Active</span>
+              <span>Autonomous mode active</span>
             </span>
-            <button onClick={handleStopSession}>Stop</button>
+            <button
+              className="terminal-session-chip-button terminal-session-chip-button--stop"
+              onClick={handleStopSession}
+            >
+              Stop
+            </button>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 import React, { Suspense, lazy, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTabs } from '../contexts/TabContext';
-import '../CSS/TitleBar.css';
+import '../CSS/components/TitleBar.css';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
 
 const NotificationBell = lazy(() => import('./NotificationBell'));

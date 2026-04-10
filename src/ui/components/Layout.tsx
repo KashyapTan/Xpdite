@@ -4,7 +4,7 @@ import { WebSocketProvider } from '../contexts/WebSocketContext';
 import { useTabKeyboardShortcuts } from '../hooks';
 import BootScreen from './boot/BootScreen';
 import xpditeLogo from '../assets/transparent-xpdite-logo.png';
-import '../CSS/Layout.css';
+import '../CSS/components/Layout.css';
 
 const Layout: React.FC = () => {
   const [mini, setMini] = useState<boolean>(false);

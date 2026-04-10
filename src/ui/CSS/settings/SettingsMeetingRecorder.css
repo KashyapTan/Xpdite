@@ -1,0 +1,200 @@
+/* MeetingRecorderSettings.css */
+
+.meeting-settings {
+    padding: 16px 20px;
+    max-width: 560px;
+    overflow-y: auto;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.meeting-settings-title {
+    font-size: 1.5rem;
+    color: var(--color-text);
+    margin: 0 0 12px;
+}
+
+/* ── Section Card ── */
+.meeting-settings-card {
+    background-color: var(--color-surface);
+    border: 1px solid var(--color-surface);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.meeting-settings-card:last-child{
+    margin-bottom: 25px;
+}
+
+.meeting-settings-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px;
+}
+
+.meeting-settings-card-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.meeting-settings-card-title {
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--color-text);
+    margin: 0;
+}
+
+.meeting-settings-card-description {
+    font-size: 0.8rem;
+    color: var(--color-text-dim);
+    margin: 0;
+    line-height: 1.4;
+}
+
+/* ── GPU display ── */
+.meeting-settings-gpu-display {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--color-surface);
+    border-radius: 6px;
+    border: 1px solid var(--color-surface);
+}
+
+.gpu-badge {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    color: var(--color-text);
+    flex-shrink: 0;
+}
+
+.gpu-badge svg {
+    display: block;
+}
+
+.gpu-cuda {
+    background: var(--color-green-soft);
+    color: var(--color-green);
+}
+
+.gpu-cpu {
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+}
+
+.gpu-label {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+/* ── Select dropdown ── */
+.meeting-settings-select {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-surface);
+    border-radius: 6px;
+    color: var(--color-text);
+    font-size: 0.85rem;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5L6 7.5L9 4.5' stroke='var(--color-text-dim)' fill='none' stroke-width='1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    transition: border-color 0.2s;
+    font-family: var(--font-family-ui);
+}
+
+.meeting-settings-select:hover {
+    border-color: var(--color-surface-strong);
+}
+
+.meeting-settings-select:focus {
+    border-color: var(--color-border-strong);
+}
+
+.meeting-settings-select option {
+    background: var(--color-panel);
+    color: var(--color-text);
+}
+
+/* ── Toggle switch ── */
+.meeting-settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.meeting-settings-toggle input[type='checkbox'] {
+    display: none;
+}
+
+.meeting-settings-toggle-slider {
+    width: 36px;
+    height: 20px;
+    background: var(--color-surface-strong);
+    border-radius: 10px;
+    position: relative;
+    transition: background 0.25s;
+    flex-shrink: 0;
+}
+
+.meeting-settings-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 14px;
+    height: 14px;
+    background: var(--color-text-muted);
+    border-radius: 50%;
+    transition: transform 0.25s, background 0.25s;
+}
+
+.meeting-settings-toggle input:checked + .meeting-settings-toggle-slider {
+    background: var(--color-thumbtack-selected);
+}
+
+.meeting-settings-toggle input:checked + .meeting-settings-toggle-slider::after {
+    transform: translateX(16px);
+    background: var(--color-text);
+}
+
+/* ── Saving indicator ── */
+.meeting-settings-saving {
+    font-size: 0.78rem;
+    color: var(--color-text);
+    margin-top: 4px;
+    animation: meetingSettingsPulse 1s ease-in-out infinite;
+}
+
+@keyframes meetingSettingsPulse {
+    0%,
+    100% {
+        opacity: 0.5;
+    }
+
+    50% {
+        opacity: 1;
+    }
+}
+
+

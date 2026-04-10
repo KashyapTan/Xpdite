@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { CheckIcon } from '../icons/AppIcons';
-import '../../CSS/SettingsSubAgents.css';
+import '../../CSS/settings/SettingsSubAgents.css';
 
 interface SubAgentSettings {
   fast_model: string;

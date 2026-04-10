@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import '../../CSS/SettingsMemory.css';
+import '../../CSS/settings/SettingsMemory.css';
 import { api } from '../../services/api';
 import type { MemoryDetail, MemorySummary } from '../../types';
 

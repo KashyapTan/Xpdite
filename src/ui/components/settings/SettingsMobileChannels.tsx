@@ -7,7 +7,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { api } from '../../services/api';
-import '../../CSS/SettingsMobileChannels.css';
+import '../../CSS/settings/SettingsMobileChannels.css';
 
 // Types
 interface PairedDevice {

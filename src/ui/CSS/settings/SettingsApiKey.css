@@ -1,0 +1,159 @@
+/* ====== API Key Settings Section ====== */
+
+.settings-apikey-section {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+    box-sizing: border-box;
+    overflow-y: auto;
+}
+
+.settings-apikey-header {
+    margin-bottom: 30px;
+}
+
+.settings-apikey-header h2 {
+    margin: 0 0 10px 0;
+    font-size: 1.5rem;
+}
+
+.settings-apikey-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+}
+
+.settings-apikey-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-apikey-loading {
+    font-size: 0.8rem;
+    color: var(--color-text-dim);
+    padding: 8px;
+}
+
+/* ====== Input Row (no key stored) ====== */
+
+.settings-apikey-input-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.settings-apikey-input {
+    flex: 1;
+    height: 32px;
+    padding: 0 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 0.8rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s ease;
+}
+
+.settings-apikey-input:focus {
+    border-color: var(--color-text-dim);
+}
+
+.settings-apikey-input::placeholder {
+    color: var(--color-border-strong);
+}
+
+.settings-apikey-input:disabled {
+    opacity: 0.5;
+}
+
+.settings-apikey-save-btn {
+    height: 32px;
+    padding: 0 14px;
+    border-radius: 6px;
+    border: 1px solid var(--color-button-primary-border);
+    background: var(--color-button-primary-background);
+    color: var(--color-button-primary-text);
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.settings-apikey-save-btn:hover:not(:disabled) {
+    background: var(--color-button-primary-background-hover);
+}
+
+.settings-apikey-save-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* ====== Stored Key Display ====== */
+
+.settings-apikey-stored {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+}
+
+.settings-apikey-stored-info {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-apikey-masked {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    font-family: var(--font-family-mono);
+    letter-spacing: 0.5px;
+}
+
+.settings-apikey-status {
+    font-size: 0.7rem;
+    color: var(--color-green);
+    font-weight: 500;
+}
+
+.settings-apikey-delete-btn {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 5px;
+    border: 1px solid var(--color-red);
+    background: var(--color-red-soft);
+    color: var(--color-red);
+    font-size: 0.75rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.settings-apikey-delete-btn:hover {
+    background: var(--color-red-soft);
+    border-color: var(--color-red);
+}
+
+/* ====== Feedback Messages ====== */
+
+.settings-apikey-error {
+    font-size: 0.75rem;
+    color: var(--color-red);
+    padding: 4px 0;
+}
+
+.settings-apikey-success {
+    font-size: 0.75rem;
+    color: var(--color-green);
+    padding: 4px 0;
+}
+

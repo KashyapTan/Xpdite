@@ -24,7 +24,7 @@ import type { FormEvent, KeyboardEvent } from 'react';
 import { X_ICON_PATHS } from '../icons/iconPaths';
 import type { Skill } from '../../types';
 import type { FileEntry } from '../../services/api';
-import '../../CSS/SlashCommandChips.css';
+import '../../CSS/input/SlashCommandChips.css';
 
 const SlashCommandMenu = lazy(() => import('../chat/SlashCommandMenu'));
 const ModelCommandMenu = lazy(() => import('../chat/ModelCommandMenu'));

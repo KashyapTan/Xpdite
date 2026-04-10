@@ -5,7 +5,7 @@ import { XIcon } from '../components/icons/AppIcons';
 import { useTabs } from '../contexts/TabContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import { api } from '../services/api';
-import '../CSS/ScheduledJobsResults.css';
+import '../CSS/pages/ScheduledJobsResults.css';
 
 interface JobConversation {
   id: string;

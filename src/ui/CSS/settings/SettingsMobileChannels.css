@@ -1,0 +1,477 @@
+/* Mobile Channels Settings */
+
+.mobile-channels-container {
+  padding: 20px;
+  color: var(--color-text);
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.mobile-channels-header {
+  margin-bottom: 30px;
+}
+
+.mobile-channels-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+}
+
+.mobile-channels-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.mobile-channels-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-dim);
+}
+
+/* --- Pairing Section --- */
+.mobile-channels-section {
+  margin-bottom: 20px;
+}
+
+.mobile-channels-section-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--color-text);
+}
+
+/* --- Pairing Code Card --- */
+.pairing-code-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 20px;
+  text-align: center;
+}
+
+.pairing-code-display {
+  font-size: 2.5rem;
+  font-weight: 700;
+  font-family: var(--font-family-mono);
+  letter-spacing: 8px;
+  color: var(--color-text);
+  margin: 20px 0;
+  padding: 20px;
+  background: var(--color-surface-strong);
+  border-radius: 8px;
+  border: 1px solid var(--color-surface-strong);
+}
+
+.pairing-code-expiry {
+  font-size: 0.85rem;
+  color: var(--color-text-dim);
+  margin-bottom: 20px;
+}
+
+.pairing-code-instructions {
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: 20px;
+}
+
+.pairing-code-btn {
+  padding: 10px 24px;
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.pairing-code-btn:hover {
+  background: var(--color-border);
+  border-color: var(--color-border-strong);
+}
+
+/* --- Platform Cards --- */
+.platform-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.platform-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.platform-card.connected {
+  border-color: var(--color-green);
+}
+
+.platform-card.error {
+  border-color: var(--color-red);
+}
+
+.platform-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.5rem;
+  flex-shrink: 0;
+}
+
+.platform-icon.telegram {
+  background: var(--color-surface);
+  color: var(--color-brand-telegram);
+}
+
+.platform-icon.discord {
+  background: var(--color-surface);
+  color: var(--color-brand-discord);
+}
+
+.platform-icon.whatsapp {
+  background: var(--color-surface);
+  color: var(--color-brand-whatsapp);
+}
+
+.platform-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.platform-name {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.platform-status {
+  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.platform-status.connected {
+  color: var(--color-green);
+}
+
+.platform-status.disconnected {
+  color: var(--color-text-dim);
+}
+
+.platform-status.error {
+  color: var(--color-red);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.platform-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.platform-btn {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.platform-btn.configure {
+  background: var(--color-surface-strong);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.platform-btn.configure:hover {
+  background: var(--color-surface-strong);
+}
+
+.platform-btn.disconnect {
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  border-color: var(--color-red);
+}
+
+.platform-btn.disconnect:hover {
+  background: var(--color-red-soft);
+}
+
+/* --- Paired Devices --- */
+.paired-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.paired-device {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.paired-device-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.paired-device-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.paired-device-name {
+  font-weight: 500;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.paired-device-meta {
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+}
+
+.paired-device-revoke {
+  padding: 6px 12px;
+  background: transparent;
+  border: 1px solid var(--color-red);
+  border-radius: 4px;
+  color: var(--color-red);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.paired-device-revoke:hover {
+  background: var(--color-red-soft);
+}
+
+.no-devices {
+  padding: 20px;
+  text-align: center;
+  color: var(--color-text-dim);
+  font-size: 0.9rem;
+}
+
+/* --- Setup Modal --- */
+.setup-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.setup-modal {
+  background: var(--color-panel);
+  border: 1px solid var(--color-surface);
+  border-radius: 12px;
+  width: 90%;
+  max-width: 500px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.setup-modal-header {
+  padding: 20px;
+  border-bottom: 1px solid var(--color-surface);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.setup-modal-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.setup-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--color-text-dim);
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 4px 8px;
+  line-height: 1;
+}
+
+.setup-modal-close:hover {
+  color: var(--color-text);
+}
+
+.setup-modal-body {
+  padding: 20px;
+}
+
+.setup-step {
+  margin-bottom: 20px;
+}
+
+.setup-step-number {
+  display: inline-flex;
+  width: 24px;
+  height: 24px;
+  background: var(--color-surface-strong);
+  color: var(--color-text);
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 600;
+  margin-right: 10px;
+}
+
+.setup-step-title {
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.setup-step-desc {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.setup-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 0.9rem;
+  box-sizing: border-box;
+}
+
+.setup-input:focus {
+  outline: none;
+  border-color: var(--color-border-strong);
+}
+
+.setup-input::placeholder {
+  color: var(--color-border-strong);
+}
+
+.setup-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.setup-link:hover {
+  background: var(--color-surface-strong);
+}
+
+.setup-modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid var(--color-surface);
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.setup-btn-cancel {
+  padding: 10px 20px;
+  background: transparent;
+  border: 1px solid var(--color-surface-strong);
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.setup-btn-save {
+  padding: 10px 20px;
+  background: var(--color-text);
+  border: none;
+  border-radius: 6px;
+  color: var(--color-text);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.setup-btn-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* --- Warning Notice --- */
+.warning-notice {
+  background: var(--color-yellow-soft);
+  border: 1px solid var(--color-yellow);
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  font-size: 0.85rem;
+  color: var(--color-yellow);
+  line-height: 1.5;
+}
+
+/* --- WhatsApp Pairing Code --- */
+.whatsapp-pairing-code {
+  font-size: 2rem;
+  font-weight: 700;
+  font-family: var(--font-family-mono);
+  letter-spacing: 6px;
+  color: var(--color-brand-whatsapp);
+  margin: 16px 0;
+  padding: 16px 24px;
+  background: var(--color-surface);
+  border-radius: 8px;
+  border: 1px solid var(--color-green);
+  text-align: center;
+}
+
+.setup-link:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+

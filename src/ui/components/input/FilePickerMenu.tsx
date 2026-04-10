@@ -10,62 +10,60 @@
 
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { api, type FileEntry } from '../../services/api';
-import '../../CSS/FilePickerMenu.css';
+import '../../CSS/input/FilePickerMenu.css';
 
-// File type to extension badge color mapping
+// File type to extension badge color mapping.
+// Keep this deliberately small so attachments still fit the app palette.
 const EXTENSION_COLORS: Record<string, string> = {
-  // Code files - blue
-  ts: '#3178c6',
-  tsx: '#3178c6',
-  js: '#f7df1e',
-  jsx: '#f7df1e',
-  py: '#3776ab',
-  rs: '#dea584',
-  go: '#00add8',
-  java: '#b07219',
-  c: '#555555',
-  cpp: '#f34b7d',
-  h: '#555555',
-  hpp: '#f34b7d',
-  rb: '#701516',
-  php: '#4f5d95',
-  swift: '#fa7343',
-  kt: '#a97bff',
-  // Config/data - green
-  json: '#40b882',
-  yaml: '#cb171e',
-  yml: '#cb171e',
-  toml: '#9c4221',
-  xml: '#e34c26',
-  csv: '#237346',
-  // Docs - purple
-  md: '#083fa1',
-  txt: '#888888',
-  pdf: '#ff0000',
-  doc: '#2b579a',
-  docx: '#2b579a',
-  // Images - orange
-  png: '#ff9800',
-  jpg: '#ff9800',
-  jpeg: '#ff9800',
-  gif: '#ff9800',
-  svg: '#ffb13b',
-  webp: '#ff9800',
-  // Web - cyan
-  html: '#e34c26',
-  css: '#1572b6',
-  scss: '#c6538c',
-  // Shell - gray
-  sh: '#89e051',
-  bash: '#89e051',
-  zsh: '#89e051',
-  ps1: '#012456',
-  bat: '#c1f12e',
+  // Code
+  ts: 'var(--color-text-muted)',
+  tsx: 'var(--color-text-muted)',
+  js: 'var(--color-text-muted)',
+  jsx: 'var(--color-text-muted)',
+  py: 'var(--color-text-muted)',
+  rs: 'var(--color-text-muted)',
+  go: 'var(--color-text-muted)',
+  java: 'var(--color-text-muted)',
+  c: 'var(--color-text-muted)',
+  cpp: 'var(--color-text-muted)',
+  h: 'var(--color-text-muted)',
+  hpp: 'var(--color-text-muted)',
+  rb: 'var(--color-text-muted)',
+  php: 'var(--color-text-muted)',
+  swift: 'var(--color-text-muted)',
+  kt: 'var(--color-text-muted)',
+  html: 'var(--color-text-muted)',
+  css: 'var(--color-text-muted)',
+  scss: 'var(--color-text-muted)',
+  sh: 'var(--color-text-muted)',
+  bash: 'var(--color-text-muted)',
+  zsh: 'var(--color-text-muted)',
+  ps1: 'var(--color-text-muted)',
+  bat: 'var(--color-text-muted)',
+  // Data / config
+  json: 'var(--color-green)',
+  yaml: 'var(--color-green)',
+  yml: 'var(--color-green)',
+  toml: 'var(--color-green)',
+  xml: 'var(--color-green)',
+  csv: 'var(--color-green)',
+  // Media / docs
+  md: 'var(--color-text-muted)',
+  txt: 'var(--color-text-muted)',
+  doc: 'var(--color-text-muted)',
+  docx: 'var(--color-text-muted)',
+  pdf: 'var(--color-yellow)',
+  png: 'var(--color-yellow)',
+  jpg: 'var(--color-yellow)',
+  jpeg: 'var(--color-yellow)',
+  gif: 'var(--color-yellow)',
+  svg: 'var(--color-yellow)',
+  webp: 'var(--color-yellow)',
 };
 
 function getExtensionColor(extension: string | null): string {
-  if (!extension) return '#888888';
-  return EXTENSION_COLORS[extension.toLowerCase()] || '#888888';
+  if (!extension) return 'var(--color-text-muted)';
+  return EXTENSION_COLORS[extension.toLowerCase()] || 'var(--color-text-muted)';
 }
 
 function formatFileSize(bytes: number | null): string {

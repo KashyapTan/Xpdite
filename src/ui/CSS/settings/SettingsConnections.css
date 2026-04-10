@@ -1,0 +1,164 @@
+/* ============================================
+   Settings — Connections Tab
+   ============================================ */
+
+.settings-connections-section {
+  padding: 20px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.settings-connections-header {
+  margin-bottom: 30px;
+}
+
+.settings-connections-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+}
+
+.settings-connections-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+}
+
+.settings-connections-error {
+  background: var(--color-red-soft);
+  border: 1px solid var(--color-red);
+  color: var(--color-red);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.82em;
+  margin-bottom: 12px;
+}
+
+/* ── Connection Cards Grid ── */
+
+.settings-connections-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  margin-bottom: 20px;
+
+}
+
+.settings-connection-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: border-color 0.2s ease;
+}
+
+.settings-connection-card:hover {
+  border-color: var(--color-surface-strong);
+}
+
+.settings-connection-card.connected {
+  border-color: var(--color-green);
+  background: var(--color-green-soft);
+}
+
+/* ── Card Icon ── */
+
+.settings-connection-card-icon {
+  width: 40px;
+  height: 40px;
+  background: var(--color-surface);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── Card Info ── */
+
+.settings-connection-card-info {
+  flex: 1;
+}
+
+.settings-connection-card-title {
+  font-size: 0.95em;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 2px;
+}
+
+.settings-connection-card-desc {
+  font-size: 0.78em;
+  color: var(--color-text-dim);
+}
+
+/* ── Service Badges ── */
+
+.settings-connection-card-services {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.settings-connection-service-badge {
+  font-size: 0.7em;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  font-weight: 500;
+}
+
+.connected .settings-connection-service-badge {
+  background: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+/* ── Action Buttons ── */
+
+.settings-connection-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.settings-connection-btn {
+  padding: 6px 16px;
+  border-radius: 8px;
+  font-size: 0.82em;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.settings-connection-btn.connect {
+  background: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+  border: 1px solid var(--color-button-primary-border);
+}
+
+.settings-connection-btn.connect:hover {
+  background: var(--color-button-primary-background-hover);
+}
+
+.settings-connection-btn.connecting {
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-surface);
+  cursor: not-allowed;
+}
+
+.settings-connection-btn.disconnect {
+  background: var(--color-surface);
+  color: var(--color-text-dim);
+  border: 1px solid var(--color-surface);
+}
+
+.settings-connection-btn.disconnect:hover {
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  border-color: var(--color-red);
+}
+

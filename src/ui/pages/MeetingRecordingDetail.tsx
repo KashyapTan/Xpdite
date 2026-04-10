@@ -12,7 +12,7 @@ import {
     XIcon,
 } from '../components/icons/AppIcons';
 import TitleBar from '../components/TitleBar';
-import '../CSS/MeetingRecordingDetail.css';
+import '../CSS/pages/MeetingRecordingDetail.css';
 
 interface MeetingRecording {
     id: string;
@@ -195,7 +195,10 @@ const MeetingRecordingDetail: React.FC = () => {
     };
 
     const statusColor: Record<string, string> = {
-        recording: '#ff5050', processing: '#ffaa00', ready: '#50cc50', partial: '#6699ff',
+        recording: 'var(--color-red)',
+        processing: 'var(--color-yellow)',
+        ready: 'var(--color-green)',
+        partial: 'var(--color-yellow)',
     };
 
     // --- Tier 2 transcript ---
@@ -221,7 +224,15 @@ const MeetingRecordingDetail: React.FC = () => {
     }
 
     const speakerColors: Record<string, string> = {};
-    const palette = ['#4f8cff', '#ff6b9d', '#50cc50', '#ffaa00', '#9b59b6', '#e67e22', '#1abc9c'];
+    const palette = [
+        'var(--color-text)',
+        'var(--color-text-muted)',
+        'var(--color-yellow)',
+        'var(--color-green)',
+        'var(--color-red)',
+        'var(--color-terminal-ansi-cyan)',
+        'var(--color-text)',
+    ];
     let colorIdx = 0;
     for (const group of groupedSegments) {
         if (!(group.speaker in speakerColors)) {
@@ -236,22 +247,34 @@ const MeetingRecordingDetail: React.FC = () => {
     const renderActionCard = (action: ActionSuggestion, idx: number) => {
         const edited = editingActions[idx] || action;
         const result = actionResults[idx];
-        const { label: typeLabel, Icon: TypeIcon } = action.type === 'calendar_event'
-            ? { label: 'Calendar Event', Icon: CalendarIcon }
+        const typeTheme = action.type === 'calendar_event'
+            ? {
+                label: 'Calendar Event',
+                Icon: CalendarIcon,
+                color: 'var(--color-text)',
+                background: 'var(--color-surface-strong)',
+            }
             : action.type === 'email'
-                ? { label: 'Email Draft', Icon: MailIcon }
-                : { label: 'Task', Icon: ClipboardListIcon };
-        const typeColor = action.type === 'calendar_event' ? '#4f8cff'
-            : action.type === 'email' ? '#ff6b9d'
-                : '#50cc50';
+                ? {
+                    label: 'Email Draft',
+                    Icon: MailIcon,
+                    color: 'var(--color-yellow)',
+                    background: 'var(--color-yellow-soft)',
+                }
+                : {
+                    label: 'Task',
+                    Icon: ClipboardListIcon,
+                    color: 'var(--color-green)',
+                    background: 'var(--color-green-soft)',
+                };
         const canExecute = action.type === 'calendar_event' || action.type === 'email';
 
         return (
-            <div key={idx} className="meeting-action-card" style={{ borderLeftColor: typeColor }}>
+            <div key={idx} className="meeting-action-card" style={{ borderLeftColor: typeTheme.color }}>
                 <div className="meeting-action-card-header">
-                    <span className="meeting-action-type" style={{ color: typeColor }}>
-                        <TypeIcon size={14} className="meeting-action-type-icon" />
-                        <span>{typeLabel}</span>
+                    <span className="meeting-action-type" style={{ color: typeTheme.color }}>
+                        <typeTheme.Icon size={14} className="meeting-action-type-icon" />
+                        <span>{typeTheme.label}</span>
                     </span>
                     {result && (
                         <span className={`meeting-action-result ${result.success ? 'success' : 'error'}`}>
@@ -307,7 +330,7 @@ const MeetingRecordingDetail: React.FC = () => {
                 )}
 
                 {canExecute && !result?.success && (
-                    <button className="meeting-action-execute" style={{ background: typeColor + '22', color: typeColor }}
+                    <button className="meeting-action-execute" style={{ background: typeTheme.background, color: typeTheme.color }}
                         onClick={() => handleExecuteAction(idx)}>
                         {action.type === 'calendar_event' ? 'Create Event' : 'Create Draft'}
                     </button>
@@ -335,7 +358,7 @@ const MeetingRecordingDetail: React.FC = () => {
                         <div className="meeting-detail-header">
                             <h2 className="meeting-detail-title">{recording.title || 'Untitled Recording'}</h2>
                             <div className="meeting-detail-meta">
-                                <span className="meeting-detail-status" style={{ color: statusColor[recording.status] || '#888' }}>
+                                <span className="meeting-detail-status" style={{ color: statusColor[recording.status] || 'var(--color-text-dim)' }}>
                                     {recording.status.toUpperCase()}
                                 </span>
                                 <span className="meeting-detail-date">{formatDate(recording.started_at)}</span>
@@ -361,10 +384,10 @@ const MeetingRecordingDetail: React.FC = () => {
                                         {processingProgress ? `${Math.round(processingProgress.percentage)}%` : ''}
                                     </span>
                                 </div>
-                                <div style={{ width: '100%', height: 4, background: 'rgba(255,255,255,0.1)', borderRadius: 2, overflow: 'hidden' }}>
+                                <div style={{ width: '100%', height: 4, background: 'var(--color-surface)', borderRadius: 2, overflow: 'hidden' }}>
                                     <div style={{
                                         width: `${processingProgress?.percentage || 0}%`,
-                                        height: '100%', background: '#ffaa00', borderRadius: 2, transition: 'width 0.5s ease'
+                                        height: '100%', background: 'var(--color-yellow)', borderRadius: 2, transition: 'width 0.5s ease'
                                     }} />
                                 </div>
                             </div>
@@ -379,7 +402,7 @@ const MeetingRecordingDetail: React.FC = () => {
                         <div className="meeting-detail-section">
                             <h3 className="meeting-detail-section-title">
                                 Transcript
-                                {hasTier2 && <span style={{ fontSize: '0.7em', marginLeft: 8, color: 'rgba(255,255,255,0.4)' }}>Enhanced</span>}
+                                {hasTier2 && <span style={{ fontSize: '0.7em', marginLeft: 8, color: 'var(--color-text-dim)' }}>Enhanced</span>}
                             </h3>
                             <div className="meeting-detail-transcript">
                                 {hasTier2 ? (
@@ -437,7 +460,7 @@ const MeetingRecordingDetail: React.FC = () => {
                             )}
 
                             {analysisError && (
-                                <div className="meeting-detail-banner" style={{ background: 'rgba(255,80,80,0.08)', color: '#ff5050', border: '1px solid rgba(255,80,80,0.2)' }}>
+                                <div className="meeting-detail-banner" style={{ background: 'var(--color-red-soft)', color: 'var(--color-red)', border: '1px solid var(--color-red-soft)' }}>
                                     Analysis failed: {analysisError}
                                     <button className="meeting-detail-retry-btn" onClick={handleSummarize}>Retry</button>
                                 </div>
@@ -466,3 +489,4 @@ const MeetingRecordingDetail: React.FC = () => {
 };
 
 export default MeetingRecordingDetail;
+

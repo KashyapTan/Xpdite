@@ -3,7 +3,7 @@ import { useOutletContext, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
 import { XIcon } from '../components/icons/AppIcons';
-import '../CSS/MeetingAlbum.css';
+import '../CSS/pages/MeetingAlbum.css';
 
 interface MeetingRecordingSummary {
   id: string;
@@ -98,20 +98,37 @@ const MeetingAlbum: React.FC = () => {
   };
 
   const statusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      recording: '#ff5050',
-      processing: '#ffaa00',
-      ready: '#50cc50',
-      partial: '#6699ff',
+    const theme: Record<string, { color: string; background: string }> = {
+      recording: {
+        color: 'var(--color-red)',
+        background: 'var(--color-red-soft)',
+      },
+      processing: {
+        color: 'var(--color-yellow)',
+        background: 'var(--color-yellow-soft)',
+      },
+      ready: {
+        color: 'var(--color-green)',
+        background: 'var(--color-green-soft)',
+      },
+      partial: {
+        color: 'var(--color-yellow)',
+        background: 'var(--color-yellow-soft)',
+      },
     };
+    const currentTheme = theme[status] ?? {
+      color: 'var(--color-text-dim)',
+      background: 'var(--color-surface)',
+    };
+
     return (
       <span
         style={{
           fontSize: '0.65rem',
           padding: '2px 6px',
           borderRadius: '4px',
-          background: `${colors[status] || '#888'}22`,
-          color: colors[status] || '#888',
+          background: currentTheme.background,
+          color: currentTheme.color,
           textTransform: 'uppercase',
           fontWeight: 600,
           letterSpacing: '0.5px',
@@ -180,16 +197,16 @@ const MeetingAlbum: React.FC = () => {
                       {rec.status === 'processing' && processingProgress[rec.id] && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
                           <div style={{
-                            flex: 1, height: 4, background: 'rgba(255,255,255,0.08)',
+                            flex: 1, height: 4, background: 'var(--color-surface)',
                             borderRadius: 2, overflow: 'hidden', minWidth: 40
                           }}>
                             <div style={{
                               width: `${processingProgress[rec.id].percentage}%`,
-                              height: '100%', background: '#ffaa00',
+                              height: '100%', background: 'var(--color-yellow)',
                               borderRadius: 2, transition: 'width 0.5s ease'
                             }} />
                           </div>
-                          <span style={{ fontSize: '0.65rem', color: 'rgba(255,255,255,0.4)', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontSize: '0.65rem', color: 'var(--color-text-dim)', whiteSpace: 'nowrap' }}>
                             {processingProgress[rec.id].step}
                           </span>
                         </div>
@@ -219,3 +236,4 @@ const MeetingAlbum: React.FC = () => {
 };
 
 export default MeetingAlbum;
+

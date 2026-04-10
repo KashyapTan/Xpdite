@@ -1,6 +1,6 @@
 import React from 'react';
 import { XIcon } from '../icons/AppIcons';
-import '../../CSS/SlashCommandChips.css';
+import '../../CSS/input/SlashCommandChips.css';
 
 interface SlashCommandChipsProps {
     query: string;

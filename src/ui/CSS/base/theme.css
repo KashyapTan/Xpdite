@@ -1,0 +1,99 @@
+:root {
+  color-scheme: dark;
+
+  --font-family-ui: 'Montserrat', sans-serif;
+  --font-family-mono: 'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+
+  --shadow-soft: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --shadow-popover: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 10px 24px rgba(0, 0, 0, 0.28);
+
+  /* Base palette: edit these six colors to retheme the entire app. */
+  --palette-black: #080808;
+  --palette-white: #ffffff;
+  --palette-blue: #3b82f6;
+  --palette-green: #22c55e;
+  --palette-yellow: #fbbf24;
+  --palette-red: #f87171;
+
+  /* Shared app colors derive from the base palette above. */
+  --color-bg: color-mix(in srgb, var(--palette-black) 88%, transparent);
+  --color-panel: color-mix(in srgb, var(--palette-black) 96%, transparent);
+  --color-surface: color-mix(in srgb, var(--palette-white) 6%, transparent);
+  --color-surface-strong: color-mix(in srgb, var(--palette-white) 12%, transparent);
+  --color-border: color-mix(in srgb, var(--palette-white) 14%, transparent);
+  --color-border-strong: color-mix(in srgb, var(--palette-white) 24%, transparent);
+  --color-text: color-mix(in srgb, var(--palette-white) 92%, transparent);
+  --color-text-muted: color-mix(in srgb, var(--palette-white) 68%, transparent);
+  --color-text-dim: color-mix(in srgb, var(--palette-white) 46%, transparent);
+
+  --color-blue: var(--palette-blue);
+  --color-blue-soft: color-mix(in srgb, var(--palette-blue) 16%, transparent);
+  --color-green: var(--palette-green);
+  --color-green-soft: color-mix(in srgb, var(--palette-green) 16%, transparent);
+  --color-yellow: var(--palette-yellow);
+  --color-yellow-soft: color-mix(in srgb, var(--palette-yellow) 16%, transparent);
+  --color-red: var(--palette-red);
+  --color-red-soft: color-mix(in srgb, var(--palette-red) 14%, transparent);
+
+  --color-thumbtack-selected: var(--color-green);
+  --color-thumbtack-selected-soft: var(--color-green-soft);
+  --color-thumbtack-partial: var(--color-yellow);
+  --color-thumbtack-partial-soft: var(--color-yellow-soft);
+  --color-thumbtack-unselected: var(--color-surface);
+  --color-thumbtack-unselected-thumb: var(--color-text-muted);
+
+  --color-button-primary-background: var(--color-blue);
+  --color-button-primary-background-hover: color-mix(in srgb, var(--color-blue) 84%, var(--palette-black));
+  --color-button-primary-border: var(--color-blue);
+  --color-button-primary-text: var(--palette-white);
+
+  --color-button-danger-background: var(--color-red-soft);
+  --color-button-danger-background-hover: color-mix(in srgb, var(--color-red-soft) 70%, var(--color-red));
+  --color-button-danger-border: var(--color-red);
+  --color-button-danger-text: var(--color-red);
+
+  --color-button-neutral-background: var(--color-surface);
+  --color-button-neutral-background-hover: var(--color-surface-strong);
+  --color-button-neutral-border: var(--color-border);
+  --color-button-neutral-text: var(--color-text);
+
+  --color-terminal-background: color-mix(in srgb, var(--palette-black) 92%, var(--palette-white) 8%);
+  --color-terminal-foreground: var(--color-text);
+  --color-terminal-cursor: var(--color-text);
+  --color-terminal-selection: color-mix(in srgb, var(--palette-white) 20%, transparent);
+  --color-terminal-ansi-black: var(--color-terminal-background);
+  --color-terminal-ansi-red: var(--color-red);
+  --color-terminal-ansi-green: var(--color-green);
+  --color-terminal-ansi-yellow: var(--color-yellow);
+  --color-terminal-ansi-blue: var(--color-blue);
+  --color-terminal-ansi-magenta: var(--color-text-muted);
+  --color-terminal-ansi-cyan: var(--color-text);
+  --color-terminal-ansi-white: var(--color-text);
+  --color-terminal-ansi-bright-black: var(--color-text-dim);
+  --color-terminal-ansi-bright-white: var(--palette-white);
+
+  /* Brand colors are limited to brand marks/icons only. */
+  --color-brand-telegram: #0088cc;
+  --color-brand-discord: #5865f2;
+  --color-brand-whatsapp: #25d366;
+  --color-brand-google-blue: #4285f4;
+  --color-brand-google-green: #34a853;
+  --color-brand-google-yellow: #fbbc05;
+  --color-brand-google-red: #ea4335;
+  --color-brand-figma-blue: #1abcfe;
+  --color-brand-figma-green: #0acf83;
+  --color-brand-figma-orange: #f24e1e;
+  --color-brand-figma-purple: #a259ff;
+  --color-brand-figma-coral: #ff7262;
+  --color-brand-slack-red: #e01e5a;
+  --color-brand-slack-blue: #36c5f0;
+  --color-brand-slack-green: #2eb67d;
+  --color-brand-slack-yellow: #ecb22e;
+}
+

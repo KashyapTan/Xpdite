@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
 import { ChevronRightIcon } from '../icons/AppIcons';
-import '../../CSS/SettingsTools.css';
+import '../../CSS/settings/SettingsTools.css';
 
 interface McpServer {
   server: string;

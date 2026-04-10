@@ -1,0 +1,169 @@
+.sub-agent-container {
+  padding: 20px;
+  color: var(--color-text);
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.sub-agent-header {
+  margin-bottom: 30px;
+}
+
+.sub-agent-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+}
+
+.sub-agent-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.sub-agent-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-dim);
+}
+
+/* --- Tier cards --- */
+.sub-agent-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.sub-agent-tier-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.sub-agent-tier-card.self-tier {
+  opacity: 0.7;
+}
+
+.sub-agent-tier-info {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.sub-agent-tier-badge {
+  display: inline-flex;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.sub-agent-tier-badge.fast {
+  background: var(--color-green-soft);
+  color: var(--color-green);
+  border: 1px solid var(--color-green);
+}
+
+.sub-agent-tier-badge.smart {
+  background: var(--color-surface-strong);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.sub-agent-tier-badge.self {
+  background: var(--color-yellow-soft);
+  color: var(--color-yellow);
+  border: 1px solid var(--color-yellow);
+}
+
+.sub-agent-tier-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 4px;
+}
+
+.sub-agent-tier-desc {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.sub-agent-model-select {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-size: 0.85rem;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.sub-agent-model-select:hover {
+  border-color: var(--color-border-strong);
+}
+
+.sub-agent-model-select:focus {
+  border-color: var(--color-border-strong);
+}
+
+.sub-agent-model-select option {
+  background: var(--color-panel);
+  color: var(--color-text);
+}
+
+.sub-agent-self-note {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.sub-agent-saved {
+  color: var(--color-green);
+  font-size: 0.85rem;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sub-agent-saved-icon {
+  flex-shrink: 0;
+}
+
+/* --- Info section --- */
+.sub-agent-info-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.sub-agent-info-section h3 {
+  margin: 0 0 12px 0;
+  font-size: 0.95rem;
+  color: var(--color-text-muted);
+}
+
+.sub-agent-info-section ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.sub-agent-info-section li {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.6;
+  margin-bottom: 4px;
+}
+

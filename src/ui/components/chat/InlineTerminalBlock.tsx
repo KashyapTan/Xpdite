@@ -18,33 +18,34 @@ import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 import AnsiToHtml from 'ansi-to-html';
 import type { TerminalCommandBlock } from '../../types';
+import { getTerminalTheme } from '../../utils/theme';
 
 const INIT_PTY_FLUSH_BATCH_SIZE = 250;
 const MAX_RENDERABLE_OUTPUT_CHUNKS = 5000;
 
 // Shared ANSI converter instance (for non-PTY commands only)
 const ansiConverter = new AnsiToHtml({
-  fg: '#d4d4d4',
+  fg: 'var(--color-terminal-foreground)',
   bg: 'transparent',
   newline: true,
   escapeXML: true,
   colors: {
-    0: '#1e1e1e',   // black
-    1: '#f44747',   // red
-    2: '#6a9955',   // green
-    3: '#e0a040',   // yellow
-    4: '#569cd6',   // blue
-    5: '#c586c0',   // magenta
-    6: '#4ec9b0',   // cyan
-    7: '#d4d4d4',   // white
-    8: '#808080',   // bright black
-    9: '#f44747',   // bright red
-    10: '#6a9955',  // bright green
-    11: '#e0a040',  // bright yellow
-    12: '#569cd6',  // bright blue
-    13: '#c586c0',  // bright magenta
-    14: '#4ec9b0',  // bright cyan
-    15: '#ffffff',  // bright white
+    0: 'var(--color-terminal-ansi-black)',
+    1: 'var(--color-terminal-ansi-red)',
+    2: 'var(--color-terminal-ansi-green)',
+    3: 'var(--color-terminal-ansi-yellow)',
+    4: 'var(--color-terminal-ansi-blue)',
+    5: 'var(--color-terminal-ansi-magenta)',
+    6: 'var(--color-terminal-ansi-cyan)',
+    7: 'var(--color-terminal-ansi-white)',
+    8: 'var(--color-terminal-ansi-bright-black)',
+    9: 'var(--color-terminal-ansi-red)',
+    10: 'var(--color-terminal-ansi-green)',
+    11: 'var(--color-terminal-ansi-yellow)',
+    12: 'var(--color-terminal-ansi-blue)',
+    13: 'var(--color-terminal-ansi-magenta)',
+    14: 'var(--color-terminal-ansi-cyan)',
+    15: 'var(--color-terminal-ansi-bright-white)',
   },
 });
 
@@ -111,16 +112,12 @@ export function InlineTerminalBlock({
   useEffect(() => {
     if (!isPty || !isExpanded || !xtermContainerRef.current || xtermRef.current) return;
 
+    const terminalTheme = getTerminalTheme();
     let disposed = false;
     const term = new Terminal({
-      theme: {
-        background: '#1a1a2e',
-        foreground: '#d4d4d4',
-        cursor: '#d4d4d4',
-        selectionBackground: 'rgba(255, 255, 255, 0.3)',
-      },
+      theme: terminalTheme,
       fontSize: 12,
-      fontFamily: "'JetBrains Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace",
+      fontFamily: "'Fira Code', 'JetBrains Mono', 'Cascadia Code', Consolas, monospace",
       cursorBlink: statusRef.current === 'running',
       cursorStyle: 'bar',
       disableStdin: true,

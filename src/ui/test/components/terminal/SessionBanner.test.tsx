@@ -18,12 +18,10 @@ describe('SessionBanner', () => {
   })
 
   describe('Content Rendering', () => {
-    test('renders session mode active text', () => {
+    test('renders autonomous mode active text', () => {
       render(<SessionBanner {...defaultProps} />)
 
-      expect(
-        screen.getByText('Session Mode Active — Xpdite is running autonomously')
-      ).toBeInTheDocument()
+      expect(screen.getByText('Autonomous mode active')).toBeInTheDocument()
     })
 
     test('renders bolt icon', () => {
@@ -94,9 +92,7 @@ describe('SessionBanner', () => {
 
       const textSpan = container.querySelector('.session-banner-text span')
       expect(textSpan).toBeInTheDocument()
-      expect(textSpan?.textContent).toBe(
-        'Session Mode Active — Xpdite is running autonomously'
-      )
+      expect(textSpan?.textContent).toBe('Autonomous mode active')
     })
   })
 

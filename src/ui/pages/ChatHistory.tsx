@@ -4,7 +4,7 @@ import TitleBar from '../components/TitleBar';
 import { XIcon } from '../components/icons/AppIcons';
 import { useTabs } from '../contexts/TabContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
-import '../CSS/ChatHistory.css';
+import '../CSS/pages/ChatHistory.css';
 
 interface Conversation {
   id: string;

@@ -1,0 +1,116 @@
+:root {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-family-ui);
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: transparent;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.container {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-color: var(--color-bg);
+  border-radius: 8px;
+  border: 2px solid var(--color-text-dim);
+  overflow: hidden;
+  color: white;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.2s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.app-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.mini-mode .container {
+  opacity: 0 !important;
+  transform: scale(0.95);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.normal-mode .mini-container {
+  opacity: 0;
+  transform: scale(1.1);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.mini-mode .mini-container {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.normal-mode .container {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+  visibility: visible;
+}
+
+.xpdite-logo {
+  height: 22px;
+  width: auto;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.mini-container {
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  border: 2px solid var(--color-text-dim);
+  box-shadow: 0 2px 5px var(--color-surface);
+  background: var(--color-bg);
+  -webkit-user-select: none;
+  user-select: none;
+  z-index: 10000;
+  -webkit-app-region: drag;
+  cursor: grab;
+  transition: all 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+  position: absolute;
+}
+
+.mini-container .xpdite-logo {
+  -webkit-app-region: no-drag;
+  pointer-events: auto;
+  cursor: pointer;
+  height: 22px;
+  width: auto;
+  opacity: 0.5;
+}
+
+.mini-container .xpdite-logo:hover {
+  opacity: 1;
+}
+
+

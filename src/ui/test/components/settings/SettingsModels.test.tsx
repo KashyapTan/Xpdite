@@ -439,12 +439,12 @@ describe('SettingsModels', () => {
       const refreshButtons = screen.getAllByRole('button', { name: /refresh/i })
       await user.click(refreshButtons[0])
 
-      expect(screen.getByText('Refreshing...')).toBeInTheDocument()
+      expect(refreshButtons[0]).toHaveAttribute('title', 'Refreshing...')
 
       // Resolve the refresh
       resolveRefresh!()
       await waitFor(() => {
-        expect(screen.queryByText('Refreshing...')).not.toBeInTheDocument()
+        expect(refreshButtons[0]).toHaveAttribute('title', 'Refresh')
       })
     })
   })

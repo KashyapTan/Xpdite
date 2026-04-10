@@ -9,7 +9,7 @@ import {
 } from '../contexts/MeetingRecorderContext';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
-import '../CSS/MeetingRecorder.css';
+import '../CSS/pages/MeetingRecorder.css';
 
 const MeetingRecorderContent: React.FC = () => {
     const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();

@@ -1,6 +1,6 @@
 import React from 'react';
 import { formatModelLabel, getModelProviderKey, getProviderLabel } from '../../utils/modelDisplay';
-import '../../CSS/ModelCommandMenu.css';
+import '../../CSS/chat/ModelCommandMenu.css';
 
 interface ModelCommandMenuProps {
   models: string[];

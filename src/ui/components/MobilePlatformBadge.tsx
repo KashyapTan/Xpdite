@@ -7,13 +7,18 @@
  */
 import React from 'react';
 import type { MobilePlatform } from '../types';
-import '../CSS/MobilePlatformBadge.css';
+import '../CSS/components/MobilePlatformBadge.css';
 
-// Platform brand colors (official brand guidelines)
-const PLATFORM_COLORS: Record<MobilePlatform, string> = {
-  telegram: '#0088cc',
-  discord: '#5865F2',
-  whatsapp: '#25D366',
+const PLATFORM_THEME: Record<MobilePlatform, { color: string }> = {
+  telegram: {
+    color: 'var(--color-brand-telegram)',
+  },
+  discord: {
+    color: 'var(--color-brand-discord)',
+  },
+  whatsapp: {
+    color: 'var(--color-brand-whatsapp)',
+  },
 };
 
 // Platform display names
@@ -72,7 +77,7 @@ export const MobilePlatformBadge: React.FC<MobilePlatformBadgeProps> = ({
   displayName,
   className = '',
 }) => {
-  const color = PLATFORM_COLORS[platform];
+  const platformTheme = PLATFORM_THEME[platform];
   const name = PLATFORM_NAMES[platform];
   
   if (size === 'small') {
@@ -80,7 +85,7 @@ export const MobilePlatformBadge: React.FC<MobilePlatformBadgeProps> = ({
     return (
       <span 
         className={`mobile-platform-badge mobile-platform-badge--small ${className}`}
-        style={{ color }}
+        style={{ color: platformTheme.color }}
         title={`From ${name}`}
       >
         <PlatformIcon platform={platform} size={12} />
@@ -93,9 +98,9 @@ export const MobilePlatformBadge: React.FC<MobilePlatformBadgeProps> = ({
     <span 
       className={`mobile-platform-badge mobile-platform-badge--pill ${className}`}
       style={{ 
-        backgroundColor: `${color}20`, // 20% opacity background
-        color,
-        borderColor: `${color}40`, // 40% opacity border
+        backgroundColor: 'var(--color-surface)',
+        color: platformTheme.color,
+        borderColor: 'var(--color-border)',
       }}
     >
       <PlatformIcon platform={platform} size={12} />

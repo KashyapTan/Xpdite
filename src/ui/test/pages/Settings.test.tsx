@@ -90,8 +90,6 @@ describe('Settings page', () => {
 
     fireEvent.click(screen.getByText('Ollama'));
     expect(screen.getByRole('heading', { name: 'Ollama' })).toBeInTheDocument();
-    expect(screen.getByText(/same LiteLLM path/i)).toBeInTheDocument();
-    expect(screen.getByText(/start your local Ollama daemon/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Anthropic'));
     expect(screen.getByTestId('settings-key-anthropic')).toBeInTheDocument();

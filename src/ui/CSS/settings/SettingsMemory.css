@@ -1,0 +1,512 @@
+/* ── Container & Header ──────────────────────── */
+
+.settings-memory {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 16px 20px;
+  box-sizing: border-box;
+  color: var(--color-text);
+  overflow-y: auto;
+}
+
+.settings-memory-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.settings-memory-header h2 {
+  margin: 0 0 4px 0;
+  font-size: 1.5rem;
+}
+
+.settings-memory-toggle-card h3,
+.settings-memory-danger h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.settings-memory-header p,
+.settings-memory-toggle-card p,
+.settings-memory-danger p {
+  margin: 4px 0 0;
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+  max-width: 500px;
+}
+
+.settings-memory-header code,
+.settings-memory-toggle-card code,
+.settings-memory-empty code {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-surface);
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+}
+
+/* ── Toggle Card (Profile Auto-Inject) ───────── */
+
+.settings-memory-toggle-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+/* Toggle Switch - matching Skills tab style */
+.settings-memory-toggle {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+.settings-memory-toggle input[type='checkbox'] {
+  display: none;
+}
+
+.settings-memory-toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--color-surface-strong);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.25s;
+  flex-shrink: 0;
+}
+
+.settings-memory-toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  transition: transform 0.25s, background 0.25s;
+}
+
+.settings-memory-toggle input:checked + .settings-memory-toggle-slider {
+  background: var(--color-thumbtack-selected);
+}
+
+.settings-memory-toggle input:checked + .settings-memory-toggle-slider::after {
+  transform: translateX(16px);
+  background: var(--color-text);
+}
+
+/* ── Error Message ───────────────────────────── */
+
+.settings-memory-error {
+  padding: 10px;
+  border-radius: 4px;
+  background-color: var(--color-red-soft);
+  border: 1px solid var(--color-red-soft);
+  color: var(--color-red);
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+/* ── File Count ──────────────────────────────── */
+
+.settings-memory-file-count {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+/* ── Memory Groups (Folders) ─────────────────── */
+
+.settings-memory-groups {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.settings-memory-groups::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-memory-groups::-webkit-scrollbar-thumb {
+  background: var(--color-surface-strong);
+  border-radius: 4px;
+}
+
+.settings-memory-groups::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-memory-folder {
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface);
+  flex-shrink: 0;
+}
+
+.settings-memory-folder-toggle {
+  width: 100%;
+  border: none;
+  padding: 10px 12px;
+  background: var(--color-surface);
+  color: inherit;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  text-align: left;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.settings-memory-folder-toggle:hover {
+  background: var(--color-surface);
+}
+
+.settings-memory-folder-toggle span:first-child {
+  color: var(--color-text-dim);
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+}
+
+.settings-memory-folder-toggle span:last-child {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+}
+
+/* ── Memory List Items ───────────────────────── */
+
+.settings-memory-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-memory-item {
+  border: 1px solid var(--color-surface);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: inherit;
+  text-align: left;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-memory-item:hover {
+  background: var(--color-surface);
+  border-color: var(--color-surface-strong);
+}
+
+.settings-memory-item.selected {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-strong);
+}
+
+.settings-memory-item-top,
+.settings-memory-item-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.settings-memory-item-top strong {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--color-text);
+  font-family: var(--font-family-ui);
+}
+
+.settings-memory-item-top span {
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+}
+
+.settings-memory-item-path {
+  font-family: var(--font-family-mono);
+  font-size: 0.75rem;
+  color: var(--color-text-dim);
+}
+
+.settings-memory-item-abstract {
+  color: var(--color-text-dim);
+  line-height: 1.35;
+  font-size: 0.8rem;
+  font-family: var(--font-family-ui);
+}
+
+.settings-memory-item-meta span {
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+  font-family: var(--font-family-ui);
+}
+
+.settings-memory-warning {
+  color: var(--color-yellow);
+}
+
+/* ── Clear All Button ────────────────────────── */
+
+.settings-memory-clear-button {
+  border: 1px solid var(--color-red);
+  background: none;
+  color: var(--color-red);
+  border-radius: 6px;
+  padding: 8px 14px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-family: var(--font-family-ui);
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-bottom: 25px;
+}
+
+.settings-memory-clear-button:hover {
+  background-color: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.settings-memory-clear-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ── Empty State ─────────────────────────────── */
+
+.settings-memory-empty {
+  padding: 16px;
+  color: var(--color-text-dim);
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+/* ── Modal Overlay ───────────────────────────── */
+
+.settings-memory-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--color-panel);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.settings-memory-modal {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  width: 100%;
+  max-width: 600px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+}
+
+.settings-memory-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  flex-shrink: 0;
+}
+
+.settings-memory-modal-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: var(--color-text);
+}
+
+.settings-memory-modal-close {
+  background-color: var(--color-surface);
+  border: none;
+  color: white;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: var(--font-family-ui);
+  font-size: 0.85rem;
+  transition: background-color 0.2s;
+}
+
+.settings-memory-modal-close:hover {
+  background-color: var(--color-surface-strong);
+}
+
+.settings-memory-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.settings-memory-modal-body::-webkit-scrollbar {
+  width: 4px;
+}
+
+.settings-memory-modal-body::-webkit-scrollbar-thumb {
+  background: var(--color-surface-strong);
+  border-radius: 4px;
+}
+
+.settings-memory-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 16px;
+  border-top: 1px solid var(--color-surface);
+  flex-shrink: 0;
+}
+
+/* ── Form Fields ─────────────────────────────── */
+
+.settings-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-memory-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-memory-field label {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+.settings-memory-field input,
+.settings-memory-field textarea {
+  border-radius: 6px;
+  border: 1px solid var(--color-surface);
+  background-color: var(--color-surface);
+  color: white;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 0.9rem;
+}
+
+.settings-memory-field input:focus,
+.settings-memory-field textarea:focus {
+  outline: none;
+  border-color: var(--color-border-strong);
+  background-color: var(--color-surface-strong);
+}
+
+.settings-memory-field input[readonly] {
+  color: var(--color-text-dim);
+  background-color: var(--color-surface);
+}
+
+.settings-memory-field textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.settings-memory-body-input {
+  min-height: 150px;
+  font-family: var(--font-family-mono);
+  line-height: 1.5;
+}
+
+.settings-memory-editor-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-surface);
+}
+
+.settings-memory-editor-meta span {
+  color: var(--color-text-dim);
+  font-size: 0.75rem;
+}
+
+/* ── Buttons ─────────────────────────────────── */
+
+.settings-memory-delete-button {
+  border: 1px solid var(--color-red);
+  background: none;
+  color: var(--color-red);
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-family: var(--font-family-ui);
+  transition: all 0.2s;
+}
+
+.settings-memory-delete-button:hover {
+  background-color: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.settings-memory-delete-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-memory-save-button {
+  background-color: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+  border: 1px solid var(--color-button-primary-border);
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+  font-family: var(--font-family-ui);
+}
+
+.settings-memory-save-button:hover {
+  background-color: var(--color-button-primary-background-hover);
+}
+
+.settings-memory-save-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+

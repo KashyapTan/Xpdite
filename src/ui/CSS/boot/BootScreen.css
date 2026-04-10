@@ -1,0 +1,185 @@
+/* ── Boot Screen ──────────────────────────────────────────── */
+
+.boot-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at center, var(--color-panel) 0%, var(--color-panel) 100%);
+  border-radius: 8px;
+  opacity: 1;
+  transition: opacity 0.25s ease-out;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.boot-screen--fading {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.boot-screen--fading .bh-ring,
+.boot-screen--fading .bh-halo {
+  animation-play-state: paused;
+}
+
+.boot-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 32px;
+}
+
+/* ── Black Hole ──────────────────────────────────────────── */
+
+.bh-container {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bh-halo {
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--color-surface) 0%, transparent 70%);
+  animation: bh-pulse 3s ease-in-out infinite;
+}
+
+.bh-ring {
+  position: absolute;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border-strong);
+  animation: bh-rotate 8s linear infinite;
+}
+
+.bh-void {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--color-panel);
+  box-shadow: 0 0 20px 4px var(--color-panel);
+}
+
+@keyframes bh-rotate {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes bh-pulse {
+  0%, 100% { opacity: 0.5; transform: scale(1); }
+  50%      { opacity: 1;   transform: scale(1.08); }
+}
+
+/* ── Status Text + Progress ──────────────────────────────── */
+
+.boot-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 240px;
+}
+
+.boot-phase {
+  margin: 0;
+  font-family: var(--font-family-ui);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.boot-progress {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.boot-progress-meta {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-dim);
+}
+
+.boot-progress-value {
+  flex-shrink: 0;
+}
+
+.boot-progress-track {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--color-surface);
+  overflow: hidden;
+}
+
+.boot-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--color-text-dim);
+  transition: width 0.25s ease-out;
+}
+
+/* ── Error State ─────────────────────────────────────────── */
+
+.boot-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.boot-error-detail {
+  margin: 0;
+  font-family: var(--font-family-ui);
+  font-size: 11px;
+  color: var(--color-red);
+  text-align: center;
+  max-width: 280px;
+  word-break: break-word;
+}
+
+.boot-retry-btn {
+  padding: 6px 20px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-family-ui);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+  -webkit-app-region: no-drag;
+}
+
+.boot-retry-btn:hover {
+  background: var(--color-surface-strong);
+  border-color: var(--color-text-dim);
+}
+
+/* ── Reduced Motion ──────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .bh-ring,
+  .bh-halo {
+    animation: none;
+  }
+}
+
+

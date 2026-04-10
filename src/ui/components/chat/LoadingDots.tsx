@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import '../../CSS/LoadingDots.css';
+import '../../CSS/chat/LoadingDots.css';
 
 // DEV: set to true to always show the animation for styling
 const DEV_PREVIEW = false;

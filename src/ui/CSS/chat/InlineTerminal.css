@@ -1,0 +1,610 @@
+/* ============================================
+   Inline Terminal Block Styles — Chat-embedded
+   ============================================ */
+
+.terminal-inline-block {
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 6px 10px 8px 0;
+  background: var(--color-surface-strong);
+  font-family: var(--font-family-ui);
+}
+
+.terminal-inline-block.status-pending_approval {
+  border-color: var(--color-surface-strong);
+}
+
+.terminal-inline-block.status-denied {
+  border-color: var(--color-red-soft);
+  opacity: 0.7;
+}
+
+.terminal-inline-block.status-running {
+  border-color: var(--color-yellow);
+}
+
+.terminal-inline-block.status-completed {
+  border-color: var(--color-surface);
+}
+
+/* ── Header ────────────────────────────────── */
+
+.terminal-inline-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: var(--color-surface);
+  transition: background 0.15s ease;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+.terminal-inline-header:hover {
+  background: var(--color-surface);
+}
+
+.terminal-inline-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1;
+}
+
+.terminal-inline-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ── Status icons ──────────────────────────── */
+
+.terminal-inline-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.terminal-inline-icon.pending {
+  color: var(--color-text);
+}
+
+.terminal-inline-icon.denied {
+  color: var(--color-red);
+}
+
+.terminal-inline-icon.running-spin {
+  color: var(--color-yellow);
+  animation: terminal-spin 1.5s linear infinite;
+}
+
+.terminal-inline-icon.success {
+  color: var(--color-green);
+}
+
+.terminal-inline-icon.error {
+  color: var(--color-red);
+}
+
+@keyframes terminal-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* ── Badge & command ───────────────────────── */
+
+.terminal-inline-badge {
+  background-color: var(--color-surface);
+  color: white;
+  border: 1px solid var(--color-text-dim);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
+}
+
+.terminal-inline-command {
+  font-family: var(--font-family-mono);
+  font-size: 0.85rem;
+  color: var(--color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── Chevron ───────────────────────────────── */
+
+.terminal-inline-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--color-border-strong);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.terminal-inline-chevron.expanded {
+  transform: rotate(180deg);
+}
+
+/* ── Kill button ───────────────────────────── */
+
+.terminal-inline-kill {
+  padding: 2px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--color-red);
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  transition: all 0.15s ease;
+  letter-spacing: 0.3px;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-inline-kill:hover {
+  background: var(--color-red);
+  border-color: var(--color-red);
+}
+
+/* ── Body ──────────────────────────────────── */
+
+.terminal-inline-body {
+  border-top: 1px solid var(--color-surface);
+}
+
+/* ── Approval prompt ───────────────────────── */
+
+.terminal-inline-approval {
+  padding: 10px 14px;
+  background: var(--color-surface-strong);
+  border-bottom: 1px solid var(--color-surface);
+}
+
+.terminal-inline-approval-info {
+  margin-bottom: 10px;
+}
+
+.terminal-inline-approval-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text);
+  margin-bottom: 4px;
+}
+
+.terminal-inline-approval-cwd {
+  font-size: 11px;
+  color: var(--color-text-dim);
+}
+
+.terminal-inline-approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* ── Approval Buttons ───────────────────────── */
+
+.terminal-inline-approval-actions .btn-deny {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-red);
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-inline-approval-actions .btn-deny:hover {
+  background: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.terminal-inline-approval-actions .btn-allow {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-button-primary-border);
+  background: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-inline-approval-actions .btn-allow:hover {
+  background: var(--color-button-primary-background-hover);
+  border-color: var(--color-button-primary-border);
+}
+
+.terminal-inline-approval-actions .btn-allow-remember {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-button-neutral-border);
+  background: var(--color-button-neutral-background);
+  color: var(--color-button-neutral-text);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.terminal-inline-approval-actions .btn-allow-remember:hover {
+  background: var(--color-button-neutral-background-hover);
+  border-color: var(--color-border-strong);
+}
+
+/* ── Denied message ────────────────────────── */
+
+.terminal-inline-denied {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--color-red);
+  background: var(--color-red-soft);
+}
+
+.terminal-inline-warning {
+  margin-top: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--color-yellow);
+  background: var(--color-yellow-soft);
+  border: 1px solid var(--color-yellow-soft);
+  border-radius: 6px;
+}
+
+/* ── xterm.js PTY output area ──────────────── */
+
+.terminal-inline-xterm-wrapper {
+  background: var(--color-panel);
+  /* Explicit height required so FitAddon can compute terminal rows.
+     height: 100% on the child only works when the parent has a definite height.
+     Default to a fixed height while running so the TUI has space to render. */
+  height: 400px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Shrink PTY wrapper once the process completes — avoid a 400px empty box
+   for short-output commands or quickly-exiting processes. */
+.terminal-inline-xterm-wrapper.pty-completed {
+  height: auto;
+  min-height: 80px;
+  max-height: 450px;
+}
+
+.terminal-inline-xterm {
+  width: 100%;
+  height: 100%;
+  min-height: 80px;
+  padding: 4px 0 4px 8px;
+  box-sizing: border-box;
+}
+
+/* xterm.js overrides for inline embedding */
+.terminal-inline-xterm .xterm {
+  padding: 0;
+}
+
+.terminal-inline-xterm .xterm-viewport {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-strong) transparent;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-inline-xterm .xterm-viewport::-webkit-scrollbar-thumb {
+  background-color: var(--color-surface-strong);
+  border-radius: 3px;
+}
+
+/* ── Standard output area (non-PTY) ────────── */
+
+.terminal-inline-output {
+  max-height: 250px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: var(--color-surface-strong);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-surface-strong) transparent;
+}
+
+.terminal-inline-output::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.terminal-inline-output::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.terminal-inline-output::-webkit-scrollbar-thumb {
+  background-color: var(--color-surface-strong);
+  border-radius: 3px;
+}
+
+.terminal-inline-output-pre {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--color-terminal-foreground);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  padding: 8px 12px;
+}
+
+/* ── Footer ────────────────────────────────── */
+
+.terminal-inline-footer {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--color-text-dim);
+  border-top: 1px solid var(--color-surface);
+  background: var(--color-surface);
+}
+
+.terminal-inline-footer.status-completed {
+  color: var(--color-green);
+}
+
+.terminal-inline-footer.status-running {
+  color: var(--color-yellow);
+  animation: terminal-footer-pulse 2s ease-in-out infinite;
+}
+
+.terminal-inline-footer.status-denied {
+  color: var(--color-red);
+}
+
+@keyframes terminal-footer-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+/* ── YouTube transcription approval card ───────────────────── */
+
+.youtube-inline-approval {
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 12px;
+  background: var(--color-surface-strong);
+}
+
+.youtube-inline-approval.status-approved {
+  border-color: var(--color-green);
+  background: var(--color-green-soft);
+}
+
+.youtube-inline-approval.status-denied {
+  border-color: var(--color-red);
+  background: var(--color-red-soft);
+}
+
+.youtube-inline-approval-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.youtube-inline-approval-badge {
+  background-color: var(--color-surface);
+  color: white;
+  border: 1px solid var(--color-text-dim);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  font-family: var(--font-family-mono);
+}
+
+.youtube-inline-approval-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.youtube-inline-approval-total-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+.youtube-inline-approval-total-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text);
+  margin: 4px 0 10px;
+}
+
+.youtube-inline-approval-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.youtube-inline-approval-grid span {
+  color: var(--color-text-muted);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+.youtube-inline-approval-note {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.youtube-inline-approval-reason {
+  margin: 8px 0;
+  font-size: 12px;
+  color: var(--color-text);
+}
+
+.youtube-inline-approval-link {
+  display: block;
+  margin: 6px 0 10px;
+  font-size: 12px;
+  color: var(--color-text);
+  word-break: break-all;
+}
+
+.youtube-inline-approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.youtube-inline-approval-actions .btn-deny {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-red);
+  background: var(--color-red-soft);
+  color: var(--color-red);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.youtube-inline-approval-actions .btn-deny:hover {
+  background: var(--color-red-soft);
+  border-color: var(--color-red);
+}
+
+.youtube-inline-approval-actions .btn-allow {
+  padding: 5px 14px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  border: 1px solid var(--color-green);
+  background: var(--color-green-soft);
+  color: var(--color-green);
+  transition: all 0.15s ease;
+  font-family: var(--font-family-ui);
+}
+
+.youtube-inline-approval-actions .btn-allow:hover {
+  background: var(--color-green-soft);
+  border-color: var(--color-green);
+}
+
+.youtube-inline-approval-status {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-surface);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.youtube-inline-approval-status.approved {
+  color: var(--color-green);
+}
+
+.youtube-inline-approval-status.denied {
+  color: var(--color-red);
+}
+
+/* ── Session mode chip (rendered in input area or chat) ──── */
+
+.terminal-session-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  font-size: 11px;
+  color: var(--color-text);
+  font-weight: 500;
+  font-family: var(--font-family-ui);
+  margin: 4px 0;
+  flex-wrap: wrap;
+}
+
+.terminal-session-chip-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.terminal-session-chip-icon {
+  flex-shrink: 0;
+  color: var(--color-text-muted);
+}
+
+.terminal-session-chip-button {
+  border-radius: 6px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-text);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 4px 10px;
+  font-weight: 600;
+  font-family: var(--font-family-ui);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.terminal-session-chip-button:hover {
+  background: var(--color-surface-strong);
+  border-color: var(--color-border-strong);
+}
+
+.terminal-session-chip-button--allow {
+  border-color: var(--color-button-primary-border);
+  background: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+}
+
+.terminal-session-chip-button--allow:hover {
+  background: var(--color-button-primary-background-hover);
+  border-color: var(--color-button-primary-border);
+}
+
+.terminal-session-chip-button--deny,
+.terminal-session-chip-button--stop {
+  border-color: var(--color-button-danger-border);
+  background: var(--color-button-danger-background);
+  color: var(--color-button-danger-text);
+}
+
+.terminal-session-chip-button--deny:hover,
+.terminal-session-chip-button--stop:hover {
+  background: var(--color-button-danger-background-hover);
+  border-color: var(--color-button-danger-border);
+}
+
+

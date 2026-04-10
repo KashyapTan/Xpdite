@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { api } from "../../services/api";
 import { CheckIcon } from "../icons/AppIcons";
-import "../../CSS/SettingsSystemPrompt.css";
+import "../../CSS/settings/SettingsSystemPrompt.css";
 
 export default function SettingsSystemPrompt() {
     const [template, setTemplate] = useState("");

@@ -1,6 +1,6 @@
 import React from 'react';
 import { useBootContext } from '../../contexts/BootContext';
-import '../../CSS/BootScreen.css';
+import '../../CSS/boot/BootScreen.css';
 
 /**
  * React-side boot screen overlay.

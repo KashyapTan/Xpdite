@@ -1,0 +1,542 @@
+.settings-models-section {
+    width: 100%;
+    height: 100%;
+    overflow-y: auto;
+    padding: 20px;
+    box-sizing: border-box;
+}
+
+.settings-models-header {
+    margin-bottom: 30px;
+}
+
+.settings-models-header h2 {
+    margin: 0 0 10px 0;
+    font-size: 1.5rem;
+    /* font-weight: normal; */
+}
+
+.settings-models-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+}
+
+.settings-models-ollama-section {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.settings-models-ollama-header,
+.settings-models-anthropic-header,
+.settings-models-gemini-header,
+.settings-models-openai-header,
+.settings-models-openrouter-header {
+    width: 100%;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 5px;
+    padding-right: 5px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: var(--color-border-strong);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    white-space: nowrap;
+}
+
+.settings-models-ollama-content,
+.settings-models-anthropic-content,
+.settings-models-gemini-content,
+.settings-models-openai-content,
+.settings-models-openrouter-content {
+    width: calc(100% - 10px);
+    height: fit-content;
+    display: flex;
+    flex-direction: column;
+    margin-left: 5px;
+    border-radius: 8px;
+    border: 1px solid var(--color-surface-strong);
+}
+
+.settings-models-gemini-content {
+    margin-bottom: 20px;
+}
+
+.settings-models-openrouter-content {
+    margin-bottom: 20px;
+}
+
+.settings-models-ollama-model,
+.settings-models-anthropic-model,
+.settings-models-gemini-model,
+.settings-models-openai-model,
+.settings-models-openrouter-model {
+    min-height: 36px;
+    padding: 4px 8px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-models-ollama-custom {
+    padding: 10px;
+    border-bottom: 1px solid var(--color-surface);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-models-ollama-custom-copy {
+    font-size: 0.72rem;
+    line-height: 1.45;
+    color: var(--color-text-dim);
+}
+
+.settings-models-ollama-custom-row {
+    display: flex;
+    gap: 8px;
+}
+
+.settings-models-ollama-input {
+    flex: 1;
+    min-width: 0;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    padding: 0 10px;
+    font: inherit;
+}
+
+.settings-models-ollama-input:focus {
+    outline: none;
+    border-color: var(--color-border-strong);
+    background: var(--color-surface);
+}
+
+.settings-models-ollama-custom-error {
+    font-size: 0.72rem;
+    color: var(--color-red);
+}
+
+.settings-models-ollama-model:last-child,
+.settings-models-anthropic-model:last-child,
+.settings-models-gemini-model:last-child,
+.settings-models-openai-model:last-child,
+.settings-models-openrouter-model:last-child {
+    margin-bottom: 0px;
+}
+
+.settings-models-ollama-model:hover,
+.settings-models-anthropic-model:hover,
+.settings-models-gemini-model:hover,
+.settings-models-openai-model:hover,
+.settings-models-openrouter-model:hover {
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+    background-color: var(--color-surface);
+}
+
+.settings-models-ollama-model:first-child:hover,
+.settings-models-anthropic-model:first-child:hover,
+.settings-models-gemini-model:first-child:hover,
+.settings-models-openai-model:first-child:hover,
+.settings-models-openrouter-model:first-child:hover {
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}
+
+.settings-models-ollama-model:last-child:hover,
+.settings-models-anthropic-model:last-child:hover,
+.settings-models-gemini-model:last-child:hover,
+.settings-models-openai-model:last-child:hover,
+.settings-models-openrouter-model:last-child:hover {
+    border-bottom-left-radius: 8px;
+    border-bottom-right-radius: 8px;
+}
+
+/* .settings-model-gemini-model{
+    margin-bottom: 50px;
+} */
+
+/* ====== Toggle switch ====== */
+.settings-model-toggle {
+    flex-shrink: 0;
+}
+
+.settings-model-toggle-track {
+    width: 32px;
+    height: 18px;
+    border-radius: 9px;
+    background: var(--color-surface-strong);
+    position: relative;
+    transition: background 0.2s ease;
+}
+
+.settings-model-toggle-track.active {
+    background: var(--color-green);
+}
+
+.settings-model-toggle-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-text);
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    transition: left 0.2s ease;
+}
+
+.settings-model-toggle-track.active .settings-model-toggle-thumb {
+    left: 16px;
+}
+
+/* ====== Model info (name + meta) ====== */
+.settings-model-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    overflow: hidden;
+}
+
+.settings-model-name {
+    font-size: 0.85rem;
+    color: var(--color-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.settings-model-meta {
+    font-size: 0.65rem;
+    color: var(--color-border-strong);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ====== States ====== */
+.settings-models-loading,
+.settings-models-error,
+.settings-models-empty,
+.settings-models-placeholder {
+    font-size: 0.8rem;
+    color: var(--color-text-dim);
+    padding: 8px;
+    justify-content: center;
+}
+
+.settings-models-error {
+    color: var(--color-red);
+}
+
+.settings-models-refresh-btn {
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    height: 22px;
+    width: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 6px;
+    font-size: 0;
+    cursor: pointer;
+}
+
+.settings-models-refresh-btn .spin {
+    animation: spin 1s linear infinite;
+}
+
+.settings-models-add-btn {
+    width: fit-content !important;
+    padding: 0 10px !important;
+    font-size: 0.75rem !important;
+    font-family: inherit !important;
+    height: 32px;
+}
+
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(-360deg); }
+}
+
+.settings-models-refresh-btn:hover:not(:disabled) {
+    background: var(--color-surface-strong);
+}
+
+.settings-models-refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.settings-models-provider-group {
+    border-top: 1px solid var(--color-surface);
+    margin-top: 2px;
+    padding-top: 4px;
+}
+
+.settings-models-provider-group-header {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--color-border-strong);
+    padding: 4px 8px 2px;
+}
+
+/* ====== Active sidebar tab ====== */
+.settings-tab-active {
+    background-color: var(--color-surface-strong) !important;
+}
+
+/* ====== Model Pull Modal ====== */
+.settings-models-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: var(--color-panel);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.settings-models-modal {
+    background-color: var(--color-panel);
+    border: 1px solid var(--color-surface);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 420px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+}
+
+.settings-models-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px;
+    border-bottom: 1px solid var(--color-surface);
+}
+
+.settings-models-modal-header h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--color-text);
+    font-weight: 600;
+}
+
+.settings-models-modal-close {
+    background-color: var(--color-surface);
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    transition: background-color 0.2s;
+}
+
+.settings-models-modal-close:hover {
+    background-color: var(--color-surface-strong);
+    color: var(--color-text);
+}
+
+.settings-models-modal-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.settings-models-modal-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.settings-models-modal-loading {
+    padding: 20px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.settings-models-modal-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.8rem;
+}
+
+.settings-models-modal-label {
+    color: var(--color-text-dim);
+}
+
+.settings-models-modal-value {
+    color: var(--color-text);
+    font-weight: 500;
+}
+
+.settings-models-modal-detail {
+    color: var(--color-text-dim);
+    font-size: 0.75rem;
+    font-weight: 400;
+}
+
+.settings-models-modal-capability {
+    color: var(--color-text);
+}
+
+.settings-models-modal-warning {
+    font-size: 0.75rem;
+    color: var(--color-text-dim);
+    line-height: 1.4;
+    padding: 10px;
+    background: var(--color-surface);
+    border-radius: 6px;
+    border: 1px solid var(--color-surface);
+}
+
+.settings-models-modal-confirm {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--color-text);
+}
+
+.settings-models-modal-confirm input {
+    margin: 0;
+}
+
+.settings-models-modal-note {
+    font-size: 0.73rem;
+    color: var(--color-text-dim);
+    line-height: 1.35;
+}
+
+.settings-models-modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 16px;
+    border-top: 1px solid var(--color-surface);
+}
+
+.settings-models-modal-btn {
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.settings-models-modal-btn:hover:not(:disabled) {
+    background: var(--color-surface-strong);
+    border-color: var(--color-border-strong);
+}
+
+.settings-models-modal-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.settings-models-modal-btn-primary {
+    background: var(--color-green);
+    border-color: var(--color-green);
+    color: var(--color-text);
+}
+
+.settings-models-modal-btn-primary:hover:not(:disabled) {
+    background: var(--color-green);
+    border-color: var(--color-green);
+}
+
+/* ====== Pull Progress ====== */
+.settings-models-pull-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.settings-models-pull-status {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    text-align: center;
+}
+
+.settings-models-pull-bar-container {
+    width: 100%;
+    height: 6px;
+    background: var(--color-surface);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.settings-models-pull-bar {
+    height: 100%;
+    background: var(--color-green);
+    border-radius: 3px;
+    transition: width 0.3s ease-out;
+}
+
+.settings-models-pull-percent {
+    font-size: 0.75rem;
+    color: var(--color-text-dim);
+    text-align: center;
+}
+
+.settings-models-pull-complete {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+}
+
+.settings-models-pull-complete-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--color-green-soft);
+    color: var(--color-green);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+}
+
+.settings-models-pull-complete-text {
+    font-size: 0.85rem;
+    color: var(--color-text);
+    font-weight: 500;
+}
+
+.settings-models-modal-error {
+    padding: 10px;
+    background: var(--color-red-soft);
+    border: 1px solid var(--color-red);
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: var(--color-red);
+}
+
