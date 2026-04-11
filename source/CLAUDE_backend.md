@@ -119,18 +119,18 @@ source/
 - **`connection.py`** — `wrap_with_tab_ctx(tab_id, coro)` wraps a coroutine so that `_current_tab_id` is set for its duration. Used whenever scheduling a broadcast from a background thread (e.g., precision-mode screenshot capture) back to the event loop via `call_soon_threadsafe` or `run_coroutine_threadsafe`. Without this wrapper, new tasks lose the contextvar and broadcast messages arrive without `tab_id`, routing them to the wrong tab on the frontend. Also provides `broadcast_to_tab(tab_id, message_type, content)` — an explicit tab-scoped broadcast helper for scenarios where you want to target a specific tab directly rather than rely on the contextvar (e.g., Ollama queue status updates from the global queue). See the "Why `wrap_with_tab_ctx`" architecture decision below.
 - **`request_context.py`** replaces the old `stop_streaming` boolean. Every subsystem that loops (tool rounds, PTY streaming, approval wait) must check `ctx.cancelled` to unblock cleanly when the user clicks Stop. Provides `ContextVar`-based `set_current_request()` / `is_current_request_cancelled()` for per-task cancellation, and `set_current_model()` / `get_current_model()` so the LLM layer picks up the correct model per-request without reading the global `app_state.selected_model`. `RequestContext` also carries a `forced_skills: list` field (set from `QueuedQuery.forced_skills` by the slash command parser) and supports `on_cancel(callback)` to register cleanup callbacks that fire on cancellation; `mark_done()` clears them on normal completion.
 - **`query_queue.py`** — `ConversationQueue`: per-tab `asyncio.Queue(maxsize=5)` with a lazy consumer task. Supports `stop_current()`, `cancel_item()`, `drain()`, and `get_snapshot()`. Errors during processing are broadcast and the queue continues; `CancelledError` exits the consumer gracefully. On `QueueFullError`, the handler broadcasts `queue_full` (not `error`). Each enqueued item broadcasts `query_queued` to the frontend. `QueuedQuery` carries `item_id`, `forced_skills`, `llm_query`, `action` (`"submit"` / `"retry"` / `"edit"`), and `target_message_id` for retry/edit flows. `resolved_conversation_id` on the queue allows subsequent items to inherit the conversation started by the first.
-- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces `MAX_TABS=10`, creates/closes/lists tabs. `lifecycle.py` calls `tab_manager.close_all()` during graceful shutdown.
+- **`tab_manager.py`** — `TabState` dataclass holds per-tab mutable state (chat_history, screenshot_list, conversation_id, current_request, stop_streaming). Includes `add_screenshot()` and `remove_screenshot()` methods that use the global `screenshot_counter` for unique IDs across tabs. `TabSession` groups a `TabState` + `ConversationQueue`. `TabManager` enforces backend safety cap `MAX_TABS=50` (frontend UI currently limits creation to 10 tabs in `TabContext`). `lifecycle.py` calls `tab_manager.close_all()` during graceful shutdown.
 - **`ollama_global_queue.py`** — singleton `OllamaGlobalQueue` serializes local Ollama requests across tabs (GPU can only serve one at a time). Cloud provider requests and Ollama cloud models (`-cloud`) bypass this and run concurrently. `remove_tab()` unblocks waiting callers with `CancelledError`. Uses a `result_holder[0]` pattern via an inner `_wrapper` coroutine to propagate return values back to `run()` callers. `set_broadcast_fn(fn)` injects the broadcast function after startup to avoid circular imports.
 - **`services/chat/tab_manager_instance.py`** — lazy singleton initialized from `bootstrap/app_factory.py` startup hooks. The `_process_fn` bridges `QueuedQuery → ConversationService.submit_query`, setting the tab_id contextvar and routing only local Ollama models through the global queue. `init_tab_manager()` also wires the Ollama queue's broadcast function and creates the default tab.
 - **`bootstrap/app_factory.py` startup hooks** — besides tab/session restoration, startup now also syncs `USER_DATA_DIR/mobile_channels_config.json` from DB by calling `_write_mobile_channels_config_file()` via `run_in_thread(...)` so Channel Bridge always gets a fresh config snapshot after backend boot.
 - **Startup performance guardrails** — keep package `__init__.py` exports lazy (`api/`, `core/`, `llm/`, `mcp_integration/`, `services/`) so importing a narrow module does not eagerly pull in the full LLM/tool stack. `api/handlers.py` should only import heavyweight services lazily inside handlers/helpers, `core/state.py` must not import `infrastructure/screenshot_runtime.py` just for typing, and `mcp_integration/core/retriever.py` should only import `sentence_transformers` if the Ollama embedding backend is unavailable. Regressing these patterns adds multiple seconds to dev startup before the first boot marker appears.
-- **`api/mobile_internal.py`** — Internal HTTP API called by `channel-bridge` service. Exposes `/internal/mobile/*` endpoints to handle message routing, command execution (`/new`, `/stop`), device pairing, and connection sync for mobile apps like WhatsApp.
+- **`api/mobile_internal.py`** — Internal HTTP API called by `channel-bridge` service. Exposes `/internal/mobile/*` endpoints to handle message routing, command execution (`/new`, `/stop`, `/status`, `/model`, `/default`, `/help`, `/pair`), device pairing/session lifecycle, and connection sync for mobile apps like WhatsApp.
 - **`services/integrations/mobile_channel.py`** — `MobileChannelService`: Coordinates communication between the Channel Bridge and Xpdite. Manages session states (mapping mobile user IDs to Xpdite tab IDs), pushes mobile messages into the Conversation Queue, and acts as the webhook callback dispatcher. Also broadcasts AI typing and message edits (streams via chunk accumulation) back to the bridge.
 - **`services/integrations/external_connectors.py`** — `ExternalConnectorService`: Manages external out-of-process MCP servers (like Figma or Slack) running via `npx` or `uvx` directly. Persists enabled states in DB so they auto-reconnect on boot.
 - **`llm/core/types.py`** — `ChatResult`: Unified return signature for all Provider streams (text output, token stats, tools, interleaved blocks).
 - **`thread_pool.py → run_in_thread`** is mandatory for anything that calls a synchronous SDK (e.g., `google-auth`, `Pillow`, screenshots). Calling them directly will block uvicorn's single event loop. Note: Ollama now uses `AsyncClient` natively and no longer needs `run_in_thread`.
 - **`terminal_executor.py`** handles terminal tools *inline* — it never calls the MCP subprocess for terminal actions. The `terminal` MCP server's `server.py` exists only as a schema/description source. Supported inline tools: `run_command`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process`, `get_environment`. `run_command` accepts optional `background=True` and `yield_ms` parameters. A per-command `_notice_checker` asyncio task fires a notice broadcast if the command runs longer than 10 seconds.
-- **`services/skills_runtime/sub_agent.py`** — Sub-agent execution service. `execute_sub_agent()` is the entry point called by the `spawn_agent` tool interceptor (in both `cloud_provider.py` and `handlers.py`). Accepts `instruction`, `model_tier` (fast/smart/self), and `agent_name`. Resolves tier to a model via `_resolve_tier_model()` (checks DB setting `sub_agent_tier_<tier>`, falls back to current model). Tools are retrieved via `_get_sub_agent_tools()` which uses semantic retrieval minus `_EXCLUDED_TOOLS` (terminal tools + spawn_agent). Cloud calls use LiteLLM non-streaming with a tool loop; Ollama calls use AsyncClient non-streaming. A global `_concurrency_semaphore` (cap 5) prevents overwhelming APIs/GPU. `execute_sub_agents_parallel()` checks if *any* call resolves to local Ollama — if so, all run sequentially; otherwise parallel with `asyncio.gather(return_exceptions=True)`. Ollama cloud tags `:cloud` and `-cloud` are treated as remote (parallel-safe). Broadcasts `tool_call` status messages with `server: "sub_agent"` for UI progress. Settings: `sub_agent_tier_fast` and `sub_agent_tier_smart` in the `settings` DB table, exposed via `GET/PUT /api/settings/sub-agents`.
+- **`services/skills_runtime/sub_agent.py`** — Sub-agent execution service. `execute_sub_agent()` is the entry point called by the `spawn_agent` tool interceptor (in both `cloud_provider.py` and `handlers.py`). Accepts `instruction`, `model_tier` (fast/smart/self), and `agent_name`. Resolves tier to a model via `_resolve_tier_model()` (checks DB setting `sub_agent_tier_<tier>`, falls back to current model). Tools are retrieved via `_get_sub_agent_tools()` which uses semantic retrieval minus `_EXCLUDED_TOOLS` (terminal tools + spawn_agent). Cloud and Ollama paths both stream progress/transcript updates through `sub_agent_stream`, with tool calls handled in multi-round loops. A global `_concurrency_semaphore` (cap 10) prevents overwhelming APIs/GPU. `execute_sub_agents_parallel()` checks if *any* call resolves to local Ollama — if so, all run sequentially; otherwise parallel with `asyncio.gather(return_exceptions=True)`. Ollama cloud tags `:cloud` and `-cloud` are treated as remote (parallel-safe). Broadcasts `tool_call` status messages with `server: "sub_agent"` for UI progress. Settings: `sub_agent_tier_fast` and `sub_agent_tier_smart` in the `settings` DB table, exposed via `GET/PUT /api/settings/sub-agents`.
 - **`infrastructure/screenshot_runtime.py`** calls `SetProcessDpiAwarenessContext(-4)` (per-monitor V2) at import time via ctypes. Without this, Tkinter reports logical coordinates while the capture API uses physical pixels, causing misaligned region selection on scaled or multi-monitor Windows setups. Also exposes `copy_image_to_clipboard(image, dpi_scale=None)` (copies PIL Image to Windows clipboard via `CF_DIB` with retry loop for busy clipboard) and `copy_file_to_clipboard(filepath)` (uses PowerShell `Set-Clipboard -Path`). `ScreenshotService` has a `start_callback` field for when capture starts (used for window hiding) and a 1.5s debounce via `_last_trigger_time`.
 - **`services/shell/approval_history.py`** persists "Allow & Remember" approvals to `user_data/exec-approvals.json`. `_normalize_command()` extracts program + first 2 args for fuzzy matching; stored as SHA256 hash so the file contains no sensitive command text. Uses an in-memory `_approvals_cache` dict protected by `threading.Lock` to avoid repeated file reads.
 - **`services/media/transcription.py`** — `TranscriptionService`: records 16kHz mono audio via `pyaudio` into a queue, transcribes on `stop_recording` using `faster-whisper` (`base.en`), broadcasts `transcription_result` via WebSocket. `_recording_error: str | None` attribute surfaces audio errors back to the caller.
@@ -153,6 +153,8 @@ source/
 - **`services/media/video_watcher.py`** — `VideoWatcherService` handles `watch_youtube_video`: normalize URL, extract metadata, prefer native YouTube captions, and fallback to Whisper transcription when captions are unavailable. Fallback path emits a `youtube_transcription_approval` request, waits up to 180s for user approval (`resolve_transcription_approval`), then runs download/transcription in thread pool. Output is bounded to `MAX_TOOL_RESULT_LENGTH` with truncation metadata.
 - **`mcp_integration/executors/skills_executor.py`** — inline executor for `list_skills` and `use_skill` tools. `list_skills` returns active skill catalog and usage guidance; `use_skill` resolves one skill and returns full prompt content without spawning MCP subprocesses.
 - **`mcp_integration/executors/video_watcher_executor.py`** — inline executor for `video_watcher/watch_youtube_video`, routing args to `VideoWatcherService` and returning user-facing errors (`VideoWatcherError`) as tool results.
+- **`mcp_integration/executors/memory_executor.py`** — inline executor for memory tools (`memlist`, `memread`, `memcommit`) backed by `services/memory_store/memory.py`.
+- **`mcp_integration/executors/scheduler_executor.py`** — inline executor for scheduler tools (`create_job`, `list_jobs`, `delete_job`, `pause_job`, `resume_job`, `run_job_now`) backed by `services/scheduling/scheduler.py`.
 - **`mcp_integration/core/tool_args.py`** — `normalize_tool_args(raw_args)` centralizes tool-argument parsing for dict/string/invalid payloads so cloud and Ollama tool loops share the same validation path and error text.
 
 ---
@@ -199,6 +201,7 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `remove_screenshot` | `id` | `_handle_remove_screenshot` |
 | `set_capture_mode` | `mode` (`fullscreen`/`precision`/`none`) | `_handle_set_capture_mode` |
 | `stop_streaming` | `tab_id` | `_handle_stop_streaming` |
+| `cancel_queued_item` | `tab_id`, `item_id` | `_handle_cancel_queued_item` |
 | `get_conversations` | `limit`, `offset` | `_handle_get_conversations` |
 | `load_conversation` | `conversation_id` | `_handle_load_conversation` |
 | `delete_conversation` | `conversation_id` | `_handle_delete_conversation` |
@@ -206,6 +209,21 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `resume_conversation` | `conversation_id`, `tab_id` | `_handle_resume_conversation` |
 | `start_recording` | — | `_handle_start_recording` |
 | `stop_recording` | — | `_handle_stop_recording` |
+| `meeting_start_recording` | — | `_handle_meeting_start_recording` |
+| `meeting_stop_recording` | — | `_handle_meeting_stop_recording` |
+| `meeting_audio_chunk` | `audio` (base64 PCM) | `_handle_meeting_audio_chunk` |
+| `get_meeting_recordings` | `limit`, `offset` | `_handle_get_meeting_recordings` |
+| `load_meeting_recording` | `recording_id` | `_handle_load_meeting_recording` |
+| `delete_meeting_recording` | `recording_id` | `_handle_delete_meeting_recording` |
+| `search_meeting_recordings` | `query` | `_handle_search_meeting_recordings` |
+| `meeting_get_status` | — | `_handle_meeting_get_status` |
+| `meeting_get_compute_info` | — | `_handle_meeting_get_compute_info` |
+| `meeting_get_settings` | — | `_handle_meeting_get_settings` |
+| `meeting_update_settings` | `settings` | `_handle_meeting_update_settings` |
+| `meeting_generate_analysis` | `recording_id`, optional `model` | `_handle_meeting_generate_analysis` |
+| `meeting_execute_action` | `recording_id`, `action`, `action_index` | `_handle_meeting_execute_action` |
+| `ollama_pull_model` | `model_name` | `_handle_ollama_pull_model` |
+| `ollama_cancel_pull` | optional `model_name` | `_handle_ollama_cancel_pull` |
 | `terminal_approval_response` | `request_id`, `approved`, `remember` | `_handle_terminal_approval_response` |
 | `terminal_session_response` | `approved` | `_handle_terminal_session_response` |
 | `terminal_stop_session` | — | `_handle_terminal_stop_session` |
@@ -215,19 +233,6 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `tab_created` | `tab_id` | `_handle_tab_created` |
 | `tab_closed` | `tab_id` | `_handle_tab_closed` |
 | `tab_activated` | `tab_id` | `_handle_tab_activated` |
-| `cancel_queued_item` | `tab_id`, `item_id` | `_handle_cancel_queued_item` |
-| `meeting_start_recording` | `title` | `_handle_meeting_start_recording` |
-| `meeting_stop_recording` | `recording_id` | `_handle_meeting_stop_recording` |
-| `meeting_cancel_recording` | `recording_id` | `_handle_meeting_cancel_recording` |
-| `meeting_get_recordings` | `limit`, `offset` | `_handle_meeting_get_recordings` |
-| `meeting_get_recording` | `recording_id` | `_handle_meeting_get_recording` |
-| `meeting_delete_recording` | `recording_id` | `_handle_meeting_delete_recording` |
-| `meeting_search_recordings` | `query` | `_handle_meeting_search_recordings` |
-| `meeting_analyze_recording` | `recording_id` | `_handle_meeting_analyze_recording` |
-| `meeting_regenerate_analysis` | `recording_id`, `instructions` | `_handle_meeting_regenerate_analysis` |
-| `meeting_get_analysis` | `recording_id` | `_handle_meeting_get_analysis` |
-| `meeting_audio_chunk` | `recording_id`, `data` (base64 PCM) | `_handle_meeting_audio_chunk` |
-| `meeting_execute_action` | `recording_id`, `action_type` (`create_event`/`create_draft`), `action_data` | `_handle_meeting_execute_action` |
 | `youtube_transcription_approval_response` | `request_id`, `approved` | `_handle_youtube_transcription_approval_response` |
 
 ### Server → Client
@@ -236,15 +241,17 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 |---|---|
 | `ready` | On new WS connect |
 | `screenshot_start` / `screenshot_added` / `screenshot_removed` / `screenshots_cleared` | Screenshot lifecycle |
+| `screenshot_ready` | Legacy screenshot message for compatibility |
 | `thinking_chunk` / `thinking_complete` | Streaming reasoning tokens |
 | `response_chunk` / `response_complete` | Streaming response tokens |
+| `artifact_start` / `artifact_chunk` / `artifact_complete` / `artifact_deleted` | Artifact lifecycle during/after generation |
 | `tool_call` | Each MCP tool invocation (includes result when done) |
 | `tool_calls_summary` | After tool loop ends |
+| `sub_agent_stream` | Structured streaming transcript for sub-agent execution |
 | `query` | Echo of submitted query |
 | `token_usage` | After response completes |
 | `context_cleared` | After `clear_context` completes |
 | `conversation_saved` / `conversations_list` / `conversation_loaded` / `conversation_deleted` / `conversation_resumed` | Conversation management (`conversation_saved` now includes the persisted turn payload used to reconcile retry/edit results on the frontend) |
-| `screenshot_ready` | Legacy — kept for backwards compatibility |
 | `transcription_result` | After `stop_recording` completes |
 | `terminal_approval_request` | Command needs user approval (includes `request_id`, `command`, `cwd`) |
 | `terminal_session_request` | LLM requests session mode (includes `reason`) |
@@ -257,23 +264,20 @@ Skills are **no longer in the database** — they are filesystem-backed folders 
 | `queue_full` | Broadcast when `QueueFullError` is raised (queue already at max 5 items) |
 | `ollama_queue_status` | Ollama global queue position broadcast |
 | `error` | Any unhandled exception |
-| `meeting_recordings_list` | Response to `meeting_get_recordings` |
-| `meeting_recording_detail` | Response to `meeting_get_recording` or `meeting_stop_recording` completion |
-| `meeting_recording_started` | Recording successfully created and started |
-| `meeting_recording_stopped` | Recording stopped; includes `recording_id` and `duration_seconds` |
-| `meeting_recording_cancelled` | Recording cancelled before saving |
-| `meeting_recording_deleted` | Recording deleted |
-| `meeting_recordings_search` | FTS/LIKE search results |
-| `meeting_tier1_transcript_chunk` | Live transcript text during recording |
-| `meeting_processing_status` | Tier 2 pipeline step progress (`transcribing` → `aligning` → `diarizing` → `merging` → `generating_title` → `saving`) |
-| `meeting_processing_complete` | Tier 2 pipeline finished; includes final recording detail |
-| `meeting_processing_error` | Tier 2 pipeline failed |
-| `meeting_analysis_result` | AI summary + actions after `meeting_analyze_recording` |
-| `meeting_action_executed` | Calendar event or email draft created via `meeting_execute_action` |
-| `meeting_error` | Meeting-specific error (not generic `error`) |
+| `meeting_recording_started` / `meeting_recording_stopped` | Meeting recorder lifecycle |
+| `meeting_transcript_chunk` | Live tier-1 transcript chunk during recording |
+| `meeting_recordings_list` | Meeting list results |
+| `meeting_recording_loaded` / `meeting_recording_deleted` | Meeting detail load/delete results |
+| `meeting_recording_status` / `meeting_recording_error` | Meeting runtime status/errors |
+| `meeting_compute_info` / `meeting_settings` | Meeting recorder settings + compute capability payloads |
+| `meeting_processing_progress` | Tier-2 pipeline progress (`transcribing` → `aligning` → `diarizing` → `merging` → `generating_title` → `saving`) |
+| `meeting_analysis_started` / `meeting_analysis_complete` / `meeting_analysis_error` | AI meeting analysis lifecycle |
+| `meeting_action_result` | Result of action execution (calendar/email draft) |
 | `youtube_transcription_approval` | User confirmation request for fallback YouTube audio transcription (includes metadata and estimates) |
+| `ollama_pull_progress` / `ollama_pull_complete` / `ollama_pull_error` / `ollama_pull_cancelled` | Ollama model pull lifecycle |
+| `notification_added` / `notification_dismissed` / `notifications_cleared` | Scheduled-job notification updates |
 
-**Note:** All server→client messages include a `tab_id` field stamped automatically by `broadcast_message()` via the `_current_tab_id` contextvar.
+**Note:** Messages sent via `broadcast_message()` / `broadcast_to_tab()` include `tab_id` when a tab context exists. Direct `websocket.send_text(...)` replies from handlers may omit `tab_id`.
 
 ---
 
@@ -294,7 +298,7 @@ All cloud providers (Anthropic, OpenAI, Gemini) use a single unified implementat
 ### `McpToolManager` — Key Methods
 - `register_inline_tools(server_name, tools)` — registers tool schemas for inline (non-subprocess) tools like terminal tools. No subprocess is spawned.
 - `get_tools()` — returns OpenAI-format tool list, strips `additionalProperties`. `get_openai_tools` is a backward-compat alias.
-- `call_tool(...)` — has a 3-minute `asyncio.wait_for` timeout ceiling.
+- `call_tool(...)` — enforces per-server read timeouts with `asyncio.wait_for`: default 90s, `websearch` 25s, plus a 5s outer buffer.
 - `connect_google_servers()` / `disconnect_google_servers()` — start/stop Gmail and Calendar MCP servers on demand.
 - Startup batching rule: when connecting multiple MCP servers in parallel during app boot, pass `skip_embed=True` to `connect_server(...)` and perform one final `refresh_tool_embeddings()` after the batch. Re-embedding after every individual server connection causes repeated retrieval-index rebuilds and noticeably slows startup.
 
@@ -311,6 +315,8 @@ Terminal tools are handled inline by `source/mcp_integration/executors/terminal_
 ### Additional Inline Tool Executors
 - **Video watcher (`video_watcher`)**: `watch_youtube_video` is registered as inline and intercepted before MCP subprocess routing. Execution is delegated to `source/mcp_integration/executors/video_watcher_executor.py` / `source/services/media/video_watcher.py`, including the user-approval fallback path (`youtube_transcription_approval` → `youtube_transcription_approval_response`) when no captions are available.
 - **Skills (`skills`)**: `list_skills` and `use_skill` are inline tools executed by `source/mcp_integration/executors/skills_executor.py`. Unlike terminal/sub_agent/video_watcher registrations, these are indexed for semantic retrieval (`skip_embed=False`) so models can discover skill-loading tools contextually.
+- **Memory (`memory`)**: `memlist`, `memread`, `memcommit` are inline tools executed by `source/mcp_integration/executors/memory_executor.py` (retrieval-enabled).
+- **Scheduler (`scheduler`)**: `create_job`, `list_jobs`, `delete_job`, `pause_job`, `resume_job`, `run_job_now` are inline tools executed by `source/mcp_integration/executors/scheduler_executor.py`.
 
 ### Adding a New MCP Server (end-to-end)
 
@@ -336,39 +342,83 @@ All endpoints are in `source/api/http.py` unless noted.
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/api/models` | Ollama models list |
-| `GET` | `/api/cloud-models` | All enabled cloud models per provider |
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/models/ollama` | Installed Ollama models |
+| `GET` | `/api/models/ollama/info/{model_name:path}` | Ollama registry metadata for a model |
+| `GET` | `/api/models/anthropic` | Anthropic models (requires key) |
+| `GET` | `/api/models/openai` | OpenAI models (requires key) |
+| `GET` | `/api/models/gemini` | Gemini models (requires key) |
+| `GET` | `/api/models/openrouter` | Tool-capable OpenRouter models (requires key) |
 | `GET` | `/api/keys` | Provider API key status (present/absent) |
-| `POST` | `/api/keys/{provider}` | Save encrypted API key; triggers model list refresh |
+| `PUT` | `/api/keys/{provider}` | Save encrypted API key; triggers model-list refresh |
 | `DELETE` | `/api/keys/{provider}` | Delete key; also removes that provider's models from `enabled_models` |
 | `GET` | `/api/models/enabled` | User's enabled model list |
 | `PUT` | `/api/models/enabled` | Save enabled model list |
-| `POST` | `/api/keys/{provider}/validate` | Validate API key with a test request. Anthropic tries `["claude-sonnet-4-20250514", "claude-3-haiku-20240307"]` with fallback |
 | `GET` | `/api/mcp/servers` | Sorted list of connected MCP servers + their tool names |
+| `GET` | `/api/settings/tools` | Tool retriever settings (`always_on`, `top_k`) |
+| `PUT` | `/api/settings/tools` | Update tool retriever settings |
+| `GET` | `/api/settings/sub-agents` | Sub-agent tier model settings |
+| `PUT` | `/api/settings/sub-agents` | Update sub-agent tier model settings |
+| `GET` | `/api/settings/memory` | Memory feature settings |
+| `PUT` | `/api/settings/memory` | Update memory feature settings |
+| `GET` | `/api/memory` | List memory files |
+| `GET` | `/api/memory/file` | Read one memory file |
+| `PUT` | `/api/memory/file` | Upsert one memory file |
+| `DELETE` | `/api/memory/file` | Delete one memory file |
+| `DELETE` | `/api/memory` | Clear all memory files |
 | `GET` | `/api/skills` | All skills (with overrides) |
 | `POST` | `/api/skills` | Create a user skill |
-| `GET` | `/api/skills/{name}` | Get a single skill |
-| `PATCH` | `/api/skills/{name}` | Update skill fields (uses `_UNSET` sentinel for `slash_command` to distinguish "not sent" from null) |
+| `PUT` | `/api/skills/{name}` | Update skill fields (uses `_UNSET` sentinel for `slash_command`) |
 | `DELETE` | `/api/skills/{name}` | Delete a user skill |
-| `PUT` | `/api/skills/{name}/toggle` | Enable/disable a skill |
+| `PATCH` | `/api/skills/{name}/toggle` | Enable/disable a skill |
 | `GET` | `/api/skills/{name}/content` | Return full `SKILL.md` text |
 | `POST` | `/api/skills/{name}/references` | Add a `.md` reference file to a skill; enforces `.md` extension (`ReferenceFileCreate`: `filename`, `content`) |
 | `GET` | `/api/google/status` | Google OAuth connection status |
 | `POST` | `/api/google/connect` | Start OAuth flow (opens browser) |
 | `POST` | `/api/google/disconnect` | Revoke + delete token |
+| `GET` | `/api/external-connectors` | External MCP connector status |
+| `POST` | `/api/external-connectors/{name}/connect` | Connect external MCP connector |
+| `POST` | `/api/external-connectors/{name}/disconnect` | Disconnect external MCP connector |
+| `GET` | `/api/mobile-channels/config` | Mobile channels config snapshot |
+| `PUT` | `/api/mobile-channels/config/{platform_id}` | Update one mobile platform config |
+| `GET` | `/api/scheduled-jobs` | List scheduled jobs |
+| `GET` | `/api/scheduled-jobs/{job_id}` | Get scheduled job details |
+| `POST` | `/api/scheduled-jobs` | Create scheduled job |
+| `PUT` | `/api/scheduled-jobs/{job_id}` | Update scheduled job |
+| `DELETE` | `/api/scheduled-jobs/{job_id}` | Delete scheduled job |
+| `POST` | `/api/scheduled-jobs/{job_id}/pause` | Pause scheduled job |
+| `POST` | `/api/scheduled-jobs/{job_id}/resume` | Resume scheduled job |
+| `POST` | `/api/scheduled-jobs/{job_id}/run-now` | Run scheduled job immediately |
+| `GET` | `/api/scheduled-jobs/conversations` | List conversations created by scheduled jobs |
+| `GET` | `/api/scheduled-jobs/{job_id}/conversations` | List one job's conversations |
+| `GET` | `/api/notifications` | List notifications |
+| `GET` | `/api/notifications/count` | Count notifications |
+| `DELETE` | `/api/notifications/{notification_id}` | Dismiss one notification |
+| `DELETE` | `/api/notifications` | Dismiss all notifications |
 | `GET` | `/api/settings/system-prompt` | Returns template text + `is_custom: bool` (returns `_BASE_TEMPLATE` if no custom set) |
 | `PUT` | `/api/settings/system-prompt` | Save custom template; send null/empty to reset to base |
 | `GET` | `/api/terminal/settings` | Terminal settings | `source/api/terminal.py` |
 | `PUT` | `/api/terminal/settings/ask-level` | Set approval level | `source/api/terminal.py` |
 | `DELETE` | `/api/terminal/approvals` | Clear remembered approvals | `source/api/terminal.py` |
 | `POST` | `/internal/mobile/message` | Mobile message entrypoint | `source/api/mobile_internal.py` |
-| `POST` | `/internal/mobile/command` | Execute `/new`, `/stop` mobile commands | `source/api/mobile_internal.py` |
+| `POST` | `/internal/mobile/command` | Execute mobile commands (`/new`, `/stop`, `/status`, `/model`, `/default`, `/help`, `/pair`) | `source/api/mobile_internal.py` |
 | `POST` | `/internal/mobile/pair/verify` | Verify pairing code | `source/api/mobile_internal.py` |
+| `POST` | `/internal/mobile/pair/check` | Check pairing status | `source/api/mobile_internal.py` |
 | `POST` | `/internal/mobile/pair/generate` | Generate pairing code | `source/api/mobile_internal.py` |
 | `GET` | `/internal/mobile/devices` | Get paired devices | `source/api/mobile_internal.py` |
 | `DELETE` | `/internal/mobile/devices/{device_id}` | Revoke device | `source/api/mobile_internal.py` |
 | `POST` | `/internal/mobile/whatsapp/connection` | Update WhatsApp conn status | `source/api/mobile_internal.py` |
 | `GET` | `/internal/mobile/sessions` | List active sessions | `source/api/mobile_internal.py` |
+| `GET` | `/internal/mobile/session/{platform}/{sender_id}` | Get one mobile session | `source/api/mobile_internal.py` |
+| `DELETE` | `/internal/mobile/session/{platform}/{sender_id}` | End one mobile session | `source/api/mobile_internal.py` |
+| `GET` | `/internal/mobile/health` | Internal mobile bridge health check | `source/api/mobile_internal.py` |
+| `POST` | `/internal/mobile/cleanup` | Cleanup expired pairing codes | `source/api/mobile_internal.py` |
+| `GET` | `/api/artifacts` | List artifacts | `source/api/http.py` |
+| `GET` | `/api/artifacts/conversation/{conversation_id}` | List artifacts for a conversation | `source/api/http.py` |
+| `GET` | `/api/artifacts/{artifact_id}` | Get one artifact | `source/api/http.py` |
+| `POST` | `/api/artifacts` | Create artifact | `source/api/http.py` |
+| `PUT` | `/api/artifacts/{artifact_id}` | Update artifact | `source/api/http.py` |
+| `DELETE` | `/api/artifacts/{artifact_id}` | Delete artifact | `source/api/http.py` |
 | `GET` | `/api/files/browse` | Browse/search files for `@` attachments | `source/api/http.py` |
 
 **Model filtering rules:**
@@ -384,6 +434,7 @@ All endpoints are in `source/api/http.py` unless noted.
 | `terminal` | `terminal` | `["terminal"]` | PTY + approval flow |
 | `filesystem` | `filesystem` | `["filesystem", "glob", "grep"]` | Read/write files plus dedicated structured search servers |
 | `websearch` | `websearch` | `["websearch"]` | Web search |
+| `youtube` | `youtube` | `["video_watcher"]` | YouTube analysis with caption-first + approval-gated Whisper fallback |
 | `gmail` | `gmail` | `["gmail"]` | Gmail MCP server |
 | `calendar` | `calendar` | `["calendar"]` | Google Calendar MCP server |
 | `browser` | `browser` | `[]` | Playwright-CLI automation; NOT server-backed. Uses `run_command` via terminal tools to interact with a playwright-cli daemon. `--headed` always. Has a `references/` subdirectory. Empty `trigger_servers` means never auto-injects — only activated by `/browser` slash command. |
@@ -402,6 +453,8 @@ Key constants from `infrastructure/config.py` (also re-exported by `source/infra
 | `TERMINAL_MAX_OUTPUT_SIZE` | `50 * 1024` (50 KB) | Max bytes stored in `terminal_events.full_output` |
 | `THREAD_POOL_SIZE` | env `XPDITE_THREAD_POOL_SIZE` or default | Override thread pool size |
 | `XPDITE_USER_DATA_DIR` env var | — | Electron sets this in production to point to the correct user data dir |
+| `SERVER_BIND_HOST` | env `XPDITE_SERVER_HOST` or `127.0.0.1` | Loopback by default; can be overridden |
+| `SERVER_SESSION_TOKEN` | env `XPDITE_SERVER_TOKEN` | Session token used by protected local HTTP flows |
 
 ---
 

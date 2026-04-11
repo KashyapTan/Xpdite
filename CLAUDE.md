@@ -11,7 +11,7 @@ Spawn as many sub-agents as you need **in parallel** for any read-only task that
 
 ### Sub-agents for Self-Review — Best-of-N + Parallel + De-dup
 
-After finishing any coding task, run a **three-stage review pipeline** before considering it done. This produces near-zero false-negatives and filters out noise. For non-trivial changes this is mandatory; for trivial one-liners (renaming a variable, fixing a typo) a single quick pass is fine.
+Use the multi-agent review pipeline for high-risk code changes (new services, migrations, auth/security-sensitive paths, complex concurrency changes). For routine edits, direct implementation plus targeted validation is sufficient. If the user explicitly asks to skip the review pipeline for a task, skip it.
 
 ---
 
@@ -151,7 +151,7 @@ uv run <file_name>                            # run python files for testing
 
 **New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
 
-**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `source/mcp_integration/core/manager.py`). Add interception in both `source/llm/providers/cloud_provider.py` (`_execute_and_broadcast_tool`) and `source/api/handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, and `skills`.
+**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `source/mcp_integration/core/manager.py`). Add interception in both `source/llm/providers/cloud_provider.py` (`_execute_and_broadcast_tool`) and `source/api/handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, `skills`, `memory`, and `scheduler`.
 
 **YouTube analysis flow (`watch_youtube_video`)** → The `video_watcher` inline tool first tries native YouTube captions; if captions are unavailable it emits a `youtube_transcription_approval` content block in chat, waits for `youtube_transcription_approval_response`, then (if approved) downloads audio and transcribes with Whisper using detected compute backend (`cuda`/`cpu`) and estimated timing metadata.
 

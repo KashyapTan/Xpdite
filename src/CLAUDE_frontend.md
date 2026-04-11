@@ -15,14 +15,15 @@ src/
 │   └── utils.ts              # isDev() — checks NODE_ENV === 'development'
 │
 └── ui/
-    ├── main.tsx              # React entry, createHashRouter (6 routes), TabProvider wrap
+    ├── main.tsx              # React entry, createHashRouter (7 routes), TabProvider wrap
     ├── pages/
     │   ├── App.tsx                  # Main chat page (query input, response, tool calls, screenshots, tab routing)
-    │   ├── Settings.tsx             # Settings page (models, connections, API keys, MCP, skills, meeting, system-prompt, channels)
+    │   ├── Settings.tsx             # Settings page (models, tools, skills, memory, artifacts, tasks, mobile, providers, prompt)
     │   ├── ChatHistory.tsx          # Past conversations browser with full-text search
     │   ├── MeetingRecorder.tsx      # Live meeting recording UI
     │   ├── MeetingAlbum.tsx         # Past meeting recordings list (grouped by date)
-    │   └── MeetingRecordingDetail.tsx  # Individual recording detail + AI analysis + action execution
+    │   ├── MeetingRecordingDetail.tsx  # Individual recording detail + AI analysis + action execution
+    │   └── ScheduledJobsResults.tsx # History browser for scheduled-job run results
     ├── components/
     │   ├── Layout.tsx        # Shell; manages mini/hidden state; passes {setMini,setIsHidden} via Outlet context
     │   ├── TitleBar.tsx      # Custom title bar: new-chat button, nav icons, mini-mode toggle
@@ -59,9 +60,12 @@ src/
     │   ├── settings/
     │   │   ├── MeetingRecorderSettings.tsx  # Whisper model, diarization, audio retention (WS-based)
     │   │   ├── SettingsApiKey.tsx           # API key entry per provider
-    │   │   ├── SettingsConnections.tsx      # Google OAuth (Gmail + Calendar)
-    │   │   ├── SettingsMobileChannels.tsx   # Mobile platforms connection status & QR
+    │   │   ├── SettingsConnections.tsx      # Google OAuth + external MCP connectors
+    │   │   ├── SettingsArtifacts.tsx        # Artifact browser/editor settings panel
+    │   │   ├── SettingsMemory.tsx           # Long-term memory settings + file management
+    │   │   ├── SettingsMobileChannels.tsx   # Mobile platform setup (tokens + WhatsApp pairing code)
     │   │   ├── SettingsModels.tsx           # Ollama + cloud model enable/disable toggles
+    │   │   ├── SettingsScheduledJobs.tsx    # Scheduled task management (pause/resume/run-now/delete)
     │   │   ├── SettingsSkills.tsx           # Full CRUD for user skills and builtin overrides
     │   │   ├── SettingsSubAgents.tsx        # Tier model mapping for sub-agent fast/smart modes
     │   │   ├── SettingsSystemPrompt.tsx     # Editable system prompt template
@@ -216,13 +220,14 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → skills → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
+`models → connections → tools → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
 
-- **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar. Shows email and service badges when connected.
+- **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
-- **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. Handles QR pairing.
+- **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. WhatsApp uses phone-number + pairing-code linked-device auth.
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
-- **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`.
+- **`scheduled-jobs`** → `<SettingsScheduledJobs>` — Scheduled task controls (toggle, run-now, delete, per-job forwarding targets).
+- **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`, `memory_block`, `artifacts_block`, `user_profile_block`.
 
 ### `createApiService` vs `api` singleton
 - `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.
@@ -265,8 +270,8 @@ api.setSystemPrompt(template)    → PUT /api/settings/system-prompt
 api.skillsApi.getAll()           → GET /api/skills
 api.skillsApi.getContent(name)   → GET /api/skills/{name}/content
 api.skillsApi.create(skill)      → POST /api/skills
-api.skillsApi.update(name, u)    → PATCH /api/skills/{name}
-api.skillsApi.toggle(name, en)   → PUT /api/skills/{name}/toggle
+api.skillsApi.update(name, u)    → PUT /api/skills/{name}
+api.skillsApi.toggle(name, en)   → PATCH /api/skills/{name}/toggle
 api.skillsApi.delete(name)       → DELETE /api/skills/{name}
 ```
 
@@ -275,10 +280,9 @@ api.skillsApi.delete(name)       → DELETE /api/skills/{name}
 ## Electron-Specific Notes
 
 ### Window
-- Frameless, transparent, **550×550**, `alwaysOnTop: true` at `screen-saver` level.
+- Frameless, transparent, **420×420**, `alwaysOnTop: true` at `screen-saver` level.
 - **Mini mode** (52×52): saves `normalBounds` before shrinking; `setResizable(true)` called before `setSize()` to allow shrinking below minimum; restores on exit. Triggered via `ipcMain.handle('set-mini-mode', …)`.
 - `minimizable: false`, `maximizable: false`, `skipTaskbar: true` — intentional for overlay UX.
-- `win.setContentProtection(true)` — prevents screen recording of the Xpdite window in production.
 - `setDisplayMediaRequestHandler` — auto-approves `getDisplayMedia` with `{ video: { source: tab-capture-stream } }` for WASAPI loopback audio capture; required by `useAudioCapture`.
 
 ### IPC surface (preload.ts)
@@ -286,6 +290,7 @@ Several key methods are exposed via `contextBridge`:
 - `window.electronAPI.setMiniMode(mini: boolean)`
 - `window.electronAPI.focusWindow()`
 - `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
+- `window.electronAPI.getServerToken()` — loopback auth token for protected local endpoints (artifact API)
 - `window.electronAPI.getBootState()` / `onBootState` — Boot initialization communication
 - `window.electronAPI.retryBoot()`
 - `window.electronAPI.perfLog(message)` — writes renderer-side perf metrics into Electron main-process terminal output
@@ -295,9 +300,9 @@ Several key methods are exposed via `contextBridge`:
 Do not add IPC channels without updating both `preload.ts` (expose) and `main.ts` (handle).
 
 ### `pythonApi.ts` extras
-- **`killProcessesOnPorts()`** — runs before every Python spawn; scans ports 8000–8009 via `netstat -ano | findstr`, cross-references PID names against `['python.exe', 'xpdite-server.exe', 'uvicorn', 'fastapi']`, then `taskkill /F /PID`. Prevents stale-port errors on restart.
-- **`XPDITE_USER_DATA_DIR`** — in production, `app.getPath('userData')` is injected as an env var so Python resolves user data paths platform-independently.
-- **Startup detection:** waits for either `"Starting FastAPI WebSocket server"` OR `"Application startup complete"` in stdout.
+- **`killProcessesOnPorts()`** — runs before every Python spawn; parses `netstat -ano -p tcp` for listeners on 8000–8009, inspects process metadata (including command lines), and kills only owned backend processes with `taskkill /F /T`. Prevents stale-port collisions without killing unrelated services.
+- **Injected env vars:** `XPDITE_USER_DATA_DIR` (production path wiring) and `XPDITE_SERVER_TOKEN` (loopback auth token for protected internal endpoints).
+- **Boot marker parsing:** stdout `XPDITE_BOOT {...}` lines are parsed and forwarded to Electron boot state handlers (`onBootMarker`).
 
 ### Python server lifecycle
 - **Dev:** Electron does *not* start Python. `dev:pyserver` runs it independently. `isDev()` guards this.

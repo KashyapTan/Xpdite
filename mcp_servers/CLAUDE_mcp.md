@@ -1,113 +1,74 @@
 # mcp_servers/ — MCP Tool Servers
 
-MCP (Model Context Protocol) extends the LLM with callable tools. Each server is an independent Python subprocess communicating over stdio JSON-RPC. The app spawns them at startup and routes tool calls from the LLM to the correct server.
+MCP extends the LLM with callable tools. In Xpdite, tools run in two modes:
+
+- **Subprocess MCP servers** over stdio JSON-RPC (managed by `source/mcp_integration/core/manager.py`)
+- **Inline tools** registered in the manager but executed directly in backend interceptors (no subprocess call path)
 
 ---
 
-## Server Directory
+## Server Inventory
 
-| Server | Status | Key Tools | Notes |
-|---|---|---|---|
-| `filesystem` | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file` | Sandboxed file I/O and directory operations |
-| `glob` | ✅ Active | `glob_files` | Dedicated pathname discovery with mtime sorting, exclude filters, and pagination |
-| `grep` | ✅ Active | `grep_files` | Dedicated content search with structured modes, pagination, file-type filters, and multiline regex support |
-| `gmail` | ✅ Active | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Requires Google OAuth token |
-| `calendar` | ✅ Active | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Requires Google OAuth token |
-| `websearch` | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo search + multi-tier HTTP/browser scraping with concurrent execution |
-| `windows_mcp` | ✅ Active | `list_windows`, `focus_window`, `minimize_window`, `maximize_window`, `close_window`, `take_screenshot` | Windows automation via uvx |
-| `terminal` | ✅ Active (inline) | `run_command`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | **Never runs as subprocess.** Schemas live in `terminal/inline_tools.py`; execution is inline via `terminal_executor.py` with approval UI, explicit shell selection, and shell-specific safety checks. |
-| `sub_agent` | ✅ Active (inline) | `spawn_agent` | **Never runs as subprocess.** Schema lives in `sub_agent/inline_tools.py`; registration remains in `manager.py`, interception in `cloud_provider.py` and `handlers.py`, execution is in `services/sub_agent.py`. |
-| `video_watcher` | ✅ Active (inline) | `watch_youtube_video` | **Never runs as subprocess.** Schema lives in `video_watcher/inline_tools.py`; execution is inline via `source/services/media/video_watcher.py` with YouTube-caption fallback approval + Whisper transcription. |
-| `skills` | ✅ Active (inline) | `list_skills`, `use_skill` | **Never runs as subprocess.** Schema lives in `skills/inline_tools.py`; execution is inline via `source/mcp_integration/executors/skills_executor.py` for on-demand skill discovery/loading. |
-| `figma` | 🔌 External | Design tools via mcp-remote | User-enabled via Settings → Connections. Uses `npx mcp-remote` to bridge Figma's remote MCP server. |
-| `demo` | ✅ Disabled | `add`, `divide` | Math demo; disabled by default |
-| `discord` | 📝 Placeholder | — | Needs `DISCORD_BOT_TOKEN` in `config/servers.json` |
-| `canvas` | 📝 Placeholder | — | Needs `CANVAS_URL` + `CANVAS_TOKEN` |
-| `github`, `jira`, `notion`, `obsidian`, `outlook`, `slack`, `teams`, `whatsapp`, `yahoo` | 📝 Placeholder | — | Stub directories only |
+| Server | Mode | Status | Key tools | Notes |
+|---|---|---|---|---|
+| `filesystem` | Subprocess | ✅ Active | `list_directory`, `read_file`, `write_file`, `create_folder`, `move_file`, `rename_file` | Sandboxed file operations |
+| `glob` | Subprocess | ✅ Active | `glob_files` | Filename discovery with filtering/pagination |
+| `grep` | Subprocess | ✅ Active | `grep_files` | Content search with regex/modes/pagination |
+| `websearch` | Subprocess | ✅ Active | `search_web_pages`, `read_website` | DuckDuckGo + multi-tier scraping |
+| `windows_mcp` | Subprocess | ✅ Active (best effort) | `list_windows`, `focus_window`, `minimize_window`, `maximize_window`, `close_window`, `take_screenshot` | Started via `uvx windows-mcp` |
+| `gmail` | Subprocess | ✅ Conditional | `search_emails`, `read_email`, `send_email`, `reply_to_email`, `create_draft`, `trash_email`, `list_labels`, `modify_labels`, `get_unread_count`, `get_email_thread` | Connects only when Google token is available |
+| `calendar` | Subprocess | ✅ Conditional | `get_events`, `search_events`, `get_event`, `create_event`, `update_event`, `delete_event`, `quick_add_event`, `list_calendars`, `get_free_busy` | Connects only when Google token is available |
+| `terminal` | Inline | ✅ Active | `run_command`, `get_environment`, `request_session_mode`, `end_session_mode`, `send_input`, `read_output`, `kill_process` | Registered via `register_inline_tools`; executed by terminal executor with approval flow |
+| `sub_agent` | Inline | ✅ Active | `spawn_agent` | Executed by `source/services/skills_runtime/sub_agent.py` |
+| `video_watcher` | Inline | ✅ Active | `watch_youtube_video` | YouTube captions first, Whisper fallback with explicit approval |
+| `skills` | Inline | ✅ Active | `list_skills`, `use_skill` | Retrieval-enabled inline tools |
+| `memory` | Inline | ✅ Active | `memlist`, `memread`, `memcommit` | Retrieval-enabled memory store tools |
+| `scheduler` | Inline | ✅ Active | `create_job`, `list_jobs`, `delete_job`, `pause_job`, `resume_job`, `run_job_now` | Scheduled job orchestration tools |
+| `everything` | External Connector | ✅ Available | Demo tool set | Defined in `external_connectors.py`; connect from Settings → Connections |
+| `demo` | Subprocess | ✅ Disabled | `add`, `divide` | Local demo server (disabled by default) |
+| `discord` | Placeholder | 📝 Stub | — | Placeholder `server.py`; not production-ready |
+| `canvas` | Placeholder | 📝 Stub | — | Placeholder `server.py`; not production-ready |
+| `github`, `jira`, `notion`, `obsidian`, `outlook`, `slack`, `teams`, `whatsapp`, `yahoo` | Placeholder dirs | 📝 Empty | — | Directory stubs only |
 
 ---
 
 ## External Connectors
 
-External connectors are MCP servers that are **not bundled** with Xpdite. They include third-party services like Figma, GitHub, etc. that:
+External connectors are MCP servers that are not bundled directly into `mcp_servers/servers/*` runtime startup. They are managed by `source/services/integrations/external_connectors.py` and connected via `init_external_connectors()` during MCP init.
 
-1. May require authentication (OAuth, API keys)
-2. Use stdio transport via bridge tools like `npx mcp-remote` or `uvx`
-3. Are enabled/disabled by users in Settings → Connections
-4. Auto-reconnect on app startup if previously enabled
+How they work:
 
-### How External Connectors Work
+1. Connector definitions live in `EXTERNAL_CONNECTORS`.
+2. UI reads connector status from `/api/external-connectors`.
+3. Enable/disable state persists in settings DB.
+4. Enabled connectors auto-reconnect on app startup.
 
-1. **Registry**: Connectors are defined in `source/services/integrations/external_connectors.py` in the `EXTERNAL_CONNECTORS` dict
-2. **UI**: They appear automatically in Settings → Connections with Connect/Disconnect buttons
-3. **State**: Enabled/disabled state is persisted in the settings DB
-4. **Connection**: On connect, the subprocess is spawned; on app restart, enabled connectors auto-reconnect
+Current registry state:
 
-### Currently Available External Connectors
+- `everything` demo connector is available.
+- Figma/Slack examples are present as commented templates (not active by default).
 
-| Connector | Transport | Auth | Notes |
-|-----------|-----------|------|-------|
-| **Figma** | `npx mcp-remote` → HTTP | OAuth (browser) | Design file access. Rate limits: Starter 6/month, Pro 200/day, Enterprise 600/day |
+### Add a New External Connector
 
-### How to Add a New External Connector
-
-1. **Add to the registry** in `source/services/integrations/external_connectors.py`:
+Add a registry entry in `source/services/integrations/external_connectors.py`:
 
 ```python
 EXTERNAL_CONNECTORS["my_connector"] = {
     "name": "my_connector",
     "display_name": "My Connector",
     "description": "What it provides",
-    "command": "npx",  # or "uvx" for Python-based servers
-    "args": ["-y", "package-name", "additional", "args"],
-    "services": ["Service1", "Service2"],  # Badges shown in UI
-    "icon_type": "my_connector",  # Icon identifier for frontend
-    "auth_type": "browser",  # "browser", "api_key", or None
-    "env": None,  # Optional env vars dict
+    "command": "npx",  # or "uvx"
+    "args": ["-y", "package-name"],
+    "services": ["Service1", "Service2"],
+    "icon_type": "my_connector",
+    "auth_type": "browser",  # or None
 }
 ```
 
-2. **Add the icon** (optional) in `SettingsConnections.tsx`:
+Optional UI polish:
 
-```tsx
-// In the ConnectorIcon component's switch statement:
-case 'my_connector':
-  return (
-    <svg viewBox="0 0 24 24" width="28" height="28">
-      {/* Your SVG paths */}
-    </svg>
-  );
-```
-
-3. **Add tool display config** (optional) in `src/ui/components/chat/toolCallUtils.ts`:
-
-```typescript
-// In TOOL_DISPLAY_CONFIG:
-my_connector: {
-  badge: 'MY-CONNECTOR',
-  summaryNoun: 'connector action',
-  tools: {
-    some_tool: (args) => `Doing something with ${args.param}`,
-  },
-},
-```
-
-4. **That's it!** The connector will:
-   - Appear in Settings → Connections automatically
-   - Be connectable/disconnectable by users
-   - Auto-reconnect on app restart if enabled
-   - Have its tools appear in chat with reasonable fallback display
-
-### External Connector Types
-
-**Browser Auth (`auth_type: "browser"`)**: 
-Uses `mcp-remote` or similar bridge that handles OAuth internally. When the user clicks Connect, the subprocess starts and may open a browser window for authentication.
-
-**API Key Auth (`auth_type: "api_key"`)** *(planned)*:
-Requires an API key stored in settings. The key is passed as an environment variable to the subprocess.
-
-**No Auth (`auth_type: null`)**:
-Public MCP servers that don't require authentication.
+- Add an icon in `src/ui/components/settings/SettingsConnections.tsx`
+- Add tool badge/summary mappings in `src/ui/components/chat/toolCallUtils.ts`
 
 ---
 
@@ -116,106 +77,78 @@ Public MCP servers that don't require authentication.
 ```text
 mcp_servers/
 ├── __init__.py
-├── requirements.txt         # Dependencies for MCP servers
-├── test_demo.py             # pytest script for testing MCP servers
+├── requirements.txt
+├── test_demo.py
 ├── config/
-│   └── servers.json         # Enable/disable servers; per-server env vars and credentials (UI metadata only — backend does not read this)
+│   └── servers.json         # UI metadata only; backend startup does not rely on this for live wiring
 ├── servers/
 │   ├── __init__.py
-│   ├── description_format.py# Shared format for tool descriptions
-│   ├── calendar/            ✅ server.py + calander_descriptions.py
-│   ├── canvas/              📝 server.py + canvas_descriptions.py (placeholder, no tools yet) — needs CANVAS_URL + CANVAS_TOKEN
-│   ├── demo/                ✅ server.py + demo_descriptions.py (disabled by default)
-│   ├── discord/             📝 server.py + discord_descriptions.py (placeholder, no tools yet) — needs DISCORD_BOT_TOKEN
-│   ├── filesystem/          ✅ server.py + filesystem_descriptions.py + sandbox.py
-│   ├── glob/                ✅ server.py + glob_descriptions.py
-│   ├── grep/                ✅ server.py + grep_descriptions.py
-│   ├── gmail/               ✅ server.py + gmail_descriptions.py
-│   ├── skills/              ✅ inline_tools.py + skills_descriptions.py (inline-only tool metadata)
-│   ├── sub_agent/           ✅ inline_tools.py + sub_agent_descriptions.py (inline-only tool metadata)
-│   ├── terminal/            ✅ server.py + terminal_descriptions.py + inline_tools.py + blocklist.py (tools run inline, not as subprocess)
-│   ├── video_watcher/       ✅ inline_tools.py + video_watcher_descriptions.py (inline-only tool metadata)
-│   ├── websearch/           ✅ server.py + websearch_descriptions.py
-│   └── github/, jira/, notion/, obsidian/, outlook/, slack/, teams/, whatsapp/, yahoo/   🗂️ Empty directories (no files)
+│   ├── description_format.py
+│   ├── calendar/            # subprocess server
+│   ├── canvas/              # placeholder stub
+│   ├── demo/                # subprocess demo server
+│   ├── discord/             # placeholder stub
+│   ├── filesystem/          # subprocess server (+ sandbox)
+│   ├── glob/                # subprocess server
+│   ├── gmail/               # subprocess server
+│   ├── grep/                # subprocess server
+│   ├── memory/              # inline_tools.py (+ descriptions)
+│   ├── scheduler/           # inline_tools.py
+│   ├── skills/              # inline_tools.py (+ descriptions)
+│   ├── sub_agent/           # inline_tools.py (+ descriptions)
+│   ├── terminal/            # inline_tools.py + subprocess fallback server code
+│   ├── video_watcher/       # inline_tools.py (+ descriptions)
+│   ├── websearch/           # subprocess server
+│   └── github/, jira/, notion/, obsidian/, outlook/, slack/, teams/, whatsapp/, yahoo/  # stubs
 └── client/
     ├── __init__.py
-    └── ollama_bridge.py    # Standalone bridge for testing MCP servers outside the main app (not used in production)
+    └── ollama_bridge.py
 ```
 
 ---
 
-## How to Add a New MCP Server (end-to-end)
+## Adding Servers
 
-### 1. Create the server
-```python
-# mcp_servers/servers/myserver/server.py
-from mcp.server.fastmcp import FastMCP
+### Add a New Subprocess MCP Server
 
-mcp = FastMCP("myserver")
+1. Create `mcp_servers/servers/<name>/server.py` with `FastMCP` tool definitions.
+2. Register connection in `source/mcp_integration/core/manager.py` inside `init_mcp_servers()` using `connect_server(...)`.
+3. (Optional) Add UI metadata entry to `mcp_servers/config/servers.json`.
+4. (Optional) Add/update skills under `source/skills_seed/<name>/` if tool-specific prompting helps.
+5. Update `src/ui/components/chat/toolCallUtils.ts` for friendly badges/summaries.
 
-@mcp.tool(description=MCP_TOOL_DESCRIPTION) # MCP_TOOL_DESCRIPTION is what the model reads to decide when and how to use the tool
-def do_thing(param: str) -> str:
-    return f"result: {param}"
+### Add a New Inline Tool Server
 
-if __name__ == "__main__":
-    mcp.run()
-```
-
-Keep descriptions crisp and consistent — the tool retriever uses them for semantic search, so vague descriptions lead to low retrieval scores.
-Use the shared helper in `mcp_servers/servers/description_format.py` and keep each description in this order:
-- `Purpose:` literal output prefix for what the tool does
-- `Use when:` literal output prefix for when the LLM should choose it
-- `Inputs:` literal output prefix for the important parameters and format constraints
-- `Returns:` literal output prefix for what comes back
-- `Notes:` optional literal output prefix only when workflow or safety guidance matters
-
-### 2. Connect in `source/mcp_integration/core/manager.py`
-Inside `init_mcp_servers()`:
-```python
-await mcp_manager.connect_server(
-    "myserver",
-    sys.executable,
-    [str(PROJECT_ROOT / "mcp_servers" / "servers" / "myserver" / "server.py")]
-)
-```
-
-### 3. (Optional) Update `config/servers.json`
-Add an entry for UI display in Settings. The backend does **not** read this file — it is metadata only.
-
-### 4. (Optional) Add a skill
-Create a folder under `source/skills_seed/<your_name>/` with two files:
-- `skill.json` — `{ name, description, slash_command, trigger_servers, version }`
-- `SKILL.md` — the prompt content injected when the skill is active.
-
-The skill is auto-seeded to `user_data/skills/builtin/` on every app startup. `trigger_servers` should list your new server name so the skill auto-injects when relevant tools are retrieved. Skills are managed by `SkillManager` in `source/services/skills_runtime/skills.py`.
-
-### 5. That's it
-Tools are auto-discovered on startup, indexed by the semantic retriever, and routed automatically when the LLM calls them.
-
-### 6. UI follow-up for chat tool calls
-If the new server's tool calls should display nicely in the chat timeline, update `src/ui/components/chat/toolCallUtils.ts` and the related summary usage in `src/ui/components/chat/ToolCallsDisplay.tsx` so the server badge and per-tool descriptions stay human-friendly.
+1. Define schemas in `mcp_servers/servers/<name>/inline_tools.py`.
+2. Register with `mcp_manager.register_inline_tools("<name>", ...)` in `init_mcp_servers()`.
+3. Add interception/execution in both paths:
+   - Cloud provider path: `source/llm/providers/cloud_provider.py`
+   - Ollama tool loop path: `source/mcp_integration/core/handlers.py`
+4. Implement executor/service logic under `source/mcp_integration/executors/` and/or `source/services/`.
 
 ---
 
 ## Gotchas
 
-**The `terminal` server is a special case.** Its tools are intercepted by `terminal_executor.py` before they reach the subprocess. The subprocess isn't even spawned for terminal tools. Do not add terminal logic to `server.py` expecting it to run — put it in `terminal_executor.py`.
+**Inline tools are not MCP subprocess calls.** If a tool is registered inline, `mcp_manager.call_tool()` should not be the execution path; intercept in provider/handler layers.
 
-**PYTHONPATH is injected automatically.** `manager.py` ensures `PROJECT_ROOT` is in the child process's `PYTHONPATH` so servers can use `from mcp_servers.servers.xxx import ...` style imports.
+**Timeout behavior is manager-defined.** Tool calls use server-specific read timeouts: default 90s, `websearch` 25s, with an additional 5s `asyncio.wait_for` buffer.
 
-**MCP subprocess lifecycle uses a background asyncio Task.** The `stdio_client` + `ClientSession` context managers must open and close on the *same* asyncio task. Do not try to disconnect a server from an HTTP handler — it will raise a `RuntimeError` from anyio's cancel scope check.
+**Tool output is truncated at 100,000 chars.** Design tools to return focused payloads.
 
-**Tool output is truncated at 100,000 characters.** If a tool returns unexpectedly large output (e.g., a huge file read), it will be silently truncated before being sent to the LLM. Design tools to return summaries rather than raw large blobs.
+**Subprocess lifecycle is task-bound.** `stdio_client` and `ClientSession` must enter/exit on the same background task; do not bypass manager lifecycle rules.
 
-**Placeholder servers have stub `server.py` files.** Running them will fail or return empty results. Check `config/servers.json` `"enabled"` before assuming a server works.
+**`PYTHONPATH` is injected for child servers.** Manager prepends project root so `mcp_servers.*` imports resolve in subprocesses.
 
-**Google-authenticated servers (`gmail`, `calendar`)** require a valid `user_data/google/token.json`. If the token is missing or expired, the tools will fail. Users must complete OAuth via Settings → Google.
+**Terminal is approval-gated and inline-executed.** Do not rely on `mcp_servers/servers/terminal/server.py` for primary runtime behavior.
 
-**The `sub_agent` server is an inline tool like `terminal`.** The `spawn_agent` schema lives in `mcp_servers/servers/sub_agent/inline_tools.py` and is registered in `manager.py`'s `init_mcp_servers()` via `register_inline_tools("sub_agent", SUB_AGENT_INLINE_TOOLS)`. Tool calls are intercepted in both `cloud_provider.py` (`_execute_and_broadcast_tool`) and `handlers.py` (Ollama tool loop) before reaching the MCP subprocess router. Sub-agents have no access to terminal tools or `spawn_agent` itself (enforced by `_EXCLUDED_TOOLS` set in `services/sub_agent.py`). Tier-to-model mapping is configurable via Settings → Sub-Agents (stored as `sub_agent_tier_fast` / `sub_agent_tier_smart` in the `settings` DB table).
+**Sub-agent is inline and restricted.** `spawn_agent` executes in `source/services/skills_runtime/sub_agent.py`; it excludes terminal tools and recursive `spawn_agent` calls.
 
-**The `video_watcher` server is also inline-only.** The `watch_youtube_video` schema lives in `mcp_servers/servers/video_watcher/inline_tools.py` and is registered in `manager.py` via `register_inline_tools("video_watcher", VIDEO_WATCHER_INLINE_TOOLS)`. Execution is intercepted in `cloud_provider.py` and `mcp_integration/handlers.py` and handled by `source/mcp_integration/executors/video_watcher_executor.py` + `source/services/media/video_watcher.py`. When captions are unavailable, it emits a `youtube_transcription_approval` chat block and waits for user approval before Whisper transcription.
+**Video watcher is inline.** `watch_youtube_video` executes via `video_watcher_executor.py` and emits approval blocks before Whisper fallback when captions are unavailable.
 
-**The `skills` server is inline-only and retrieval-enabled.** `list_skills` and `use_skill` are registered via `register_inline_tools("skills", SKILLS_INLINE_TOOLS, skip_embed=False)` so they can be semantically retrieved by the tool retriever. Execution is handled inline by `source/mcp_integration/executors/skills_executor.py` (no subprocess).
+**Google tools require OAuth token.** `gmail`/`calendar` need a valid `user_data/google/token.json` created through Settings.
+
+**Placeholder servers are scaffolds only.** Stub directories/files are not production-ready implementations.
 
 ---
 
