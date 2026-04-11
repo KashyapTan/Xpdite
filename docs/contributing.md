@@ -1,121 +1,72 @@
-# Contributing to Xpdite
+# Contributing
 
-Thank you for your interest in contributing to Xpdite. This document outlines the process for contributing and our expectations.
+Thanks for contributing to Xpdite.
 
-## Getting Started
+## Contribution Workflow
 
-1. Fork the repository on GitHub
-2. Clone your fork locally:
-   ```bash
-   git clone https://github.com/your-username/xpdite.git
-   cd xpdite
-   ```
-3. Install dependencies:
-   ```bash
-   bun install
-   bun run install:python
-   ```
-4. Create a feature branch:
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+1. Fork and clone repository.
+2. Create a focused branch from latest main.
+3. Implement change with tests and documentation updates.
+4. Run quality checks locally.
+5. Open PR with clear context and validation notes.
 
-## Development Workflow
+## Setup
 
-1. Make your changes following the [Development Guide](./development.md)
-2. Test your changes locally with `bun run dev`
-3. Ensure the build succeeds: `bun run build`
-4. Commit with a clear, descriptive message
-5. Push to your fork and open a Pull Request
-
-## Areas for Contribution
-
-### High Priority
-
-- **macOS Support** - Porting the screenshot system and DPI handling
-- **MCP Server Implementations** - Completing the Discord and Canvas servers (Gmail/Calendar are now active)
-- **Test Coverage** - Unit and integration tests for both Python and React
-- **Accessibility** - Keyboard navigation, screen reader support
-
-### Medium Priority
-
-- **UI/UX Improvements** - Better theming, animations, responsive design
-- **Documentation** - Tutorials, examples, video guides
-- **Performance** - Optimizing streaming, reducing memory usage
-- **Error Handling** - Better error messages and recovery flows
-
-### Good First Issues
-
-- Adding new demo MCP tools
-- Improving CSS styling
-- Adding TypeScript interfaces for untyped code
-- Writing documentation for specific features
-
-## Code Style
-
-### Python
-
-- Follow PEP 8 conventions
-- Use type hints for all function parameters and return values
-- Write docstrings for public functions and classes
-- Use async/await for I/O-bound operations
-
-### TypeScript / React
-
-- Use functional components with hooks
-- Define interfaces in `src/ui/types/index.ts`
-- Follow the existing component structure (pages, components, hooks)
-- Use CSS modules or component-scoped CSS files
-
-### Commit Messages
-
-Write clear, concise commit messages:
-
-```
-feat: add web search MCP server with DuckDuckGo integration
-fix: resolve DPI scaling on multi-monitor Windows setups
-refactor: extract screenshot logic into separate service module
-docs: add MCP integration guide
+```bash
+git clone https://github.com/<your-user>/xpdite.git
+cd xpdite
+bun install
+bun run install:python
 ```
 
-Prefix with: `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `style`
+## Quality Gates
 
-## Pull Request Process
+Before opening a PR, run the Build and Validate command set documented in `docs/development.md`.
 
-1. **Description**: Clearly describe what your PR does and why
-2. **Scope**: Keep PRs focused on a single feature or fix
-3. **Testing**: Describe how you tested your changes
-4. **Screenshots**: Include before/after screenshots for UI changes
-5. **Breaking Changes**: Clearly note any breaking changes
+## Pull Request Requirements
 
-## Adding MCP Servers
+- Clear title and problem statement.
+- Explain why change is needed.
+- Keep scope focused; avoid mixed unrelated changes.
+- Include screenshots for UI changes.
+- Include API or behavior contract updates where applicable.
+- Update docs in `docs/` for user-visible or integration-impacting changes.
 
-If you're implementing one of the placeholder MCP servers (Gmail, Calendar, Discord, Canvas):
+## Coding Expectations
 
-1. Follow the [MCP Guide](./mcp-guide.md) for the implementation pattern
-2. Handle authentication securely (never commit credentials)
-3. Write tool descriptions that are clear and specific for the LLM
-4. Add error handling that returns user-friendly messages
-5. Update `mcp_servers/config/servers.json` with your server
-6. Update the documentation
+- Follow existing architecture boundaries (API layer thin, logic in services).
+- Keep type safety in both Python and TypeScript.
+- Avoid broad refactors unless explicitly scoped.
+- Add regression tests for bug fixes.
 
-## Reporting Issues
+## Commit Message Style
 
-When reporting issues, please include:
+Use conventional prefixes:
 
-- **Description**: What happened vs. what you expected
-- **Steps to Reproduce**: Minimal steps to trigger the issue
-- **Environment**: OS version, Python version, Node.js version, Ollama version
-- **Logs**: Relevant console output from both the Python server and Electron
-- **Screenshots**: If applicable
+- `feat:`
+- `fix:`
+- `refactor:`
+- `docs:`
+- `test:`
+- `chore:`
 
-## Code of Conduct
+Examples:
 
-- Be respectful and constructive in all interactions
-- Focus on the technical merits of contributions
-- Welcome newcomers and help them get started
-- Credit others' work appropriately
+```text
+feat: add scheduled job run-now endpoint validation
+fix: preserve tab context in mobile relay broadcast path
+docs: align api reference with websocket message contract
+```
 
-## License
+## Areas Typically Needing Contributions
 
-By contributing, you agree that your contributions will be licensed under the same license as the project.
+- Cross-platform robustness (non-Windows workflows)
+- MCP tool integrations and reliability
+- Mobile bridge adapter edge-case handling
+- Performance and startup optimization
+- Test coverage expansion for integration-heavy flows
+
+## Code of Conduct and License
+
+- Follow repository `CODE_OF_CONDUCT.md`.
+- By contributing, you agree to the project license terms.

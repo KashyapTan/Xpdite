@@ -1,961 +1,314 @@
 # API Reference
 
-Xpdite uses two communication protocols between the frontend and backend:
-- **WebSocket** (`ws://localhost:8000/ws`) for real-time bidirectional messaging
-- **REST API** (`http://localhost:8000/api/*`) for configuration and metadata
+Xpdite exposes:
 
-## REST API Endpoints
+- **WebSocket** for real-time chat and streaming: `/ws`
+- **REST API** for configuration/data operations: `/api/*`
+- **Internal mobile API** for Channel Bridge integration: `/internal/mobile/*`
 
-### Health Check
+Base host defaults to loopback (`127.0.0.1`) and backend port is auto-selected in `8000-8009`.
 
-```
-GET /api/health
-```
+Host binding is configurable through `XPDITE_SERVER_HOST`. Binding to non-loopback expands the trust boundary and requires additional external network controls.
 
-Returns server status. Used by the Electron process to verify the Python server is running.
+## Conventions
 
-**Response:**
+- REST requests/responses use JSON unless noted.
+- Error shape from FastAPI handlers is typically:
+
 ```json
 {
-    "status": "healthy"
+  "detail": "Human-readable error message"
 }
 ```
 
-### Model Management
+- Artifact endpoints are loopback-gated and may require `X-Xpdite-Server-Token` when runtime token protection is enabled.
 
-#### List Ollama Models
+## REST API
 
-```
-GET /api/models/ollama
-```
+### Health
 
-Returns all locally installed Ollama models.
+- `GET /api/health`
 
-**Response:**
+Returns backend health status.
+
+Example response:
+
 ```json
 {
-    "models": [
-        {
-            "name": "qwen3-vl:8b-instruct",
-            "size": 5300000000,
-            "modified_at": "2026-02-01T12:00:00Z"
-        }
-    ]
+  "status": "healthy"
 }
 ```
 
-#### List Cloud Models
+### Models and Keys
 
-```
-GET /api/models/anthropic
-GET /api/models/openai
-GET /api/models/gemini
-```
+- `GET /api/models/ollama`
+- `GET /api/models/ollama/info/{model_name}`
+- `GET /api/models/enabled`
+- `PUT /api/models/enabled`
+- `GET /api/models/anthropic`
+- `GET /api/models/openai`
+- `GET /api/models/gemini`
+- `GET /api/models/openrouter`
+- `GET /api/keys`
+- `PUT /api/keys/{provider}`
+- `DELETE /api/keys/{provider}`
 
-Returns available models for the respective cloud provider. Requires a valid API key to be stored. If the API is unreachable, returns a fallback list of known models.
+### Artifacts
 
-**Response:**
-```json
-[
-    {
-        "name": "anthropic/claude-3-5-sonnet-20241022",
-        "provider": "anthropic",
-        "description": "Claude 3.5 Sonnet"
-    }
-]
-```
+All artifact routes require loopback access. When server token is set, include `X-Xpdite-Server-Token`.
 
-#### Get Enabled Models
+- `GET /api/artifacts`
+- `GET /api/artifacts/conversation/{conversation_id}`
+- `GET /api/artifacts/{artifact_id}`
+- `POST /api/artifacts`
+- `PUT /api/artifacts/{artifact_id}`
+- `DELETE /api/artifacts/{artifact_id}`
 
-```
-GET /api/models/enabled
-```
+List query parameters:
 
-Returns the list of models currently enabled in the UI (both local and cloud).
+- `query` (string)
+- `type` (`code` | `markdown` | `html`)
+- `status` (`ready` | `deleted`)
+- `page` (int, default `1`)
+- `page_size` (int, default `50`)
 
-**Response:**
+Create request example:
+
 ```json
 {
-    "models": ["qwen3-vl:8b-instruct", "anthropic/claude-3-5-sonnet-20241022"]
+  "type": "markdown",
+  "title": "Release Notes Draft",
+  "content": "# v1.2.0\n...",
+  "language": "markdown",
+  "conversation_id": "conv_abc123",
+  "message_id": "msg_abc123"
 }
 ```
 
-#### Update Enabled Models
+Destructive operation note:
 
-```
-PUT /api/models/enabled
-Content-Type: application/json
-```
+- Artifact delete operations are irreversible for API consumers.
 
-**Request Body:**
+### Memory
+
+- `GET /api/memory`
+- `GET /api/memory/file`
+- `PUT /api/memory/file`
+- `DELETE /api/memory/file`
+- `DELETE /api/memory`
+
+`PUT /api/memory/file` request example:
+
 ```json
 {
-    "models": ["qwen3-vl:8b-instruct", "llama3:8b"]
+  "path": "profile/user.md",
+  "title": "User Profile",
+  "category": "profile",
+  "importance": 0.9,
+  "tags": ["identity", "preferences"],
+  "abstract": "Stable user preferences and context.",
+  "body": "- Prefers concise responses\n- Uses Windows"
 }
 ```
 
-### API Key Management
+Destructive operation note:
 
-#### Get Key Status
+- `DELETE /api/memory` clears all memory files and recreates default folders.
 
-```
-GET /api/keys
-```
+### Settings and MCP
 
-Returns the status of API keys for all cloud providers (masked).
+- `GET /api/settings/tools`
+- `PUT /api/settings/tools`
+- `GET /api/settings/sub-agents`
+- `PUT /api/settings/sub-agents`
+- `GET /api/settings/memory`
+- `PUT /api/settings/memory`
+- `GET /api/settings/system-prompt`
+- `PUT /api/settings/system-prompt`
+- `GET /api/mcp/servers`
 
-**Response:**
+### Skills
+
+- `GET /api/skills`
+- `GET /api/skills/{name}/content`
+- `POST /api/skills`
+- `PUT /api/skills/{name}`
+- `PATCH /api/skills/{name}/toggle`
+- `DELETE /api/skills/{name}`
+- `POST /api/skills/{name}/references`
+
+### Google Integration
+
+- `GET /api/google/status`
+- `POST /api/google/connect`
+- `POST /api/google/disconnect`
+
+### External Connectors
+
+- `GET /api/external-connectors`
+- `POST /api/external-connectors/{name}/connect`
+- `POST /api/external-connectors/{name}/disconnect`
+
+### Mobile Channel Settings (Public)
+
+- `GET /api/mobile-channels/config`
+- `PUT /api/mobile-channels/config/{platform_id}`
+
+### Scheduled Jobs
+
+- `GET /api/scheduled-jobs`
+- `GET /api/scheduled-jobs/conversations`
+- `GET /api/scheduled-jobs/{job_id}`
+- `POST /api/scheduled-jobs`
+- `PUT /api/scheduled-jobs/{job_id}`
+- `DELETE /api/scheduled-jobs/{job_id}`
+- `POST /api/scheduled-jobs/{job_id}/pause`
+- `POST /api/scheduled-jobs/{job_id}/resume`
+- `POST /api/scheduled-jobs/{job_id}/run-now`
+- `GET /api/scheduled-jobs/{job_id}/conversations`
+
+`POST /api/scheduled-jobs` request example:
+
 ```json
 {
-    "anthropic": { "has_key": true, "masked": "sk-ant...a1b2" },
-    "openai": { "has_key": false, "masked": null },
-    "gemini": { "has_key": false, "masked": null }
+  "name": "Daily Standup Summary",
+  "cron_expression": "0 9 * * 1-5",
+  "instruction": "Summarize yesterday's progress and blockers.",
+  "timezone": "America/New_York",
+  "model": "qwen3-vl:8b-instruct",
+  "delivery_platform": "telegram",
+  "delivery_sender_id": "123456789",
+  "is_one_shot": false
 }
 ```
 
-#### Save API Key
+Destructive operation note:
 
-```
-PUT /api/keys/{provider}
-Content-Type: application/json
-```
+- `DELETE /api/scheduled-jobs/{job_id}` permanently removes job definitions.
 
-Validates and stores an API key. Supported providers: `anthropic`, `openai`, `gemini`.
+### Notifications
 
-**Request Body:**
-```json
-{
-    "key": "sk-..."
-}
-```
+- `GET /api/notifications`
+- `GET /api/notifications/count`
+- `DELETE /api/notifications/{notification_id}`
+- `DELETE /api/notifications`
 
-#### Delete API Key
+Destructive operation note:
 
-```
-DELETE /api/keys/{provider}
-```
-
-Removes the stored API key for the specified provider.
-
-#### Validate API Key
-
-```
-POST /api/keys/{provider}/validate
-Content-Type: application/json
-```
-
-Validates an API key by making a lightweight probe call to the provider. Does **not** save the key.
-
-**Request Body:**
-```json
-{
-    "key": "sk-..."
-}
-```
-
-**Response:**
-```json
-{
-    "valid": true,
-    "error": null
-}
-```
-
-### Google OAuth
-
-#### Get Connection Status
-
-```
-GET /api/google/status
-```
-
-**Response:**
-```json
-{
-    "connected": true,
-    "email": "user@gmail.com",
-    "auth_in_progress": false
-}
-```
-
-#### Connect Google Account
-
-```
-POST /api/google/connect
-```
-
-Initiates the OAuth flow. Opens the system browser for login. Blocks until authentication completes or fails.
-
-**Response:**
-```json
-{
-    "success": true,
-    "email": "user@gmail.com"
-}
-```
-
-#### Disconnect Google Account
-
-```
-POST /api/google/disconnect
-```
-
-Revokes the OAuth token and removes stored credentials.
-
-### MCP Tools and Retrieval Settings
-
-#### List MCP Servers and Tools
-
-```
-GET /api/mcp/servers
-```
-
-Returns a list of connected MCP servers and the tools they provide.
-
-**Response:**
-```json
-[
-    {
-        "server": "filesystem",
-        "tools": ["list_directory", "read_file", "write_file", ...]
-    }
-]
-```
-
-#### Get Tool Retrieval Settings
-
-```
-GET /api/settings/tools
-```
-
-Returns current tool retrieval settings.
-
-**Response:**
-```json
-{
-    "always_on": ["search_web_pages", "read_website"],
-    "top_k": 5
-}
-```
-
-#### Update Tool Retrieval Settings
-
-```
-PUT /api/settings/tools
-Content-Type: application/json
-```
-
-**Request Body:**
-```json
-{
-    "always_on": ["list_directory"],
-    "top_k": 3
-}
-```
-
-### System Prompt Settings
-
-#### Get System Prompt
-
-```
-GET /api/settings/system-prompt
-```
-
-Returns the current custom system prompt template, or the default if none is saved.
-
-**Response:**
-```json
-{
-    "template": "You are Xpdite...",
-    "is_custom": false
-}
-```
-
-#### Update System Prompt
-
-```
-PUT /api/settings/system-prompt
-Content-Type: application/json
-```
-
-Updates the custom system prompt template. Send an empty string to reset to the default.
-
-**Request Body:**
-```json
-{
-    "template": "Your new custom prompt here"
-}
-```
-
-### Skill Management
-
-#### Get All Skills
-
-```
-GET /api/skills
-```
-
-Returns all skills (builtin and user-created) with enabled state.
-
-**Response:**
-```json
-[
-    {
-        "name": "terminal",
-        "display_name": "Terminal",
-        "slash_command": "terminal",
-        "enabled": true,
-        "is_builtin": true,
-        "is_modified": false
-    }
-]
-```
-
-#### Create Skill
-
-```
-POST /api/skills
-Content-Type: application/json
-```
-
-#### Update Skill
-
-```
-PUT /api/skills/{skill_name}
-Content-Type: application/json
-```
-
-#### Delete Skill
-
-```
-DELETE /api/skills/{skill_name}
-```
-
-#### Reset Skill to Default
-
-```
-POST /api/skills/{skill_name}/reset
-```
-
-Resets a modified builtin skill back to the seed version.
-
-#### Get Skill Content
-
-```
-GET /api/skills/{skill_name}/content
-```
-
-Returns the full `SKILL.md` content for a skill.
-
-#### Toggle Skill Enabled
-
-```
-POST /api/skills/{skill_name}/toggle
-```
-
-Toggles the enabled/disabled state for a skill.
-
-#### Get Skill References
-
-```
-GET /api/skills/{skill_name}/references
-```
-
-Returns conversations where this skill was used.
+- Notification delete operations are irreversible.
 
 ### Terminal Settings
 
-#### Get Terminal Settings
+- `GET /api/terminal/settings`
+- `PUT /api/terminal/settings/ask-level`
+- `DELETE /api/terminal/approvals`
 
-```
-GET /api/terminal/settings
-```
-
-Returns terminal configuration (working directory, shell, environment).
-
-#### Update Terminal Settings
-
-```
-PUT /api/terminal/settings
-Content-Type: application/json
-```
-
----
-
-## WebSocket Protocol
-
-All WebSocket messages use JSON with `type` and optional `content` fields:
+`PUT /api/terminal/settings/ask-level` request body:
 
 ```json
 {
-    "type": "message_type",
-    "content": "string or JSON-stringified object"
+  "level": "on-miss"
 }
 ```
 
-### Client -> Server Messages
+Allowed values: `always`, `on-miss`, `off`.
 
-#### Submit a Query
+### File Browser
+
+- `GET /api/files/browse`
+
+### Internal Mobile API (`/internal/mobile/*`)
+
+These endpoints are intended for Channel Bridge integration.
+
+Security boundary:
+
+- Treat `/internal/mobile/*` as local integration APIs, not public internet APIs.
+- Keep backend bound to loopback interfaces.
+- Do not expose these routes through external reverse proxies.
+- Assume local-trust posture; these routes are intended for the local Channel Bridge process.
+- Internal mobile endpoints are unauthenticated by design and rely on loopback/network boundary controls.
+
+- `POST /internal/mobile/message`
+- `POST /internal/mobile/command`
+- `POST /internal/mobile/pair/verify`
+- `POST /internal/mobile/pair/check`
+- `POST /internal/mobile/pair/generate`
+- `GET /internal/mobile/devices`
+- `DELETE /internal/mobile/devices/{device_id}`
+- `POST /internal/mobile/whatsapp/connection`
+- `GET /internal/mobile/sessions`
+- `GET /internal/mobile/session/{platform}/{sender_id}`
+- `DELETE /internal/mobile/session/{platform}/{sender_id}`
+- `GET /internal/mobile/health`
+- `POST /internal/mobile/cleanup`
+
+## WebSocket Protocol (`/ws`)
+
+Message envelope:
 
 ```json
 {
-    "type": "submit_query",
-    "content": "Your question here",
-    "model": "qwen3-vl:8b-instruct"
+  "type": "message_type",
+  "content": "...",
+  "tab_id": "default"
 }
 ```
 
-Submits a user query and creates a **RequestContext**. If screenshots are in context, they are automatically included. The `model` field can be a local Ollama model or a cloud model ID (e.g., `anthropic/claude-3-5-sonnet`).
+`tab_id` is required for tab-scoped operations.
 
-**Slash Commands**: If the `content` contains recognized slash commands (e.g., `/fs`), the corresponding **Skills** are injected into the system prompt for that turn.
-
-**Note**: Submitting a query while another is in progress will return an error.
-
-#### Clear Context
+Client message example:
 
 ```json
 {
-    "type": "clear_context"
+  "type": "submit_query",
+  "tab_id": "default",
+  "content": "Summarize this screenshot",
+  "capture_mode": "precision",
+  "model": "qwen3-vl:8b-instruct"
 }
 ```
 
-Starts a new conversation. Clears chat history, screenshots, and resets state (including terminal session mode).
-
-#### Stop Streaming
+Server stream example:
 
 ```json
 {
-    "type": "stop_streaming"
+  "type": "response_chunk",
+  "tab_id": "default",
+  "content": "Here is a concise summary..."
 }
 ```
 
-Interrupts the current AI response mid-stream by cancelling the active `RequestContext`. This triggers immediate cleanup of associated resources (e.g., killing running shell processes).
-
-#### Set Capture Mode
-
-```json
-{
-    "type": "set_capture_mode",
-    "mode": "fullscreen | precision | none"
-}
-```
-
-Changes the screenshot capture behavior.
-
-#### Remove Screenshot
-
-```json
-{
-    "type": "remove_screenshot",
-    "screenshot_id": "ss_1"
-}
-```
-
-Removes a specific screenshot from the current context.
-
-#### Get Conversations
-
-```json
-{
-    "type": "get_conversations",
-    "limit": 50,
-    "offset": 0
-}
-```
-
-Retrieves a paginated list of past conversations.
-
-#### Load Conversation
-
-```json
-{
-    "type": "load_conversation",
-    "conversation_id": "uuid-string"
-}
-```
-
-Loads a specific conversation's messages into the chat view.
-
-#### Resume Conversation
-
-```json
-{
-    "type": "resume_conversation",
-    "conversation_id": "uuid-string"
-}
-```
-
-Resumes a previous conversation, restoring full chat state.
-
-#### Search Conversations
-
-```json
-{
-    "type": "search_conversations",
-    "query": "search terms"
-}
-```
-
-Searches conversation titles and message content.
-
-#### Delete Conversation
-
-```json
-{
-    "type": "delete_conversation",
-    "conversation_id": "uuid-string"
-}
-```
-
-Permanently deletes a conversation.
-
-#### Stop Recording
-
-```json
-{
-    "type": "stop_recording"
-}
-```
-
-Stops voice recording and triggers transcription.
-
-#### Retry Message
-
-```json
-{
-    "type": "retry_message",
-    "message_id": "uuid-string",
-    "model": "anthropic/claude-opus-4-5"
-}
-```
-
-Regenerates the assistant response for the given `message_id`. Creates a new response version and increments `active_response_index`. The `model` field is optional (defaults to current model selection).
-
-#### Edit Message
-
-```json
-{
-    "type": "edit_message",
-    "message_id": "uuid-string",
-    "new_content": "Updated user message",
-    "model": "qwen3-vl:8b-instruct"
-}
-```
-
-Edits a past user message and regenerates all subsequent responses.
-
-#### Set Active Response
-
-```json
-{
-    "type": "set_active_response",
-    "message_id": "uuid-string",
-    "response_index": 2
-}
-```
-
-Switches which response variant is displayed (navigating the retry history).
-
-#### Cancel Queued Item
-
-```json
-{
-    "type": "cancel_queued_item",
-    "item_id": "uuid-string"
-}
-```
-
-Cancels a query that is waiting in the tab's conversation queue (not yet processing).
-
-#### Terminal Kill Command
-
-```json
-{
-    "type": "terminal_kill_command",
-    "request_id": "req_uuid"
-}
-```
-
-Sends SIGTERM (then SIGKILL) to the process tree for a running terminal command.
-
-#### Terminal Resize
-
-```json
-{
-    "type": "terminal_resize",
-    "cols": 120,
-    "rows": 30
-}
-```
-
-Resizes the active PTY terminal.
-
-#### Tab Created
-
-```json
-{
-    "type": "tab_created",
-    "tab_id": "tab_uuid"
-}
-```
-
-Creates a new isolated tab session on the backend.
-
-#### Tab Closed
-
-```json
-{
-    "type": "tab_closed",
-    "tab_id": "tab_uuid"
-}
-```
-
-Destroys a tab session and all its state.
-
-#### Tab Activated
-
-```json
-{
-    "type": "tab_activated",
-    "tab_id": "tab_uuid"
-}
-```
-
-Sets the given tab as the active tab for screenshot hotkey routing.
-
-### Meeting Recorder Messages (Client → Server)
-
-#### Start Meeting Recording
-
-```json
-{
-    "type": "meeting_start_recording",
-    "tab_id": "tab_uuid"
-}
-```
-
-#### Stop Meeting Recording
-
-```json
-{
-    "type": "meeting_stop_recording"
-}
-```
-
-#### Get Meeting Recordings
-
-```json
-{
-    "type": "get_meeting_recordings",
-    "limit": 20,
-    "offset": 0
-}
-```
-
-#### Get Meeting Recording Detail
-
-```json
-{
-    "type": "get_meeting_recording",
-    "recording_id": "uuid-string"
-}
-```
-
-#### Delete Meeting Recording
-
-```json
-{
-    "type": "delete_meeting_recording",
-    "recording_id": "uuid-string"
-}
-```
-
-#### Update Meeting Recording Settings
-
-```json
-{
-    "type": "update_meeting_settings",
-    "settings": { "whisper_model": "large-v3", "diarize": true }
-}
-```
-
-### Terminal Interaction Messages
-
-#### Terminal Approval Response
-
-```json
-{
-    "type": "terminal_approval_response",
-    "request_id": "req_uuid",
-    "approved": true,
-    "remember": false
-}
-```
-
-Sent by the client to approve or deny a command execution request.
-
-#### Terminal Session Response
-
-```json
-{
-    "type": "terminal_session_response",
-    "approved": true
-}
-```
-
-Sent by the client to approve or deny a request to enter autonomous session mode.
-
----
-
-### Server -> Client Messages
-
-#### Ready
-
-```json
-{
-    "type": "ready",
-    "content": "Server ready..."
-}
-```
-
-Sent on WebSocket connection.
-
-#### Screenshot Added
-
-```json
-{
-    "type": "screenshot_added",
-    "content": "{\"id\": \"ss_1\", \"name\": \"screenshot.png\", \"thumbnail\": \"...\"}"
-}
-```
-
-A screenshot has been captured and added.
-
-#### Thinking Chunk
-
-```json
-{
-    "type": "thinking_chunk",
-    "content": "...partial reasoning..."
-}
-```
-
-Streaming chunk of the model's thinking/reasoning process (Ollama DeepSeek/Qwen or Claude/OpenAI reasoning models).
-
-#### Response Chunk
-
-```json
-{
-    "type": "response_chunk",
-    "content": "...partial response..."
-}
-```
-
-Streaming chunk of the model's visible response.
-
-#### Tool Call
-
-```json
-{
-    "type": "tool_call",
-    "content": "{\"name\": \"search_web_pages\", \"arguments\": {\"query\": \"news\"}, \"server\": \"websearch\"}"
-}
-```
-
-An MCP tool has been invoked.
-
-#### Tool Result
-
-```json
-{
-    "type": "tool_result",
-    "content": "{\"name\": \"search_web_pages\", \"result\": \"...\", \"server\": \"websearch\"}"
-}
-```
-
-The result of an MCP tool execution.
-
-#### Tool Calls Summary
-
-```json
-{
-    "type": "tool_calls_summary",
-    "content": "[{\"name\": \"add\", \"result\": \"100\", \"server\": \"demo\"}]"
-}
-```
-
-Summary of all tool calls made during a response.
-
-#### Token Update
-
-```json
-{
-    "type": "token_update",
-    "content": "{\"input\": 123, \"output\": 456, \"total\": 579}"
-}
-```
-
-Token usage statistics.
-
-#### Transcription Result
-
-```json
-{
-    "type": "transcription_result",
-    "content": "Transcribed text"
-}
-```
-
-Result of voice-to-text transcription.
-
-#### Error
-
-```json
-{
-    "type": "error",
-    "content": "Error message"
-}
-```
-
-An error occurred during processing.
-
-### Terminal Events
-
-#### Terminal Approval Request
-
-```json
-{
-    "type": "terminal_approval_request",
-    "content": "{\"request_id\": \"...\", \"command\": \"...\", \"cwd\": \"...\"}"
-}
-```
-
-The server is waiting for user approval before executing a command.
-
-#### Terminal Output
-
-```json
-{
-    "type": "terminal_output",
-    "content": "{\"request_id\": \"...\", \"output\": \"...\"}"
-}
-```
-
-Live stdout/stderr stream from an executing command.
-
-#### Terminal Command Complete
-
-```json
-{
-    "type": "terminal_command_complete",
-    "content": "{\"request_id\": \"...\", \"exit_code\": 0, \"duration_ms\": 1234}"
-}
-```
-
-A terminal command has finished executing.
-
-#### Terminal Running Notice
-
-```json
-{
-    "type": "terminal_running_notice",
-    "content": "{\"request_id\": \"...\", \"command\": \"...\", \"elapsed_seconds\": 15}"
-}
-```
-
-Sent every 10 seconds for long-running commands to keep the UI informed.
-
-### Tab and Queue Events (Server → Client)
-
-#### Query Queued
-
-```json
-{
-    "type": "query_queued",
-    "content": "{\"item_id\": \"uuid\", \"position\": 2, \"tab_id\": \"...\"}"
-}
-```
-
-The submitted query was accepted into the tab's conversation queue (another query is already processing).
-
-#### Queue Full
-
-```json
-{
-    "type": "queue_full",
-    "content": "{\"message\": \"Queue is full (max 5)\"}"
-}
-```
-
-The tab's queue has reached its maximum capacity (5). The query was rejected.
-
-#### Ollama Queue Status
-
-```json
-{
-    "type": "ollama_queue_status",
-    "content": "{\"position\": 3, \"tab_id\": \"...\"}"
-}
-```
-
-Emitted when an Ollama request is waiting in the global GPU queue (behind other tabs).
-
-### Tab Snapshot (Server → Client)
-
-#### Tab Snapshot
-
-```json
-{
-    "type": "tab_snapshot",
-    "content": "{\"tab_id\": \"...\", \"conversation_id\": \"...\", \"history\": [...], \"screenshots\": [...], \"terminal\": {...}, \"generatingModel\": \"...\"}"
-}
-```
-
-Full state snapshot sent when a tab is activated, allowing the frontend to restore the chat view.
-
-### Meeting Recorder Events (Server → Client)
-
-#### Meeting Recording Started
-
-```json
-{ "type": "meeting_recording_started", "content": "{\"recording_id\": \"...\"}" }
-```
-
-#### Meeting Recording Stopped
-
-```json
-{ "type": "meeting_recording_stopped", "content": "{\"recording_id\": \"\", \"duration_seconds\": 123}" }
-```
-
-#### Meeting Processing Progress
-
-```json
-{ "type": "meeting_processing_progress", "content": "{\"recording_id\": \"...\", \"stage\": \"tier2_transcription\", \"pct\": 55}" }
-```
-
-#### Meeting Processing Complete
-
-```json
-{
-    "type": "meeting_processing_complete",
-    "content": "{\"recording_id\": \"...\", \"tier1_transcript\": \"...\", \"ai_summary\": \"...\", \"ai_actions\": [...], \"ai_title\": \"...\"}"
-}
-```
-
-#### Meeting Processing Failed
-
-```json
-{ "type": "meeting_processing_failed", "content": "{\"recording_id\": \"...\", \"error\": \"...\"}" }
-```
-
-#### Meeting Recordings List
-
-```json
-{ "type": "meeting_recordings_list", "content": "[{...}, ...]" }
-```
-
-#### Meeting Recording Detail
-
-```json
-{ "type": "meeting_recording_detail", "content": "{...full recording row...}" }
-```
+### Client -> Server Types
+
+- Tab lifecycle: `tab_created`, `tab_closed`, `tab_activated`
+- Chat flow: `submit_query`, `retry_message`, `edit_message`, `set_active_response`
+- Conversation management: `clear_context`, `resume_conversation`, `load_conversation`, `delete_conversation`, `get_conversations`, `search_conversations`
+- Queue/cancellation: `stop_streaming`, `cancel_queued_item`
+- Screenshots: `remove_screenshot`
+- Capture mode: `set_capture_mode`
+- Legacy voice transcription: `start_recording`, `stop_recording`
+- Terminal approvals/control: `terminal_approval_response`, `terminal_session_response`, `terminal_stop_session`, `terminal_kill_command`, `terminal_set_ask_level`, `terminal_resize`
+- YouTube fallback approval: `youtube_transcription_approval_response`
+- Meeting recording: `meeting_start_recording`, `meeting_stop_recording`, `meeting_audio_chunk`, `get_meeting_recordings`, `load_meeting_recording`, `delete_meeting_recording`, `search_meeting_recordings`, `meeting_get_status`, `meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`, `meeting_generate_analysis`, `meeting_execute_action`
+- Ollama model pull: `ollama_pull_model`, `ollama_cancel_pull`
+
+### Server -> Client Events
+
+- Readiness/base: `ready`, `error`
+- Screenshots: `screenshot_start`, `screenshot_added`, `screenshot_removed`, `screenshots_cleared`, `screenshot_ready`
+- Chat streaming: `query`, `thinking_chunk`, `thinking_complete`, `response_chunk`, `response_complete`, `token_usage`
+- Tooling/artifacts: `tool_call`, `tool_calls_summary`, `artifact_start`, `artifact_chunk`, `artifact_complete`, `artifact_deleted`
+- Conversation/history: `context_cleared`, `conversation_saved`, `conversations_list`, `conversation_loaded`, `conversation_deleted`, `conversation_resumed`
+- Queue: `queue_full`, `query_queued`, `queue_updated`, `ollama_queue_status`
+- Terminal: `terminal_approval_request`, `terminal_session_request`, `terminal_session_started`, `terminal_session_ended`, `terminal_running_notice`, `terminal_output`, `terminal_command_complete`
+- YouTube fallback: `youtube_transcription_approval`
+- Meeting: `transcription_result`, `meeting_recording_started`, `meeting_recording_stopped`, `meeting_transcript_chunk`, `meeting_recordings_list`, `meeting_recording_loaded`, `meeting_recording_deleted`, `meeting_recording_status`, `meeting_recording_error`, `meeting_processing_progress`, `meeting_compute_info`, `meeting_settings`, `meeting_analysis_started`, `meeting_analysis_complete`, `meeting_analysis_error`, `meeting_action_result`
+- Notifications: `notification_added`, `notification_dismissed`, `notifications_cleared`
+- Ollama pull: `ollama_pull_progress`, `ollama_pull_complete`, `ollama_pull_error`, `ollama_pull_cancelled`
+- Mobile stop acknowledgement: `generation_stopped`
+
+## Notes
+
+- Some event payloads intentionally contain stringified JSON for compatibility.
+- Keep this document and `source/api/websocket.py` protocol docstring in sync when adding/removing message types.
