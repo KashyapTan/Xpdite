@@ -3,14 +3,14 @@
     <img alt="xpdite" width="240" src="./assets/xpdite-logo-github-color.png">
   </a>
 </div>
-<h3 align="center">Answers for anything on your screen with Xpdite.</h3>
-<h4 align="center">| Free | Easy | Fast | Private |</h4>
+<h3 align="center">Your AI Assistant and Agent Harness with Xpdite.</h3>
+<h4 align="center">| Free | Easy | Open Source | Private |</h4>
 
 ---
 
 # Xpdite
 
-A free, private, AI-powered desktop assistant that sees your screen. Take screenshots of anything, ask questions in natural language, and get instant answers -- all running locally on your machine with Ollama.
+An AI assistant and agent harness that is truly **yours**. It runs your desktop using any model provider (local or cloud), is completely open-source, 100% customizable, and built for everyone (technical or not).
 
 ## Key Features
 
@@ -43,50 +43,18 @@ A free, private, AI-powered desktop assistant that sees your screen. Take screen
 
 ### Quick Install
 
-<div>
-  <a href="https://github.com/KashyapTan/xpdite/releases/latest/download/XpditeSetup.exe">
-    <img src="https://img.shields.io/badge/Download Xpdite-blue?style=for-the-badge&logo=windows&logoColor=white" alt="Download Xpdite Setup">
-  </a>
-</div>
-
-**Alternative:** Download from the [Releases](https://github.com/KashyapTan/xpdite/releases) page
-
-> **Windows Security Notice:** You may see a SmartScreen warning because the app is not yet code-signed. Only proceed after verifying you downloaded from the official releases page (and checksum/signature if provided), then click "More info" -> "Run anyway".
+Xpdite is currently in deveopment, however, the beta will be released very soon.
 
 ### Usage
 
 1. Launch Xpdite
 2. Take a screenshot with `Alt + .` (period)
-3. Type a question or just press Enter
+3. Type a question.
 4. Get streaming AI responses in real-time
 
-## Demo
+## Custom MCP Tools
 
-### Video Demo
-
-<div align="center">
-  <img src="./assets/xpdite-demo.gif" alt="Xpdite Demo - Animated Preview" width="720">
-</div>
-
-<div>
-  <h1>Watch on Youtube:</h1>
-  <a href="https://www.youtube.com/watch?v=wrrfFeGoSt0">
-    <img src="https://img.youtube.com/vi/wrrfFeGoSt0/maxresdefault.jpg" alt="Watch Full Demo on YouTube" width="200">
-  </a>
-</div>
-
-### Screenshots
-
-| Step | Screenshot |
-|------|-----------|
-| 1. Launch & capture | <img alt="Launch" src="./assets/demo-1.png" width="300"> |
-| 2. Enter a prompt | <img alt="Prompt" src="./assets/demo-2.png" width="300"> |
-| 3. Real-time response | <img alt="Response" src="./assets/demo-3.png" width="300"> |
-| 4. Final result | <img alt="Result" src="./assets/demo-4.png" width="300"> |
-
-## MCP Tools
-
-Xpdite gives the AI hands. It can read files, search the web, send emails, manage your calendar, and run terminal commands — all from within the chat.
+Xpdite allows your model to take action. It can read files, search the web, send emails, manage your calendar, and run terminal commands — all from within the chat.
 
 | Server | What it can do | Status |
 |--------|---------------|--------|
@@ -103,8 +71,6 @@ Adding new tools is straightforward -- see the [MCP Guide](./docs/mcp-guide.md).
 ## Feature Inventory
 
 For the complete, up-to-date feature catalog, see `docs/features-overview.md`.
-
-This keeps README concise and avoids drift between marketing and product documentation.
 
 ## Documentation
 
