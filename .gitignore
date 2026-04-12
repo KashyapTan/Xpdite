@@ -47,3 +47,4 @@ claude-code-reference-implementations/
 scripts/benchmark_results
 scripts/quality_test_results
 .marketplace*
+.tmp
