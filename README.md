@@ -38,7 +38,7 @@ An AI assistant and agent harness that is truly **yours**. It runs your desktop 
 
 - **Ollama** -- Download from [ollama.com](https://ollama.com/) and pull a model:
   ```bash
-  ollama pull qwen3-vl:8b-instruct
+  ollama pull qwen3.5:9b
   ```
 
 ### Quick Install
