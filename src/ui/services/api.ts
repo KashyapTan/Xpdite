@@ -151,6 +151,62 @@ export interface ConnectExternalConnectorResponse {
   error?: string;
 }
 
+export interface MarketplaceSource {
+  id: string;
+  name: string;
+  kind: string;
+  location: string;
+  enabled: boolean;
+  builtin: boolean;
+  manifest?: Record<string, unknown> | null;
+  last_sync_at?: number | null;
+  last_error?: string | null;
+}
+
+export interface McpServerToolSummary {
+  id: string;
+  name: string;
+}
+
+export interface McpServerSummary {
+  server: string;
+  display_name: string;
+  tools: McpServerToolSummary[];
+}
+
+export interface MarketplaceInstall {
+  id: string;
+  item_kind: 'skill' | 'plugin' | 'mcp';
+  source_id: string | null;
+  manifest_item_id: string;
+  display_name: string;
+  canonical_id?: string | null;
+  install_root: string;
+  resolved_ref?: string | null;
+  status: string;
+  enabled: boolean;
+  component_manifest?: Record<string, unknown>;
+  raw_source?: Record<string, unknown>;
+  last_error?: string | null;
+  required_secrets?: string[];
+}
+
+export interface MarketplaceCatalogItem {
+  source_id: string;
+  manifest_item_id: string;
+  kind: 'skill' | 'plugin' | 'mcp';
+  display_name: string;
+  description: string;
+  required_secrets: string[];
+  component_counts: {
+    skills: number;
+    mcp_servers: number;
+  };
+  compatibility_warnings: string[];
+  raw: Record<string, unknown>;
+  install?: MarketplaceInstall | null;
+}
+
 /**
  * File entry from the file browser API.
  */
@@ -659,7 +715,7 @@ export const api = {
   /**
    * Get connected MCP servers and their tools.
    */
-  async getMcpServers(): Promise<{ server: string; tools: string[] }[]> {
+  async getMcpServers(): Promise<McpServerSummary[]> {
     try {
       const base = await baseUrl();
       const response = await fetch(`${base}/api/mcp/servers`);
@@ -1091,6 +1147,181 @@ export const api = {
       });
       if (!res.ok) throw new Error('Failed to delete skill');
     },
+  },
+
+  // ============================================
+  // Marketplace API
+  // ============================================
+
+  async getMarketplaceSources(): Promise<MarketplaceSource[]> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/sources`);
+    if (!response.ok) throw new Error('Failed to fetch marketplace sources');
+    return response.json();
+  },
+
+  async createMarketplaceSource(input: {
+    name: string;
+    location: string;
+    kind?: string;
+  }): Promise<MarketplaceSource> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/sources`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to create marketplace source');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.source;
+  },
+
+  async deleteMarketplaceSource(sourceId: string): Promise<void> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/sources/${encodeURIComponent(sourceId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to delete marketplace source');
+      throw new Error(detail);
+    }
+  },
+
+  async refreshMarketplaceSource(sourceId: string): Promise<MarketplaceSource> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/sources/${encodeURIComponent(sourceId)}/refresh`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to refresh marketplace source');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.source;
+  },
+
+  async getMarketplaceCatalog(): Promise<MarketplaceCatalogItem[]> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/catalog`);
+    if (!response.ok) throw new Error('Failed to fetch marketplace catalog');
+    const payload = await response.json();
+    return Array.isArray(payload?.items) ? payload.items : [];
+  },
+
+  async getMarketplaceInstalls(): Promise<MarketplaceInstall[]> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/installs`);
+    if (!response.ok) throw new Error('Failed to fetch marketplace installs');
+    const payload = await response.json();
+    return Array.isArray(payload?.installs) ? payload.installs : [];
+  },
+
+  async installMarketplaceItem(input: {
+    source_id: string;
+    manifest_item_id: string;
+    secrets?: Record<string, string>;
+  }): Promise<MarketplaceInstall> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/install`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to install marketplace item');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.install;
+  },
+
+  async installMarketplacePackage(input: {
+    runner: 'npx' | 'uvx';
+    package_input: string;
+  }): Promise<MarketplaceInstall> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/install-package`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to install marketplace package');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.install;
+  },
+
+  async installMarketplaceRepo(input: {
+    repo_input: string;
+  }): Promise<MarketplaceInstall> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/install-repo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to install marketplace repo');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.install;
+  },
+
+  async setMarketplaceInstallEnabled(installId: string, enabled: boolean): Promise<MarketplaceInstall> {
+    const base = await baseUrl();
+    const response = await artifactFetch(
+      `${base}/api/marketplace/installs/${encodeURIComponent(installId)}/${enabled ? 'enable' : 'disable'}`,
+      { method: 'POST' },
+    );
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to update marketplace install');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.install;
+  },
+
+  async updateMarketplaceInstall(installId: string): Promise<MarketplaceInstall> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/installs/${encodeURIComponent(installId)}/update`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to update marketplace install');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.install;
+  },
+
+  async deleteMarketplaceInstall(installId: string): Promise<void> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/installs/${encodeURIComponent(installId)}`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to delete marketplace install');
+      throw new Error(detail);
+    }
+  },
+
+  async updateMarketplaceSecrets(installId: string, secrets: Record<string, string>): Promise<void> {
+    const base = await baseUrl();
+    const response = await artifactFetch(`${base}/api/marketplace/installs/${encodeURIComponent(installId)}/secrets`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secrets }),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to update marketplace secrets');
+      throw new Error(detail);
+    }
   },
 
   // ============================================

@@ -200,6 +200,23 @@ def _is_loopback_request(request: Request) -> bool:
     return bool(client and client.host in _LOOPBACK_CLIENT_HOSTS)
 
 
+async def _require_local_api_access(
+    request: Request,
+    server_token: Optional[str] = Header(
+        default=None,
+        alias=_ARTIFACT_AUTH_HEADER,
+    ),
+) -> None:
+    if not _is_loopback_request(request):
+        raise HTTPException(status_code=403, detail="Local API access denied")
+
+    if SERVER_SESSION_TOKEN and not (
+        server_token
+        and secrets.compare_digest(server_token, SERVER_SESSION_TOKEN)
+    ):
+        raise HTTPException(status_code=403, detail="Local API access denied")
+
+
 async def _require_artifact_access(
     request: Request,
     artifact_token: Optional[str] = Header(
@@ -207,14 +224,17 @@ async def _require_artifact_access(
         alias=_ARTIFACT_AUTH_HEADER,
     ),
 ) -> None:
-    if not _is_loopback_request(request):
-        raise HTTPException(status_code=403, detail="Artifact access denied")
+    await _require_local_api_access(request, server_token=artifact_token)
 
-    if SERVER_SESSION_TOKEN and not (
-        artifact_token
-        and secrets.compare_digest(artifact_token, SERVER_SESSION_TOKEN)
-    ):
-        raise HTTPException(status_code=403, detail="Artifact access denied")
+
+async def _require_marketplace_access(
+    request: Request,
+    marketplace_token: Optional[str] = Header(
+        default=None,
+        alias=_ARTIFACT_AUTH_HEADER,
+    ),
+) -> None:
+    await _require_local_api_access(request, server_token=marketplace_token)
 
 
 def _validate_artifact_type(artifact_type: Optional[str]) -> Optional[str]:
@@ -1164,12 +1184,7 @@ async def get_mcp_servers():
     """Get connected MCP servers and their tools."""
     from ..mcp_integration.core.manager import mcp_manager
 
-    servers = mcp_manager.get_server_tools()
-
-    result = [
-        {"server": name, "tools": sorted(tools)} for name, tools in servers.items()
-    ]
-    return sorted(result, key=lambda x: x["server"])
+    return mcp_manager.get_server_tools()
 
 
 @router.get("/settings/tools")
@@ -1454,6 +1469,31 @@ class ReferenceFileCreate(BaseModel):
     content: str
 
 
+class MarketplaceSourceCreate(BaseModel):
+    name: str
+    location: str
+    kind: Optional[str] = None
+
+
+class MarketplaceInstallRequest(BaseModel):
+    source_id: str
+    manifest_item_id: str
+    secrets: dict[str, str] = {}
+
+
+class MarketplacePackageInstallRequest(BaseModel):
+    runner: str
+    package_input: str
+
+
+class MarketplaceRepoInstallRequest(BaseModel):
+    repo_input: str
+
+
+class MarketplaceSecretsUpdate(BaseModel):
+    secrets: dict[str, str]
+
+
 @router.get("/skills")
 async def get_skills():
     """Get all skills (builtin + user), with override info for the UI."""
@@ -1565,6 +1605,258 @@ async def add_reference_file(name: str, body: ReferenceFileCreate):
             manager.add_reference_file, name, body.filename, body.content
         )
         return {"status": "created", "filename": body.filename}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ============================================
+# Marketplace API
+# ============================================
+
+
+@router.get("/marketplace/sources")
+async def get_marketplace_sources(_: None = Depends(_require_marketplace_access)):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    return await _run_in_thread(service.list_sources)
+
+
+@router.post("/marketplace/sources")
+async def create_marketplace_source(
+    body: MarketplaceSourceCreate,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    if not body.location.strip():
+        raise HTTPException(status_code=400, detail="Marketplace source location is required")
+    service = get_marketplace_service()
+    created_source = None
+    try:
+        created_source = await _run_in_thread(
+            service.create_source,
+            name=body.name,
+            location=body.location,
+            kind=body.kind or "manifest",
+        )
+        await service.refresh_source_async(created_source["id"])
+        return {"status": "created", "source": service.get_source(created_source["id"])}
+    except ValueError as e:
+        if created_source is not None:
+            try:
+                await _run_in_thread(service.delete_source, created_source["id"])
+            except ValueError:
+                pass
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/marketplace/sources/{source_id}")
+async def delete_marketplace_source(
+    source_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        await _run_in_thread(service.delete_source, source_id)
+        return {"status": "deleted", "source_id": source_id}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/marketplace/sources/{source_id}/refresh")
+async def refresh_marketplace_source(
+    source_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        source = await service.refresh_source_async(source_id)
+        return {"status": "refreshed", "source": source}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/marketplace/catalog")
+async def get_marketplace_catalog(_: None = Depends(_require_marketplace_access)):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    catalog = await _run_in_thread(service.list_catalog)
+    return {"items": catalog}
+
+
+@router.get("/marketplace/installs")
+async def get_marketplace_installs(_: None = Depends(_require_marketplace_access)):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    installs = await _run_in_thread(service.list_installs)
+    return {"installs": installs}
+
+
+@router.post("/marketplace/install")
+async def install_marketplace_item(
+    body: MarketplaceInstallRequest,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        install = await service.install_item_async(
+            source_id=body.source_id,
+            manifest_item_id=body.manifest_item_id,
+            secrets=body.secrets,
+        )
+        return {"status": "installed", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(
+            "Unexpected marketplace install failure for source=%s item=%s",
+            body.source_id,
+            body.manifest_item_id,
+        )
+        raise HTTPException(status_code=400, detail=str(e) or "Marketplace install failed")
+
+
+@router.post("/marketplace/install-package")
+async def install_marketplace_package(
+    body: MarketplacePackageInstallRequest,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    runner = body.runner.strip().lower()
+    package_input = body.package_input.strip()
+    if not runner:
+        raise HTTPException(status_code=400, detail="Package runner is required")
+    if not package_input:
+        raise HTTPException(status_code=400, detail="Package command is required")
+
+    service = get_marketplace_service()
+    try:
+        install = await service.install_package_async(
+            runner=runner,
+            package_input=package_input,
+        )
+        return {"status": "installed", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception(
+            "Unexpected marketplace package install failure for runner=%s input=%s",
+            runner,
+            package_input,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=str(e) or "Marketplace package install failed",
+        )
+
+
+@router.post("/marketplace/install-repo")
+async def install_marketplace_repo(
+    body: MarketplaceRepoInstallRequest,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    repo_input = body.repo_input.strip()
+    if not repo_input:
+        raise HTTPException(status_code=400, detail="Repository input is required")
+
+    service = get_marketplace_service()
+    try:
+        install = await service.install_repo_async(repo_input=repo_input)
+        return {"status": "installed", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Unexpected marketplace repo install failure for %s", repo_input)
+        raise HTTPException(
+            status_code=400,
+            detail=str(e) or "Marketplace repo install failed",
+        )
+
+
+@router.post("/marketplace/installs/{install_id}/enable")
+async def enable_marketplace_install(
+    install_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        install = await service.enable_install_async(install_id)
+        return {"status": "enabled", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/marketplace/installs/{install_id}/disable")
+async def disable_marketplace_install(
+    install_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        install = await service.disable_install_async(install_id)
+        return {"status": "disabled", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/marketplace/installs/{install_id}/update")
+async def update_marketplace_install(
+    install_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        install = await service.update_install_async(install_id)
+        return {"status": "updated", "install": install}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/marketplace/installs/{install_id}")
+async def uninstall_marketplace_install(
+    install_id: str,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        result = await service.uninstall_async(install_id)
+        return {"status": "deleted", **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/marketplace/installs/{install_id}/secrets")
+async def update_marketplace_install_secrets(
+    install_id: str,
+    body: MarketplaceSecretsUpdate,
+    _: None = Depends(_require_marketplace_access),
+):
+    from ..services.marketplace.service import get_marketplace_service
+
+    service = get_marketplace_service()
+    try:
+        result = await _run_in_thread(service.set_install_secrets, install_id, body.secrets)
+        return {"status": "updated", **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

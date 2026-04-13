@@ -414,6 +414,57 @@ class DatabaseManager:
                 ON notifications(created_at DESC)
             """)
 
+            # --- TABLE: MARKETPLACE SOURCES ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS marketplace_sources (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    location TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    builtin INTEGER NOT NULL DEFAULT 0,
+                    manifest_json TEXT,
+                    last_sync_at REAL,
+                    last_error TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_marketplace_sources_enabled
+                ON marketplace_sources(enabled, name)
+            """)
+
+            # --- TABLE: MARKETPLACE INSTALLS ---
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS marketplace_installs (
+                    id TEXT PRIMARY KEY,
+                    item_kind TEXT NOT NULL,
+                    source_id TEXT,
+                    manifest_item_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    canonical_id TEXT,
+                    install_root TEXT NOT NULL,
+                    resolved_ref TEXT,
+                    status TEXT NOT NULL,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    component_manifest_json TEXT,
+                    raw_source_json TEXT,
+                    last_error TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL,
+                    UNIQUE(source_id, manifest_item_id)
+                )
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_marketplace_installs_enabled
+                ON marketplace_installs(enabled, item_kind)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_marketplace_installs_source
+                ON marketplace_installs(source_id, manifest_item_id)
+            """)
+
             # --- CONVERSATION JOB_ID MIGRATION ---
             try:
                 cursor.execute("ALTER TABLE conversations ADD COLUMN job_id TEXT")

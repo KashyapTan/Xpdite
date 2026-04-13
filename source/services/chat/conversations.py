@@ -26,7 +26,7 @@ from ..media.screenshots import ScreenshotHandler
 
 logger = logging.getLogger(__name__)
 
-_SLASH_COMMAND_PATTERN = re.compile(r"(?<!\S)/([a-zA-Z0-9_-]+)(?=\s|$)")
+_SLASH_COMMAND_PATTERN = re.compile(r"(?<!\S)/([a-zA-Z0-9_:-]+)(?=\s|$)")
 _ATTACHMENT_READ_FILE_MAX_CHARS = 8000
 if TYPE_CHECKING:
     from .tab_manager import TabState

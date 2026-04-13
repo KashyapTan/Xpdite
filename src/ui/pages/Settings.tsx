@@ -5,6 +5,7 @@ import SettingsModels from '../components/settings/SettingsModels';
 import SettingsTools from '../components/settings/SettingsTools';
 import SettingsApiKey from '../components/settings/SettingsApiKey';
 import SettingsConnections from '../components/settings/SettingsConnections';
+import SettingsMarketplace from '../components/settings/SettingsMarketplace';
 import SettingsSystemPrompt from '../components/settings/SettingsSystemPrompt';
 import SettingsSkills from '../components/settings/SettingsSkills';
 import SettingsMemory from '../components/settings/SettingsMemory';
@@ -46,6 +47,7 @@ const Settings: React.FC = () => {
   const tabs: SettingsTab[] = [
     { id: 'models', label: 'Models', icon: modelsIcon, className: 'settings-models', component: <SettingsModels /> },
     { id: 'connections', label: 'Connections', icon: connectionsIcon, className: 'settings-mcp-connections', component: <SettingsConnections /> },
+    { id: 'marketplace', label: 'Marketplace', icon: connectionsIcon, className: 'settings-marketplace-tab', component: <SettingsMarketplace /> },
     { id: 'tools', label: 'Tools', icon: toolsIcon, className: 'settings-tools', component: <SettingsTools /> },
     { id: 'skills', label: 'Skills', icon: settingsIcon, className: 'settings-skills-tab', component: <SettingsSkills /> },
     { id: 'memory', label: 'Memory', icon: settingsIcon, className: 'settings-memory-tab', component: <SettingsMemory /> },

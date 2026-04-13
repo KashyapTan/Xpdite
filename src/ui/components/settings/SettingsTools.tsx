@@ -1,15 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../services/api';
+import type { McpServerSummary } from '../../services/api';
 import { ChevronRightIcon } from '../icons/AppIcons';
 import '../../CSS/settings/SettingsTools.css';
 
-interface McpServer {
-  server: string;
-  tools: string[];
-}
-
 const SettingsTools: React.FC = () => {
-  const [servers, setServers] = useState<McpServer[]>([]);
+  const [servers, setServers] = useState<McpServerSummary[]>([]);
   const [alwaysOn, setAlwaysOn] = useState<string[]>([]);
   const [topK, setTopK] = useState(5);
   const [loading, setLoading] = useState(true);
@@ -52,16 +48,17 @@ const SettingsTools: React.FC = () => {
     saveSettings(newAlwaysOn, topK);
   };
 
-  const toggleServer = (serverTools: string[]) => {
-    const allEnabled = serverTools.every(t => alwaysOn.includes(t));
+  const toggleServer = (serverTools: McpServerSummary['tools']) => {
+    const toolIds = serverTools.map((tool) => tool.id);
+    const allEnabled = toolIds.every((toolId) => alwaysOn.includes(toolId));
     
     let newAlwaysOn = [...alwaysOn];
     if (allEnabled) {
       // Disable all
-      newAlwaysOn = newAlwaysOn.filter(t => !serverTools.includes(t));
+      newAlwaysOn = newAlwaysOn.filter((toolId) => !toolIds.includes(toolId));
     } else {
       // Enable all (add missing ones)
-      const missing = serverTools.filter(t => !alwaysOn.includes(t));
+      const missing = toolIds.filter((toolId) => !alwaysOn.includes(toolId));
       newAlwaysOn = [...newAlwaysOn, ...missing];
     }
     saveSettings(newAlwaysOn, topK);
@@ -119,8 +116,9 @@ const SettingsTools: React.FC = () => {
         <h3>Connected MCP Servers</h3>
         {servers.map(server => {
           const isExpanded = expandedServers.has(server.server);
-          const allEnabled = server.tools.length > 0 && server.tools.every(t => alwaysOn.includes(t));
-          const someEnabled = server.tools.some(t => alwaysOn.includes(t));
+          const toolIds = server.tools.map((tool) => tool.id);
+          const allEnabled = toolIds.length > 0 && toolIds.every((toolId) => alwaysOn.includes(toolId));
+          const someEnabled = toolIds.some((toolId) => alwaysOn.includes(toolId));
           
           return (
             <div key={server.server} className="settings-tools-server-card">
@@ -134,7 +132,7 @@ const SettingsTools: React.FC = () => {
                  </button>
                 
                 <div className="settings-tools-server-info" onClick={() => toggleExpand(server.server)}>
-                  <span className="settings-tools-server-name">{server.server}</span>
+                  <span className="settings-tools-server-name">{server.display_name || server.server}</span>
                   <span className="settings-tools-count">{server.tools.length} tools</span>
                 </div>
 
@@ -152,10 +150,10 @@ const SettingsTools: React.FC = () => {
               {isExpanded && (
                 <div className="settings-tools-server-content">
                   {server.tools.map(tool => (
-                    <div key={tool} className="settings-tools-item" onClick={() => toggleTool(tool)}>
-                      <span className="settings-tools-name">{tool}</span>
+                    <div key={tool.id} className="settings-tools-item" onClick={() => toggleTool(tool.id)}>
+                      <span className="settings-tools-name">{tool.name}</span>
                       
-                      <div className={`settings-tools-toggle ${alwaysOn.includes(tool) ? 'active' : ''}`}>
+                      <div className={`settings-tools-toggle ${alwaysOn.includes(tool.id) ? 'active' : ''}`}>
                         <div className="settings-tools-toggle-track">
                           <div className="settings-tools-toggle-thumb" />
                         </div>

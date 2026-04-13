@@ -184,12 +184,15 @@ export interface Skill {
   name: string;
   description: string;
   slash_command: string | null;
+  canonical_id?: string | null;
   trigger_servers: string[];
   version: string;
-  source: 'builtin' | 'user';
+  source: 'builtin' | 'user' | 'marketplace';
   enabled: boolean;
   overridden_by_user: boolean;
   folder_path: string;
+  install_id?: string | null;
+  folder_slug?: string | null;
 }
 
 export interface MemorySummary {

@@ -23,6 +23,10 @@ vi.mock('../../components/settings/SettingsConnections', () => ({
   default: () => <div data-testid="settings-connections">connections</div>,
 }));
 
+vi.mock('../../components/settings/SettingsMarketplace', () => ({
+  default: () => <div data-testid="settings-marketplace">marketplace</div>,
+}));
+
 vi.mock('../../components/settings/SettingsSystemPrompt', () => ({
   default: () => <div data-testid="settings-prompt">prompt</div>,
 }));
@@ -65,6 +69,9 @@ describe('Settings page', () => {
 
     fireEvent.click(screen.getByText('Connections'));
     expect(screen.getByTestId('settings-connections')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Marketplace'));
+    expect(screen.getByTestId('settings-marketplace')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Tools'));
     expect(screen.getByTestId('settings-tools')).toBeInTheDocument();

@@ -18,8 +18,16 @@ describe('SettingsTools', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockedApi.getMcpServers.mockResolvedValue([
-      { server: 'filesystem', tools: ['read_file', 'write_file'] },
-      { server: 'terminal', tools: ['run_command'] },
+      {
+        server: 'filesystem',
+        display_name: 'filesystem',
+        tools: [{ id: 'read_file', name: 'read_file' }, { id: 'write_file', name: 'write_file' }],
+      },
+      {
+        server: 'terminal',
+        display_name: 'terminal',
+        tools: [{ id: 'run_command', name: 'run_command' }],
+      },
     ]);
     mockedApi.getToolsSettings.mockResolvedValue({
       always_on: ['read_file'],
@@ -78,7 +86,11 @@ describe('SettingsTools', () => {
   });
 
   test('renders loading fallback while initial fetch resolves', async () => {
-    let resolveServers: (value: { server: string; tools: string[] }[]) => void = () => {};
+    let resolveServers: (value: {
+      server: string;
+      display_name: string;
+      tools: { id: string; name: string }[];
+    }[]) => void = () => {};
     mockedApi.getMcpServers.mockReturnValue(
       new Promise((resolve) => {
         resolveServers = resolve;
@@ -88,7 +100,7 @@ describe('SettingsTools', () => {
     render(<SettingsTools />);
     expect(screen.getByText('Loading tools...')).toBeInTheDocument();
 
-    resolveServers([{ server: 'filesystem', tools: ['read_file'] }]);
+    resolveServers([{ server: 'filesystem', display_name: 'filesystem', tools: [{ id: 'read_file', name: 'read_file' }] }]);
 
     expect(await screen.findByText('filesystem')).toBeInTheDocument();
   });

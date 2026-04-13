@@ -18,9 +18,13 @@ class TestCreateApp:
         ]
         assert len(cors_middleware) == 1
         options = cors_middleware[0].kwargs
-        assert options["allow_origins"] == ["*"]
+        assert options["allow_origins"] == [
+            "http://127.0.0.1:5123",
+            "http://localhost:5123",
+            "null",
+        ]
         assert options["allow_methods"] == ["*"]
-        assert options["allow_headers"] == ["*"]
+        assert options["allow_headers"] == ["Content-Type", "X-Xpdite-Server-Token"]
 
         route_paths = {route.path for route in app.router.routes}
         assert "/ws" in route_paths

@@ -233,6 +233,7 @@ const SettingsSkills: React.FC = () => {
                                         {skill.slash_command && <span className="skill-command">/{skill.slash_command}</span>}
                                         {skill.source === 'builtin' && <span className="skill-badge default">BUILTIN</span>}
                                         {skill.source === 'user' && <span className="skill-badge custom">CUSTOM</span>}
+                                        {skill.source === 'marketplace' && <span className="skill-badge custom">MARKETPLACE</span>}
                                         {skill.overridden_by_user && <span className="skill-badge modified">OVERRIDDEN</span>}
                                     </div>
                                     <label className="settings-toggle">

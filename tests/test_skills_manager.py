@@ -104,6 +104,36 @@ class TestSeedOverwrite:
         assert mgr.get_all_skills() == []
 
 
+class TestNativeSkillMarkdown:
+    def test_loads_native_skill_md_without_skill_json(self, tmp_path):
+        skills_dir = tmp_path / "skills"
+        builtin_dir = skills_dir / "builtin"
+        user_dir = skills_dir / "user"
+        seed_dir = tmp_path / "skills_seed"
+        prefs_file = skills_dir / "preferences.json"
+
+        native_folder = seed_dir / "planner-skill"
+        native_folder.mkdir(parents=True, exist_ok=True)
+        (native_folder / "SKILL.md").write_text(
+            "---\nname: planner\ncommand: planner:triage\ndescription: Planner skill\n---\n# Planner\n",
+            encoding="utf-8",
+        )
+
+        mgr = SkillManager(
+            skills_dir=skills_dir,
+            builtin_dir=builtin_dir,
+            user_dir=user_dir,
+            seed_dir=seed_dir,
+            preferences_file=prefs_file,
+        )
+        mgr.initialize()
+
+        skill = mgr.get_skill_by_slash_command("planner:triage")
+        assert skill is not None
+        assert skill.name == "planner"
+        assert skill.source == "builtin"
+
+
 # ── Preferences ──────────────────────────────────────────────────
 
 

@@ -83,7 +83,7 @@ type FileTrigger = {
   searchTerm: string;
 };
 
-const COMMAND_BODY_PATTERN = /^[a-zA-Z0-9_-]*$/;
+const COMMAND_BODY_PATTERN = /^[a-zA-Z0-9_:-]*$/;
 const FILE_TRIGGER_BODY_PATTERN = /^[^\s@]*$/;
 const FILE_MENU_WIDTH = 320;
 const SLASH_MENU_WIDTH = 250;

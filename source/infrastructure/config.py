@@ -44,6 +44,19 @@ USER_SKILLS_DIR = SKILLS_DIR / "user"
 SKILLS_SEED_DIR = SOURCE_DIR / "skills_seed"
 SKILLS_PREFERENCES_FILE = SKILLS_DIR / "preferences.json"
 
+# Marketplace directories
+MARKETPLACE_DIR = USER_DATA_DIR / "marketplace"
+MARKETPLACE_PLUGINS_DIR = MARKETPLACE_DIR / "plugins"
+MARKETPLACE_SKILLS_DIR = MARKETPLACE_DIR / "skills"
+MARKETPLACE_MCP_DIR = MARKETPLACE_DIR / "mcp"
+for _marketplace_dir in (
+    MARKETPLACE_DIR,
+    MARKETPLACE_PLUGINS_DIR,
+    MARKETPLACE_SKILLS_DIR,
+    MARKETPLACE_MCP_DIR,
+):
+    os.makedirs(_marketplace_dir, exist_ok=True)
+
 # Memory directories
 MEMORY_DIR = USER_DATA_DIR / "memory"
 MEMORY_PROFILE_FILE = MEMORY_DIR / "profile" / "user_profile.md"

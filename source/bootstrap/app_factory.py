@@ -4,6 +4,7 @@ FastAPI application factory.
 Creates and configures the FastAPI application instance.
 """
 
+import asyncio
 import logging
 
 from fastapi import FastAPI
@@ -72,6 +73,31 @@ def create_app() -> FastAPI:
         mobile_channel_service.cleanup_expired_codes()
         mobile_channel_service.register_relay_callback()
 
+    # ── Marketplace source initialization ────────────────────────────
+    @app.on_event("startup")
+    async def _init_marketplace_sources():
+        from ..services.marketplace.service import get_marketplace_service
+
+        marketplace_service = get_marketplace_service()
+        try:
+            marketplace_service.initialize()
+        except Exception as e:
+            logger.warning("Failed to seed marketplace sources on startup: %s", e)
+            return
+
+        async def _refresh_marketplace_sources_background() -> None:
+            try:
+                await marketplace_service.refresh_builtin_sources_async()
+            except Exception as e:
+                logger.warning("Failed to refresh marketplace sources in background: %s", e)
+
+        try:
+            app.state.marketplace_refresh_task = asyncio.create_task(
+                _refresh_marketplace_sources_background()
+            )
+        except Exception as e:
+            logger.warning("Failed to schedule marketplace refresh task: %s", e)
+
     # ── Channel Bridge config sync ────────────────────────────────
     @app.on_event("startup")
     async def _sync_mobile_channels_bridge_config():
@@ -100,6 +126,19 @@ def create_app() -> FastAPI:
             file_browser_service.shutdown()
         except Exception as e:
             logger.warning("Failed to stop file browser indexer: %s", e)
+
+    @app.on_event("shutdown")
+    async def _cancel_marketplace_refresh_task():
+        task = getattr(app.state, "marketplace_refresh_task", None)
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("Marketplace refresh task failed during shutdown: %s", e)
 
     return app
 

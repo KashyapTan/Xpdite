@@ -696,8 +696,16 @@ describe('api singleton - HTTP endpoints', () => {
   describe('getMcpServers', () => {
     test('returns MCP servers on success', async () => {
       const mockServers = [
-        { server: 'filesystem', tools: ['read', 'write'] },
-        { server: 'gmail', tools: ['search', 'send'] },
+        {
+          server: 'filesystem',
+          display_name: 'filesystem',
+          tools: [{ id: 'read', name: 'read' }, { id: 'write', name: 'write' }],
+        },
+        {
+          server: 'gmail',
+          display_name: 'gmail',
+          tools: [{ id: 'search', name: 'search' }, { id: 'send', name: 'send' }],
+        },
       ];
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -1154,6 +1162,110 @@ describe('api singleton - HTTP endpoints', () => {
       expect(init).toBeDefined();
       expect((init?.headers as Headers).get('X-Xpdite-Server-Token')).toBe('artifact-token');
       expect((init?.headers as Headers).get('Content-Type')).toBe('application/json');
+    });
+  });
+
+  describe('marketplace API', () => {
+    test('getMarketplaceCatalog returns catalog items', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          items: [{ manifest_item_id: 'planner-skill', kind: 'skill' }],
+        }),
+      });
+
+      const result = await api.getMarketplaceCatalog();
+
+      expect(result).toEqual([{ manifest_item_id: 'planner-skill', kind: 'skill' }]);
+      const [url] = vi.mocked(fetch).mock.calls[0];
+      expect(url).toBe('http://localhost:8000/api/marketplace/catalog');
+    });
+
+    test('installMarketplaceItem posts source, item, and secrets', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          install: { id: 'install-1', item_kind: 'skill' },
+        }),
+      });
+
+      const result = await api.installMarketplaceItem({
+        source_id: 'source-1',
+        manifest_item_id: 'planner-skill',
+        secrets: { API_TOKEN: 'secret' },
+      });
+
+      expect(result).toEqual({ id: 'install-1', item_kind: 'skill' });
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      expect(url).toBe('http://localhost:8000/api/marketplace/install');
+      expect(init?.method).toBe('POST');
+      expect((init?.headers as Headers).get('Content-Type')).toBe('application/json');
+      expect(init?.body).toBe(JSON.stringify({
+        source_id: 'source-1',
+        manifest_item_id: 'planner-skill',
+        secrets: { API_TOKEN: 'secret' },
+      }));
+    });
+
+    test('installMarketplacePackage posts runner and package command', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          install: { id: 'install-2', item_kind: 'mcp' },
+        }),
+      });
+
+      const result = await api.installMarketplacePackage({
+        runner: 'npx',
+        package_input: '@modelcontextprotocol/server-everything --debug',
+      });
+
+      expect(result).toEqual({ id: 'install-2', item_kind: 'mcp' });
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      expect(url).toBe('http://localhost:8000/api/marketplace/install-package');
+      expect(init?.method).toBe('POST');
+      expect((init?.headers as Headers).get('Content-Type')).toBe('application/json');
+      expect(init?.body).toBe(JSON.stringify({
+        runner: 'npx',
+        package_input: '@modelcontextprotocol/server-everything --debug',
+      }));
+    });
+
+    test('installMarketplaceRepo posts repo input', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          install: { id: 'install-3', item_kind: 'plugin' },
+        }),
+      });
+
+      const result = await api.installMarketplaceRepo({
+        repo_input: 'JuliusBrussee/caveman',
+      });
+
+      expect(result).toEqual({ id: 'install-3', item_kind: 'plugin' });
+      const [url, init] = vi.mocked(fetch).mock.calls[0];
+      expect(url).toBe('http://localhost:8000/api/marketplace/install-repo');
+      expect(init?.method).toBe('POST');
+      expect((init?.headers as Headers).get('Content-Type')).toBe('application/json');
+      expect(init?.body).toBe(JSON.stringify({
+        repo_input: 'JuliusBrussee/caveman',
+      }));
+    });
+
+    test('marketplace requests include the Electron server token header', async () => {
+      window.electronAPI = {
+        getServerToken: vi.fn().mockResolvedValue('marketplace-token'),
+      } as typeof window.electronAPI;
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ items: [] }),
+      });
+
+      await api.getMarketplaceCatalog();
+
+      const [, init] = vi.mocked(fetch).mock.calls[0];
+      expect((init?.headers as Headers).get('X-Xpdite-Server-Token')).toBe('marketplace-token');
     });
   });
 });

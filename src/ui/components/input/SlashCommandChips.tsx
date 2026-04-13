@@ -13,7 +13,7 @@ interface SlashCommandChipsProps {
  */
 const SlashCommandChips: React.FC<SlashCommandChipsProps> = ({ query, onRemoveCommand }) => {
     // Extract all slash commands from the query
-    const commands = query.match(/\/[a-zA-Z0-9_-]+/g) || [];
+    const commands = query.match(/\/[a-zA-Z0-9_:-]+/g) || [];
 
     // Deduplicate
     const uniqueCommands = [...new Set(commands)];

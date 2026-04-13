@@ -77,6 +77,8 @@ class McpToolManager:
         env: Optional[Dict[str, str]] = None,
         *,
         skip_embed: bool = False,
+        tool_name_prefix: Optional[str] = None,
+        display_name: Optional[str] = None,
     ):
         """Connect to an MCP server by launching it as a subprocess.
 
@@ -175,19 +177,26 @@ class McpToolManager:
                 "session": session,
                 "shutdown_event": shutdown_event,
                 "task": task,
+                "display_name": display_name or server_name,
             }
 
             # Discover tools
             tools_result = await session.list_tools()
             for tool in tools_result.tools:
-                self._tool_registry[tool.name] = {
+                registered_name = (
+                    f"{tool_name_prefix}{tool.name}" if tool_name_prefix else tool.name
+                )
+                self._tool_registry[registered_name] = {
                     "session": session,
                     "server_name": server_name,
+                    "server_display_name": display_name or server_name,
+                    "session_tool_name": tool.name,
+                    "display_tool_name": tool.name,
                 }
                 ollama_tool = {
                     "type": "function",
                     "function": {
-                        "name": tool.name,
+                        "name": registered_name,
                         "description": tool.description or "",
                         "parameters": tool.inputSchema
                         if tool.inputSchema
@@ -199,14 +208,14 @@ class McpToolManager:
                 # Store raw schema for cross-provider conversion
                 self._raw_tools.append(
                     {
-                        "name": tool.name,
+                        "name": registered_name,
                         "description": tool.description or "",
                         "input_schema": tool.inputSchema
                         if tool.inputSchema
                         else {"type": "object", "properties": {}},
                     }
                 )
-                logger.debug("Registered tool: %s (from %s)", tool.name, server_name)
+                logger.debug("Registered tool: %s (from %s)", registered_name, server_name)
 
             logger.info(
                 "Connected to '%s' — %d tool(s)", server_name, len(tools_result.tools)
@@ -248,6 +257,8 @@ class McpToolManager:
             self._tool_registry[name] = {
                 "session": None,  # no subprocess — intercepted at handler layer
                 "server_name": server_name,
+                "server_display_name": server_name,
+                "display_tool_name": name,
             }
 
             ollama_tool = {
@@ -304,7 +315,7 @@ class McpToolManager:
             )
             result = await asyncio.wait_for(
                 session.call_tool(
-                    tool_name,
+                    str(entry.get("session_tool_name") or tool_name),
                     arguments=arguments,
                     read_timeout_seconds=timedelta(seconds=read_timeout_s),
                 ),
@@ -364,15 +375,30 @@ class McpToolManager:
         """Check if any tools are registered."""
         return len(self._ollama_tools) > 0
 
-    def get_server_tools(self) -> Dict[str, List[str]]:
-        """Return a mapping of server names to their tool names."""
-        servers: Dict[str, List[str]] = {}
-        for tool_name, entry in self._tool_registry.items():
-            server_name = entry["server_name"]
-            if server_name not in servers:
-                servers[server_name] = []
-            servers[server_name].append(tool_name)
-        return servers
+    def get_server_tools(self) -> List[Dict[str, Any]]:
+        """Return MCP servers with stable ids and user-facing display names."""
+        servers: Dict[str, Dict[str, Any]] = {}
+        for tool_id, entry in self._tool_registry.items():
+            server_name = str(entry["server_name"])
+            server_entry = servers.setdefault(
+                server_name,
+                {
+                    "server": server_name,
+                    "display_name": str(entry.get("server_display_name") or server_name),
+                    "tools": [],
+                },
+            )
+            server_entry["tools"].append(
+                {
+                    "id": tool_id,
+                    "name": str(entry.get("display_tool_name") or entry.get("session_tool_name") or tool_id),
+                }
+            )
+
+        result = list(servers.values())
+        for server in result:
+            server["tools"] = sorted(server["tools"], key=lambda tool: str(tool["name"]).lower())
+        return sorted(result, key=lambda item: str(item["display_name"]).lower())
 
     def get_tools(self) -> List[Dict] | None:
         """Return tool definitions in OpenAI format, or None if no tools.
@@ -639,12 +665,12 @@ async def init_mcp_servers():
             sys.executable,
             [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
         ),
-        _connect_with_timeout(
-            "windows_mcp",
-            "uvx",
-            ["windows-mcp"],
-            timeout_s=60.0,  # Windows MCP can take a while to start on first run due to antivirus scans
-        ),
+        # _connect_with_timeout(
+        #     "windows_mcp",
+        #     "uvx",
+        #     ["windows-mcp"],
+        #     timeout_s=60.0,  # Windows MCP can take a while to start on first run due to antivirus scans
+        # ),
     )
 
     # ── Terminal tools (inline — no subprocess) ─────────────────────
@@ -740,6 +766,14 @@ async def init_mcp_servers():
         await init_external_connectors()
     except Exception as e:
         logger.warning("External connector initialization failed (non-fatal): %s", e)
+
+    # ── Marketplace-installed MCP bundles ──────────────────────────
+    from ...services.marketplace.service import get_marketplace_service
+
+    try:
+        await get_marketplace_service().reconnect_enabled_mcp_installs_async()
+    except Exception as e:
+        logger.warning("Marketplace MCP reconnect failed (non-fatal): %s", e)
 
     # Final startup pass for the active tool set. Cache entries for inactive
     # tools are intentionally retained so later reconnects can reuse them when

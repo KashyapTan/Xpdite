@@ -93,6 +93,29 @@ class TestArtifactApiEndpoints:
         assert exc.value.status_code == 403
 
     @pytest.mark.anyio
+    async def test_require_marketplace_access_enforces_session_token_when_configured(self):
+        request = Request(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/marketplace/catalog",
+                "headers": [],
+                "client": ("127.0.0.1", 5000),
+            }
+        )
+
+        with patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"):
+            with pytest.raises(HTTPException) as exc:
+                await http_api._require_marketplace_access(request, marketplace_token="wrong")
+
+            await http_api._require_marketplace_access(
+                request,
+                marketplace_token="secret-token",
+            )
+
+        assert exc.value.status_code == 403
+
+    @pytest.mark.anyio
     async def test_require_artifact_access_enforces_session_token_when_configured(self):
         request = Request(
             {
@@ -220,7 +243,197 @@ class TestArtifactApiEndpoints:
 
         assert result == {"id": "artifact-1", "title": "Demo"}
         service.get_artifact.assert_called_once_with("artifact-1")
+
+
+class TestMarketplaceApiEndpoints:
+    def test_marketplace_routes_require_server_token_when_configured(self):
+        app = FastAPI()
+        app.include_router(http_api.router)
+
+        service = MagicMock()
+        service.list_catalog.return_value = []
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"),
+        ):
+            client = TestClient(app)
+            unauthorized = client.get("/api/marketplace/catalog")
+            authorized = client.get(
+                "/api/marketplace/catalog",
+                headers={"X-Xpdite-Server-Token": "secret-token"},
+            )
+
+        assert unauthorized.status_code == 403
+        assert authorized.status_code == 200
+        assert authorized.json() == {"items": []}
+
+    @pytest.mark.anyio
+    async def test_get_mcp_servers_returns_display_names(self):
+        manager = MagicMock()
+        manager.get_server_tools.return_value = [
+            {
+                "server": "marketplace-1234-exa",
+                "display_name": "ai.exa/exa",
+                "tools": [{"id": "mcp__ai-exa-exa__search", "name": "search"}],
+            }
+        ]
+
+        with patch("source.mcp_integration.core.manager.mcp_manager", manager):
+            result = await http_api.get_mcp_servers()
+
+        assert result == [
+            {
+                "server": "marketplace-1234-exa",
+                "display_name": "ai.exa/exa",
+                "tools": [{"id": "mcp__ai-exa-exa__search", "name": "search"}],
+            }
+        ]
+
+    @pytest.mark.anyio
+    async def test_get_marketplace_catalog_delegates_to_service(self):
+        service = MagicMock()
+        service.list_catalog.return_value = [{"manifest_item_id": "planner-skill"}]
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.get_marketplace_catalog()
+
+        assert result == {"items": [{"manifest_item_id": "planner-skill"}]}
+        service.list_catalog.assert_called_once_with()
+
+    @pytest.mark.anyio
+    async def test_create_marketplace_source_rolls_back_failed_refresh(self):
+        service = MagicMock()
+        service.create_source.return_value = {"id": "source-1"}
+        service.refresh_source_async = AsyncMock(side_effect=ValueError("bad manifest"))
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException, match="bad manifest"):
+                await http_api.create_marketplace_source(
+                    http_api.MarketplaceSourceCreate(
+                        name="Composio",
+                        location="https://github.com/ComposioHQ/awesome-claude-plugins",
+                    )
+                )
+
+        service.delete_source.assert_called_once_with("source-1")
+
+    @pytest.mark.anyio
+    async def test_install_marketplace_item_returns_install_payload(self):
+        service = MagicMock()
+        service.install_item_async = AsyncMock(
+            return_value={"id": "install-1", "status": "installed"}
+        )
+
+        with patch(
+            "source.services.marketplace.service.get_marketplace_service",
+            return_value=service,
+        ):
+            result = await http_api.install_marketplace_item(
+                http_api.MarketplaceInstallRequest(
+                    source_id="source-1",
+                    manifest_item_id="planner-skill",
+                    secrets={"API_TOKEN": "secret"},
+                )
+            )
+
+        assert result == {
+            "status": "installed",
+            "install": {"id": "install-1", "status": "installed"},
+        }
+        service.install_item_async.assert_awaited_once_with(
+            source_id="source-1",
+            manifest_item_id="planner-skill",
+            secrets={"API_TOKEN": "secret"},
+        )
         service.update_artifact.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_install_marketplace_item_returns_http_400_for_unexpected_errors(self):
+        service = MagicMock()
+        service.install_item_async = AsyncMock(side_effect=RuntimeError("archive download failed"))
+
+        with patch(
+            "source.services.marketplace.service.get_marketplace_service",
+            return_value=service,
+        ):
+            with pytest.raises(HTTPException, match="archive download failed") as exc:
+                await http_api.install_marketplace_item(
+                    http_api.MarketplaceInstallRequest(
+                        source_id="source-1",
+                        manifest_item_id="planner-skill",
+                    )
+                )
+
+        assert exc.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_install_marketplace_package_returns_install_payload(self):
+        service = MagicMock()
+        service.install_package_async = AsyncMock(
+            return_value={"id": "install-2", "status": "connected"}
+        )
+
+        with patch(
+            "source.services.marketplace.service.get_marketplace_service",
+            return_value=service,
+        ):
+            result = await http_api.install_marketplace_package(
+                http_api.MarketplacePackageInstallRequest(
+                    runner="npx",
+                    package_input='@modelcontextprotocol/server-everything --debug',
+                )
+            )
+
+        assert result == {
+            "status": "installed",
+            "install": {"id": "install-2", "status": "connected"},
+        }
+        service.install_package_async.assert_awaited_once_with(
+            runner="npx",
+            package_input='@modelcontextprotocol/server-everything --debug',
+        )
+
+    @pytest.mark.anyio
+    async def test_install_marketplace_repo_returns_install_payload(self):
+        service = MagicMock()
+        service.install_repo_async = AsyncMock(
+            return_value={"id": "install-3", "status": "installed"}
+        )
+
+        with patch(
+            "source.services.marketplace.service.get_marketplace_service",
+            return_value=service,
+        ):
+            result = await http_api.install_marketplace_repo(
+                http_api.MarketplaceRepoInstallRequest(
+                    repo_input="JuliusBrussee/caveman",
+                )
+            )
+
+        assert result == {
+            "status": "installed",
+            "install": {"id": "install-3", "status": "installed"},
+        }
+        service.install_repo_async.assert_awaited_once_with(
+            repo_input="JuliusBrussee/caveman",
+        )
 
     @pytest.mark.anyio
     async def test_delete_artifact_broadcasts_deletion(self):

@@ -61,6 +61,13 @@ class TestExtractSkillSlashCommands:
         assert matched[0].name == "terminal"
         assert cleaned == "run this"
 
+    def test_namespaced_slash_command(self):
+        skills = [_make_skill("planner:triage", "planner:triage")]
+        matched, cleaned = self._call("/planner:triage review this", skills)
+        assert len(matched) == 1
+        assert matched[0].slash_command == "planner:triage"
+        assert cleaned == "review this"
+
     def test_multiple_slash_commands(self):
         skills = [
             _make_skill("terminal", "terminal"),

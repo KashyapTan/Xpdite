@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 # Strict pattern for skill names and filenames — no path traversal.
 _SAFE_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+_CANONICAL_COMMAND_RE = re.compile(r"^[A-Za-z0-9_-]+(?::[A-Za-z0-9_-]+)*$")
+_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?(.*)$", re.DOTALL)
 
 
 def _validate_safe_name(value: str, label: str = "name") -> None:
@@ -34,6 +36,50 @@ def _validate_safe_name(value: str, label: str = "name") -> None:
             f"Invalid {label}: must contain only letters, digits, hyphens, "
             f"and underscores (got {value!r})"
         )
+
+
+def _validate_slash_command(value: str, label: str = "slash command") -> None:
+    if not value or not _CANONICAL_COMMAND_RE.match(value):
+        raise ValueError(
+            f"Invalid {label}: must use segment(:segment)* with letters, digits, hyphens, and underscores"
+        )
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    match = _FRONTMATTER_RE.match(text)
+    if not match:
+        return {}, text
+
+    raw_meta, body = match.groups()
+    metadata: dict[str, Any] = {}
+    current_list_key: Optional[str] = None
+
+    for line in raw_meta.replace("\r\n", "\n").split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- ") and current_list_key:
+            metadata.setdefault(current_list_key, []).append(stripped[2:].strip())
+            continue
+        current_list_key = None
+        if ":" not in stripped:
+            continue
+        key, raw_value = stripped.split(":", 1)
+        key = key.strip()
+        raw_value = raw_value.strip()
+        if not raw_value:
+            metadata[key] = []
+            current_list_key = key
+            continue
+        if raw_value.startswith("[") and raw_value.endswith("]"):
+            items = [
+                item.strip().strip("'\"") for item in raw_value[1:-1].split(",")
+            ]
+            metadata[key] = [item for item in items if item]
+            continue
+        metadata[key] = raw_value.strip("'\"")
+
+    return metadata, body
 
 
 # ── Data model ────────────────────────────────────────────────────
@@ -47,10 +93,14 @@ class Skill:
     slash_command: Optional[str]
     trigger_servers: List[str]
     version: str
-    source: str  # "builtin" | "user"
+    source: str  # "builtin" | "user" | "marketplace"
     folder_path: Path
+    canonical_id: Optional[str] = None
     enabled: bool = True
     overridden_by_user: bool = False
+    install_id: Optional[str] = None
+    folder_slug: Optional[str] = None
+    content_path: Optional[Path] = None
 
     # Lazily loaded — not read until explicitly requested.
     # NOTE: the cache lives on the Skill *instance*.  After _reload_cache()
@@ -62,9 +112,9 @@ class Skill:
     def read_content(self) -> str:
         """Read ``SKILL.md`` from disk (cached after first call)."""
         if self._content is None:
-            skill_md = self.folder_path / "SKILL.md"
-            if skill_md.exists():
-                self._content = skill_md.read_text(encoding="utf-8")
+            content_path = self.content_path or (self.folder_path / "SKILL.md")
+            if content_path.exists():
+                self._content = content_path.read_text(encoding="utf-8")
             else:
                 self._content = ""
         return self._content
@@ -78,12 +128,16 @@ class Skill:
             "name": self.name,
             "description": self.description,
             "slash_command": self.slash_command,
+            "canonical_id": self.canonical_id,
             "trigger_servers": self.trigger_servers,
             "version": self.version,
             "source": self.source,
             "enabled": self.enabled,
             "overridden_by_user": self.overridden_by_user,
             "folder_path": str(self.folder_path),
+            "install_id": self.install_id,
+            "folder_slug": self.folder_slug,
+            "content_path": str(self.content_path) if self.content_path else None,
         }
 
 
@@ -117,6 +171,14 @@ class SkillManager:
         # Preferences (disabled skill names)
         self._disabled: set[str] = set()
 
+    @staticmethod
+    def _preference_key(skill: Skill) -> str:
+        return skill.canonical_id or skill.slash_command or skill.name
+
+    def _is_skill_enabled(self, skill: Skill) -> bool:
+        pref_key = self._preference_key(skill)
+        return pref_key not in self._disabled and skill.name not in self._disabled
+
     # ── Initialization (call once at startup) ─────────────────────
 
     def initialize(self) -> None:
@@ -129,10 +191,11 @@ class SkillManager:
         self._load_preferences()
         self._reload_cache()
         logger.info(
-            "SkillManager initialized: %d skill(s) loaded (%d builtin, %d user)",
+            "SkillManager initialized: %d skill(s) loaded (%d builtin, %d user, %d marketplace)",
             len(self._cache),
             sum(1 for s in self._cache.values() if s.source == "builtin"),
             sum(1 for s in self._cache.values() if s.source == "user"),
+            sum(1 for s in self._cache.values() if s.source == "marketplace"),
         )
 
     # ── Seeding ───────────────────────────────────────────────────
@@ -147,7 +210,8 @@ class SkillManager:
             if not src_folder.is_dir():
                 continue
             skill_json = src_folder / "skill.json"
-            if not skill_json.exists():
+            skill_md = src_folder / "SKILL.md"
+            if not skill_json.exists() and not skill_md.exists():
                 continue
             dest = self._builtin_dir / src_folder.name
             # Overwrite builtin folder entirely
@@ -188,6 +252,7 @@ class SkillManager:
 
         builtin_skills: Dict[str, Skill] = {}
         user_skills: Dict[str, Skill] = {}
+        marketplace_skills: Dict[str, Skill] = {}
 
         # Load builtins first
         for skill in self._scan_directory(self._builtin_dir, source="builtin"):
@@ -197,16 +262,24 @@ class SkillManager:
         for skill in self._scan_directory(self._user_dir, source="user"):
             user_skills[skill.name] = skill
 
+        for skill in self._scan_marketplace_skills():
+            marketplace_skills[skill.name] = skill
+
         # Merge: user skills take precedence
         for name, skill in builtin_skills.items():
             if name in user_skills:
                 skill.overridden_by_user = True
-            skill.enabled = name not in self._disabled
+            skill.enabled = self._is_skill_enabled(skill)
             self._cache[name] = skill
 
         for name, skill in user_skills.items():
-            skill.enabled = name not in self._disabled
+            skill.enabled = self._is_skill_enabled(skill)
             self._cache[name] = skill  # overwrites builtin if same name
+
+        for name, skill in marketplace_skills.items():
+            skill.enabled = self._is_skill_enabled(skill)
+            if name not in self._cache:
+                self._cache[name] = skill
 
     def _scan_directory(self, directory: Path, source: str) -> List[Skill]:
         """Load all valid skill folders from a directory."""
@@ -223,31 +296,175 @@ class SkillManager:
 
         return skills
 
+    def _scan_marketplace_skills(self) -> List[Skill]:
+        from ..marketplace.service import get_marketplace_service
+
+        service = get_marketplace_service()
+        skills: list[Skill] = []
+        for install in service.list_installs():
+            if not install.get("enabled"):
+                continue
+            component_manifest = install.get("component_manifest") or {}
+            if install["item_kind"] == "skill":
+                skill = self._load_marketplace_skill_install(install, component_manifest)
+                if skill is not None:
+                    skills.append(skill)
+            elif install["item_kind"] == "plugin":
+                skills.extend(
+                    self._load_marketplace_plugin_install(install, component_manifest)
+                )
+        return skills
+
+    def _load_marketplace_skill_install(
+        self, install: Dict[str, Any], component_manifest: Dict[str, Any]
+    ) -> Optional[Skill]:
+        skill_path_value = component_manifest.get("skill_path")
+        if not skill_path_value:
+            return None
+        skill_path = Path(str(skill_path_value))
+        if not skill_path.exists():
+            return None
+
+        metadata, _body = _parse_frontmatter(skill_path.read_text(encoding="utf-8"))
+        slash_command = str(
+            metadata.get("slash_command")
+            or metadata.get("command")
+            or install.get("canonical_id")
+            or metadata.get("name")
+            or install["display_name"]
+        )
+        if slash_command:
+            _validate_slash_command(slash_command)
+
+        name = str(metadata.get("name") or install["display_name"])
+        return Skill(
+            name=name,
+            description=str(metadata.get("description") or install["display_name"]),
+            slash_command=slash_command or None,
+            canonical_id=install.get("canonical_id") or slash_command or name,
+            trigger_servers=list(metadata.get("trigger_servers") or []),
+            version=str(metadata.get("version") or "1.0.0"),
+            source="marketplace",
+            folder_path=skill_path.parent,
+            install_id=install["id"],
+            folder_slug=skill_path.parent.name,
+            content_path=skill_path,
+        )
+
+    def _load_marketplace_plugin_install(
+        self, install: Dict[str, Any], component_manifest: Dict[str, Any]
+    ) -> List[Skill]:
+        plugin_manifest = component_manifest.get("plugin_manifest") or {}
+        plugin_id = str(
+            install.get("canonical_id")
+            or plugin_manifest.get("name")
+            or install["display_name"]
+        )
+        if plugin_id:
+            _validate_slash_command(plugin_id)
+
+        skills: list[Skill] = []
+        for item in component_manifest.get("skills") or []:
+            metadata = item.get("metadata") or {}
+            skill_name = str(item.get("name") or metadata.get("name") or "skill")
+            local_command = str(
+                item.get("slash_command")
+                or metadata.get("slash_command")
+                or metadata.get("command")
+                or skill_name
+            )
+            slash_command = (
+                local_command
+                if ":" in local_command
+                else f"{plugin_id}:{local_command}"
+            )
+            _validate_slash_command(slash_command)
+            skill_path = Path(str(item.get("path") or install["install_root"]))
+            skills.append(
+                Skill(
+                    name=f"{plugin_id}:{skill_name}",
+                    description=str(item.get("description") or metadata.get("description") or ""),
+                    slash_command=slash_command,
+                    canonical_id=slash_command,
+                    trigger_servers=list(metadata.get("trigger_servers") or []),
+                    version=str(plugin_manifest.get("version") or "1.0.0"),
+                    source="marketplace",
+                    folder_path=skill_path.parent if skill_path.name.lower() == "skill.md" else skill_path,
+                    install_id=install["id"],
+                    folder_slug=skill_path.parent.name if skill_path.name.lower() == "skill.md" else skill_path.name,
+                    content_path=skill_path if skill_path.name.lower() == "skill.md" else None,
+                )
+            )
+        for item in component_manifest.get("commands") or []:
+            metadata = item.get("metadata") or {}
+            command_name = str(
+                item.get("slash_command")
+                or metadata.get("slash_command")
+                or metadata.get("command")
+                or item.get("name")
+                or "command"
+            ).strip()
+            if not command_name:
+                continue
+            _validate_slash_command(command_name)
+            command_path = Path(str(item.get("path") or install["install_root"]))
+            skills.append(
+                Skill(
+                    name=command_name,
+                    description=str(item.get("description") or metadata.get("description") or ""),
+                    slash_command=command_name,
+                    canonical_id=command_name,
+                    trigger_servers=[],
+                    version=str(plugin_manifest.get("version") or "1.0.0"),
+                    source="marketplace",
+                    folder_path=command_path.parent,
+                    install_id=install["id"],
+                    folder_slug=command_path.stem,
+                    content_path=command_path,
+                )
+            )
+        return skills
+
     def _load_skill_folder(self, folder: Path, source: str) -> Optional[Skill]:
         """Parse a single skill folder.  Returns None on invalid/missing files."""
         skill_json_path = folder / "skill.json"
-        if not skill_json_path.exists():
+        skill_md_path = folder / "SKILL.md"
+        if not skill_json_path.exists() and not skill_md_path.exists():
             return None
 
-        try:
-            meta = json.loads(skill_json_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Bad skill.json in %s: %s", folder, exc)
-            return None
+        meta: dict[str, Any] = {}
+        if skill_json_path.exists():
+            try:
+                meta = json.loads(skill_json_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as exc:
+                logger.warning("Bad skill.json in %s: %s", folder, exc)
+                return None
+        elif skill_md_path.exists():
+            try:
+                meta, _body = _parse_frontmatter(skill_md_path.read_text(encoding="utf-8"))
+            except OSError as exc:
+                logger.warning("Bad SKILL.md in %s: %s", folder, exc)
+                return None
 
         name = meta.get("name")
         if not name:
             logger.warning("skill.json missing 'name' in %s", folder)
             return None
 
+        slash_command = meta.get("slash_command") or meta.get("command")
+        if slash_command:
+            _validate_slash_command(str(slash_command))
+
         return Skill(
             name=name,
             description=meta.get("description", ""),
-            slash_command=meta.get("slash_command"),
+            slash_command=slash_command,
+            canonical_id=slash_command or name,
             trigger_servers=meta.get("trigger_servers", []),
             version=meta.get("version", "0.0.0"),
             source=source,
             folder_path=folder,
+            folder_slug=folder.name,
         )
 
     # ── Public read API ───────────────────────────────────────────
@@ -272,7 +489,7 @@ class SkillManager:
                 continue
             if skill.name in self._cache and self._cache[skill.name].source == "user":
                 skill.overridden_by_user = True
-                skill.enabled = skill.name not in self._disabled
+                skill.enabled = self._is_skill_enabled(skill)
                 result.append(skill.to_dict())
         # Then add all active skills from cache
         for skill in self._cache.values():
@@ -283,12 +500,21 @@ class SkillManager:
         """Return only enabled, non-overridden skills."""
         return [s for s in self._cache.values() if s.enabled]
 
+    def reload(self) -> None:
+        self._reload_cache()
+
     def get_skill_by_name(self, name: str) -> Optional[Skill]:
-        return self._cache.get(name)
+        skill = self._cache.get(name)
+        if skill is not None:
+            return skill
+        for candidate in self._cache.values():
+            if candidate.slash_command == name or candidate.canonical_id == name:
+                return candidate
+        return None
 
     def get_skill_by_slash_command(self, command: str) -> Optional[Skill]:
         for skill in self._cache.values():
-            if skill.slash_command == command:
+            if (skill.slash_command or "").lower() == command.lower():
                 return skill
         return None
 
@@ -303,14 +529,16 @@ class SkillManager:
 
     def toggle_skill(self, name: str, enabled: bool) -> bool:
         """Enable or disable a skill.  Returns False if skill not found."""
-        skill = self._cache.get(name)
+        skill = self.get_skill_by_name(name)
         if skill is None:
             return False
 
+        pref_key = self._preference_key(skill)
         if enabled:
-            self._disabled.discard(name)
+            self._disabled.discard(pref_key)
+            self._disabled.discard(skill.name)
         else:
-            self._disabled.add(name)
+            self._disabled.add(pref_key)
 
         skill.enabled = enabled
         self._save_preferences()
@@ -334,8 +562,11 @@ class SkillManager:
 
         # Validate slash command uniqueness
         if slash_command:
+            _validate_slash_command(slash_command)
             for s in self._cache.values():
-                if s.slash_command == slash_command and s.source == "user":
+                if s.slash_command == slash_command and not (
+                    s.source == "builtin" and s.name == name
+                ):
                     raise ValueError(
                         f"Slash command '/{slash_command}' already in use by '{s.name}'"
                     )
@@ -384,8 +615,11 @@ class SkillManager:
         if slash_command is not ...:
             # Validate uniqueness if changing
             if slash_command and slash_command != skill.slash_command:
+                _validate_slash_command(slash_command)
                 for s in self._cache.values():
-                    if s.slash_command == slash_command and s.name != name:
+                    if s.slash_command == slash_command and s.name != name and not (
+                        s.source == "builtin" and s.name == name
+                    ):
                         raise ValueError(
                             f"Slash command '/{slash_command}' already in use by '{s.name}'"
                         )
