@@ -1534,6 +1534,7 @@ textarea,
   flex: 1;
   min-width: 0;
   padding: 2px 0 10px 0;
+  margin-right: 8px;
 }
 
 /* Thinking-only chains: no marker/dot, just content */
