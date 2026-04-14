@@ -91,7 +91,7 @@ REASONING_EFFORT = "high"
 OLLAMA_CTX_SIZE = 32768
 
 # Tool result truncation
-MAX_TOOL_RESULT_LENGTH = 100_000
+MAX_TOOL_RESULT_LENGTH = 200_000
 
 # read_file pagination default chunk size (characters)
 DEFAULT_READ_FILE_MAX_CHARS = 10_000

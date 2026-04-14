@@ -1599,7 +1599,8 @@ function App() {
         } else if (tc.status === 'complete') {
           chatState.updateToolCall({
             name: tc.name, args: tc.args, result: tc.result, server: tc.server,
-            status: 'complete', agentId: safeAgentId2, description: safeDesc2, partialResult: undefined,
+            status: 'complete', agentId: safeAgentId2, description: safeDesc2,
+            ...(tc.server === 'sub_agent' ? {} : { partialResult: undefined }),
           });
           chatState.setStatus('Tool call complete.');
         }

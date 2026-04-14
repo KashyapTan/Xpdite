@@ -35,6 +35,7 @@ from ..executors.memory_executor import execute_memory_tool, is_memory_tool
 from ..executors.skills_executor import execute_skill_tool
 from ..executors.scheduler_executor import is_scheduler_tool, execute_scheduler_tool
 from .tool_args import normalize_tool_args, sanitize_tool_args
+from .tool_output import format_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -565,12 +566,13 @@ async def handle_mcp_tool_calls(
                     # For broadcast and storage, use a summary
                     result_str = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
                 else:
-                    if isinstance(result, dict):
+                    formatted_result = format_tool_output(result)
+                    if isinstance(formatted_result, dict):
                         serialized_result = json.dumps(
-                            result, ensure_ascii=False, default=str
+                            formatted_result, ensure_ascii=False, default=str
                         )
                     else:
-                        serialized_result = str(result)
+                        serialized_result = str(formatted_result)
                     if hook_context_messages:
                         serialized_result = (
                             serialized_result

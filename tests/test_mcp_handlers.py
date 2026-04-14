@@ -690,7 +690,7 @@ class TestHandleMcpToolCalls:
         )
 
     @pytest.mark.asyncio
-    async def test_dict_tool_result_is_serialized_as_json(self, handlers_module):
+    async def test_dict_tool_result_is_formatted_as_markdown(self, handlers_module):
         tool = SimpleNamespace(
             function=SimpleNamespace(name="read_file", arguments='{"path":"app.py"}')
         )
@@ -757,7 +757,8 @@ class TestHandleMcpToolCalls:
 
         assert len(calls) == 1
         assert calls[0]["name"] == "read_file"
-        parsed = json.loads(calls[0]["result"])
-        assert parsed["content"] == "abcd"
-        assert parsed["has_more"] is True
-        assert parsed["next_offset"] == 4
+        assert "Showing characters 0-4 of 10 (40%)" in calls[0]["result"]
+        assert "- **Total chars:** 10" in calls[0]["result"]
+        assert "- **Has more:** Yes" in calls[0]["result"]
+        assert "```" in calls[0]["result"]
+        assert "abcd" in calls[0]["result"]

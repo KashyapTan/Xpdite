@@ -131,11 +131,16 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
   const resultRef = useRef<HTMLDivElement>(null);
   const { badge, text } = getHumanReadableDescription(toolCall);
   const isRunning = toolCall.status === 'calling' || toolCall.status === 'progress';
-  const hasResult = !isRunning && !!toolCall.result;
   const isSubAgent = toolCall.server === 'sub_agent';
+  const preferredSubAgentContent = isSubAgent
+    ? (toolCall.partialResult || toolCall.result)
+    : undefined;
+  const hasResult = !isRunning && !!(isSubAgent ? preferredSubAgentContent : toolCall.result);
   // Sub-agents are always expandable while running (to peek at output) or when complete
   const isExpandable = hasResult || (isSubAgent && isRunning);
-  const displayContent = hasResult ? toolCall.result : toolCall.partialResult;
+  const displayContent = isSubAgent
+    ? preferredSubAgentContent
+    : (hasResult ? toolCall.result : toolCall.partialResult);
 
   // Auto-scroll the result container when new partial content arrives
   useEffect(() => {
@@ -167,7 +172,14 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
           </div>
         )}
         {showResult && !isSubAgent && displayContent && (
-          <pre className="chain-tool-result">{displayContent}</pre>
+          <div className="chain-tool-result">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{ code: CodeBlock as React.ComponentType<React.ComponentPropsWithRef<'code'>> }}
+            >
+              {displayContent}
+            </ReactMarkdown>
+          </div>
         )}
       </div>
     </div>

@@ -110,7 +110,7 @@ def list_directory(path: str) -> list[str]:
 
 @mcp.tool(description=READ_FILE_DESCRIPTION)
 def read_file(
-    path: str, offset: int = 0, max_chars: int = 8000
+    path: str, offset: int = 0, max_chars: int = 10_000
 ) -> str | dict[str, Any]:
     """
     Read file content with support for multiple formats and pagination.

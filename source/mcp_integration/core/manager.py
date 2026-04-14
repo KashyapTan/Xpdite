@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from ...infrastructure.config import PROJECT_ROOT
 from .retriever import retriever
+from .tool_output import format_tool_output
 
 logger = logging.getLogger(__name__)
 
@@ -369,7 +370,8 @@ class McpToolManager:
             else:
                 output_parts.append(str(block))
 
-        return "\n".join(output_parts) if output_parts else "Tool returned no output."
+        final_output = "\n".join(output_parts) if output_parts else "Tool returned no output."
+        return format_tool_output(final_output)
 
     def get_ollama_tools(self) -> List[Dict] | None:
         """Return tool definitions in Ollama format, or None if no tools."""

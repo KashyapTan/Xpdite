@@ -134,6 +134,8 @@ mcp_servers/
 
 **Timeout behavior is manager-defined.** Tool calls use server-specific read timeouts: default 90s, `websearch` 25s, with an additional 5s `asyncio.wait_for` buffer.
 
+**Tool output is normalized to Markdown before it reaches the model/UI.** Structured JSON-style payloads from subprocess MCP tools are converted into Markdown summaries plus fenced content blocks at the app layer, so tools like `read_file`, `glob_files`, and `grep_files` can keep returning structured data internally without exposing raw JSON to the model.
+
 **Tool output is truncated at 100,000 chars.** Design tools to return focused payloads.
 
 **Subprocess lifecycle is task-bound.** `stdio_client` and `ClientSession` must enter/exit on the same background task; do not bypass manager lifecycle rules.

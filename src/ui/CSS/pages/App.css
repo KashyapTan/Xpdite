@@ -1654,7 +1654,7 @@ textarea,
 }
 
 .chain-tool-result {
-  font-family: var(--font-family-mono);
+  font-family: var(--font-family-ui);
   font-size: 0.72rem;
   color: var(--color-border-strong);
   background-color: var(--color-surface);
@@ -1666,6 +1666,19 @@ textarea,
   max-height: 200px;
   overflow-y: auto;
   margin-top: 6px;
+}
+
+.chain-tool-result > :first-child {
+  margin-top: 0;
+}
+
+.chain-tool-result > :last-child {
+  margin-bottom: 0;
+}
+
+.chain-tool-result code:not(pre code) {
+  font-family: var(--font-family-mono);
+  font-size: 0.72rem;
 }
 
 .chain-subagent-result {

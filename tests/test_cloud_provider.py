@@ -265,7 +265,7 @@ class TestHelpers:
         }
 
     @pytest.mark.asyncio
-    async def test_execute_and_broadcast_tool_serializes_dict_results_as_json(self):
+    async def test_execute_and_broadcast_tool_formats_dict_results_as_markdown(self):
         from source.llm.providers.cloud_provider import _execute_and_broadcast_tool
 
         tool_calls = []
@@ -315,12 +315,13 @@ class TestHelpers:
             )
 
         assert isinstance(result, str)
-        parsed = json.loads(result)
-        assert parsed["content"] == "abcd"
-        assert parsed["has_more"] is True
-        assert parsed["next_offset"] == 4
+        assert "Showing characters 0-4 of 10 (40%)" in result
+        assert "- **Total chars:** 10" in result
+        assert "- **Has more:** Yes" in result
+        assert "```" in result
+        assert "abcd" in result
         assert len(tool_calls) == 1
-        assert json.loads(tool_calls[0]["result"])["total_chars"] == 10
+        assert "- **Total chars:** 10" in tool_calls[0]["result"]
 
         complete_calls = [
             c for c in mock_bcast.await_args_list if c.args[0] == "tool_call"
