@@ -6,6 +6,15 @@ Xpdite is an **always-on-top Electron desktop app** that wraps a React UI and a 
 
 ## Workflow
 
+### Read More Than Less
+Always read all relevant and connected files before writing new code. It is always better to over-read than to miss context.
+
+### Freedom and Direction
+You are extremely knowledgeable — don't be afraid to use that. If you have concerns, suggestions, or improvements, raise them. Discussion and clarification lead to the best possible outcome.
+
+### Planning
+Enter plan mode for non-trivial tasks. Get the correct info and details before executing. For trivial tasks this is unnecessary — don't over-engineer.
+
 ### Sub-agents for Information Gathering
 Spawn as many sub-agents as you need **in parallel** for any read-only task that just needs a result — reading files, searching for patterns, exploring the directory structure, checking how something is implemented. The goal is to keep the main context window clean and focused. Do NOT use sub-agents when the reasoning process itself is needed in the main context.
 
@@ -60,16 +69,6 @@ Spawn a **single judge sub-agent** that receives all raw reports from Stage 1 (a
 ### Post-Review Action
 Read the Testing section and determine if new tests are needed based on the changes made. Once the entire task is complete, update any relevant CLAUDE and documentation files to reflect the changes.
 After every code implementation, run all lint checks and tests and fix all issues before considering the task complete.
-
-### Read More Than Less
-Always read all relevant and connected files before writing new code. It is always better to over-read than to miss context.
-
-### Freedom and Direction
-You are extremely knowledgeable — don't be afraid to use that. If you have concerns, suggestions, or improvements, raise them. Discussion and clarification lead to the best possible outcome.
-
-### Planning
-Enter plan mode for non-trivial tasks. Get the correct info and details before executing. For trivial tasks this is unnecessary — don't over-engineer.
-
 ---
 
 ## Dev Commands
