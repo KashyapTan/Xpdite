@@ -409,8 +409,9 @@ class TestExecuteSubAgent:
         }
         result = await execute_sub_agent("What is the answer?", "fast", "TestAgent")
         assert result == "The answer is 42."
-        # Should have broadcast calling + complete
-        assert mock_broadcast.call_count == 2
+        # Live transcript updates are streamed separately; execute_sub_agent no longer
+        # emits redundant outer tool_call lifecycle broadcasts here.
+        assert mock_broadcast.call_count == 0
 
     @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.skills_runtime.sub_agent._get_sub_agent_tools", return_value=None)

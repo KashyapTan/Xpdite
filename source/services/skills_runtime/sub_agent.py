@@ -971,19 +971,6 @@ async def execute_sub_agent(
         agent_name, agent_id, model_tier, model_name,
     )
 
-    # Broadcast status update: sub-agent starting
-    await broadcast_message(
-        "tool_call",
-        json.dumps({
-            "name": "spawn_agent",
-            "args": {"agent_name": agent_name, "model_tier": model_tier},
-            "server": "sub_agent",
-            "status": "calling",
-            "agent_id": agent_id,
-            "description": f"{agent_name} ({model_tier})",
-        }),
-    )
-
     # Retrieve tools for this sub-agent's instruction
     tools = _get_sub_agent_tools(instruction)
 
@@ -1008,35 +995,11 @@ async def execute_sub_agent(
     except asyncio.TimeoutError:
         error_msg = f"Sub-agent '{agent_name}' timed out after {_SUB_AGENT_TIMEOUT}s"
         logger.warning(error_msg)
-        await broadcast_message(
-            "tool_call",
-            json.dumps({
-                "name": "spawn_agent",
-                "args": {"agent_name": agent_name, "model_tier": model_tier},
-                "server": "sub_agent",
-                "status": "complete",
-                "agent_id": agent_id,
-                "result": error_msg,
-                "description": f"{agent_name} (timed out)",
-            }),
-        )
         return f"Error: Sub-agent '{agent_name}' timed out after {_SUB_AGENT_TIMEOUT}s"
     except Exception as e:
         # Log full error internally; expose only type name to caller
         error_msg = f"Sub-agent '{agent_name}' failed: {type(e).__name__}"
         logger.error("Sub-agent '%s' failed: %s", agent_name, e)
-        await broadcast_message(
-            "tool_call",
-            json.dumps({
-                "name": "spawn_agent",
-                "args": {"agent_name": agent_name, "model_tier": model_tier},
-                "server": "sub_agent",
-                "status": "complete",
-                "agent_id": agent_id,
-                "result": error_msg,
-                "description": f"{agent_name} (error)",
-            }),
-        )
         return f"Error: {error_msg}"
 
     response_text = result.get("response", "")
@@ -1058,21 +1021,6 @@ async def execute_sub_agent(
 
     total_tokens = token_stats.get("prompt_tokens", 0) + token_stats.get("completion_tokens", 0)
     token_label = f" \u2022 {total_tokens} tokens" if total_tokens else ""
-
-    # Broadcast completion with full result
-    await broadcast_message(
-        "tool_call",
-        json.dumps({
-            "name": "spawn_agent",
-            "args": {"agent_name": agent_name, "model_tier": model_tier},
-            "server": "sub_agent",
-            "status": "complete",
-            "agent_id": agent_id,
-            "result": response_text,
-            "description": f"{agent_name}{token_label}",
-            "token_stats": token_stats,
-        }),
-    )
 
     if error:
         return f"Error: {error}\n\nPartial response:\n{response_text}" if response_text else f"Error: {error}"

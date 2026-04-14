@@ -206,9 +206,9 @@ class TestHelpers:
     def test_truncate_tool_result_long(self):
         from source.llm.providers.cloud_provider import _truncate_tool_result
 
-        long_text = "x" * 200_000
+        long_text = "x" * 200_001
         result = _truncate_tool_result(long_text)
-        assert len(result) < len(long_text)
+        assert result.startswith("x" * 200_000)
         assert result.endswith("[Output truncated due to length]")
 
     def test_format_image(self):

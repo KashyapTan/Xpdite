@@ -1686,7 +1686,26 @@ function App() {
           break;
         }
         if (Array.isArray(calls) && calls.length > 0) {
-          chatState.toolCallsRef.current = calls;
+          let mergedToolCalls = chatState.toolCallsRef.current;
+          let mergedContentBlocks = chatState.contentBlocksRef.current;
+
+          for (const rawCall of calls) {
+            if (!rawCall || typeof rawCall !== 'object') {
+              continue;
+            }
+
+            const nextState = applyToolCallChange(
+              mergedToolCalls,
+              mergedContentBlocks,
+              rawCall as ToolCall,
+              true,
+            );
+            mergedToolCalls = nextState.toolCalls;
+            mergedContentBlocks = nextState.contentBlocks;
+          }
+
+          chatState.toolCallsRef.current = mergedToolCalls;
+          chatState.contentBlocksRef.current = mergedContentBlocks;
         }
         break;
       }
