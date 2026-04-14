@@ -262,12 +262,12 @@ def build_system_prompt(
         "{{artifact_close_sentinel}}", ARTIFACT_LITERAL_CLOSE_SENTINEL
     )
     prompt = prompt.replace("{{skills_block}}", skills_block)
-    print(f'{"="*10} SYSTEM PROMPT {"="*10}')
-    # Use sys.stdout.buffer to print UTF-8 directly or encode with replace/ignore to avoid charmap errors on Windows
-    # Alternatively, ensure the string is encodable by the current terminal
-    try:
-        print(prompt)
-    except UnicodeEncodeError:
-        print(prompt.encode("ascii", "replace").decode("ascii"))
-    print(f'{"="*30}')
+    # print(f'{"="*10} SYSTEM PROMPT {"="*10}')
+    # # Use sys.stdout.buffer to print UTF-8 directly or encode with replace/ignore to avoid charmap errors on Windows
+    # # Alternatively, ensure the string is encodable by the current terminal
+    # try:
+    #     print(prompt)
+    # except UnicodeEncodeError:
+    #     print(prompt.encode("ascii", "replace").decode("ascii"))
+    # print(f'{"="*30}')
     return prompt

@@ -77,10 +77,14 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def _init_marketplace_sources():
         from ..services.marketplace.service import get_marketplace_service
+        from ..services.hooks_runtime import get_hooks_runtime
 
         marketplace_service = get_marketplace_service()
         try:
             marketplace_service.initialize()
+            await get_hooks_runtime().rehydrate_enabled_installs_async(
+                await asyncio.to_thread(marketplace_service.list_installs)
+            )
         except Exception as e:
             logger.warning("Failed to seed marketplace sources on startup: %s", e)
             return

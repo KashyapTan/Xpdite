@@ -47,7 +47,6 @@ import type {
   ConversationResumedContent,
   ConversationTurnPayload,
   ArtifactContentPayload,
-  ToolCall,
   ToolCallContent,
   SubAgentStreamContent,
   TokenUsageContent,
@@ -63,6 +62,7 @@ import type { LocalTurnPatch } from '../utils/conversationMessageTransforms';
 import { formatModelLabel, getModelProviderKey, getProviderLabel } from '../utils/modelDisplay';
 import { ProviderLogo } from '../components/icons/ProviderLogos';
 import { hasProviderLogo } from '../utils/providerLogos';
+import { applyToolCallChange } from '../utils/toolCallState';
 
 // Assets
 import '../CSS/pages/App.css';
@@ -1111,28 +1111,56 @@ function App() {
         const safeDesc = typeof tc.description === 'string' ? tc.description.slice(0, 500) : undefined;
         const safePartial = typeof tc.partial_result === 'string' ? tc.partial_result : undefined;
         if (tc.status === 'calling') {
-          const newTc: ToolCall = { name: tc.name, args: tc.args, server: tc.server, status: 'calling', agentId: safeAgentId, description: safeDesc };
-          chat.toolCalls = [...chat.toolCalls, newTc];
-          chat.contentBlocks = [...chat.contentBlocks, { type: 'tool_call', toolCall: newTc }];
+          const nextState = applyToolCallChange(
+            chat.toolCalls,
+            chat.contentBlocks,
+            {
+              name: tc.name,
+              args: tc.args,
+              server: tc.server,
+              status: 'calling',
+              agentId: safeAgentId,
+              description: safeDesc,
+            },
+            true,
+          );
+          chat.toolCalls = nextState.toolCalls;
+          chat.contentBlocks = nextState.contentBlocks;
         } else if (tc.status === 'progress' && safeAgentId) {
-          // Update description + partial result on matching sub-agent
-          const matchAgent = (t: ToolCall) => t.agentId === safeAgentId;
-          chat.toolCalls = chat.toolCalls.map(t => matchAgent(t) ? { ...t, description: safeDesc, partialResult: safePartial } : t);
-          chat.contentBlocks = chat.contentBlocks.map(b =>
-            b.type === 'tool_call' && matchAgent(b.toolCall) ? { ...b, toolCall: { ...b.toolCall, description: safeDesc, partialResult: safePartial } } : b
+          const nextState = applyToolCallChange(
+            chat.toolCalls,
+            chat.contentBlocks,
+            {
+              name: tc.name,
+              args: tc.args,
+              server: tc.server,
+              status: 'calling',
+              agentId: safeAgentId,
+              description: safeDesc,
+              partialResult: safePartial,
+            },
+            false,
           );
+          chat.toolCalls = nextState.toolCalls;
+          chat.contentBlocks = nextState.contentBlocks;
         } else if (tc.status === 'complete') {
-          // Match by agentId for sub-agents, fall back to (name, args) for others
-          const matchTc = (t: ToolCall) =>
-            safeAgentId ? t.agentId === safeAgentId
-            : t.name === tc.name && JSON.stringify(t.args) === JSON.stringify(tc.args);
-          chat.toolCalls = chat.toolCalls.map(t =>
-            matchTc(t) ? { ...t, result: tc.result, status: 'complete', description: safeDesc, partialResult: undefined } : t
+          const nextState = applyToolCallChange(
+            chat.toolCalls,
+            chat.contentBlocks,
+            {
+              name: tc.name,
+              args: tc.args,
+              result: tc.result,
+              server: tc.server,
+              status: 'complete',
+              agentId: safeAgentId,
+              description: safeDesc,
+              partialResult: undefined,
+            },
+            false,
           );
-          chat.contentBlocks = chat.contentBlocks.map(b =>
-            b.type === 'tool_call' && matchTc(b.toolCall)
-              ? { ...b, toolCall: { ...b.toolCall, result: tc.result, status: 'complete', description: safeDesc, partialResult: undefined } } : b
-          );
+          chat.toolCalls = nextState.toolCalls;
+          chat.contentBlocks = nextState.contentBlocks;
         }
         break;
       }

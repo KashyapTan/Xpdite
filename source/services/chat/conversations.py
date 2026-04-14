@@ -303,6 +303,7 @@ class ConversationService:
         If *tab_state* is provided, clears per-tab state instead of global.
         """
         from ..shell.terminal import terminal_service
+        from ..hooks_runtime import get_hooks_runtime
 
         if tab_state is not None:
             await ScreenshotHandler.clear_screenshots(tab_state=tab_state)
@@ -316,6 +317,12 @@ class ConversationService:
         terminal_service.reset()
 
         logger.info("Context cleared: screenshots and chat history reset")
+        if tab_state is not None:
+            await get_hooks_runtime().ensure_session_started(
+                tab_state,
+                source="clear",
+                force_new_session=True,
+            )
         await broadcast_message(
             "context_cleared", "Context cleared. Ready for new conversation."
         )
@@ -328,6 +335,7 @@ class ConversationService:
 
         If *tab_state* is provided, loads into per-tab state.
         """
+        from ..hooks_runtime import get_hooks_runtime
 
         # Resolve state target
         chat_history_target = (
@@ -361,6 +369,12 @@ class ConversationService:
             conversation_id,
             chat_history_len,
         )
+        if tab_state is not None:
+            await get_hooks_runtime().ensure_session_started(
+                tab_state,
+                source="resume",
+                force_new_session=True,
+            )
 
         # Notify client
         token_usage = db.get_token_usage(conversation_id)
@@ -617,6 +631,35 @@ class ConversationService:
                     )
                     query_for_llm = f"{warning_block}\n\n{query_for_llm}"
 
+            from ..hooks_runtime import get_hooks_runtime
+
+            hooks_runtime = get_hooks_runtime()
+            await hooks_runtime.ensure_session_started(tab_state, source="startup")
+            await hooks_runtime.append_transcript_entry(
+                tab_state,
+                role="user",
+                content=display_query,
+                metadata={"action": action, "model": current_model},
+            )
+            prompt_hook_result = await hooks_runtime.dispatch_user_prompt_submit(
+                tab_state,
+                prompt=display_query,
+                llm_prompt=query_for_llm,
+                action=action,
+                model=current_model,
+            )
+            if prompt_hook_result.blocked:
+                await broadcast_message(
+                    "error",
+                    prompt_hook_result.reason or "Blocked by Claude-compatible hook.",
+                )
+                return None
+
+            prompt_context = hooks_runtime.build_user_prompt_context(prompt_hook_result)
+            if prompt_context:
+                query_for_llm = "\n\n".join([prompt_context, query_for_llm])
+                tool_retrieval_query = query_for_llm
+
             await broadcast_message("query", display_query)
 
             (
@@ -651,6 +694,78 @@ class ConversationService:
                 from ..shell.terminal import terminal_service
 
                 terminal_service.flush_pending_events(_require_conv_id())
+
+            if response_text.strip():
+                await hooks_runtime.append_transcript_entry(
+                    tab_state,
+                    role="assistant",
+                    content=response_text,
+                    metadata={"model": current_model, "action": action},
+                )
+
+            stop_hook_result = await hooks_runtime.dispatch_stop(
+                tab_state,
+                response_text=response_text,
+                conversation_id=_require_conv_id(),
+                tool_calls=tool_calls,
+                action=action,
+                model=current_model,
+            )
+            if stop_hook_result.blocked and not hooks_runtime.stop_hook_active(tab_state):
+                hooks_runtime.set_stop_hook_active(tab_state, True)
+                try:
+                    continuation_prompt = hooks_runtime.build_stop_continuation_prompt(
+                        stop_hook_result,
+                        prior_response=response_text,
+                    )
+                    continuation_history = copy.deepcopy(history_for_llm)
+                    continuation_history.append(
+                        {"role": "assistant", "content": response_text}
+                    )
+                    (
+                        continuation_response,
+                        continuation_tokens,
+                        continuation_tool_calls,
+                        continuation_blocks,
+                    ) = await route_chat(
+                        current_model,
+                        continuation_prompt,
+                        [],
+                        continuation_history,
+                        forced_skills=ctx.forced_skills,
+                        tool_retrieval_query=continuation_prompt,
+                    )
+                    if continuation_response.strip():
+                        response_text = (
+                            response_text + "\n\n" + continuation_response
+                            if response_text.strip()
+                            else continuation_response
+                        )
+                    token_stats["prompt_eval_count"] = token_stats.get(
+                        "prompt_eval_count", 0
+                    ) + continuation_tokens.get("prompt_eval_count", 0)
+                    token_stats["eval_count"] = token_stats.get(
+                        "eval_count", 0
+                    ) + continuation_tokens.get("eval_count", 0)
+                    if continuation_tool_calls:
+                        tool_calls = [*tool_calls, *continuation_tool_calls]
+                    if continuation_blocks:
+                        if interleaved_blocks_from_llm:
+                            interleaved_blocks_from_llm = [
+                                *interleaved_blocks_from_llm,
+                                *continuation_blocks,
+                            ]
+                        else:
+                            interleaved_blocks_from_llm = continuation_blocks
+                    if continuation_response.strip():
+                        await hooks_runtime.append_transcript_entry(
+                            tab_state,
+                            role="assistant",
+                            content=continuation_response,
+                            metadata={"model": current_model, "action": "stop_continuation"},
+                        )
+                finally:
+                    hooks_runtime.set_stop_hook_active(tab_state, False)
 
             input_tokens = token_stats.get("prompt_eval_count", 0)
             output_tokens = token_stats.get("eval_count", 0)
@@ -849,7 +964,11 @@ class ConversationService:
             return _require_conv_id()
 
         except Exception as e:
-            await broadcast_message("error", f"Error processing: {e}")
+            logger.exception("Error processing chat request: %s", e)
+            await broadcast_message(
+                "error",
+                "Error processing request. See server logs for details.",
+            )
             return None
         finally:
             # ── Always clear screenshots that were consumed ───────────

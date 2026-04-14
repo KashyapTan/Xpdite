@@ -3,6 +3,7 @@ import { RotateCcwIcon, TrashIcon } from '../icons/AppIcons';
 import { api } from '../../services/api';
 import type {
   MarketplaceCatalogItem,
+  MarketplaceHookRuntimeSummary,
   MarketplaceInstall,
   MarketplaceSource,
 } from '../../services/api';
@@ -34,12 +35,13 @@ function sourceSubtitle(source: MarketplaceSource): string {
   return 'Custom source';
 }
 
-function getInstallCounts(install: MarketplaceInstall): { skills: number; commands: number; mcpServers: number } {
+function getInstallCounts(install: MarketplaceInstall): { skills: number; commands: number; mcpServers: number; hooks: number } {
   const componentManifest = (install.component_manifest ?? {}) as {
     skills?: unknown[];
     commands?: unknown[];
     mcp_manifests?: unknown[];
     mcp_manifest?: unknown;
+    hooks?: { handler_count?: unknown };
   };
 
   const skills = Array.isArray(componentManifest.skills) ? componentManifest.skills.length : 0;
@@ -49,8 +51,11 @@ function getInstallCounts(install: MarketplaceInstall): { skills: number; comman
     : componentManifest.mcp_manifest
       ? 1
       : 0;
+  const hooks = typeof componentManifest.hooks?.handler_count === 'number'
+    ? componentManifest.hooks.handler_count
+    : 0;
 
-  return { skills, commands, mcpServers };
+  return { skills, commands, mcpServers, hooks };
 }
 
 function getInstallSlashCommands(install: MarketplaceInstall): string[] {
@@ -121,6 +126,39 @@ function getInstallAuthInstructions(install: MarketplaceInstall): string {
     return rawSource.auth_instructions;
   }
   return 'Enter the required secret values to finish configuring this integration.';
+}
+
+function getHookRuntimeStatusLabel(runtime: MarketplaceHookRuntimeSummary): string {
+  if (runtime.status === 'active') return 'Hooks active';
+  if (runtime.status === 'degraded') return 'Hooks partial';
+  if (runtime.status === 'blocked') return 'Hooks blocked';
+  return 'Hooks inactive';
+}
+
+function getHookRuntimeStatusClass(runtime: MarketplaceHookRuntimeSummary): string {
+  if (runtime.status === 'active') return 'is-active';
+  if (runtime.status === 'degraded') return 'is-degraded';
+  if (runtime.status === 'blocked') return 'is-blocked';
+  return 'is-inactive';
+}
+
+function getHookRuntimeMessages(runtime: MarketplaceHookRuntimeSummary | undefined): string[] {
+  if (!runtime?.has_hooks) {
+    return [];
+  }
+  const messages: string[] = [];
+  if (runtime.missing_secrets.length > 0) {
+    messages.push(`Hooks are waiting for configuration: ${runtime.missing_secrets.join(', ')}.`);
+  }
+  for (const reason of runtime.blocked_reasons) {
+    if (reason.trim()) {
+      messages.push(reason.trim());
+    }
+  }
+  if (runtime.last_runtime_error?.trim()) {
+    messages.push(`Last hook runtime error: ${runtime.last_runtime_error.trim()}`);
+  }
+  return Array.from(new Set(messages));
 }
 
 const SettingsMarketplace: React.FC = () => {
@@ -519,8 +557,8 @@ const SettingsMarketplace: React.FC = () => {
               <p>Install a GitHub or local Claude plugin, skill, or MCP repo directly. Use this for repos like `JuliusBrussee/caveman`.</p>
             </div>
           </div>
-          <div className="settings-marketplace-warning settings-marketplace-warning-inline">
-            Hook-only Claude plugins may install successfully but still not add slash commands or tools in Xpdite yet.
+          <div className="settings-marketplace-info settings-marketplace-warning-inline">
+            Claude-compatible plugin hooks run in Xpdite for supported event and hook types. Unsupported hook features stay visible in install status instead of failing silently.
           </div>
           <div className="settings-marketplace-source-form settings-marketplace-direct-form">
             <input
@@ -613,6 +651,7 @@ const SettingsMarketplace: React.FC = () => {
                   <div className="settings-marketplace-meta-row">
                     <span>{item.component_counts.skills} skill(s)</span>
                     <span>{item.component_counts.mcp_servers} MCP server(s)</span>
+                    <span>{item.component_counts.hooks} hook handler(s)</span>
                     {item.required_secrets.length > 0 && <span>{item.required_secrets.length} secret(s) required</span>}
                   </div>
                   {item.compatibility_warnings.map((warning) => (
@@ -648,11 +687,20 @@ const SettingsMarketplace: React.FC = () => {
               const slashCommands = getInstallSlashCommands(install);
               const originLabel = getInstallOriginLabel(install);
               const installWarnings = getInstallWarnings(install);
+              const hookRuntime = install.hook_runtime;
+              const hookMessages = getHookRuntimeMessages(hookRuntime);
               return (
               <div key={install.id} className="settings-marketplace-item-card">
                 <div className="settings-marketplace-item-top">
                   <div className="settings-marketplace-item-copy">
-                    <div className="settings-marketplace-pill">{labelForKind(install.item_kind)}</div>
+                    <div className="settings-marketplace-status-row">
+                      <div className="settings-marketplace-pill">{labelForKind(install.item_kind)}</div>
+                      {hookRuntime?.has_hooks && (
+                        <div className={`settings-marketplace-hook-status ${getHookRuntimeStatusClass(hookRuntime)}`}>
+                          {getHookRuntimeStatusLabel(hookRuntime)}
+                        </div>
+                      )}
+                    </div>
                     <h4>{install.display_name}</h4>
                     <p>Status: {install.status}</p>
                   </div>
@@ -680,6 +728,15 @@ const SettingsMarketplace: React.FC = () => {
                   {counts.skills > 0 && <span>{counts.skills} skill(s)</span>}
                   {counts.commands > 0 && <span>{counts.commands} command(s)</span>}
                   {counts.mcpServers > 0 && <span>{counts.mcpServers} MCP server(s)</span>}
+                  {counts.hooks > 0 && <span>{counts.hooks} hook handler(s)</span>}
+                  {hookRuntime?.has_hooks && <span>{hookRuntime.registered_handler_count} active hook handler(s)</span>}
+                  {hookRuntime?.has_hooks && <span>{hookRuntime.supported_event_count} supported hook event(s)</span>}
+                  {hookRuntime?.has_hooks && hookRuntime.unsupported_event_count > 0 && (
+                    <span>{hookRuntime.unsupported_event_count} unsupported hook event(s)</span>
+                  )}
+                  {hookRuntime?.has_hooks && hookRuntime.unsupported_types.length > 0 && (
+                    <span>Unsupported hook types: {hookRuntime.unsupported_types.join(', ')}</span>
+                  )}
                   {originLabel && <span>{originLabel}</span>}
                   {install.required_secrets && install.required_secrets.length > 0 && (
                     <button className="settings-marketplace-link-button" onClick={() => void handleInstallSecrets(install)}>
@@ -690,6 +747,9 @@ const SettingsMarketplace: React.FC = () => {
                 {install.last_error && <div className="settings-marketplace-warning">{install.last_error}</div>}
                 {installWarnings.map((warning) => (
                   <div key={`${install.id}:${warning}`} className="settings-marketplace-warning">{warning}</div>
+                ))}
+                {hookMessages.map((message) => (
+                  <div key={`${install.id}:hook:${message}`} className="settings-marketplace-info">{message}</div>
                 ))}
                 {install.status === 'manual_auth_required' && (
                   <div className="settings-marketplace-warning">

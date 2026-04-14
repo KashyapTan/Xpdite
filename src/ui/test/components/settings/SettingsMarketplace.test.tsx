@@ -48,7 +48,7 @@ describe('SettingsMarketplace', () => {
         display_name: 'Planner Skill',
         description: 'Standalone native skill',
         required_secrets: [],
-        component_counts: { skills: 1, mcp_servers: 0 },
+        component_counts: { skills: 1, mcp_servers: 0, hooks: 2 },
         compatibility_warnings: [],
         raw: {},
         install: null,
@@ -77,6 +77,18 @@ describe('SettingsMarketplace', () => {
       status: 'installed',
       enabled: true,
       required_secrets: [],
+      hook_runtime: {
+        has_hooks: false,
+        registered_handler_count: 0,
+        supported_event_count: 0,
+        unsupported_event_count: 0,
+        supported_types: [],
+        unsupported_types: [],
+        status: 'inactive',
+        blocked_reasons: [],
+        missing_secrets: [],
+        last_runtime_error: null,
+      },
     });
     mockedApi.installMarketplacePackage.mockResolvedValue({
       id: 'install-package-1',
@@ -88,6 +100,18 @@ describe('SettingsMarketplace', () => {
       status: 'connected',
       enabled: true,
       required_secrets: [],
+      hook_runtime: {
+        has_hooks: false,
+        registered_handler_count: 0,
+        supported_event_count: 0,
+        unsupported_event_count: 0,
+        supported_types: [],
+        unsupported_types: [],
+        status: 'inactive',
+        blocked_reasons: [],
+        missing_secrets: [],
+        last_runtime_error: null,
+      },
     });
   });
 
@@ -103,7 +127,7 @@ describe('SettingsMarketplace', () => {
     render(<SettingsMarketplace />);
 
     fireEvent.change(screen.getByPlaceholderText('Source name'), { target: { value: 'Custom' } });
-    fireEvent.change(screen.getByPlaceholderText('Manifest URL or local path'), { target: { value: '/tmp/marketplace.json' } });
+    fireEvent.change(screen.getByPlaceholderText('Marketplace URL, GitHub repo, or local manifest path'), { target: { value: '/tmp/marketplace.json' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add Source' }));
 
     await waitFor(() => {
@@ -179,5 +203,50 @@ describe('SettingsMarketplace', () => {
     });
 
     expect(await screen.findByText('Planner Skill')).toBeInTheDocument();
+  });
+
+  test('renders hook runtime state for installed plugins', async () => {
+    mockedApi.getMarketplaceInstalls.mockResolvedValue([
+      {
+        id: 'install-hooks-1',
+        item_kind: 'plugin',
+        source_id: null,
+        manifest_item_id: 'security-guidance',
+        display_name: 'Security Guidance',
+        canonical_id: 'security-guidance',
+        install_root: '/tmp/install-hooks-1',
+        status: 'connected',
+        enabled: true,
+        required_secrets: ['api_token'],
+        component_manifest: {
+          hooks: {
+            handler_count: 2,
+            compatibility_warnings: [],
+          },
+        },
+        hook_runtime: {
+          has_hooks: true,
+          registered_handler_count: 1,
+          supported_event_count: 2,
+          unsupported_event_count: 1,
+          supported_types: ['command'],
+          unsupported_types: ['prompt'],
+          status: 'degraded',
+          blocked_reasons: ['Unsupported Claude hook type \'prompt\' in Xpdite v1.'],
+          missing_secrets: ['api_token'],
+          last_runtime_error: 'Hook timed out after 10s.',
+        },
+        raw_source: { kind: 'direct_repo' },
+      },
+    ]);
+
+    render(<SettingsMarketplace />);
+
+    expect(await screen.findByText('Hooks partial')).toBeInTheDocument();
+    expect(screen.getAllByText('2 hook handler(s)')).toHaveLength(2);
+    expect(screen.getByText('1 active hook handler(s)')).toBeInTheDocument();
+    expect(screen.getByText('Hooks are waiting for configuration: api_token.')).toBeInTheDocument();
+    expect(screen.getByText("Unsupported Claude hook type 'prompt' in Xpdite v1.")).toBeInTheDocument();
+    expect(screen.getByText('Last hook runtime error: Hook timed out after 10s.')).toBeInTheDocument();
   });
 });

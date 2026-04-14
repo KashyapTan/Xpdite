@@ -41,12 +41,14 @@ class TabState:
     is_streaming: bool = False
     stop_streaming: bool = False
     _request_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    hook_session: Dict[str, Any] = field(default_factory=dict)
 
     def reset_conversation(self) -> None:
         """Reset state for a new conversation."""
         self.chat_history = []
         self.conversation_id = None
         self.screenshot_list = []
+        self.hook_session = {}
 
     def get_image_paths(self) -> List[str]:
         """Get list of valid image paths from current screenshots."""

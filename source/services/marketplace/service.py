@@ -32,6 +32,7 @@ from ...infrastructure.config import (
     MARKETPLACE_MCP_DIR,
     MARKETPLACE_PLUGINS_DIR,
     MARKETPLACE_SKILLS_DIR,
+    MARKETPLACE_PLUGIN_DATA_DIR,
     PROJECT_ROOT,
 )
 from ...infrastructure.database import db
@@ -489,6 +490,7 @@ class MarketplaceService:
                 package_input,
             )
             await self._connect_install_runtime_if_needed(install)
+            install = await asyncio.to_thread(self.get_install, install["id"])
             await manager.broadcast_json(
                 "marketplace_install_completed",
                 {"install_id": install["id"], "status": install["status"]},
@@ -517,6 +519,7 @@ class MarketplaceService:
                 repo_input,
             )
             await self._connect_install_runtime_if_needed(install)
+            install = await asyncio.to_thread(self.get_install, install["id"])
             await manager.broadcast_json(
                 "marketplace_install_completed",
                 {"install_id": install["id"], "status": install["status"]},
@@ -643,6 +646,7 @@ class MarketplaceService:
                 secrets or {},
             )
             await self._connect_install_runtime_if_needed(install)
+            install = await asyncio.to_thread(self.get_install, install["id"])
             await manager.broadcast_json(
                 "marketplace_install_completed",
                 {"install_id": install["id"], "status": install["status"]},
@@ -662,6 +666,7 @@ class MarketplaceService:
     async def enable_install_async(self, install_id: str) -> dict[str, Any]:
         install = await asyncio.to_thread(self._set_install_enabled_sync, install_id, True)
         await self._connect_install_runtime_if_needed(install)
+        install = await asyncio.to_thread(self.get_install, install_id)
         await manager.broadcast_json(
             "marketplace_update_completed",
             {"install_id": install_id, "action": "enable", "status": install["status"]},
@@ -809,11 +814,20 @@ class MarketplaceService:
         }
 
     def get_install_secrets(self, install_id: str) -> dict[str, str]:
-        install = self.get_install(install_id)
-        secret_names = self._install_secret_names(
-            install.get("component_manifest") or {},
-            install.get("raw_source") or {},
-        )
+        with db._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT component_manifest_json, raw_source_json
+                FROM marketplace_installs
+                WHERE id = ?
+                """,
+                (install_id,),
+            ).fetchone()
+        if row is None:
+            raise ValueError(f"Unknown marketplace install: {install_id}")
+        component_manifest = json.loads(row[0]) if row[0] else {}
+        raw_source = json.loads(row[1]) if row[1] else {}
+        secret_names = self._install_secret_names(component_manifest, raw_source)
         values: dict[str, str] = {}
         for secret_name in secret_names:
             encrypted = db.get_setting(f"marketplace_secret:{install_id}:{secret_name}")
@@ -876,14 +890,20 @@ class MarketplaceService:
         if not install["enabled"]:
             return
 
+        from ..hooks_runtime import get_hooks_runtime
         from ...mcp_integration.core.manager import mcp_manager
 
-        for runtime in self.build_runtime_server_configs(install):
-            if runtime.get("manual_auth_required"):
-                continue
-            if mcp_manager.is_server_connected(runtime["server_name"]):
-                continue
-            try:
+        hooks_runtime = get_hooks_runtime()
+        connected_servers: list[str] = []
+        hooks_registered = False
+        try:
+            await hooks_runtime.register_install_async(install)
+            hooks_registered = True
+            for runtime in self.build_runtime_server_configs(install):
+                if runtime.get("manual_auth_required"):
+                    continue
+                if mcp_manager.is_server_connected(runtime["server_name"]):
+                    continue
                 await mcp_manager.connect_server(
                     runtime["server_name"],
                     runtime["command"],
@@ -893,23 +913,52 @@ class MarketplaceService:
                     tool_name_prefix=runtime.get("tool_name_prefix"),
                     display_name=runtime.get("display_name"),
                 )
-                install = await asyncio.to_thread(
-                    self._set_install_runtime_state_sync,
-                    install["id"],
-                    status="connected",
-                    last_error=None,
-                )
-            except Exception as exc:
-                friendly_error = self._friendly_runtime_error(install, exc)
-                await asyncio.to_thread(
-                    self._set_install_runtime_state_sync,
-                    install["id"],
-                    status="error",
-                    last_error=friendly_error,
-                )
-                raise ValueError(friendly_error) from exc
+                connected_servers.append(runtime["server_name"])
+            install = await asyncio.to_thread(self.get_install, install["id"])
+            status = self._resolve_install_status(
+                install,
+                enabled=True,
+                hooks_runtime=hooks_runtime,
+            )
+            install = await asyncio.to_thread(
+                self._set_install_runtime_state_sync,
+                install["id"],
+                status=status,
+                last_error=None,
+            )
+        except Exception as exc:
+            for server_name in reversed(connected_servers):
+                if not mcp_manager.is_server_connected(server_name):
+                    continue
+                try:
+                    await mcp_manager.disconnect_server(server_name)
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Rollback disconnect failed for install '%s' server '%s': %s",
+                        install["id"],
+                        server_name,
+                        cleanup_exc,
+                    )
+            if hooks_registered:
+                try:
+                    await hooks_runtime.unregister_install_async(str(install["id"]))
+                except Exception as cleanup_exc:
+                    logger.warning(
+                        "Rollback hook unregister failed for install '%s': %s",
+                        install["id"],
+                        cleanup_exc,
+                    )
+            friendly_error = self._friendly_runtime_error(install, exc)
+            await asyncio.to_thread(
+                self._set_install_runtime_state_sync,
+                install["id"],
+                status="error",
+                last_error=friendly_error,
+            )
+            raise ValueError(friendly_error) from exc
 
     async def _disconnect_install_runtime_if_needed(self, install: dict[str, Any]) -> None:
+        from ..hooks_runtime import get_hooks_runtime
         from ...mcp_integration.core.manager import mcp_manager
 
         runtimes = self.build_runtime_server_configs(install)
@@ -928,6 +977,7 @@ class MarketplaceService:
             server_name = runtime["server_name"]
             if mcp_manager.is_server_connected(server_name):
                 await mcp_manager.disconnect_server(server_name)
+        await get_hooks_runtime().unregister_install_async(str(install["id"]))
 
     def _refresh_source_sync(self, source_id: str) -> dict[str, Any]:
         source = self.get_source(source_id)
@@ -2163,7 +2213,7 @@ class MarketplaceService:
         descriptor: str,
     ) -> list[str]:
         normalized_relative = _normalize_relative_path(descriptor)
-        candidates = [normalized_relative]
+        candidates: list[str] = []
         plugin_root = self._marketplace_plugin_root(source_ctx.manifest)
         if plugin_root:
             if not normalized_relative:
@@ -2173,6 +2223,7 @@ class MarketplaceService:
                 and not normalized_relative.startswith(f"{plugin_root}/")
             ):
                 candidates.append(self._join_repo_path(plugin_root, normalized_relative))
+        candidates.append(normalized_relative)
         return list(dict.fromkeys(candidates))
 
     def _install_item_sync(
@@ -2330,7 +2381,12 @@ class MarketplaceService:
         try:
             descriptor = manifest_item.get("source") or manifest_item.get("url") or manifest_item.get("path") or manifest_item
             resolved_ref = self._materialize_install_root(source_ctx, install_root, descriptor, kind)
-            component_manifest = self._inspect_install_root(kind, install_root, manifest_item)
+            component_manifest = self._inspect_install_root(
+                kind,
+                install_root,
+                manifest_item,
+                install_id,
+            )
             canonical_id = self._resolve_canonical_id(kind, component_manifest, normalized["display_name"])
             conflict_exclusion = replacement_install_id or install_id
             if kind in {"skill", "plugin"}:
@@ -2347,22 +2403,22 @@ class MarketplaceService:
                         db.set_setting(f"marketplace_secret:{install_id}:{secret_name}", encrypted)
                         persisted_secret_names.append(secret_name)
 
-            status = "disabled" if not enabled else "installed"
-            if enabled and self._component_has_mcp_runtime(component_manifest):
-                runtimes = [
-                    self._build_runtime_from_mcp_manifest(
-                        install_id,
-                        mcp_manifest,
-                        install_root=str(install_root),
-                        secrets_override=secrets,
-                        config_index=index,
-                    )
-                    for index, mcp_manifest in enumerate(self._component_runtime_manifests(component_manifest))
-                ]
-                if any(runtime.get("manual_auth_required") for runtime in runtimes):
-                    status = "manual_auth_required"
-                else:
-                    status = "connected"
+            provided_secret_names = {
+                name
+                for name, value in secrets.items()
+                if isinstance(name, str) and str(name).strip() and value not in (None, "")
+            }
+            status = self._resolve_install_status(
+                {
+                    "id": install_id,
+                    "enabled": enabled,
+                    "install_root": str(install_root),
+                    "component_manifest": component_manifest,
+                },
+                enabled=enabled,
+                provided_secret_names=provided_secret_names,
+                secrets_override=secrets,
+            )
 
             now = _utc_now()
             with db._connect() as conn:
@@ -2441,6 +2497,11 @@ class MarketplaceService:
         install_root = Path(install["install_root"])
         if install_root.exists():
             shutil.rmtree(install_root, ignore_errors=True)
+        install_id = str(install.get("id") or "")
+        if install_id:
+            plugin_data_dir = MARKETPLACE_PLUGIN_DATA_DIR / install_id
+            if plugin_data_dir.exists():
+                shutil.rmtree(plugin_data_dir, ignore_errors=True)
 
     def _delete_install_row_sync(self, install_id: str) -> None:
         with db._connect() as conn:
@@ -2479,25 +2540,69 @@ class MarketplaceService:
             )
         return message or "The MCP server failed to start correctly."
 
+    def _resolve_install_status(
+        self,
+        install: dict[str, Any],
+        *,
+        enabled: Optional[bool] = None,
+        provided_secret_names: Optional[set[str]] = None,
+        secrets_override: Optional[dict[str, str]] = None,
+        hooks_runtime: Optional[Any] = None,
+    ) -> str:
+        is_enabled = install["enabled"] if enabled is None else enabled
+        if not is_enabled:
+            return "disabled"
+
+        component_manifest = install.get("component_manifest") or {}
+        if provided_secret_names is None:
+            install_id = str(install.get("id") or "")
+            provided_secret_names = (
+                set(self.get_install_secrets(install_id)) if install_id else set()
+            )
+
+        if self._missing_hook_secret_names(
+            component_manifest,
+            provided_secret_names=provided_secret_names,
+        ):
+            return "manual_auth_required"
+
+        if self._component_has_mcp_runtime(component_manifest):
+            if secrets_override is not None:
+                runtimes = [
+                    self._build_runtime_from_mcp_manifest(
+                        str(install.get("id") or ""),
+                        mcp_manifest,
+                        install_root=install.get("install_root"),
+                        secrets_override=secrets_override,
+                        config_index=index,
+                    )
+                    for index, mcp_manifest in enumerate(
+                        self._component_runtime_manifests(component_manifest)
+                    )
+                ]
+            else:
+                runtimes = self.build_runtime_server_configs(
+                    {
+                        **install,
+                        "enabled": True,
+                    }
+                )
+            return (
+                "manual_auth_required"
+                if any(runtime.get("manual_auth_required") for runtime in runtimes)
+                else "connected"
+            )
+
+        if hooks_runtime is not None:
+            hook_summary = hooks_runtime.build_runtime_summary(install)
+            if hook_summary.get("has_hooks"):
+                return "connected"
+
+        return "installed"
+
     def _set_install_enabled_sync(self, install_id: str, enabled: bool) -> dict[str, Any]:
         install = self.get_install(install_id)
-        status = install["status"]
-        if not enabled:
-            status = "disabled"
-        elif self._component_has_mcp_runtime(install.get("component_manifest") or {}):
-            component_manifest = install.get("component_manifest") or {}
-            runtimes = [
-                self._build_runtime_from_mcp_manifest(
-                    install_id,
-                    mcp_manifest,
-                    install_root=install.get("install_root"),
-                    config_index=index,
-                )
-                for index, mcp_manifest in enumerate(self._component_runtime_manifests(component_manifest))
-            ]
-            status = "manual_auth_required" if any(runtime.get("manual_auth_required") for runtime in runtimes) else "connected"
-        else:
-            status = "installed"
+        status = self._resolve_install_status(install, enabled=enabled)
 
         with db._connect() as conn:
             conn.execute(
@@ -2743,6 +2848,7 @@ class MarketplaceService:
         kind: MarketplaceItemKind,
         install_root: Path,
         manifest_item: dict[str, Any],
+        install_id: str,
     ) -> dict[str, Any]:
         if kind == "plugin":
             plugin_manifest_path = install_root / ".claude-plugin" / "plugin.json"
@@ -2771,11 +2877,19 @@ class MarketplaceService:
                 else None
             )
             mcp_manifest, mcp_manifests = self._normalize_mcp_payload(raw_mcp_payload)
+            from ..hooks_runtime import get_hooks_runtime
+
+            normalized_hooks = get_hooks_runtime().normalize_plugin_hooks(
+                plugin_manifest,
+                install_root=install_root,
+                install_id=install_id,
+            )
             compatibility_warnings = self._plugin_component_compatibility_warnings(
                 plugin_manifest,
                 skills=skills,
                 commands=commands,
                 mcp_manifests=mcp_manifests,
+                hooks=normalized_hooks,
             )
             return {
                 "plugin_manifest": plugin_manifest,
@@ -2783,12 +2897,14 @@ class MarketplaceService:
                 "commands": commands,
                 "mcp_manifest": mcp_manifest,
                 "mcp_manifests": mcp_manifests,
+                "hooks": normalized_hooks,
                 "compatibility_warnings": compatibility_warnings,
                 "required_secrets": self._collect_required_secrets(
                     manifest_item,
                     plugin_manifest,
                     raw_mcp_payload,
                     mcp_manifests,
+                    normalized_hooks,
                 ),
             }
 
@@ -2904,21 +3020,28 @@ class MarketplaceService:
         skills: list[dict[str, Any]],
         commands: list[dict[str, Any]],
         mcp_manifests: list[dict[str, Any]],
+        hooks: dict[str, Any],
     ) -> list[str]:
         warnings: list[str] = []
-        if plugin_manifest.get("hooks"):
-            warnings.append(
-                "Claude plugin hooks are not yet executed by Xpdite, so hook-driven behavior will not run here."
-            )
+        warnings.extend(
+            warning
+            for warning in list(hooks.get("compatibility_warnings") or [])
+            if isinstance(warning, str) and warning.strip()
+        )
         if plugin_manifest.get("agents"):
             warnings.append("Claude plugin agents are not yet surfaced in Xpdite.")
         if plugin_manifest.get("outputStyles") or plugin_manifest.get("output_styles"):
             warnings.append("Claude output styles are preserved in metadata but not yet surfaced in Xpdite.")
-        if not skills and not commands and not mcp_manifests:
+        if (
+            not skills
+            and not commands
+            and not mcp_manifests
+            and int(hooks.get("handler_count") or 0) == 0
+        ):
             warnings.append(
-                "This plugin does not expose slash commands, skills, or MCP servers that Xpdite can run yet."
+                "This plugin does not expose slash commands, skills, MCP servers, or hooks that Xpdite can run."
             )
-        return warnings
+        return list(dict.fromkeys(warnings))
 
     def _read_skill_entry(self, path: Path) -> dict[str, Any]:
         meta, _body = _parse_simple_frontmatter(path.read_text(encoding="utf-8"))
@@ -3145,6 +3268,31 @@ class MarketplaceService:
             if secret_name not in provided_secret_names
         ]
 
+    def _estimate_hook_count(self, hooks_payload: Any) -> int:
+        if not hooks_payload:
+            return 0
+        if isinstance(hooks_payload, str):
+            return 1
+        if isinstance(hooks_payload, list):
+            return sum(self._estimate_hook_count(entry) for entry in hooks_payload)
+        if not isinstance(hooks_payload, dict):
+            return 0
+
+        hooks_object = hooks_payload.get("hooks") if isinstance(hooks_payload.get("hooks"), dict) else hooks_payload
+        if not isinstance(hooks_object, dict):
+            return 1
+
+        count = 0
+        for groups in hooks_object.values():
+            if not isinstance(groups, list):
+                continue
+            for group in groups:
+                if isinstance(group, dict) and isinstance(group.get("hooks"), list):
+                    count += len([hook for hook in group.get("hooks") or [] if isinstance(hook, dict)])
+                elif isinstance(group, list):
+                    count += len([hook for hook in group if isinstance(hook, dict)])
+        return count or 1
+
     def _estimate_component_counts(
         self, source: dict[str, Any], kind: MarketplaceItemKind, item: dict[str, Any]
     ) -> dict[str, int]:
@@ -3187,12 +3335,12 @@ class MarketplaceService:
         ):
             skills_count = 1
 
-        return {"skills": skills_count, "mcp_servers": mcp_count}
+        hooks_count = self._estimate_hook_count(item.get("hooks"))
+
+        return {"skills": skills_count, "mcp_servers": mcp_count, "hooks": hooks_count}
 
     def _compatibility_warnings(self, kind: MarketplaceItemKind, item: dict[str, Any]) -> list[str]:
         warnings: list[str] = []
-        if item.get("hooks"):
-            warnings.append("Claude hooks are not yet executed by Xpdite.")
         if item.get("agents"):
             warnings.append("Claude agents are not yet surfaced in Xpdite.")
         if kind == "mcp" and item.get("resources"):
@@ -3211,6 +3359,27 @@ class MarketplaceService:
 
     def _component_has_mcp_runtime(self, component_manifest: dict[str, Any]) -> bool:
         return bool(self._component_runtime_manifests(component_manifest))
+
+    def _component_hook_secret_names(self, component_manifest: dict[str, Any]) -> list[str]:
+        hooks = component_manifest.get("hooks")
+        if not isinstance(hooks, dict):
+            return []
+        required = hooks.get("required_secrets")
+        if not isinstance(required, list):
+            return []
+        return [str(name).strip() for name in required if str(name).strip()]
+
+    def _missing_hook_secret_names(
+        self,
+        component_manifest: dict[str, Any],
+        *,
+        provided_secret_names: set[str],
+    ) -> list[str]:
+        return [
+            secret_name
+            for secret_name in self._component_hook_secret_names(component_manifest)
+            if secret_name not in provided_secret_names and not os.environ.get(secret_name)
+        ]
 
     def _component_runtime_manifests(self, component_manifest: dict[str, Any]) -> list[dict[str, Any]]:
         manifests = component_manifest.get("mcp_manifests")
@@ -3470,7 +3639,7 @@ class MarketplaceService:
             for secret_name in all_secret_names
             if not db.get_setting(f"marketplace_secret:{row[0]}:{secret_name}")
         ]
-        return {
+        install = {
             "id": row[0],
             "item_kind": row[1],
             "source_id": row[2],
@@ -3488,6 +3657,10 @@ class MarketplaceService:
             "updated_at": row[14],
             "required_secrets": required_secrets,
         }
+        from ..hooks_runtime import get_hooks_runtime
+
+        install["hook_runtime"] = get_hooks_runtime().build_runtime_summary(install)
+        return install
 
 
 _instance: Optional[MarketplaceService] = None

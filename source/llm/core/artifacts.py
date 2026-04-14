@@ -6,7 +6,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from html import escape as html_escape
-from typing import Any, Dict, Iterable, List, Literal, Optional
+from typing import Any, Awaitable, Callable, Dict, Iterable, List, Literal, Optional
 
 from ...core.connection import broadcast_message
 
@@ -407,12 +407,15 @@ def apply_artifact_stream_events(
 async def emit_artifact_stream_events(
     events: List[Dict[str, Any]],
     interleaved_blocks: List[Dict[str, Any]],
+    *,
+    broadcaster: Optional[Callable[[str, Any], Awaitable[Any]]] = None,
 ) -> str:
     """Broadcast parser events and update ordered content blocks.
 
     Returns the cleaned conversational text emitted by these events.
     """
     text_output = apply_artifact_stream_events(events, interleaved_blocks)
+    emit = broadcaster or broadcast_message
 
     for event in events:
         event_type = event.get("type")
@@ -420,23 +423,23 @@ async def emit_artifact_stream_events(
             text = str(event.get("content", ""))
             if not text:
                 continue
-            await broadcast_message("response_chunk", text)
+            await emit("response_chunk", text)
             continue
 
         if event_type == "artifact_start":
-            await broadcast_message("artifact_start", event["artifact"])
+            await emit("artifact_start", event["artifact"])
             continue
 
         if event_type == "artifact_chunk":
-            await broadcast_message("artifact_chunk", event["artifact"])
+            await emit("artifact_chunk", event["artifact"])
             continue
 
         if event_type == "artifact_complete":
-            await broadcast_message("artifact_complete", dict(event["artifact"]))
+            await emit("artifact_complete", dict(event["artifact"]))
             continue
 
         if event_type == "artifact_abandoned":
-            await broadcast_message(
+            await emit(
                 "artifact_deleted",
                 {"artifact_id": event["artifact_id"], "reason": "abandoned"},
             )

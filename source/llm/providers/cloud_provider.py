@@ -12,6 +12,7 @@ Same return signature as stream_ollama_chat for drop-in compatibility.
 """
 
 import base64
+import copy
 import json
 import logging
 import os
@@ -146,6 +147,15 @@ def _append_tool_result(
     )
 
 
+def _build_spawn_agent_request(fn_args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the normalized sub-agent batch payload from tool arguments."""
+    return {
+        "instruction": fn_args.get("instruction", ""),
+        "model_tier": fn_args.get("model_tier", "fast"),
+        "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Message builder (unified OpenAI format — LiteLLM translates per-provider)
 # ---------------------------------------------------------------------------
@@ -208,6 +218,8 @@ async def _execute_and_broadcast_tool(
     provider_label: str,
     tool_calls_list: List[Dict[str, Any]],
     interleaved_blocks: List[Dict[str, Any]],
+    *,
+    precomputed_result: Optional[str] = None,
 ) -> str | Dict[str, Any]:
     """Execute a single MCP tool call, broadcast progress, and record results.
 
@@ -224,6 +236,7 @@ async def _execute_and_broadcast_tool(
     from ...mcp_integration.executors.memory_executor import is_memory_tool, execute_memory_tool
     from ...mcp_integration.executors.skills_executor import execute_skill_tool
     from ...mcp_integration.executors.scheduler_executor import is_scheduler_tool, execute_scheduler_tool
+    from ...services.hooks_runtime import get_hooks_runtime
 
     try:
         server_name = mcp_manager.get_tool_server_name(fn_name) or "unknown"
@@ -236,54 +249,111 @@ async def _execute_and_broadcast_tool(
         )
         server_name = "unknown"
 
+    hooks_runtime = get_hooks_runtime()
+    effective_args = copy.deepcopy(fn_args)
+    pre_hook_result = await hooks_runtime.dispatch_pre_tool_use(
+        fn_name,
+        effective_args,
+        server_name=server_name,
+    )
+    if pre_hook_result.updated_input is not None:
+        effective_args = copy.deepcopy(pre_hook_result.updated_input)
+
     logger.info(
         "%s tool call: %s(%s) from '%s'",
         provider_label,
         fn_name,
-        sanitize_tool_args(fn_name, server_name, fn_args),
+        sanitize_tool_args(fn_name, server_name, effective_args),
         server_name,
     )
 
-    safe_args = sanitize_tool_args(fn_name, server_name, fn_args)
+    safe_args = sanitize_tool_args(fn_name, server_name, effective_args)
+    hook_context_messages: list[str] = []
+    if not pre_hook_result.suppress_output:
+        hook_context_messages.extend(pre_hook_result.system_messages)
+        hook_context_messages.extend(pre_hook_result.additional_context)
 
-    await broadcast_message(
-        "tool_call",
-        json.dumps(
-            {
-                "name": fn_name,
-                "args": safe_args,
-                "server": server_name,
-                "status": "calling",
-            }
-        ),
-    )
-
-    try:
-        if is_terminal_tool(fn_name, server_name):
-            result = await execute_terminal_tool(fn_name, fn_args, server_name)
-        elif is_video_watcher_tool(fn_name, server_name):
-            result = await execute_video_watcher_tool(fn_name, fn_args, server_name)
-        elif is_memory_tool(fn_name, server_name):
-            result = await execute_memory_tool(fn_name, fn_args, server_name)
-        elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
-            result = execute_skill_tool(fn_name, fn_args)
-        elif is_scheduler_tool(fn_name, server_name):
-            result = await execute_scheduler_tool(fn_name, fn_args, server_name)
-        else:
-            result = await mcp_manager.call_tool(fn_name, fn_args)
-    except Exception as e:
-        logger.warning(
-            "%s tool execution failed for %s on '%s' (%s)",
-            provider_label,
-            fn_name,
-            server_name,
-            type(e).__name__,
+    if pre_hook_result.blocked:
+        result = (
+            "Error: Blocked by Claude-compatible hook: "
+            + (pre_hook_result.reason or "Tool execution denied.")
         )
-        result = "System error: tool execution failed. See server logs for details."
+    else:
+        await broadcast_message(
+            "tool_call",
+            json.dumps(
+                {
+                    "name": fn_name,
+                    "args": safe_args,
+                    "server": server_name,
+                    "status": "calling",
+                }
+            ),
+        )
 
-    # Handle image results specially - return dict directly
-    if isinstance(result, dict) and result.get("type") == "image":
-        # For broadcast, use a summary instead of base64 data
+        try:
+            if precomputed_result is not None and pre_hook_result.updated_input is None:
+                result = precomputed_result
+            elif fn_name == "spawn_agent" and server_name == "sub_agent":
+                from ...services.skills_runtime.sub_agent import execute_sub_agents_parallel
+
+                results = await execute_sub_agents_parallel(
+                    [_build_spawn_agent_request(effective_args)]
+                )
+                result = results[0] if results else ""
+            elif is_terminal_tool(fn_name, server_name):
+                result = await execute_terminal_tool(fn_name, effective_args, server_name)
+            elif is_video_watcher_tool(fn_name, server_name):
+                result = await execute_video_watcher_tool(fn_name, effective_args, server_name)
+            elif is_memory_tool(fn_name, server_name):
+                result = await execute_memory_tool(fn_name, effective_args, server_name)
+            elif server_name == "skills" and fn_name in ("list_skills", "use_skill"):
+                result = execute_skill_tool(fn_name, effective_args)
+            elif is_scheduler_tool(fn_name, server_name):
+                result = await execute_scheduler_tool(fn_name, effective_args, server_name)
+            else:
+                result = await mcp_manager.call_tool(fn_name, effective_args)
+        except Exception as e:
+            logger.warning(
+                "%s tool execution failed for %s on '%s' (%s)",
+                provider_label,
+                fn_name,
+                server_name,
+                type(e).__name__,
+            )
+            result = "System error: tool execution failed. See server logs for details."
+
+    tool_failed = isinstance(result, str) and result.startswith(("Error:", "System error:"))
+    if not pre_hook_result.blocked:
+        if tool_failed:
+            post_hook_result = await hooks_runtime.dispatch_post_tool_use_failure(
+                fn_name,
+                effective_args,
+                str(result),
+                server_name=server_name,
+            )
+        else:
+            post_hook_result = await hooks_runtime.dispatch_post_tool_use(
+                fn_name,
+                effective_args,
+                result,
+                server_name=server_name,
+            )
+        if not post_hook_result.suppress_output:
+            hook_context_messages.extend(post_hook_result.system_messages)
+            hook_context_messages.extend(post_hook_result.additional_context)
+        if (
+            post_hook_result.updated_mcp_tool_output is not None
+            and mcp_manager.tool_uses_mcp_session(fn_name)
+        ):
+            result = post_hook_result.updated_mcp_tool_output
+        if post_hook_result.blocked:
+            result = (
+                "Error: Blocked by Claude-compatible hook: "
+                + (post_hook_result.reason or "Tool output was blocked.")
+            )
+
+    if isinstance(result, dict) and result.get("type") == "image" and not hook_context_messages:
         result_summary = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
         await broadcast_message(
             "tool_call",
@@ -299,19 +369,24 @@ async def _execute_and_broadcast_tool(
         )
         _append_tool_result(
             fn_name,
-            fn_args,
+            effective_args,
             result_summary,
             server_name,
             tool_calls_list,
             interleaved_blocks,
         )
-        return result  # Return the image dict
+        return result
 
-    # Normal result: preserve structured dict payloads as JSON
     if isinstance(result, dict):
         serialized_result = json.dumps(result, ensure_ascii=False, default=str)
     else:
         serialized_result = str(result)
+    if hook_context_messages:
+        serialized_result = (
+            serialized_result
+            + "\n\n[Claude-compatible hook context]\n"
+            + "\n\n".join(message for message in hook_context_messages if message)
+        )
     result_str = _truncate_tool_result(serialized_result)
     await broadcast_message(
         "tool_call",
@@ -328,7 +403,7 @@ async def _execute_and_broadcast_tool(
 
     _append_tool_result(
         fn_name,
-        fn_args,
+        effective_args,
         result_str,
         server_name,
         tool_calls_list,
@@ -602,6 +677,7 @@ async def _stream_litellm(
                     await emit_artifact_stream_events(
                         events,
                         interleaved_blocks,
+                        broadcaster=broadcast_message,
                     )
                     if cleaned_text:
                         all_accumulated.append(cleaned_text)
@@ -644,6 +720,7 @@ async def _stream_litellm(
                 await emit_artifact_stream_events(
                     final_events,
                     interleaved_blocks,
+                    broadcaster=broadcast_message,
                 )
                 if cleaned_text:
                     all_accumulated.append(cleaned_text)
@@ -721,13 +798,7 @@ async def _stream_litellm(
 
                     if fn_name == "spawn_agent" and sn == "sub_agent":
                         spawn_agent_indices.append(idx)
-                        spawn_agent_calls.append(
-                            {
-                                "instruction": fn_args.get("instruction", ""),
-                                "model_tier": fn_args.get("model_tier", "fast"),
-                                "agent_name": fn_args.get("agent_name", "Sub-Agent"),
-                            }
-                        )
+                        spawn_agent_calls.append(_build_spawn_agent_request(fn_args))
 
                 # Run all spawn_agent calls in parallel (if any)
                 spawn_results: Dict[int, str] = {}
@@ -808,26 +879,14 @@ async def _stream_litellm(
                         cancelled_during_tool_loop = True
                         break
 
-                    # spawn_agent results already computed in parallel
-                    if idx in spawn_results:
-                        result_str = spawn_results[idx]
-                        _append_tool_result(
-                            fn_name,
-                            fn_args,
-                            result_str,
-                            "sub_agent",
-                            tool_calls_list,
-                            interleaved_blocks,
-                        )
-                        tool_result = result_str
-                    else:
-                        tool_result = await _execute_and_broadcast_tool(
-                            fn_name,
-                            fn_args,
-                            provider.capitalize(),
-                            tool_calls_list,
-                            interleaved_blocks,
-                        )
+                    tool_result = await _execute_and_broadcast_tool(
+                        fn_name,
+                        fn_args,
+                        provider.capitalize(),
+                        tool_calls_list,
+                        interleaved_blocks,
+                        precomputed_result=spawn_results.get(idx),
+                    )
 
                     # Append tool result in OpenAI format (LiteLLM translates)
                     # Handle image results specially - construct image content block

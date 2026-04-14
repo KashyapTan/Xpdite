@@ -7,10 +7,13 @@ Covers:
 """
 
 import json
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from source.services.hooks_runtime.runtime import HookDispatchResult
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +567,88 @@ class TestStreamLitellm:
         block_types = [b["type"] for b in blocks]
         assert "tool_call" in block_types
         assert "text" in block_types
+
+    @pytest.mark.asyncio
+    async def test_spawn_agent_parallel_batch_runs_hook_lifecycle(
+        self,
+        _mock_broadcast,
+        _mock_cancelled,
+        _mock_mcp,
+        monkeypatch,
+    ):
+        """Parallel spawn_agent execution should still dispatch tool hooks."""
+        tool_stream = [
+            _tool_call_chunk(0, tc_id="call_1", name="spawn_agent"),
+            _tool_call_chunk(
+                0,
+                arguments='{"instruction":"summarize","model_tier":"fast","agent_name":"Worker"}',
+                finish_reason="tool_calls",
+            ),
+        ]
+        text_stream = [
+            _text_chunk("Delegated"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        _mock_mcp.get_tools.return_value = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "spawn_agent",
+                    "description": "Spawn a sub-agent",
+                    "parameters": {},
+                },
+            }
+        ]
+        _mock_mcp.get_tool_server_name.return_value = "sub_agent"
+
+        sub_agent_module = types.ModuleType("source.services.skills_runtime.sub_agent")
+        sub_agent_module.execute_sub_agents_parallel = AsyncMock(
+            return_value=["parallel-result"]
+        )
+        monkeypatch.setitem(
+            sys.modules, "source.services.skills_runtime.sub_agent", sub_agent_module
+        )
+        fake_hooks = SimpleNamespace(
+            dispatch_pre_tool_use=AsyncMock(return_value=HookDispatchResult()),
+            dispatch_post_tool_use=AsyncMock(return_value=HookDispatchResult()),
+            dispatch_post_tool_use_failure=AsyncMock(
+                return_value=HookDispatchResult()
+            ),
+        )
+
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(text_stream),
+        ]
+
+        with (
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
+            patch(
+                "source.services.hooks_runtime.get_hooks_runtime",
+                return_value=fake_hooks,
+            ),
+        ):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai",
+                model="gpt-4o",
+                api_key="sk-test",
+                user_query="delegate",
+                image_paths=[],
+                chat_history=[],
+                allowed_tool_names={"spawn_agent"},
+            )
+
+        assert text == "Delegated"
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "spawn_agent"
+        assert tool_calls[0]["result"] == "parallel-result"
+        sub_agent_module.execute_sub_agents_parallel.assert_awaited_once()
+        fake_hooks.dispatch_pre_tool_use.assert_awaited_once()
+        fake_hooks.dispatch_post_tool_use.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cancellation_mid_stream(self, _mock_broadcast):

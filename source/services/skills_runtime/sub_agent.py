@@ -38,7 +38,7 @@ _CONCURRENCY_CAP = 10
 _concurrency_semaphore = asyncio.Semaphore(_CONCURRENCY_CAP)
 
 # Hard timeout per sub-agent call (seconds)
-_SUB_AGENT_TIMEOUT = 300
+_SUB_AGENT_TIMEOUT = 500
 
 
 def _tool_progress_description(fn_name: str, fn_args: dict) -> str:

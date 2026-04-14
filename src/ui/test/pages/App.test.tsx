@@ -652,6 +652,149 @@ describe('App websocket-driven behavior', () => {
     expect(terminalBlocks[1]?.terminal?.requestId).toBe('');
   });
 
+  test('reconciles background sub-agent tool calls into a single row', async () => {
+    tabSnapshots.set('tab-2', {
+      chat: {
+        chatHistory: [],
+        currentQuery: '',
+        response: '',
+        thinking: '',
+        isThinking: false,
+        thinkingCollapsed: true,
+        toolCalls: [
+          {
+            name: 'spawn_agent',
+            args: {
+              instruction: 'Research TurboTax',
+              agent_name: 'TurboTax Researcher',
+              model_tier: 'smart',
+            },
+            server: 'sub_agent',
+            status: 'calling',
+          },
+        ],
+        contentBlocks: [
+          {
+            type: 'tool_call',
+            toolCall: {
+              name: 'spawn_agent',
+              args: {
+                instruction: 'Research TurboTax',
+                agent_name: 'TurboTax Researcher',
+                model_tier: 'smart',
+              },
+              server: 'sub_agent',
+              status: 'calling',
+            },
+          },
+        ],
+        conversationId: null,
+        query: '',
+        canSubmit: true,
+        status: 'Ready',
+        error: '',
+      },
+      screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      terminal: { terminalSessionActive: false, terminalSessionRequest: null },
+      generatingModel: 'openai/gpt-4o',
+    });
+
+    render(<App />);
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'tool_call',
+      tab_id: 'tab-2',
+      content: {
+        server: 'sub_agent',
+        name: 'spawn_agent',
+        status: 'calling',
+        agent_id: 'agent-1',
+        description: 'TurboTax Researcher (smart)',
+        args: {
+          agent_name: 'TurboTax Researcher',
+          model_tier: 'smart',
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    let latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    let nextSnapshot = latestCall?.[1] as {
+      chat: {
+        toolCalls: Array<{
+          name: string;
+          agentId?: string;
+          description?: string;
+          args: Record<string, unknown>;
+        }>;
+        contentBlocks: Array<{
+          type: string;
+          toolCall?: { agentId?: string };
+        }>;
+      };
+    };
+
+    expect(nextSnapshot.chat.toolCalls).toHaveLength(1);
+    expect(nextSnapshot.chat.contentBlocks).toHaveLength(1);
+    expect(nextSnapshot.chat.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.toolCalls[0]?.description).toBe('TurboTax Researcher (smart)');
+    expect(nextSnapshot.chat.toolCalls[0]?.args).toEqual({
+      agent_name: 'TurboTax Researcher',
+      model_tier: 'smart',
+    });
+
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'tool_call',
+      tab_id: 'tab-2',
+      content: {
+        server: 'sub_agent',
+        name: 'spawn_agent',
+        status: 'complete',
+        result: 'Finished report',
+        args: {
+          instruction: 'Research TurboTax',
+          agent_name: 'TurboTax Researcher',
+          model_tier: 'smart',
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    nextSnapshot = latestCall?.[1] as {
+      chat: {
+        toolCalls: Array<{
+          agentId?: string;
+          status?: string;
+          result?: string;
+        }>;
+        contentBlocks: Array<{
+          type: string;
+          toolCall?: { agentId?: string; status?: string; result?: string };
+        }>;
+      };
+    };
+
+    expect(nextSnapshot.chat.toolCalls).toHaveLength(1);
+    expect(nextSnapshot.chat.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.toolCalls[0]?.status).toBe('complete');
+    expect(nextSnapshot.chat.toolCalls[0]?.result).toBe('Finished report');
+    expect(nextSnapshot.chat.contentBlocks).toHaveLength(1);
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.status).toBe('complete');
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.result).toBe('Finished report');
+  });
+
   test('handles youtube approval message and approval action callback', async () => {
     render(<App />);
     chatStateMock.addYouTubeApprovalBlock.mockClear();

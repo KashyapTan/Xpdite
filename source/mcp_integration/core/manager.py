@@ -180,42 +180,50 @@ class McpToolManager:
                 "display_name": display_name or server_name,
             }
 
-            # Discover tools
-            tools_result = await session.list_tools()
-            for tool in tools_result.tools:
-                registered_name = (
-                    f"{tool_name_prefix}{tool.name}" if tool_name_prefix else tool.name
-                )
-                self._tool_registry[registered_name] = {
-                    "session": session,
-                    "server_name": server_name,
-                    "server_display_name": display_name or server_name,
-                    "session_tool_name": tool.name,
-                    "display_tool_name": tool.name,
-                }
-                ollama_tool = {
-                    "type": "function",
-                    "function": {
-                        "name": registered_name,
-                        "description": tool.description or "",
-                        "parameters": tool.inputSchema
-                        if tool.inputSchema
-                        else {"type": "object", "properties": {}},
-                    },
-                }
-                self._ollama_tools.append(ollama_tool)
-
-                # Store raw schema for cross-provider conversion
-                self._raw_tools.append(
-                    {
-                        "name": registered_name,
-                        "description": tool.description or "",
-                        "input_schema": tool.inputSchema
-                        if tool.inputSchema
-                        else {"type": "object", "properties": {}},
+            try:
+                # Discover tools
+                tools_result = await session.list_tools()
+                for tool in tools_result.tools:
+                    registered_name = (
+                        f"{tool_name_prefix}{tool.name}" if tool_name_prefix else tool.name
+                    )
+                    self._tool_registry[registered_name] = {
+                        "session": session,
+                        "server_name": server_name,
+                        "server_display_name": display_name or server_name,
+                        "session_tool_name": tool.name,
+                        "display_tool_name": tool.name,
                     }
-                )
-                logger.debug("Registered tool: %s (from %s)", registered_name, server_name)
+                    ollama_tool = {
+                        "type": "function",
+                        "function": {
+                            "name": registered_name,
+                            "description": tool.description or "",
+                            "parameters": tool.inputSchema
+                            if tool.inputSchema
+                            else {"type": "object", "properties": {}},
+                        },
+                    }
+                    self._ollama_tools.append(ollama_tool)
+
+                    # Store raw schema for cross-provider conversion
+                    self._raw_tools.append(
+                        {
+                            "name": registered_name,
+                            "description": tool.description or "",
+                            "input_schema": tool.inputSchema
+                            if tool.inputSchema
+                            else {"type": "object", "properties": {}},
+                        }
+                    )
+                    logger.debug("Registered tool: %s (from %s)", registered_name, server_name)
+            except Exception:
+                try:
+                    await self.disconnect_server(server_name)
+                except Exception:
+                    await _cleanup_untracked_lifecycle_task()
+                    self._connections.pop(server_name, None)
+                raise
 
             logger.info(
                 "Connected to '%s' — %d tool(s)", server_name, len(tools_result.tools)
@@ -232,6 +240,7 @@ class McpToolManager:
         except Exception as e:
             logger.error("Error connecting to '%s': %s", server_name, e)
             logger.warning("The server will work without '%s' tools.", server_name)
+            raise
 
     def register_inline_tools(
         self, server_name: str, tools: List[Dict[str, Any]], *, skip_embed: bool = False
@@ -370,6 +379,11 @@ class McpToolManager:
         """Get the server name that owns a tool."""
         entry = self._tool_registry.get(tool_name)
         return entry["server_name"] if entry else "unknown"
+
+    def tool_uses_mcp_session(self, tool_name: str) -> bool:
+        """Whether a tool is backed by a live MCP session instead of inline execution."""
+        entry = self._tool_registry.get(tool_name)
+        return bool(entry and entry.get("session") is not None)
 
     def has_tools(self) -> bool:
         """Check if any tools are registered."""

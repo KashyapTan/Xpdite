@@ -321,13 +321,21 @@
   flex: 1;
 }
 
+.settings-marketplace-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .settings-marketplace-item-card p {
   margin: 4px 0 0;
   line-height: 1.35;
 }
 
 .settings-marketplace-pill,
-.settings-marketplace-installed {
+.settings-marketplace-installed,
+.settings-marketplace-hook-status {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -348,6 +356,26 @@
   color: var(--color-green);
 }
 
+.settings-marketplace-hook-status.is-active {
+  background-color: var(--color-green-soft);
+  color: var(--color-green);
+}
+
+.settings-marketplace-hook-status.is-degraded {
+  background-color: var(--color-yellow-soft);
+  color: var(--color-yellow);
+}
+
+.settings-marketplace-hook-status.is-blocked {
+  background-color: var(--color-red-soft);
+  color: var(--color-red);
+}
+
+.settings-marketplace-hook-status.is-inactive {
+  background-color: var(--color-surface-strong);
+  color: var(--color-text-muted);
+}
+
 .settings-marketplace-meta-row {
   flex-wrap: wrap;
   border-top: 1px solid var(--color-surface);
@@ -356,7 +384,8 @@
 }
 
 .settings-marketplace-warning,
-.settings-marketplace-error {
+.settings-marketplace-error,
+.settings-marketplace-info {
   background-color: var(--color-yellow-soft);
   color: var(--color-yellow);
   padding: 10px;
@@ -367,6 +396,13 @@
 
 .settings-marketplace-warning {
   margin-top: 8px;
+}
+
+.settings-marketplace-info {
+  margin-top: 8px;
+  background-color: var(--color-surface-strong);
+  border-color: var(--color-surface-strong);
+  color: var(--color-text-dim);
 }
 
 .settings-marketplace-warning-inline {

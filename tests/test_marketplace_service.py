@@ -6,12 +6,14 @@ import io
 import json
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import requests
 
 from source.infrastructure.database import db
+from source.services.hooks_runtime import runtime as hooks_runtime_module
 from source.services.marketplace import service as marketplace_module
 from source.services.skills_runtime.skills import SkillManager
 
@@ -78,13 +80,19 @@ def marketplace_env(tmp_path, monkeypatch):
     plugins_dir = tmp_path / "user_data" / "marketplace" / "plugins"
     skills_dir = tmp_path / "user_data" / "marketplace" / "skills"
     mcp_dir = tmp_path / "user_data" / "marketplace" / "mcp"
-    for path in (plugins_dir, skills_dir, mcp_dir):
+    plugin_data_dir = tmp_path / "user_data" / "marketplace" / "plugin-data"
+    hook_transcripts_dir = tmp_path / "user_data" / "marketplace" / "hook-transcripts"
+    for path in (plugins_dir, skills_dir, mcp_dir, plugin_data_dir, hook_transcripts_dir):
         path.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setattr(marketplace_module, "MARKETPLACE_PLUGINS_DIR", plugins_dir)
     monkeypatch.setattr(marketplace_module, "MARKETPLACE_SKILLS_DIR", skills_dir)
     monkeypatch.setattr(marketplace_module, "MARKETPLACE_MCP_DIR", mcp_dir)
+    monkeypatch.setattr(marketplace_module, "MARKETPLACE_PLUGIN_DATA_DIR", plugin_data_dir)
     monkeypatch.setattr(marketplace_module, "_instance", None)
+    monkeypatch.setattr(hooks_runtime_module, "MARKETPLACE_PLUGIN_DATA_DIR", plugin_data_dir)
+    monkeypatch.setattr(hooks_runtime_module, "MARKETPLACE_HOOK_TRANSCRIPTS_DIR", hook_transcripts_dir)
+    monkeypatch.setattr(hooks_runtime_module, "_instance", None)
 
     skill_manager = SkillManager(
         skills_dir=tmp_path / "skills",
@@ -745,7 +753,7 @@ class TestMarketplaceService:
         assert Path(runtime["args"][-1]).name == "config.json"
         assert "plugin-root-demo" in runtime["args"][-1]
 
-    def test_direct_repo_install_loads_hook_only_plugin_and_surfaces_warning(self, marketplace_env, local_manifest_root):
+    def test_direct_repo_install_loads_hook_only_plugin_and_registers_hook_metadata(self, marketplace_env, local_manifest_root):
         service, skill_manager, _ = marketplace_env
 
         install = service._install_repo_sync(str(local_manifest_root / "hook-plugin"))
@@ -755,9 +763,16 @@ class TestMarketplaceService:
         assert install["source_id"] is None
         assert install["raw_source"]["kind"] == "direct_repo"
         assert skill_manager.get_skill_by_slash_command("caveman") is None
+        hooks_manifest = install["component_manifest"]["hooks"]
+        assert hooks_manifest["handler_count"] == 1
+        assert hooks_manifest["supported_event_count"] == 1
+        assert hooks_manifest["required_secrets"] == []
+        hook_runtime = install["hook_runtime"]
+        assert hook_runtime["has_hooks"] is True
+        assert hook_runtime["registered_handler_count"] == 1
+        assert hook_runtime["status"] == "active"
         warnings = install["component_manifest"]["compatibility_warnings"]
-        assert any("hooks" in warning.lower() for warning in warnings)
-        assert any("does not expose slash commands" in warning.lower() for warning in warnings)
+        assert warnings == []
 
     def test_direct_package_install_routes_repo_like_inputs_to_repo_installer(
         self,
@@ -852,6 +867,75 @@ class TestMarketplaceService:
         assert len(installs) == 1
         assert installs[0]["id"] == install["id"]
         assert installs[0]["display_name"] == install["display_name"]
+
+    @pytest.mark.anyio
+    async def test_connect_install_runtime_rolls_back_partial_activation_on_failure(
+        self,
+        marketplace_env,
+    ):
+        service, _, _ = marketplace_env
+        install = {"id": "install-1", "enabled": True}
+        connected_servers: set[str] = set()
+        fake_hooks = SimpleNamespace(
+            register_install_async=AsyncMock(),
+            unregister_install_async=AsyncMock(),
+        )
+
+        async def fake_connect(server_name, *_args, **_kwargs):
+            if server_name == "server-a":
+                connected_servers.add(server_name)
+                return None
+            raise RuntimeError("boom")
+
+        async def fake_disconnect(server_name):
+            connected_servers.discard(server_name)
+
+        with (
+            patch.object(
+                service,
+                "build_runtime_server_configs",
+                return_value=[
+                    {
+                        "server_name": "server-a",
+                        "command": "cmd-a",
+                        "args": [],
+                    },
+                    {
+                        "server_name": "server-b",
+                        "command": "cmd-b",
+                        "args": [],
+                    },
+                ],
+            ),
+            patch.object(
+                service,
+                "_set_install_runtime_state_sync",
+                return_value=install,
+            ),
+            patch(
+                "source.services.hooks_runtime.get_hooks_runtime",
+                return_value=fake_hooks,
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.is_server_connected",
+                side_effect=lambda name: name in connected_servers,
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.connect_server",
+                new=AsyncMock(side_effect=fake_connect),
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.disconnect_server",
+                new=AsyncMock(side_effect=fake_disconnect),
+            ) as disconnect_server,
+        ):
+            with pytest.raises(ValueError, match="boom"):
+                await service._connect_install_runtime_if_needed(install)
+
+        fake_hooks.register_install_async.assert_awaited_once_with(install)
+        fake_hooks.unregister_install_async.assert_awaited_once_with("install-1")
+        disconnect_server.assert_awaited_once_with("server-a")
+        assert connected_servers == set()
 
     def test_mcp_registry_manifest_prefers_remote_then_maps_pypi_to_uvx(self, marketplace_env, monkeypatch):
         service, _, _ = marketplace_env

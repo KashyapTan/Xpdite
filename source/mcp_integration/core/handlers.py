@@ -9,6 +9,7 @@ Uses Ollama's AsyncClient for fully async tool detection and streaming
 follow-up calls — no background threads or wrap_with_tab_ctx needed.
 """
 
+import copy
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -113,6 +114,15 @@ def _truncate_result(result: str) -> str:
             result_str[:MAX_TOOL_RESULT_LENGTH] + "... [Output truncated due to length]"
         )
     return result_str
+
+
+def _build_spawn_agent_request(fn_args: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the normalized sub-agent batch payload from tool arguments."""
+    return {
+        "instruction": fn_args.get("instruction", ""),
+        "model_tier": fn_args.get("model_tier", "fast"),
+        "agent_name": fn_args.get("agent_name", "Sub-Agent"),
+    }
 
 
 async def _save_temp_image_for_ollama(image_result: Dict[str, Any]) -> Optional[str]:
@@ -324,6 +334,7 @@ async def handle_mcp_tool_calls(
                 await emit_artifact_stream_events(
                     detection_events,
                     interleaved_blocks,
+                    broadcaster=broadcast_message,
                 )
                 if current_content:
                     all_accumulated_text.append(current_content)
@@ -367,13 +378,7 @@ async def handle_mcp_tool_calls(
                 continue
             if fn_name == "spawn_agent" and sn == "sub_agent":
                 spawn_agent_indices.append(idx)
-                spawn_agent_calls.append(
-                    {
-                        "instruction": fn_args.get("instruction", ""),
-                        "model_tier": fn_args.get("model_tier", "fast"),
-                        "agent_name": fn_args.get("agent_name", "Sub-Agent"),
-                    }
-                )
+                spawn_agent_calls.append(_build_spawn_agent_request(fn_args))
 
         # Run all spawn_agent calls in parallel (if any)
         spawn_results: Dict[int, str] = {}
@@ -389,7 +394,8 @@ async def handle_mcp_tool_calls(
             fn_args = tc["args"]
             arg_error = tc.get("arg_error")
             server_name = mcp_manager.get_tool_server_name(fn_name)
-            safe_args = sanitize_tool_args(fn_name, server_name, fn_args)
+            effective_args = copy.deepcopy(fn_args)
+            safe_args = sanitize_tool_args(fn_name, server_name, effective_args)
 
             logger.info(
                 "Tool call: %s(%s) from server '%s'", fn_name, safe_args, server_name
@@ -402,10 +408,7 @@ async def handle_mcp_tool_calls(
             result: Any = None
             is_image_result = False
 
-            # spawn_agent results already computed in parallel — skip outer broadcast
-            if idx in spawn_results:
-                result_str = _truncate_result(spawn_results[idx])
-            elif arg_error:
+            if arg_error:
                 await broadcast_message(
                     "tool_call",
                     json.dumps(
@@ -433,61 +436,132 @@ async def handle_mcp_tool_calls(
                     ),
                 )
             else:
-                await broadcast_message(
-                    "tool_call",
-                    json.dumps(
-                        {
-                            "name": fn_name,
-                            "args": safe_args,
-                            "server": server_name,
-                            "status": "calling",
-                        }
-                    ),
-                )
+                from ...services.hooks_runtime import get_hooks_runtime
 
-                # Execute (terminal interception or standard MCP)
-                try:
-                    if is_terminal_tool(fn_name, server_name):
-                        result = await execute_terminal_tool(
-                            fn_name, fn_args, server_name
+                hooks_runtime = get_hooks_runtime()
+                pre_hook_result = await hooks_runtime.dispatch_pre_tool_use(
+                    fn_name,
+                    effective_args,
+                    server_name=server_name,
+                )
+                if pre_hook_result.updated_input is not None:
+                    effective_args = copy.deepcopy(pre_hook_result.updated_input)
+                safe_args = sanitize_tool_args(fn_name, server_name, effective_args)
+                hook_context_messages: List[str] = []
+                if not pre_hook_result.suppress_output:
+                    hook_context_messages.extend(pre_hook_result.system_messages)
+                    hook_context_messages.extend(pre_hook_result.additional_context)
+
+                if pre_hook_result.blocked:
+                    result = (
+                        "Error: Blocked by Claude-compatible hook: "
+                        + (pre_hook_result.reason or "Tool execution denied.")
+                    )
+                else:
+                    await broadcast_message(
+                        "tool_call",
+                        json.dumps(
+                            {
+                                "name": fn_name,
+                                "args": safe_args,
+                                "server": server_name,
+                                "status": "calling",
+                            }
+                        ),
+                    )
+
+                    # Execute (terminal interception or standard MCP)
+                    try:
+                        if idx in spawn_results and pre_hook_result.updated_input is None:
+                            result = spawn_results[idx]
+                        elif fn_name == "spawn_agent" and server_name == "sub_agent":
+                            from ...services.skills_runtime.sub_agent import execute_sub_agents_parallel
+
+                            results = await execute_sub_agents_parallel(
+                                [_build_spawn_agent_request(effective_args)]
+                            )
+                            result = results[0] if results else ""
+                        elif is_terminal_tool(fn_name, server_name):
+                            result = await execute_terminal_tool(
+                                fn_name, effective_args, server_name
+                            )
+                        elif is_video_watcher_tool(fn_name, server_name):
+                            result = await execute_video_watcher_tool(
+                                fn_name, effective_args, server_name
+                            )
+                        elif is_memory_tool(fn_name, server_name):
+                            result = await execute_memory_tool(
+                                fn_name, effective_args, server_name
+                            )
+                        elif server_name == "skills" and fn_name in (
+                            "list_skills",
+                            "use_skill",
+                        ):
+                            try:
+                                result = execute_skill_tool(fn_name, effective_args)
+                            except Exception as e:
+                                logger.warning(
+                                    "Skills tool error for %s: %s", fn_name, e
+                                )
+                                result = f"Error executing skill tool: {e}"
+                        elif is_scheduler_tool(fn_name, server_name):
+                            result = await execute_scheduler_tool(
+                                fn_name, effective_args, server_name
+                            )
+                        else:
+                            result = await mcp_manager.call_tool(
+                                fn_name, effective_args
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Tool execution failed for %s on server '%s' (%s)",
+                            fn_name,
+                            server_name,
+                            type(e).__name__,
                         )
-                    elif is_video_watcher_tool(fn_name, server_name):
-                        result = await execute_video_watcher_tool(
-                            fn_name, fn_args, server_name
-                        )
-                    elif is_memory_tool(fn_name, server_name):
-                        result = await execute_memory_tool(
-                            fn_name, fn_args, server_name
-                        )
-                    elif server_name == "skills" and fn_name in (
-                        "list_skills",
-                        "use_skill",
-                    ):
-                        try:
-                            result = execute_skill_tool(fn_name, fn_args)
-                        except Exception as e:
-                            logger.warning("Skills tool error for %s: %s", fn_name, e)
-                            result = f"Error executing skill tool: {e}"
-                    elif is_scheduler_tool(fn_name, server_name):
-                        result = await execute_scheduler_tool(
-                            fn_name, fn_args, server_name
+                        result = "System error: tool execution failed. See server logs for details."
+
+                tool_failed = isinstance(result, str) and result.startswith(
+                    ("Error:", "System error:")
+                )
+                if not pre_hook_result.blocked:
+                    if tool_failed:
+                        post_hook_result = await hooks_runtime.dispatch_post_tool_use_failure(
+                            fn_name,
+                            effective_args,
+                            str(result),
+                            server_name=server_name,
                         )
                     else:
-                        result = await mcp_manager.call_tool(fn_name, fn_args)
-                except Exception as e:
-                    logger.warning(
-                        "Tool execution failed for %s on server '%s' (%s)",
-                        fn_name,
-                        server_name,
-                        type(e).__name__,
-                    )
-                    result = "System error: tool execution failed. See server logs for details."
+                        post_hook_result = await hooks_runtime.dispatch_post_tool_use(
+                            fn_name,
+                            effective_args,
+                            result,
+                            server_name=server_name,
+                        )
+                    if not post_hook_result.suppress_output:
+                        hook_context_messages.extend(post_hook_result.system_messages)
+                        hook_context_messages.extend(post_hook_result.additional_context)
+                    if (
+                        post_hook_result.updated_mcp_tool_output is not None
+                        and mcp_manager.tool_uses_mcp_session(fn_name)
+                    ):
+                        result = post_hook_result.updated_mcp_tool_output
+                    if post_hook_result.blocked:
+                        result = (
+                            "Error: Blocked by Claude-compatible hook: "
+                            + (post_hook_result.reason or "Tool output was blocked.")
+                        )
 
                 # Handle image results specially for Ollama
                 is_image_result = (
                     isinstance(result, dict) and result.get("type") == "image"
                 )
-                if is_image_result and isinstance(result, dict):
+                if (
+                    is_image_result
+                    and isinstance(result, dict)
+                    and not hook_context_messages
+                ):
                     # For broadcast and storage, use a summary
                     result_str = f"[Image: {result.get('width', '?')}x{result.get('height', '?')}, {result.get('file_size_bytes', 0):,} bytes]"
                 else:
@@ -497,6 +571,16 @@ async def handle_mcp_tool_calls(
                         )
                     else:
                         serialized_result = str(result)
+                    if hook_context_messages:
+                        serialized_result = (
+                            serialized_result
+                            + "\n\n[Claude-compatible hook context]\n"
+                            + "\n\n".join(
+                                message
+                                for message in hook_context_messages
+                                if message
+                            )
+                        )
                     result_str = _truncate_result(serialized_result)
                 logger.debug("Tool result:\n%s...", result_str[:100])
 
@@ -559,18 +643,29 @@ async def handle_mcp_tool_calls(
 
         # ── Stream follow-up call ─────────────────────────────────
         # Text is broadcast to the user in real-time inside this call
-        (
-            current_content,
-            current_model_content,
-            current_tool_calls,
-            round_stats,
-            current_thinking,
-        ) = await _stream_tool_follow_up(
+        follow_up_result = await _stream_tool_follow_up(
             messages,
             filtered_tools,
             interleaved_blocks=interleaved_blocks,
             client=async_client,
+            include_model_content=True,
         )
+        if len(follow_up_result) == 5:
+            (
+                current_content,
+                current_model_content,
+                current_tool_calls,
+                round_stats,
+                current_thinking,
+            ) = follow_up_result
+        else:
+            (
+                current_content,
+                current_tool_calls,
+                round_stats,
+                current_thinking,
+            ) = follow_up_result
+            current_model_content = current_content or None
 
         total_token_stats["prompt_eval_count"] += round_stats.get(
             "prompt_eval_count", 0
@@ -608,18 +703,26 @@ async def handle_mcp_tool_calls(
 async def _stream_tool_follow_up(
     messages: List[Dict[str, Any]],
     tools: list,
-    interleaved_blocks: List[Dict[str, Any]],
+    interleaved_blocks: Optional[List[Dict[str, Any]]] = None,
     client: Optional[OllamaAsyncClient] = None,
-) -> tuple[str, Optional[str], List[Dict[str, Any]], Dict[str, int], str]:
+    *,
+    include_model_content: bool = False,
+) -> tuple[str, List[Dict[str, Any]], Dict[str, int], str] | tuple[
+    str, Optional[str], List[Dict[str, Any]], Dict[str, int], str
+]:
     """
     Stream a follow-up Ollama call during the tool loop.
 
     Broadcasts text chunks to the user in real-time using the async client.
     Collects any tool calls that appear in the stream for the next round.
 
-    Returns: (visible_text, model_content, tool_calls_found, token_stats, thinking_text)
+    Returns:
+      default: (visible_text, tool_calls_found, token_stats, thinking_text)
+      include_model_content=True:
+          (visible_text, model_content, tool_calls_found, token_stats, thinking_text)
     """
     async_client = client or OllamaAsyncClient()
+    active_interleaved_blocks = interleaved_blocks if interleaved_blocks is not None else []
 
     async def _consume_stream(
         think_enabled: bool,
@@ -679,7 +782,7 @@ async def _stream_tool_follow_up(
             if content_token:
                 if thinking_chunks and not thinking_complete_sent:
                     await broadcast_message("thinking_complete", "")
-                    interleaved_blocks.append(
+                    active_interleaved_blocks.append(
                         {"type": "thinking", "content": "".join(thinking_chunks)}
                     )
                     thinking_complete_sent = True
@@ -690,7 +793,8 @@ async def _stream_tool_follow_up(
                 )
                 await emit_artifact_stream_events(
                     events,
-                    interleaved_blocks,
+                    active_interleaved_blocks,
+                    broadcaster=broadcast_message,
                 )
                 if cleaned_text:
                     text_chunks.append(cleaned_text)
@@ -733,7 +837,7 @@ async def _stream_tool_follow_up(
 
         if thinking_chunks and not thinking_complete_sent:
             await broadcast_message("thinking_complete", "")
-            interleaved_blocks.append(
+            active_interleaved_blocks.append(
                 {"type": "thinking", "content": "".join(thinking_chunks)}
             )
             thinking_complete_sent = True
@@ -746,7 +850,8 @@ async def _stream_tool_follow_up(
             )
             await emit_artifact_stream_events(
                 final_events,
-                interleaved_blocks,
+                active_interleaved_blocks,
+                broadcaster=broadcast_message,
             )
             if cleaned_text:
                 text_chunks.append(cleaned_text)
@@ -778,9 +883,13 @@ async def _stream_tool_follow_up(
             logger.debug(
                 "Ollama tool follow-up with think=True returned no output; retrying with think=False"
             )
-            return await _consume_stream(think_enabled=False)
+            text, model_content, tool_calls_found, token_stats, thinking_text = await _consume_stream(
+                think_enabled=False
+            )
 
-        return text, model_content, tool_calls_found, token_stats, thinking_text
+        if include_model_content:
+            return text, model_content, tool_calls_found, token_stats, thinking_text
+        return text, tool_calls_found, token_stats, thinking_text
 
     except Exception as e:
         if not is_current_request_cancelled():
@@ -789,11 +898,24 @@ async def _stream_tool_follow_up(
                 type(e).__name__,
             )
             try:
-                return await _consume_stream(think_enabled=False)
+                text, model_content, tool_calls_found, token_stats, thinking_text = await _consume_stream(
+                    think_enabled=False
+                )
+                if include_model_content:
+                    return (
+                        text,
+                        model_content,
+                        tool_calls_found,
+                        token_stats,
+                        thinking_text,
+                    )
+                return text, tool_calls_found, token_stats, thinking_text
             except Exception as fallback_error:
                 logger.error("Error in streaming follow-up: %s", fallback_error)
                 await broadcast_message(
                     "error", "Tool follow-up streaming error. Please retry."
                 )
 
-    return "", None, [], {"prompt_eval_count": 0, "eval_count": 0}, ""
+    if include_model_content:
+        return "", None, [], {"prompt_eval_count": 0, "eval_count": 0}, ""
+    return "", [], {"prompt_eval_count": 0, "eval_count": 0}, ""

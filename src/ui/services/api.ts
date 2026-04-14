@@ -189,6 +189,20 @@ export interface MarketplaceInstall {
   raw_source?: Record<string, unknown>;
   last_error?: string | null;
   required_secrets?: string[];
+  hook_runtime?: MarketplaceHookRuntimeSummary;
+}
+
+export interface MarketplaceHookRuntimeSummary {
+  has_hooks: boolean;
+  registered_handler_count: number;
+  supported_event_count: number;
+  unsupported_event_count: number;
+  supported_types: string[];
+  unsupported_types: string[];
+  status: 'active' | 'degraded' | 'blocked' | 'inactive';
+  blocked_reasons: string[];
+  missing_secrets: string[];
+  last_runtime_error?: string | null;
 }
 
 export interface MarketplaceCatalogItem {
@@ -201,6 +215,7 @@ export interface MarketplaceCatalogItem {
   component_counts: {
     skills: number;
     mcp_servers: number;
+    hooks: number;
   };
   compatibility_warnings: string[];
   raw: Record<string, unknown>;

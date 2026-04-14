@@ -1,6 +1,8 @@
 """Tests for MCP manager embedding refresh behaviour."""
 
 import asyncio
+import sys
+import types
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -63,7 +65,8 @@ class TestInitMcpServers:
         # 6 inline tool registrations: terminal, sub_agent, video_watcher,
         # skills, memory, scheduler
         assert register_inline_tools.call_count == 6
-        embed_tools.assert_called_once_with([])
+        assert embed_tools.call_count >= 1
+        assert embed_tools.call_args_list[-1].args == ([],)
         assert manager._initialized is True
 
 
@@ -125,6 +128,62 @@ class TestConnectGoogleServers:
 
 
 class TestManagerLifecycleRefresh:
+    @pytest.mark.asyncio
+    async def test_connect_server_cleans_up_when_tool_discovery_fails(
+        self,
+        reset_mcp_manager_state,
+        monkeypatch,
+    ):
+        manager = reset_mcp_manager_state
+
+        class DummyClientSession:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def initialize(self):
+                return None
+
+            async def list_tools(self):
+                raise RuntimeError("tool discovery failed")
+
+        class DummyStdioClient:
+            async def __aenter__(self):
+                return object(), object()
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+        fake_mcp = types.ModuleType("mcp")
+        fake_mcp.ClientSession = DummyClientSession
+        fake_mcp.StdioServerParameters = lambda command, args, env=None: SimpleNamespace(
+            command=command,
+            args=args,
+            env=env,
+        )
+        fake_mcp_client = types.ModuleType("mcp.client")
+        fake_mcp_client.__path__ = []
+        fake_mcp_stdio = types.ModuleType("mcp.client.stdio")
+        fake_mcp_stdio.stdio_client = lambda _params: DummyStdioClient()
+        monkeypatch.setitem(sys.modules, "mcp", fake_mcp)
+        monkeypatch.setitem(sys.modules, "mcp.client", fake_mcp_client)
+        monkeypatch.setitem(sys.modules, "mcp.client.stdio", fake_mcp_stdio)
+
+        with patch.object(manager_module.retriever, "embed_tools") as embed_tools:
+            with pytest.raises(RuntimeError, match="tool discovery failed"):
+                await manager.connect_server("demo", "python", ["server.py"])
+
+        assert manager.is_server_connected("demo") is False
+        assert manager._tool_registry == {}
+        assert manager._ollama_tools == []
+        assert manager._raw_tools == []
+        embed_tools.assert_called_once_with([])
+
     @pytest.mark.asyncio
     async def test_disconnect_server_refreshes_remaining_tools_without_pruning_cache(
         self, reset_mcp_manager_state

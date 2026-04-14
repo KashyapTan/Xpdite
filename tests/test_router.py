@@ -91,6 +91,9 @@ _ROUTE_PATCHES = {
         get_setting=MagicMock(return_value=None),
     ),
     "source.llm.core.prompt.build_system_prompt": MagicMock(return_value="system"),
+    "source.llm.core.prompt.build_artifacts_prompt_block": MagicMock(
+        return_value="\nARTIFACTS BLOCK\n"
+    ),
     "source.mcp_integration.core.skill_injector.get_skills_to_inject": MagicMock(
         return_value=[]
     ),
@@ -272,6 +275,7 @@ class TestRouteChat:
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",
+                    artifacts_block="\nARTIFACTS BLOCK\n",
                     user_profile_block="\n## User Profile\n\nProfile body\n",
                     template=None,
                 )
@@ -321,6 +325,7 @@ class TestRouteChat:
                 mock_build_prompt.assert_called_once_with(
                     skills_block="",
                     memory_block="\nMEMORY BLOCK\n",
+                    artifacts_block="\nARTIFACTS BLOCK\n",
                     user_profile_block="",
                     template=None,
                 )

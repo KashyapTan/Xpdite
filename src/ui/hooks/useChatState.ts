@@ -13,6 +13,7 @@ import type {
   YouTubeTranscriptionApprovalBlock,
   ChatStateSnapshot,
 } from '../types';
+import { applyToolCallChange } from '../utils/toolCallState';
 
 interface UseChatStateReturn {
   // State
@@ -142,13 +143,17 @@ export function useChatState(): UseChatStateReturn {
   }, []);
 
   const addToolCall = useCallback((toolCall: ToolCall) => {
-    setToolCalls(prev => [...prev, toolCall]);
-    toolCallsRef.current = [...toolCallsRef.current, toolCall];
+    const nextState = applyToolCallChange(
+      toolCallsRef.current,
+      contentBlocksRef.current,
+      toolCall,
+      true,
+    );
 
-    // Append a tool_call block to contentBlocks
-    const newBlocks: ContentBlock[] = [...contentBlocksRef.current, { type: 'tool_call', toolCall }];
-    contentBlocksRef.current = newBlocks;
-    setContentBlocks(newBlocks);
+    toolCallsRef.current = nextState.toolCalls;
+    contentBlocksRef.current = nextState.contentBlocks;
+    setToolCalls(nextState.toolCalls);
+    setContentBlocks(nextState.contentBlocks);
   }, []);
 
   const addArtifactBlock = useCallback((artifact: ArtifactBlockData) => {
@@ -234,26 +239,17 @@ export function useChatState(): UseChatStateReturn {
   }, []);
 
   const updateToolCall = useCallback((updatedToolCall: ToolCall) => {
-    // Match by agentId for sub-agents, fall back to (name, args) for regular tools
-    const matches = (tc: ToolCall) =>
-      updatedToolCall.agentId
-        ? tc.agentId === updatedToolCall.agentId
-        : tc.name === updatedToolCall.name && JSON.stringify(tc.args) === JSON.stringify(updatedToolCall.args);
+    const nextState = applyToolCallChange(
+      toolCallsRef.current,
+      contentBlocksRef.current,
+      updatedToolCall,
+      false,
+    );
 
-    setToolCalls(prev => prev.map(tc => matches(tc) ? { ...tc, ...updatedToolCall } : tc));
-    
-    // Update ref as well
-    toolCallsRef.current = toolCallsRef.current.map(tc => matches(tc) ? { ...tc, ...updatedToolCall } : tc);
-
-    // Update the matching tool_call block in contentBlocks
-    const newBlocks = contentBlocksRef.current.map(block => {
-      if (block.type === 'tool_call' && matches(block.toolCall)) {
-        return { ...block, toolCall: { ...block.toolCall, ...updatedToolCall } };
-      }
-      return block;
-    });
-    contentBlocksRef.current = newBlocks;
-    setContentBlocks(newBlocks);
+    toolCallsRef.current = nextState.toolCalls;
+    contentBlocksRef.current = nextState.contentBlocks;
+    setToolCalls(nextState.toolCalls);
+    setContentBlocks(nextState.contentBlocks);
   }, []);
 
   // ── Terminal block management ─────────────────────────────────

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from source.services.hooks_runtime.runtime import HookDispatchResult
 
 
 _HANDLERS_MODULE_CACHE = None
@@ -396,6 +397,13 @@ class TestHandleMcpToolCalls:
         monkeypatch.setitem(
             sys.modules, "source.services.skills_runtime.sub_agent", sub_agent_module
         )
+        fake_hooks = SimpleNamespace(
+            dispatch_pre_tool_use=AsyncMock(return_value=HookDispatchResult()),
+            dispatch_post_tool_use=AsyncMock(return_value=HookDispatchResult()),
+            dispatch_post_tool_use_failure=AsyncMock(
+                return_value=HookDispatchResult()
+            ),
+        )
 
         with (
             patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
@@ -432,6 +440,10 @@ class TestHandleMcpToolCalls:
                 "call_tool",
                 new=AsyncMock(),
             ) as mock_call_tool,
+            patch(
+                "source.services.hooks_runtime.get_hooks_runtime",
+                return_value=fake_hooks,
+            ),
             patch.object(handlers_module, "broadcast_message", new=AsyncMock()),
         ):
             _, calls, precomputed = await handlers_module.handle_mcp_tool_calls(
@@ -446,6 +458,8 @@ class TestHandleMcpToolCalls:
         assert calls[0]["result"] == "parallel-result"
         mock_call_tool.assert_not_awaited()
         sub_agent_module.execute_sub_agents_parallel.assert_awaited_once()
+        fake_hooks.dispatch_pre_tool_use.assert_awaited_once()
+        fake_hooks.dispatch_post_tool_use.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_memory_tools_are_intercepted(self, handlers_module):

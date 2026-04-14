@@ -292,6 +292,46 @@ describe('useChatState', () => {
       expect(result.current.toolCalls).toHaveLength(2);
       expect(result.current.contentBlocks).toHaveLength(2);
     });
+
+    test('should reconcile generic and runtime sub-agent tool calls into a single entry', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addToolCall({
+          name: 'spawn_agent',
+          args: {
+            instruction: 'Research TurboTax',
+            agent_name: 'TurboTax Researcher',
+            model_tier: 'smart',
+          },
+          server: 'sub_agent',
+          status: 'calling',
+        });
+      });
+
+      act(() => {
+        result.current.addToolCall({
+          name: 'spawn_agent',
+          args: {
+            agent_name: 'TurboTax Researcher',
+            model_tier: 'smart',
+          },
+          server: 'sub_agent',
+          status: 'calling',
+          agentId: 'agent-123',
+          description: 'TurboTax Researcher (smart)',
+        });
+      });
+
+      expect(result.current.toolCalls).toHaveLength(1);
+      expect(result.current.contentBlocks).toHaveLength(1);
+      expect(result.current.toolCalls[0]?.agentId).toBe('agent-123');
+      expect(result.current.toolCalls[0]?.description).toBe('TurboTax Researcher (smart)');
+      expect(result.current.toolCalls[0]?.args).toEqual({
+        agent_name: 'TurboTax Researcher',
+        model_tier: 'smart',
+      });
+    });
   });
 
   describe('updateToolCall', () => {
@@ -378,6 +418,46 @@ describe('useChatState', () => {
       if (block.type === 'tool_call') {
         expect(block.toolCall.status).toBe('complete');
       }
+    });
+
+    test('should reconcile generic completion payloads back onto the agent-identified sub-agent row', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.addToolCall({
+          name: 'spawn_agent',
+          args: {
+            agent_name: 'TurboTax Researcher',
+            model_tier: 'smart',
+          },
+          server: 'sub_agent',
+          status: 'calling',
+          agentId: 'agent-123',
+          partialResult: 'Working...',
+        });
+      });
+
+      act(() => {
+        result.current.updateToolCall({
+          name: 'spawn_agent',
+          args: {
+            instruction: 'Research TurboTax',
+            agent_name: 'TurboTax Researcher',
+            model_tier: 'smart',
+          },
+          result: 'Finished report',
+          server: 'sub_agent',
+          status: 'complete',
+          partialResult: undefined,
+        });
+      });
+
+      expect(result.current.toolCalls).toHaveLength(1);
+      expect(result.current.contentBlocks).toHaveLength(1);
+      expect(result.current.toolCalls[0]?.agentId).toBe('agent-123');
+      expect(result.current.toolCalls[0]?.status).toBe('complete');
+      expect(result.current.toolCalls[0]?.result).toBe('Finished report');
+      expect(result.current.toolCalls[0]?.partialResult).toBeUndefined();
     });
   });
 
