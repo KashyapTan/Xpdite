@@ -651,6 +651,7 @@ class TestConversationBranching:
         assert await_args is not None
         llm_query_sent = await_args.args[1]
         assert "--- Attached via read_file: deck.pptx" in llm_query_sent
+        assert deck_path.resolve().as_posix() in llm_query_sent
         assert '"extracted_images"' in llm_query_sent
         assert str(extracted_image_path).replace("\\", "\\\\") in llm_query_sent
         assert await_args.kwargs["tool_retrieval_query"] == "What is on slide 1 image?"

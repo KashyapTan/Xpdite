@@ -4,14 +4,15 @@ Conversation management service.
 Handles conversation lifecycle, persistence, and query processing.
 """
 
-import os
 import copy
+import asyncio
 import json
 import logging
+import os
 import re
 import uuid
-import asyncio
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from ...infrastructure.config import MAX_TOOL_RESULT_LENGTH
@@ -92,6 +93,14 @@ async def _run_read_file_for_attachment(path: str) -> str | dict[str, Any]:
     from mcp_servers.servers.filesystem.server import read_file
 
     return await run_in_thread(read_file, path, 0, _ATTACHMENT_READ_FILE_MAX_CHARS)
+
+
+def _format_attachment_tool_path(path: str) -> str:
+    """Return a tool-safe attachment path for prompt injection."""
+    try:
+        return Path(path).resolve(strict=False).as_posix()
+    except Exception:
+        return path.replace("\\", "/")
 
 
 @lru_cache(maxsize=1)
@@ -543,13 +552,7 @@ class ConversationService:
                     if not os.path.exists(file_path):
                         return None, None, f"Attachment missing: {file_name}"
 
-                    relative_path = file_path
-                    try:
-                        relative_path = os.path.relpath(
-                            file_path, os.path.expanduser("~")
-                        )
-                    except Exception:
-                        pass
+                    tool_path = _format_attachment_tool_path(file_path)
 
                     try:
                         result = await _run_read_file_for_attachment(file_path)
@@ -563,7 +566,7 @@ class ConversationService:
                                 )
                             block_text = _truncate_attachment_tool_result(result)
                             block = (
-                                f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                                f"--- Attached via read_file: {file_name} ({tool_path}) ---\n"
                                 f"{block_text}\n"
                                 f"--- End: {file_name} ---"
                             )
@@ -581,7 +584,7 @@ class ConversationService:
                             height = result.get("height", "?")
                             file_size = int(result.get("file_size_bytes", 0) or 0)
                             block = (
-                                f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                                f"--- Attached via read_file: {file_name} ({tool_path}) ---\n"
                                 f"Image: {width}x{height}, {file_size:,} bytes\n"
                                 "[This image was auto-attached as multimodal context from the @ attachment.]\n"
                                 f"--- End: {file_name} ---"
@@ -597,7 +600,7 @@ class ConversationService:
                         block_text = _truncate_attachment_tool_result(serialized_result)
 
                         block = (
-                            f"--- Attached via read_file: {file_name} ({relative_path}) ---\n"
+                            f"--- Attached via read_file: {file_name} ({tool_path}) ---\n"
                             f"{block_text}\n"
                             f"--- End: {file_name} ---"
                         )
