@@ -484,7 +484,9 @@ async def get_ollama_model_info(model_name: str) -> Any:
         manifest_response.raise_for_status()
         manifest = manifest_response.json()
 
-        config = manifest.get("config", {})
+        config = manifest.get("config") or {}
+        if not isinstance(config, dict):
+            config = {}
         config_digest = config.get("digest")
         config_size = int(config.get("size", 0) or 0)
 
@@ -500,8 +502,14 @@ async def get_ollama_model_info(model_name: str) -> Any:
         )
         config_response.raise_for_status()
         config_data = config_response.json()
+        if not isinstance(config_data, dict):
+            config_data = {}
 
-        layers = manifest.get("layers", [])
+        # Ollama cloud-hosted manifests may omit local layer details entirely
+        # (``layers: null``) because the remote runtime serves the model on demand.
+        layers = manifest.get("layers")
+        if not isinstance(layers, list):
+            layers = []
         total_size = int(
             sum(
                 int(layer.get("size", 0) or 0)
@@ -545,6 +553,10 @@ async def get_ollama_model_info(model_name: str) -> Any:
             # Keep API resilient even if local daemon is unavailable.
             is_installed = False
 
+        families = config_data.get("model_families")
+        if not isinstance(families, list):
+            families = []
+
         return {
             "success": True,
             "data": {
@@ -552,7 +564,7 @@ async def get_ollama_model_info(model_name: str) -> Any:
                 "tag": tag,
                 "full_name": full_name,
                 "family": config_data.get("model_family", ""),
-                "families": config_data.get("model_families", []),
+                "families": families,
                 "parameter_size": config_data.get("model_type", ""),
                 "quantization": config_data.get("file_type", ""),
                 "format": config_data.get("model_format", ""),

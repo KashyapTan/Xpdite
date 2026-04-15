@@ -530,6 +530,56 @@ class TestHttpApiEndpoints:
         assert result["entries"] == []
         service.search.assert_called_once_with("foo", None)
 
+    @pytest.mark.anyio
+    async def test_get_ollama_model_info_handles_cloud_manifest_without_layers(self):
+        manifest_response = MagicMock()
+        manifest_response.status_code = 200
+        manifest_response.json.return_value = {
+            "config": {
+                "digest": "sha256:test-config",
+                "size": 345,
+            },
+            "layers": None,
+        }
+        manifest_response.raise_for_status.return_value = None
+
+        config_response = MagicMock()
+        config_response.status_code = 200
+        config_response.json.return_value = {
+            "model_family": "",
+            "model_families": None,
+            "model_type": "",
+            "file_type": "",
+            "model_format": "",
+            "architecture": "amd64",
+            "os": "linux",
+        }
+        config_response.raise_for_status.return_value = None
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        ollama_client = MagicMock()
+        ollama_client.list = AsyncMock(return_value=SimpleNamespace(models=[]))
+
+        with (
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(
+                http_api.requests,
+                "get",
+                side_effect=[manifest_response, config_response],
+            ),
+            patch.object(http_api, "OllamaAsyncClient", return_value=ollama_client),
+        ):
+            result = await http_api.get_ollama_model_info("nemotron-3-super:cloud")
+
+        assert result["success"] is True
+        assert result["data"]["full_name"] == "nemotron-3-super:cloud"
+        assert result["data"]["layers"] == []
+        assert result["data"]["families"] == []
+        assert result["data"]["total_size_bytes"] == 0
+        assert result["data"]["is_installed"] is False
+
     def test_scheduled_job_conversations_route_returns_job_conversations(self):
         app = FastAPI()
         app.include_router(http_api.router)
