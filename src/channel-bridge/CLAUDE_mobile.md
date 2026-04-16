@@ -30,7 +30,7 @@ The Channel Bridge is a standalone TypeScript service spawned by Electron after 
 ## Runtime Responsibilities
 
 - `index.ts` is the real runtime entrypoint: starts `BridgeServer`, creates `PythonClient`, loads config, (re)builds adapters, initializes Chat SDK, wires inbound handlers (`onNewMention`, `onSubscribedMessage`, `onNewMessage`), and emits structured stdout messages (`CHANNEL_BRIDGE_MSG {...}`) consumed by Electron.
-- Inbound dedup + safety live in `index.ts`: message-id TTL cache, startup grace window, WhatsApp self-message filtering, outbound-echo suppression, and per-user unpaired-response cooldown.
+- Inbound dedup + safety live in `index.ts`: message-id TTL cache, startup grace window, WhatsApp self-chat-only filtering (using both the paired account's PN and LID identities so self-chat works on LID-addressed accounts), canonical self-chat thread normalization for outbound relay/editing, outbound-echo suppression, and per-user unpaired-response cooldown.
 - `commands/handler.ts` intercepts supported commands before LLM submission: `/new`, `/stop`, `/status`, `/model`, `/default`, `/help`, `/pair`.
 - `server.ts` exposes Python-facing loopback relay endpoints: `POST /outbound`, `POST /outbound/typing`, `POST /outbound/edit`, legacy `POST /send`, plus `GET /status` and `GET /health`.
 - `pythonClient.ts` calls Python `/internal/mobile/*` endpoints with timeout guards; primary paths are `/message`, `/command`, `/pair/verify`, `/pair/check`, and `/health`.
@@ -41,7 +41,7 @@ The Channel Bridge is a standalone TypeScript service spawned by Electron after 
 
 Inbound (platform -> bridge -> Python):
 1. Adapter callback receives a platform message event.
-2. `index.ts` normalizes text/sender/timestamps (`toInboundMessage`) and applies dedup + stale-event checks.
+2. `index.ts` normalizes text/sender/timestamps (`toInboundMessage`) and applies dedup + stale-event checks. For WhatsApp, it only accepts self-authored messages in the paired account's self-chat and ignores all other threads.
 3. If command, `commands/handler.ts` executes locally by calling Python internal command/pair endpoints.
 4. If non-command, bridge posts to `/internal/mobile/message`.
 5. On success, bridge reacts with thumbs-up and starts typing; on queue backlog, sends queue-position acknowledgment.

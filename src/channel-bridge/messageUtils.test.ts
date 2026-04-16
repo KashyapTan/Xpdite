@@ -1,11 +1,17 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import {
+  canonicalizeWhatsAppThreadId,
   createWhatsAppOutboundTracker,
+  encodeBaileysThreadId,
   decodeBaileysThreadId,
   getInboundSenderId,
+  getWhatsAppInboundGateResult,
   getMessageText,
   getMessageTimestampMs,
+  isWhatsAppSelfAuthoredMessage,
+  isWhatsAppSelfChatThread,
+  normalizeWhatsAppJid,
   normalizeWhatsAppSenderId,
 } from './messageUtils.js';
 
@@ -17,9 +23,19 @@ describe('normalizeWhatsAppSenderId', () => {
   test('keeps non-device JID unchanged', () => {
     expect(normalizeWhatsAppSenderId('15551234567@s.whatsapp.net')).toBe('15551234567@s.whatsapp.net');
   });
+
+  test('normalizes lid device suffixes as well', () => {
+    expect(normalizeWhatsAppJid('54494595424418:22@lid')).toBe('54494595424418@lid');
+  });
 });
 
 describe('decodeBaileysThreadId', () => {
+  test('encodes baileys thread id from jid', () => {
+    const jid = '15551234567@s.whatsapp.net';
+
+    expect(encodeBaileysThreadId(jid)).toBe(`baileys:${Buffer.from(jid).toString('base64url')}`);
+  });
+
   test('decodes encoded baileys thread id', () => {
     const jid = '15551234567@s.whatsapp.net';
     const encoded = Buffer.from(jid).toString('base64url');
@@ -177,6 +193,210 @@ describe('getMessageText', () => {
         },
       }),
     ).toBe('/pair 654321');
+  });
+});
+
+describe('isWhatsAppSelfAuthoredMessage', () => {
+  test('reads fromMe from raw WhatsApp message key', () => {
+    expect(
+      isWhatsAppSelfAuthoredMessage({
+        raw: {
+          key: {
+            fromMe: true,
+          },
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test('returns false when raw key is missing', () => {
+    expect(isWhatsAppSelfAuthoredMessage({})).toBe(false);
+  });
+});
+
+describe('isWhatsAppSelfChatThread', () => {
+  test('matches decoded thread jid to normalized bot jid', () => {
+    const selfJid = '15551234567@s.whatsapp.net';
+    const encoded = Buffer.from(selfJid).toString('base64url');
+
+    expect(
+      isWhatsAppSelfChatThread(`baileys:${encoded}`, ['15551234567:42@s.whatsapp.net']),
+    ).toBe(true);
+  });
+
+  test('matches self chat against lid identity when pn identity differs', () => {
+    const selfLid = '54494595424418@lid';
+    const encoded = Buffer.from(selfLid).toString('base64url');
+
+    expect(
+      isWhatsAppSelfChatThread(`baileys:${encoded}`, [
+        '17323187425:22@s.whatsapp.net',
+        '54494595424418:22@lid',
+      ]),
+    ).toBe(true);
+  });
+
+  test('returns false for non-self chat thread', () => {
+    const otherJid = '15557654321@s.whatsapp.net';
+    const encoded = Buffer.from(otherJid).toString('base64url');
+
+    expect(
+      isWhatsAppSelfChatThread(`baileys:${encoded}`, ['15551234567@s.whatsapp.net']),
+    ).toBe(false);
+  });
+});
+
+describe('canonicalizeWhatsAppThreadId', () => {
+  test('re-encodes thread ids with normalized jid while preserving server', () => {
+    const rawSelfThread = `baileys:${Buffer.from('54494595424418:22@lid').toString('base64url')}`;
+
+    expect(canonicalizeWhatsAppThreadId(rawSelfThread)).toBe(
+      encodeBaileysThreadId('54494595424418@lid'),
+    );
+  });
+
+  test('leaves already canonical thread ids unchanged', () => {
+    const otherThread = `baileys:${Buffer.from('15557654321@s.whatsapp.net').toString('base64url')}`;
+    expect(canonicalizeWhatsAppThreadId(otherThread)).toBe(otherThread);
+  });
+});
+
+describe('getWhatsAppInboundGateResult', () => {
+  const selfPnJid = '17323187425:22@s.whatsapp.net';
+  const selfLidJid = '54494595424418:22@lid';
+  const selfThreadId = `baileys:${Buffer.from('54494595424418@lid').toString('base64url')}`;
+
+  test('allows self-authored messages in self chat when they are not outbound echoes', () => {
+    expect(
+      getWhatsAppInboundGateResult(
+        selfThreadId,
+        {
+          id: 'user-self-msg',
+          text: 'Summarize my day',
+          raw: {
+            key: {
+              fromMe: true,
+            },
+            messageTimestamp: 1_700_000_000,
+          },
+        },
+        {
+          selfJids: [selfPnJid, selfLidJid],
+          bridgeStartTime: 1_700_000_010_000,
+          selfHistoryGraceMs: 5000,
+          outboundTracker: {
+            shouldIgnore: () => false,
+          },
+        },
+      ),
+    ).toBe('allow');
+  });
+
+  test('rejects messages that were not authored by the paired account', () => {
+    expect(
+      getWhatsAppInboundGateResult(
+        selfThreadId,
+        {
+          id: 'external-msg',
+          text: 'hello',
+          raw: {
+            key: {
+              fromMe: false,
+            },
+          },
+        },
+        {
+          selfJids: [selfPnJid, selfLidJid],
+          bridgeStartTime: Date.now(),
+          selfHistoryGraceMs: 5000,
+          outboundTracker: {
+            shouldIgnore: () => false,
+          },
+        },
+      ),
+    ).toBe('ignore_non_self_authored');
+  });
+
+  test('rejects self-authored messages that are not in self chat', () => {
+    const otherThreadId = `baileys:${Buffer.from('15557654321@s.whatsapp.net').toString('base64url')}`;
+
+    expect(
+      getWhatsAppInboundGateResult(
+        otherThreadId,
+        {
+          id: 'sent-to-someone-else',
+          text: 'hello there',
+          raw: {
+            key: {
+              fromMe: true,
+            },
+          },
+        },
+        {
+          selfJids: [selfPnJid, selfLidJid],
+          bridgeStartTime: Date.now(),
+          selfHistoryGraceMs: 5000,
+          outboundTracker: {
+            shouldIgnore: () => false,
+          },
+        },
+      ),
+    ).toBe('ignore_non_self_chat');
+  });
+
+  test('rejects historical self messages replayed on reconnect', () => {
+    expect(
+      getWhatsAppInboundGateResult(
+        selfThreadId,
+        {
+          id: 'historical-self-msg',
+          text: 'old prompt',
+          raw: {
+            key: {
+              fromMe: true,
+            },
+            messageTimestamp: 1_700_000_000,
+          },
+        },
+        {
+          selfJids: [selfPnJid, selfLidJid],
+          bridgeStartTime: 1_700_000_010_000,
+          selfHistoryGraceMs: 5000,
+          outboundTracker: {
+            shouldIgnore: () => false,
+          },
+        },
+      ),
+    ).toBe('ignore_historical_self_message');
+  });
+
+  test('rejects outbound echoes in self chat', () => {
+    expect(
+      getWhatsAppInboundGateResult(
+        selfThreadId,
+        {
+          id: 'assistant-echo',
+          text: 'Working on it...',
+          raw: {
+            key: {
+              fromMe: true,
+            },
+            messageTimestamp: 1_700_000_008,
+          },
+        },
+        {
+          selfJids: [selfPnJid, selfLidJid],
+          bridgeStartTime: 1_700_000_010_000,
+          selfHistoryGraceMs: 5000,
+          outboundTracker: {
+            shouldIgnore: (messageId, threadId, text) =>
+              messageId === 'assistant-echo'
+              && threadId === selfThreadId
+              && text === 'Working on it...',
+          },
+        },
+      ),
+    ).toBe('ignore_outbound_echo');
   });
 });
 

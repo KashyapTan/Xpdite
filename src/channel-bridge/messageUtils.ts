@@ -19,10 +19,26 @@ interface MessageWithTextLike {
   raw?: unknown;
 }
 
+interface MessageWithIdLike {
+  id: string;
+}
+
+interface MessageWithWhatsAppKeyLike {
+  raw?: unknown;
+}
+
+interface WhatsAppMessageKeyLike {
+  fromMe?: boolean;
+}
+
 type ObjectLike = Record<string, unknown>;
 
 export function normalizeWhatsAppSenderId(senderId: string): string {
   return senderId.replace(/:[0-9]+@/, '@');
+}
+
+export function normalizeWhatsAppJid(jid: string): string {
+  return normalizeWhatsAppSenderId(jid);
 }
 
 function isLikelyWhatsAppJid(value: string): boolean {
@@ -134,6 +150,10 @@ export function decodeBaileysThreadId(threadId: string): string | null {
   } catch {
     return null;
   }
+}
+
+export function encodeBaileysThreadId(jid: string): string {
+  return `baileys:${Buffer.from(jid).toString('base64url')}`;
 }
 
 export function getInboundSenderId(
@@ -273,9 +293,96 @@ export function getMessageText(message: MessageWithTextLike): string {
   return message.text ?? '';
 }
 
+function getWhatsAppMessageKey(message: MessageWithWhatsAppKeyLike): WhatsAppMessageKeyLike | undefined {
+  if (!message.raw || typeof message.raw !== 'object') {
+    return undefined;
+  }
+
+  const raw = message.raw as {
+    key?: unknown;
+  };
+
+  const key = asObject(raw.key);
+  if (!key) {
+    return undefined;
+  }
+
+  return {
+    fromMe: typeof key.fromMe === 'boolean' ? key.fromMe : undefined,
+  };
+}
+
+export function isWhatsAppSelfAuthoredMessage(message: MessageWithWhatsAppKeyLike): boolean {
+  return Boolean(getWhatsAppMessageKey(message)?.fromMe);
+}
+
+export function isWhatsAppSelfChatThread(threadId: string, selfJids: string[] = []): boolean {
+  if (selfJids.length === 0) {
+    return false;
+  }
+
+  const threadJid = decodeBaileysThreadId(threadId);
+  if (!threadJid) {
+    return false;
+  }
+
+  const normalizedThreadJid = normalizeWhatsAppJid(threadJid);
+  return selfJids.some((selfJid) => normalizeWhatsAppJid(selfJid) === normalizedThreadJid);
+}
+
+export function canonicalizeWhatsAppThreadId(
+  threadId: string,
+): string {
+  const threadJid = decodeBaileysThreadId(threadId);
+  if (!threadJid) {
+    return threadId;
+  }
+
+  return encodeBaileysThreadId(normalizeWhatsAppJid(threadJid));
+}
+
 export interface WhatsAppOutboundTracker {
   remember: (messageId: string | undefined, threadId: string, text: string) => void;
   shouldIgnore: (messageId: string, threadId: string, text: string) => boolean;
+}
+
+export type WhatsAppInboundGateResult =
+  | 'allow'
+  | 'ignore_non_self_authored'
+  | 'ignore_non_self_chat'
+  | 'ignore_historical_self_message'
+  | 'ignore_outbound_echo';
+
+export interface WhatsAppInboundGateOptions {
+  selfJids?: string[];
+  bridgeStartTime: number;
+  selfHistoryGraceMs: number;
+  outboundTracker: Pick<WhatsAppOutboundTracker, 'shouldIgnore'>;
+}
+
+export function getWhatsAppInboundGateResult(
+  threadId: string,
+  message: MessageWithIdLike & MessageWithTextLike & MessageWithTimestampLike & MessageWithWhatsAppKeyLike,
+  options: WhatsAppInboundGateOptions,
+): WhatsAppInboundGateResult {
+  if (!isWhatsAppSelfAuthoredMessage(message)) {
+    return 'ignore_non_self_authored';
+  }
+
+  if (!isWhatsAppSelfChatThread(threadId, options.selfJids ?? [])) {
+    return 'ignore_non_self_chat';
+  }
+
+  const msgTimestamp = getMessageTimestampMs(message);
+  if (msgTimestamp && msgTimestamp < options.bridgeStartTime - options.selfHistoryGraceMs) {
+    return 'ignore_historical_self_message';
+  }
+
+  if (options.outboundTracker.shouldIgnore(message.id, threadId, getMessageText(message))) {
+    return 'ignore_outbound_echo';
+  }
+
+  return 'allow';
 }
 
 export function createWhatsAppOutboundTracker(

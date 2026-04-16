@@ -25,10 +25,13 @@ import { createConfigLoader } from './config/index.js';
 import { createCommandHandler } from './commands/index.js';
 import { createPythonClient } from './pythonClient.js';
 import {
+  canonicalizeWhatsAppThreadId,
   createWhatsAppOutboundTracker,
   getInboundSenderId,
   getMessageText,
   getMessageTimestampMs,
+  getWhatsAppInboundGateResult,
+  isWhatsAppSelfAuthoredMessage,
 } from './messageUtils.js';
 import type { 
   Platform, 
@@ -198,6 +201,33 @@ function clearWhatsAppConnectionPoller(): void {
     clearTimeout(whatsappConnectionPollTimeout);
     whatsappConnectionPollTimeout = null;
   }
+}
+
+function getWhatsAppSelfJids(): string[] {
+  const selfJids = new Set<string>();
+
+  if (adapters.whatsapp?.botUserId) {
+    selfJids.add(adapters.whatsapp.botUserId);
+  }
+
+  const internal = adapters.whatsapp as unknown as {
+    _socket?: {
+      user?: {
+        id?: string;
+        lid?: string;
+      };
+    };
+  } | null;
+
+  const socketUser = internal?._socket?.user;
+  if (socketUser?.id) {
+    selfJids.add(socketUser.id);
+  }
+  if (socketUser?.lid) {
+    selfJids.add(socketUser.lid);
+  }
+
+  return Array.from(selfJids);
 }
 
 function getDedupKey(platform: Platform, threadId: string, messageId: string): string {
@@ -378,7 +408,9 @@ async function main(): Promise<void> {
           if (!adapter) {
             throw new Error('WhatsApp adapter not initialized');
           }
-          const targetThreadId = threadId ?? await adapter.openDM(senderId);
+          const targetThreadId = threadId
+            ? canonicalizeWhatsAppThreadId(threadId)
+            : await adapter.openDM(senderId);
           const sent = await adapter.postMessage(targetThreadId, { markdown: message });
           whatsappOutboundTracker.remember(sent.id, targetThreadId, message);
           debugLog(`[ChannelBridge] WhatsApp message sent to ${senderId} (id: ${sent.id})`);
@@ -426,7 +458,10 @@ async function main(): Promise<void> {
     try {
       const adapter = adapters[platform];
       if (!adapter || !threadId) return;
-      await adapter.startTyping(threadId);
+      const targetThreadId = platform === 'whatsapp'
+        ? canonicalizeWhatsAppThreadId(threadId)
+        : threadId;
+      await adapter.startTyping(targetThreadId);
     } catch (err) {
       // Non-fatal — typing indicator failing should not break the flow
       errorLog(`[ChannelBridge] Failed to start typing on ${platform} (thread=${threadId}):`, err);
@@ -445,7 +480,10 @@ async function main(): Promise<void> {
       if (!adapter) {
         throw new Error(`${platform} adapter not initialized`);
       }
-      await adapter.editMessage(threadId, messageId, { markdown: content });
+      const targetThreadId = platform === 'whatsapp'
+        ? canonicalizeWhatsAppThreadId(threadId)
+        : threadId;
+      await adapter.editMessage(targetThreadId, messageId, { markdown: content });
       debugLog(`[ChannelBridge] Edited message ${messageId} on ${platform}`);
     } catch (err) {
       errorLog(`[ChannelBridge] Error editing message on ${platform}:`, err);
@@ -462,6 +500,9 @@ async function main(): Promise<void> {
     const text = getMessageText(message);
     const author = message.author as { userId?: string; platformId?: string; userName?: string };
     const authorId = getInboundSenderId(platform, threadId, author);
+    const normalizedThreadId = platform === 'whatsapp'
+      ? canonicalizeWhatsAppThreadId(threadId)
+      : threadId;
     const timestamp = getMessageTimestampMs(message) ?? Date.now();
     return {
       platform,
@@ -469,7 +510,7 @@ async function main(): Promise<void> {
       senderName: message.author.userName,
       message: text,
       messageId: message.id,
-      threadId,
+      threadId: normalizedThreadId,
       timestamp,
       isCommand: text.trim().startsWith('/'),
     };
@@ -586,30 +627,41 @@ async function main(): Promise<void> {
     threadId: string,
     message: Message<unknown>,
   ): boolean {
-    if (!message.author.isMe) {
+    if (platform !== 'whatsapp') {
+      return Boolean(message.author.isMe);
+    }
+
+    const gateResult = getWhatsAppInboundGateResult(
+      threadId,
+      message,
+      {
+        selfJids: getWhatsAppSelfJids(),
+        bridgeStartTime,
+        selfHistoryGraceMs: WHATSAPP_SELF_HISTORY_GRACE_MS,
+        outboundTracker: whatsappOutboundTracker,
+      },
+    );
+
+    if (gateResult === 'allow') {
       return false;
     }
 
-    if (platform !== 'whatsapp') {
-      return true;
+    switch (gateResult) {
+      case 'ignore_non_self_authored':
+        debugLog(`[ChannelBridge] Ignoring WhatsApp message not authored by the paired account: ${message.id}`);
+        return true;
+      case 'ignore_non_self_chat':
+        debugLog(`[ChannelBridge] Ignoring WhatsApp message outside self chat: ${message.id}`);
+        return true;
+      case 'ignore_historical_self_message':
+        debugLog(`[ChannelBridge] Ignoring historical WhatsApp self-message: ${message.id}`);
+        return true;
+      case 'ignore_outbound_echo':
+        debugLog(`[ChannelBridge] Ignoring WhatsApp outbound echo: ${message.id}`);
+        return true;
+      default:
+        return true;
     }
-
-    const msgTimestamp = getMessageTimestampMs(message);
-    if (msgTimestamp && msgTimestamp < bridgeStartTime - WHATSAPP_SELF_HISTORY_GRACE_MS) {
-      debugLog(`[ChannelBridge] Ignoring historical WhatsApp self-message: ${message.id}`);
-      return true;
-    }
-
-    const shouldIgnoreEcho = whatsappOutboundTracker.shouldIgnore(
-      message.id,
-      threadId,
-      getMessageText(message),
-    );
-    if (shouldIgnoreEcho) {
-      debugLog(`[ChannelBridge] Ignoring WhatsApp outbound echo: ${message.id}`);
-    }
-
-    return shouldIgnoreEcho;
   }
 
   async function processInboundChatMessage(
@@ -634,8 +686,9 @@ async function main(): Promise<void> {
       if (platform === 'whatsapp') {
         const author = message.author as { userId?: string; platformId?: string; userName?: string; isMe?: boolean };
         const parsedSender = getInboundSenderId(platform, threadId, author);
+        const selfAuthored = isWhatsAppSelfAuthoredMessage(message);
         debugLog(
-          `[ChannelBridge] WhatsApp inbound event id=${message.id} thread=${threadId} isMe=${String(message.author.isMe)} sender=${parsedSender} hasText=${msgText.trim().length > 0} timestamp=${msgTimestamp ?? 'unknown'}`,
+          `[ChannelBridge] WhatsApp inbound event id=${message.id} thread=${threadId} selfAuthored=${String(selfAuthored)} sender=${parsedSender} hasText=${msgText.trim().length > 0} timestamp=${msgTimestamp ?? 'unknown'}`,
         );
       }
 
@@ -656,7 +709,7 @@ async function main(): Promise<void> {
       const inbound = toInboundMessage(platform, threadId, message);
       if (platform === 'whatsapp') {
         debugLog(
-          `[ChannelBridge] WhatsApp inbound normalized id=${inbound.messageId} sender=${inbound.senderId} command=${inbound.isCommand} chars=${inbound.message.length}`,
+          `[ChannelBridge] WhatsApp inbound normalized id=${inbound.messageId} sender=${inbound.senderId} thread=${inbound.threadId ?? 'none'} command=${inbound.isCommand} chars=${inbound.message.length}`,
         );
       }
       updatePlatformStatus(platform, { lastMessageAt: Date.now() });
