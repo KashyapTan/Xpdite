@@ -1,6 +1,6 @@
 <div align="center">
   <a href="https://github.com/KashyapTan/xpdite">
-    <img alt="xpdite" width="240" src="./assets/xpdite-logo-github-color.png">
+    <img alt="xpdite" width="240" src="./assets/xpdite-logo-github-bg.svg">
   </a>
 </div>
 <h3 align="center">Your AI Assistant and Agent Harness with Xpdite.</h3>
