@@ -110,3 +110,6 @@ See [Contributing Guide](./docs/contributing.md) for details.
 ## License
 
 [MIT](./LICENSE)
+
+## Sponsor
+<iframe src="https://github.com/sponsors/KashyapTan/card" title="Sponsor KashyapTan" height="225" width="600" style="border: 0;"></iframe>
