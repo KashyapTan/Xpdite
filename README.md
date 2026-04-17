@@ -112,4 +112,7 @@ See [Contributing Guide](./docs/contributing.md) for details.
 [MIT](./LICENSE)
 
 ## Sponsor
-<iframe src="https://github.com/sponsors/KashyapTan/card" title="Sponsor KashyapTan" height="225" width="600" style="border: 0;"></iframe>
+
+<a href="https://github.com/sponsors/KashyapTan">
+  <img src="https://img.shields.io/badge/Sponsor-%E2%9D%A4-ea4aaa?style=for-the-badge&logo=github-sponsors&logoColor=white" alt="Sponsor KashyapTan">
+</a>
