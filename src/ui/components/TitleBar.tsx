@@ -2,7 +2,7 @@ import React, { Suspense, lazy, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useTabs } from '../contexts/TabContext';
 import '../CSS/components/TitleBar.css';
-import xpditeLogo from '../assets/transparent-xpdite-logo.png';
+import xpditeLogo from '../assets/new/xpdite-logo-transparent.svg';
 
 const NotificationBell = lazy(() => import('./NotificationBell'));
 let notificationBellWarmupPromise: Promise<unknown> | null = null;

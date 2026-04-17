@@ -103,7 +103,7 @@ textarea,
 }
 
 .xpdite-logo {
-  height: 22px;
+  height: 19px;
   width: auto;
   -webkit-user-select: none;
   user-select: none;
@@ -1326,7 +1326,7 @@ textarea,
   -webkit-app-region: no-drag;
   pointer-events: auto;
   cursor: pointer;
-  height: 22px;
+  height: 19px;
   width: auto;
   opacity: 0.5;
 

@@ -22,7 +22,7 @@
             ]
         }
     ],
-    "icon": "./assets/xpdite-logo.jpg",
+    "icon": "./assets/xpdite-logo-black-bg.svg",
     "mac": {
         "target": "dmg"
     },
@@ -41,7 +41,7 @@
                 "arch": ["x64"]
             }
         ],
-        "icon": "./assets/xpdite-logo.jpg"
+        "icon": "./assets/xpdite-logo-black-bg.svg"
     },
     "nsis": {
         "oneClick": false,
