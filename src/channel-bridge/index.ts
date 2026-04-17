@@ -16,13 +16,14 @@
 /* eslint-disable react-hooks/rules-of-hooks */
 // Note: useMultiFileAuthState is from Baileys, NOT a React hook
 
-import type { Adapter, Message } from 'chat';
+import type { Adapter, AdapterPostableMessage, Logger, Message } from 'chat';
 import * as path from 'path';
 import * as fs from 'fs';
 
 import { createBridgeServer } from './server.js';
 import { createConfigLoader } from './config/index.js';
 import { createCommandHandler } from './commands/index.js';
+import { splitDiscordOutboundContent } from './outboundUtils.js';
 import { createPythonClient } from './pythonClient.js';
 import {
   canonicalizeWhatsAppThreadId,
@@ -30,6 +31,7 @@ import {
   getInboundSenderId,
   getMessageText,
   getMessageTimestampMs,
+  normalizeInboundText,
   getWhatsAppInboundGateResult,
   isWhatsAppSelfAuthoredMessage,
 } from './messageUtils.js';
@@ -38,6 +40,7 @@ import type {
   PlatformStatus, 
   InboundMessage,
   OutboundMessageType,
+  OutboundRenderMode,
   TelegramCredentials,
   DiscordCredentials,
   WhatsAppCredentials,
@@ -174,6 +177,29 @@ const whatsappOutboundTracker = createWhatsAppOutboundTracker();
 let bridgeStartTime = Date.now();
 let whatsappConnectionPollInterval: NodeJS.Timeout | null = null;
 let whatsappConnectionPollTimeout: NodeJS.Timeout | null = null;
+const DISCORD_GATEWAY_SESSION_MS = 24 * 60 * 60 * 1000;
+const DISCORD_GATEWAY_RESTART_DELAY_MS = 1_000;
+interface DiscordContinuationState {
+  continuationIds: string[];
+  chunks: string[];
+}
+
+const discordContinuationStates = new Map<string, DiscordContinuationState>();
+interface DiscordQueuedEditState {
+  adapter: ChatSDKDiscordAdapter;
+  inFlight: boolean;
+  lastAppliedAt: number;
+  latestContent: string;
+  latestRenderMode: OutboundRenderMode;
+  messageId: string;
+  retryAfterUntil: number;
+  threadId: string;
+  timer: NodeJS.Timeout | null;
+}
+
+const discordQueuedEdits = new Map<string, DiscordQueuedEditState>();
+const DISCORD_MIN_EDIT_INTERVAL_MS = 1000;
+const DISCORD_RATE_LIMIT_BUFFER_MS = 100;
 
 function debugLog(message: string): void {
   if (mobileDebugLogs) {
@@ -189,6 +215,20 @@ function infoLog(message: string): void {
 
 function errorLog(message: string, ...args: unknown[]): void {
   console.error(message, ...args);
+}
+
+function getDiscordContinuationKey(threadId: string, rootMessageId: string): string {
+  return `${threadId}:${rootMessageId}`;
+}
+
+function clearDiscordContinuationTracking(): void {
+  discordContinuationStates.clear();
+  for (const state of discordQueuedEdits.values()) {
+    if (state.timer) {
+      clearTimeout(state.timer);
+    }
+  }
+  discordQueuedEdits.clear();
 }
 
 function clearWhatsAppConnectionPoller(): void {
@@ -360,6 +400,422 @@ async function main(): Promise<void> {
     return Array.from(platformStatuses.values());
   }
 
+  function emitStatusUpdate(): void {
+    emitMessage({ type: 'status', platforms: getPlatformStatuses() });
+  }
+
+  let discordGatewayAbortController: AbortController | null = null;
+  let discordGatewayLoopPromise: Promise<void> | null = null;
+  let discordGatewayConnectedThisSession = false;
+  let discordGatewayLastError: string | undefined;
+
+  function getDiscordLoggerError(args: unknown[]): string | undefined {
+    for (const arg of args) {
+      if (typeof arg === 'string' && arg.trim()) {
+        return arg;
+      }
+
+      if (!arg || typeof arg !== 'object') {
+        continue;
+      }
+
+      const maybeError = (arg as { error?: unknown }).error;
+      if (typeof maybeError === 'string' && maybeError.trim()) {
+        return maybeError;
+      }
+    }
+
+    return undefined;
+  }
+
+  function logDiscordAdapterEvent(
+    prefix: string,
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    args: unknown[],
+  ): void {
+    const formattedPrefix = `[ChannelBridge][${prefix}] ${message}`;
+
+    if (level === 'debug') {
+      if (mobileDebugLogs) {
+        console.log(formattedPrefix, ...args);
+      }
+    } else if (level === 'info') {
+      if (mobileDebugLogs) {
+        console.log(formattedPrefix, ...args);
+      }
+    } else if (level === 'warn') {
+      console.warn(formattedPrefix, ...args);
+    } else {
+      console.error(formattedPrefix, ...args);
+    }
+
+    if (message === 'Discord Gateway connected') {
+      discordGatewayConnectedThisSession = true;
+      discordGatewayLastError = undefined;
+      updatePlatformStatus('discord', {
+        status: 'connected',
+        connectedAt: Date.now(),
+        error: undefined,
+      });
+      emitStatusUpdate();
+      return;
+    }
+
+    if (
+      level === 'error'
+      && (message === 'Discord Gateway listener error' || message === 'Discord Gateway error')
+    ) {
+      const errorMessage = getDiscordLoggerError(args) ?? 'Discord gateway listener failed.';
+      discordGatewayLastError = errorMessage;
+      updatePlatformStatus('discord', { status: 'error', error: errorMessage });
+      emitStatusUpdate();
+    }
+  }
+
+  function createDiscordBridgeLogger(prefix: string = 'discord'): Logger {
+    return {
+      child(childPrefix: string): Logger {
+        return createDiscordBridgeLogger(`${prefix}:${childPrefix}`);
+      },
+      debug(message: string, ...args: unknown[]): void {
+        logDiscordAdapterEvent(prefix, 'debug', message, args);
+      },
+      info(message: string, ...args: unknown[]): void {
+        logDiscordAdapterEvent(prefix, 'info', message, args);
+      },
+      warn(message: string, ...args: unknown[]): void {
+        logDiscordAdapterEvent(prefix, 'warn', message, args);
+      },
+      error(message: string, ...args: unknown[]): void {
+        logDiscordAdapterEvent(prefix, 'error', message, args);
+      },
+    };
+  }
+
+  function stopDiscordGatewayLoop(): void {
+    if (discordGatewayAbortController && !discordGatewayAbortController.signal.aborted) {
+      debugLog('[ChannelBridge] Stopping Discord gateway listener...');
+      discordGatewayAbortController.abort();
+    }
+
+    discordGatewayAbortController = null;
+    discordGatewayConnectedThisSession = false;
+    discordGatewayLastError = undefined;
+  }
+
+  function startDiscordGatewayLoop(adapter: ChatSDKDiscordAdapter): void {
+    stopDiscordGatewayLoop();
+
+    const controller = new AbortController();
+    discordGatewayAbortController = controller;
+
+    const loopPromise = (async () => {
+      while (
+        adapters.discord === adapter
+        && discordGatewayAbortController === controller
+        && !controller.signal.aborted
+      ) {
+        discordGatewayConnectedThisSession = false;
+        discordGatewayLastError = undefined;
+        updatePlatformStatus('discord', { status: 'connecting', error: undefined });
+        emitStatusUpdate();
+
+        let listenerPromise: Promise<unknown> | null = null;
+        const response = await adapter.startGatewayListener(
+          {
+            waitUntil: (task) => {
+              listenerPromise = Promise.resolve(task);
+            },
+          },
+          DISCORD_GATEWAY_SESSION_MS,
+          controller.signal,
+        );
+
+        if (!response.ok) {
+          const responseText = (await response.text()).trim();
+          const errorMessage = responseText || `Discord gateway start failed (${response.status}).`;
+          updatePlatformStatus('discord', { status: 'error', error: errorMessage });
+          emitStatusUpdate();
+          return;
+        }
+
+        if (!listenerPromise) {
+          updatePlatformStatus('discord', {
+            status: 'error',
+            error: 'Discord gateway listener did not start correctly.',
+          });
+          emitStatusUpdate();
+          return;
+        }
+
+        debugLog('[ChannelBridge] Discord gateway listener started');
+        await listenerPromise;
+
+        if (
+          controller.signal.aborted
+          || adapters.discord !== adapter
+          || discordGatewayAbortController !== controller
+        ) {
+          break;
+        }
+
+        if (!discordGatewayConnectedThisSession) {
+          const errorMessage = discordGatewayLastError
+            ?? 'Discord gateway could not connect. Check the bot token, invite permissions, and Message Content Intent.';
+          updatePlatformStatus('discord', { status: 'error', error: errorMessage });
+          emitStatusUpdate();
+          return;
+        }
+
+        debugLog('[ChannelBridge] Discord gateway listener ended, restarting...');
+        await new Promise((resolve) => setTimeout(resolve, DISCORD_GATEWAY_RESTART_DELAY_MS));
+      }
+    })().catch((err) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      errorLog('[ChannelBridge] Discord gateway loop failed:', err);
+      updatePlatformStatus('discord', { status: 'error', error: (err as Error).message });
+      emitStatusUpdate();
+    }).finally(() => {
+      if (discordGatewayAbortController === controller) {
+        discordGatewayAbortController = null;
+      }
+
+      if (discordGatewayLoopPromise === loopPromise) {
+        discordGatewayLoopPromise = null;
+      }
+    });
+
+    discordGatewayLoopPromise = loopPromise;
+  }
+
+  function toPostableMessage(
+    content: string,
+    renderMode: OutboundRenderMode = 'markdown',
+  ): AdapterPostableMessage {
+    return renderMode === 'raw' ? { raw: content } : { markdown: content };
+  }
+
+  async function postDiscordMessageWithContinuations(
+    adapter: ChatSDKDiscordAdapter,
+    threadId: string,
+    content: string,
+    renderMode: OutboundRenderMode,
+  ): Promise<string> {
+    const chunks = splitDiscordOutboundContent(content);
+    const first = await adapter.postMessage(threadId, toPostableMessage(chunks[0] ?? '', renderMode));
+    const continuationIds: string[] = [];
+
+    for (const chunk of chunks.slice(1)) {
+      const sent = await adapter.postMessage(threadId, toPostableMessage(chunk, renderMode));
+      continuationIds.push(sent.id);
+    }
+
+    const continuationKey = getDiscordContinuationKey(threadId, first.id);
+    if (continuationIds.length > 0) {
+      discordContinuationStates.set(continuationKey, {
+        continuationIds,
+        chunks,
+      });
+    } else {
+      discordContinuationStates.delete(continuationKey);
+    }
+
+    return first.id;
+  }
+
+  async function syncDiscordMessageContinuations(
+    adapter: ChatSDKDiscordAdapter,
+    threadId: string,
+    rootMessageId: string,
+    content: string,
+    renderMode: OutboundRenderMode,
+  ): Promise<void> {
+    const chunks = splitDiscordOutboundContent(content);
+    const [rootChunk = '', ...continuationChunks] = chunks;
+    const continuationKey = getDiscordContinuationKey(threadId, rootMessageId);
+    const priorState = discordContinuationStates.get(continuationKey);
+    const existingIds = [...(priorState?.continuationIds ?? [])];
+    const previousChunks = priorState?.chunks ?? [];
+    const nextIds: string[] = [];
+
+    if (previousChunks[0] !== rootChunk) {
+      await adapter.editMessage(threadId, rootMessageId, toPostableMessage(rootChunk, renderMode));
+    }
+
+    for (let index = 0; index < continuationChunks.length; index += 1) {
+      const chunk = continuationChunks[index];
+      const existingId = existingIds[index];
+      if (existingId) {
+        if (previousChunks[index + 1] !== chunk) {
+          await adapter.editMessage(threadId, existingId, toPostableMessage(chunk, renderMode));
+        }
+        nextIds.push(existingId);
+        continue;
+      }
+
+      const sent = await adapter.postMessage(threadId, toPostableMessage(chunk, renderMode));
+      nextIds.push(sent.id);
+    }
+
+    for (const staleId of existingIds.slice(continuationChunks.length)) {
+      try {
+        await adapter.deleteMessage(threadId, staleId);
+      } catch (err) {
+        errorLog(`[ChannelBridge] Failed to delete stale Discord continuation ${staleId}:`, err);
+      }
+    }
+
+    if (nextIds.length > 0) {
+      discordContinuationStates.set(continuationKey, {
+        continuationIds: nextIds,
+        chunks,
+      });
+    } else {
+      discordContinuationStates.delete(continuationKey);
+    }
+  }
+
+  function getDiscordRetryAfterMs(err: unknown): number | null {
+    if (!(err instanceof Error)) {
+      return null;
+    }
+
+    const match = err.message.match(/"retry_after"\s*:\s*([0-9.]+)/i);
+    if (!match) {
+      return null;
+    }
+
+    const seconds = Number.parseFloat(match[1] ?? '');
+    if (!Number.isFinite(seconds) || seconds < 0) {
+      return null;
+    }
+
+    return Math.ceil(seconds * 1000) + DISCORD_RATE_LIMIT_BUFFER_MS;
+  }
+
+  function scheduleDiscordQueuedEdit(
+    continuationKey: string,
+    state: DiscordQueuedEditState,
+  ): void {
+    if (state.inFlight || state.timer) {
+      return;
+    }
+
+    const now = Date.now();
+    const nextAllowedAt = Math.max(
+      state.lastAppliedAt + DISCORD_MIN_EDIT_INTERVAL_MS,
+      state.retryAfterUntil,
+    );
+    const delayMs = Math.max(0, nextAllowedAt - now);
+
+    if (delayMs === 0) {
+      void flushDiscordQueuedEdit(continuationKey);
+      return;
+    }
+
+    state.timer = setTimeout(() => {
+      const current = discordQueuedEdits.get(continuationKey);
+      if (!current) {
+        return;
+      }
+      current.timer = null;
+      void flushDiscordQueuedEdit(continuationKey);
+    }, delayMs);
+  }
+
+  async function flushDiscordQueuedEdit(continuationKey: string): Promise<void> {
+    const state = discordQueuedEdits.get(continuationKey);
+    if (!state || state.inFlight) {
+      return;
+    }
+
+    state.inFlight = true;
+    const snapshotContent = state.latestContent;
+    const snapshotRenderMode = state.latestRenderMode;
+
+    try {
+      await syncDiscordMessageContinuations(
+        state.adapter,
+        state.threadId,
+        state.messageId,
+        snapshotContent,
+        snapshotRenderMode,
+      );
+      state.lastAppliedAt = Date.now();
+      state.retryAfterUntil = 0;
+    } catch (err) {
+      const retryAfterMs = getDiscordRetryAfterMs(err);
+      if (retryAfterMs !== null) {
+        state.retryAfterUntil = Date.now() + retryAfterMs;
+        state.inFlight = false;
+        scheduleDiscordQueuedEdit(continuationKey, state);
+        return;
+      }
+
+      errorLog(
+        `[ChannelBridge] Discord queued edit failed for ${state.messageId}:`,
+        err,
+      );
+    } finally {
+      const current = discordQueuedEdits.get(continuationKey);
+      if (current) {
+        current.inFlight = false;
+      }
+    }
+
+    const current = discordQueuedEdits.get(continuationKey);
+    if (!current) {
+      return;
+    }
+
+    if (
+      current.latestContent !== snapshotContent
+      || current.latestRenderMode !== snapshotRenderMode
+    ) {
+      scheduleDiscordQueuedEdit(continuationKey, current);
+      return;
+    }
+  }
+
+  function queueDiscordEdit(
+    adapter: ChatSDKDiscordAdapter,
+    threadId: string,
+    messageId: string,
+    content: string,
+    renderMode: OutboundRenderMode,
+  ): void {
+    const continuationKey = getDiscordContinuationKey(threadId, messageId);
+    const existing = discordQueuedEdits.get(continuationKey);
+
+    if (existing) {
+      existing.adapter = adapter;
+      existing.threadId = threadId;
+      existing.messageId = messageId;
+      existing.latestContent = content;
+      existing.latestRenderMode = renderMode;
+      scheduleDiscordQueuedEdit(continuationKey, existing);
+      return;
+    }
+
+    const state: DiscordQueuedEditState = {
+      adapter,
+      inFlight: false,
+      lastAppliedAt: 0,
+      latestContent: content,
+      latestRenderMode: renderMode,
+      messageId,
+      retryAfterUntil: 0,
+      threadId,
+      timer: null,
+    };
+    discordQueuedEdits.set(continuationKey, state);
+    scheduleDiscordQueuedEdit(continuationKey, state);
+  }
+
   // Function to send message to a platform
   // Chat SDK's thread.post() is only available from event handlers,
   // so for outbound messages we use the native platform APIs directly.
@@ -370,6 +826,7 @@ async function main(): Promise<void> {
     messageType: OutboundMessageType,
     replyToMessageId?: string,
     threadId?: string,
+    renderMode: OutboundRenderMode = 'markdown',
   ): Promise<string | undefined> {
     debugLog(
       `[ChannelBridge] Sending ${messageType} to ${platform}:${senderId} (thread: ${threadId ?? 'none'}, chars: ${message.length})`,
@@ -378,7 +835,11 @@ async function main(): Promise<void> {
     if (replyToMessageId) {
       debugLog(`[ChannelBridge] Reply-to message ID: ${replyToMessageId} (not yet implemented)`);
     }
-    
+
+    const effectiveRenderMode: OutboundRenderMode =
+      platform === 'discord' ? 'raw' : renderMode;
+    const postable = toPostableMessage(message, effectiveRenderMode);
+
     try {
       switch (platform) {
         case 'telegram': {
@@ -387,7 +848,7 @@ async function main(): Promise<void> {
             throw new Error('Telegram adapter not initialized');
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
-          const sent = await adapter.postMessage(targetThreadId, { markdown: message });
+          const sent = await adapter.postMessage(targetThreadId, postable);
           debugLog(`[ChannelBridge] Telegram message sent to ${senderId} (id: ${sent.id})`);
           return sent.id;
         }
@@ -398,9 +859,14 @@ async function main(): Promise<void> {
             throw new Error('Discord adapter not initialized');
           }
           const targetThreadId = threadId ?? await adapter.openDM(senderId);
-          const sent = await adapter.postMessage(targetThreadId, { markdown: message });
-          debugLog(`[ChannelBridge] Discord message sent to ${senderId} (id: ${sent.id})`);
-          return sent.id;
+          const sentMessageId = await postDiscordMessageWithContinuations(
+            adapter,
+            targetThreadId,
+            message,
+            effectiveRenderMode,
+          );
+          debugLog(`[ChannelBridge] Discord message sent to ${senderId} (id: ${sentMessageId})`);
+          return sentMessageId;
         }
         
         case 'whatsapp': {
@@ -411,7 +877,7 @@ async function main(): Promise<void> {
           const targetThreadId = threadId
             ? canonicalizeWhatsAppThreadId(threadId)
             : await adapter.openDM(senderId);
-          const sent = await adapter.postMessage(targetThreadId, { markdown: message });
+          const sent = await adapter.postMessage(targetThreadId, postable);
           whatsappOutboundTracker.remember(sent.id, targetThreadId, message);
           debugLog(`[ChannelBridge] WhatsApp message sent to ${senderId} (id: ${sent.id})`);
           return sent.id;
@@ -421,6 +887,22 @@ async function main(): Promise<void> {
           throw new Error(`Unknown platform: ${platform}`);
       }
     } catch (err) {
+      if (effectiveRenderMode === 'markdown') {
+        try {
+          debugLog(`[ChannelBridge] Retrying outbound send as raw text on ${platform}`);
+          return await sendToPlatform(
+            platform,
+            senderId,
+            message,
+            messageType,
+            replyToMessageId,
+            threadId,
+            'raw',
+          );
+        } catch (retryErr) {
+          errorLog(`[ChannelBridge] Raw-text retry failed on ${platform}:`, retryErr);
+        }
+      }
       errorLog(`[ChannelBridge] Error sending to ${platform}:`, err);
       throw err;
     }
@@ -474,8 +956,11 @@ async function main(): Promise<void> {
     threadId: string,
     messageId: string,
     content: string,
+    renderMode: OutboundRenderMode = 'markdown',
   ): Promise<void> {
     try {
+      const effectiveRenderMode: OutboundRenderMode =
+        platform === 'discord' ? 'raw' : renderMode;
       const adapter = adapters[platform];
       if (!adapter) {
         throw new Error(`${platform} adapter not initialized`);
@@ -483,9 +968,34 @@ async function main(): Promise<void> {
       const targetThreadId = platform === 'whatsapp'
         ? canonicalizeWhatsAppThreadId(threadId)
         : threadId;
-      await adapter.editMessage(targetThreadId, messageId, { markdown: content });
+      if (platform === 'discord') {
+        queueDiscordEdit(
+          adapter as ChatSDKDiscordAdapter,
+          targetThreadId,
+          messageId,
+          content,
+          effectiveRenderMode,
+        );
+        debugLog(`[ChannelBridge] Queued Discord edit for ${messageId}`);
+        return;
+      } else {
+        await adapter.editMessage(
+          targetThreadId,
+          messageId,
+          toPostableMessage(content, effectiveRenderMode),
+        );
+      }
       debugLog(`[ChannelBridge] Edited message ${messageId} on ${platform}`);
     } catch (err) {
+      if ((platform === 'discord' ? 'raw' : renderMode) === 'markdown') {
+        try {
+          debugLog(`[ChannelBridge] Retrying edit as raw text on ${platform}`);
+          await editPlatformMessage(platform, threadId, messageId, content, 'raw');
+          return;
+        } catch (retryErr) {
+          errorLog(`[ChannelBridge] Raw-text edit retry failed on ${platform}:`, retryErr);
+        }
+      }
       errorLog(`[ChannelBridge] Error editing message on ${platform}:`, err);
       throw err;
     }
@@ -497,7 +1007,7 @@ async function main(): Promise<void> {
     threadId: string,
     message: Message<unknown>
   ): InboundMessage {
-    const text = getMessageText(message);
+    const text = normalizeInboundText(platform, getMessageText(message));
     const author = message.author as { userId?: string; platformId?: string; userName?: string };
     const authorId = getInboundSenderId(platform, threadId, author);
     const normalizedThreadId = platform === 'whatsapp'
@@ -753,6 +1263,9 @@ async function main(): Promise<void> {
         debugLog('[ChannelBridge] Cleaning up existing Chat instance before reload...');
         // Chat SDK doesn't have a built-in destroy() method, but we can disconnect adapters
       }
+
+      stopDiscordGatewayLoop();
+      clearDiscordContinuationTracking();
       
       // Disconnect all existing adapters before recreating.
       // IMPORTANT: Skip WhatsApp teardown if it's already connected and the
@@ -890,11 +1403,11 @@ async function main(): Promise<void> {
             botToken: creds.botToken,
             publicKey: creds.publicKey,
             applicationId: creds.applicationId,
+            logger: createDiscordBridgeLogger(),
           });
           
           chatAdapters.discord = adapters.discord;
-          updatePlatformStatus('discord', { status: 'connected', connectedAt: Date.now(), error: undefined });
-          debugLog('[ChannelBridge] Discord adapter initialized');
+          debugLog('[ChannelBridge] Discord adapter initialized, waiting for gateway connection');
         } catch (err) {
           errorLog('[ChannelBridge] Failed to initialize Discord:', err);
           updatePlatformStatus('discord', { status: 'error', error: (err as Error).message });
@@ -1091,6 +1604,10 @@ async function main(): Promise<void> {
         // Initialize the Chat instance (attaches adapters, starts Telegram/Discord)
         await chatInstance.initialize();
         debugLog('[ChannelBridge] Chat SDK instance initialized');
+
+        if (adapters.discord) {
+          startDiscordGatewayLoop(adapters.discord);
+        }
         
         // NOW connect WhatsApp - must be AFTER initialize() per Chat SDK docs
         // WhatsApp is WebSocket-based and needs to connect after Chat is initialized.
@@ -1171,7 +1688,7 @@ async function main(): Promise<void> {
       }
       
       // Emit status update
-      emitMessage({ type: 'status', platforms: getPlatformStatuses() });
+      emitStatusUpdate();
       
     } catch (err) {
       errorLog('[ChannelBridge] Error applying config:', err);
@@ -1208,6 +1725,8 @@ async function main(): Promise<void> {
     
     configLoader.stopWatching();
     clearWhatsAppConnectionPoller();
+    stopDiscordGatewayLoop();
+    clearDiscordContinuationTracking();
     
     // Disconnect WhatsApp (needs explicit cleanup)
     if (adapters.whatsapp) {

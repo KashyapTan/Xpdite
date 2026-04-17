@@ -58,6 +58,7 @@ Outbound (Python -> bridge -> platform):
 
 - Source of truth is `mobile_channels_config.json` under Electron `userData`.
 - `config/loader.ts` watches the config directory and debounces reloads.
+- Discord config is only considered complete when `botToken`, `publicKey`, and `applicationId` are all present. The settings modal pre-fills the non-secret Discord identifiers and preserves an existing saved bot token unless the user explicitly replaces it.
 - Reload path (`applyConfig()` in `index.ts`) tears down/rebuilds adapters safely; WhatsApp may be preserved across reloads when already connected and `forcePairing` is not requested.
 - `forcePairing: true` triggers fresh WhatsApp auth-state cleanup under `XPDITE_USER_DATA_DIR/whatsapp_auth` before reconnect.
 

@@ -1437,6 +1437,10 @@ export const api = {
     platforms?: Record<string, {
       enabled: boolean;
       token?: string;
+      publicKey?: string;
+      applicationId?: string;
+      phoneNumber?: string;
+      authMethod?: string;
       status: 'connected' | 'disconnected' | 'error';
     }>;
   }> {
@@ -1454,7 +1458,15 @@ export const api = {
    */
   async setMobilePlatformConfig(
     platformId: string,
-    config: { token?: string; enabled?: boolean; phoneNumber?: string; authMethod?: string; forcePairing?: boolean }
+    config: {
+      token?: string;
+      enabled?: boolean;
+      publicKey?: string;
+      applicationId?: string;
+      phoneNumber?: string;
+      authMethod?: string;
+      forcePairing?: boolean;
+    }
   ): Promise<void> {
     const base = await baseUrl();
     const response = await fetch(`${base}/api/mobile-channels/config/${platformId}`, {
@@ -1462,7 +1474,23 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(config),
     });
-    if (!response.ok) throw new Error('Failed to save platform config');
+    if (!response.ok) {
+      const responseBody = await response.text();
+      let message = 'Failed to save platform config';
+
+      if (responseBody) {
+        try {
+          const parsed = JSON.parse(responseBody) as { detail?: string };
+          if (typeof parsed.detail === 'string' && parsed.detail.trim()) {
+            message = parsed.detail;
+          }
+        } catch {
+          message = responseBody;
+        }
+      }
+
+      throw new Error(message);
+    }
   },
 
   // ============================================

@@ -1044,7 +1044,7 @@ class TestHttpApiEndpoints:
         db_mock = MagicMock()
         db_mock.get_setting.side_effect = lambda key: {
             "mobile_channel_telegram": '{"enabled": true, "token": "tg-token", "status": "connected"}',
-            "mobile_channel_discord": None,
+            "mobile_channel_discord": '{"enabled": true, "token": "discord-token", "publicKey": "abcdef1234567890", "applicationId": "1234567890", "status": "disconnected"}',
             "mobile_channel_whatsapp": "{bad-json",
         }.get(key)
 
@@ -1059,7 +1059,10 @@ class TestHttpApiEndpoints:
                     "status": "connected",
                 },
                 "discord": {
-                    "enabled": False,
+                    "enabled": True,
+                    "token": "***",
+                    "publicKey": "abcdef1234567890",
+                    "applicationId": "1234567890",
                     "status": "disconnected",
                 },
                 "whatsapp": {
@@ -1113,6 +1116,51 @@ class TestHttpApiEndpoints:
             "status": "disconnected",
         }
         assert result == {"success": True}
+
+    @pytest.mark.anyio
+    async def test_set_mobile_platform_config_updates_discord_fields_without_overwriting_token(
+        self,
+    ):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = (
+            '{"enabled": false, "token": "discord-token", "status": "disconnected"}'
+        )
+
+        body = http_api.MobilePlatformConfig(
+            enabled=True,
+            publicKey="abcdef1234567890",
+            applicationId="1234567890",
+        )
+        with (
+            patch("source.infrastructure.database.db", db_mock),
+            patch.object(http_api, "_write_mobile_channels_config_file"),
+        ):
+            result = await http_api.set_mobile_platform_config("discord", body)
+
+        args = db_mock.set_setting.call_args.args
+        assert args[0] == "mobile_channel_discord"
+        assert json.loads(args[1]) == {
+            "enabled": True,
+            "token": "discord-token",
+            "publicKey": "abcdef1234567890",
+            "applicationId": "1234567890",
+            "status": "disconnected",
+        }
+        assert result == {"success": True}
+
+    @pytest.mark.anyio
+    async def test_set_mobile_platform_config_rejects_incomplete_discord_config(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.return_value = '{"enabled": false, "token": "discord-token"}'
+
+        body = http_api.MobilePlatformConfig(enabled=True, applicationId="1234567890")
+        with patch("source.infrastructure.database.db", db_mock):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.set_mobile_platform_config("discord", body)
+
+        assert exc.value.status_code == 400
+        assert exc.value.detail == "Discord public key is required."
+        db_mock.set_setting.assert_not_called()
 
     @pytest.mark.anyio
     async def test_set_mobile_platform_config_returns_500_when_bridge_sync_fails(self):
@@ -1178,6 +1226,34 @@ class TestHttpApiEndpoints:
                     "forcePairing": True,
                 },
             },
+        }
+
+    def test_write_mobile_channels_config_file_serializes_discord_credentials(self, tmp_path):
+        db_mock = MagicMock()
+        db_mock.get_setting.side_effect = lambda key: {
+            "mobile_channel_telegram": None,
+            "mobile_channel_discord": '{"enabled": true, "token": "discord-token", "publicKey": "abcdef1234567890", "applicationId": "1234567890"}',
+            "mobile_channel_whatsapp": None,
+        }.get(key)
+
+        fake_state = SimpleNamespace(server_loop_holder={"port": 8012})
+
+        with (
+            patch("source.infrastructure.database.db", db_mock),
+            patch("source.infrastructure.config.USER_DATA_DIR", tmp_path),
+            patch("source.core.state.app_state", fake_state),
+        ):
+            http_api._write_mobile_channels_config_file()
+
+        payload = json.loads(
+            (tmp_path / "mobile_channels_config.json").read_text(encoding="utf-8")
+        )
+
+        assert payload["platforms"]["discord"] == {
+            "enabled": True,
+            "botToken": "discord-token",
+            "publicKey": "abcdef1234567890",
+            "applicationId": "1234567890",
         }
 
     def test_write_mobile_channels_config_file_uses_atomic_replace(self, tmp_path):

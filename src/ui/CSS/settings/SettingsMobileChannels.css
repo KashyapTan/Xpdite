@@ -344,6 +344,10 @@
   margin-bottom: 20px;
 }
 
+.setup-step .setup-input + .setup-input {
+  margin-top: 10px;
+}
+
 .setup-step-number {
   display: inline-flex;
   width: 24px;
@@ -390,6 +394,23 @@
   color: var(--color-border-strong);
 }
 
+.setup-input-hint {
+  font-size: 0.78rem;
+  color: var(--color-text-dim);
+  margin: 8px 0 0 0;
+}
+
+.setup-error {
+  background: var(--color-red-soft);
+  border: 1px solid var(--color-red);
+  border-radius: 8px;
+  color: var(--color-red);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+}
+
 .setup-link {
   display: inline-flex;
   align-items: center;
@@ -428,7 +449,7 @@
 
 .setup-btn-save {
   padding: 10px 20px;
-  background: var(--color-text);
+  background: var(--color-button-primary-background);
   border: none;
   border-radius: 6px;
   color: var(--color-text);

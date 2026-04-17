@@ -1973,6 +1973,8 @@ class MobilePlatformConfig(BaseModel):
 
     token: Optional[str] = None
     enabled: Optional[bool] = None
+    publicKey: Optional[str] = None
+    applicationId: Optional[str] = None
     phoneNumber: Optional[str] = None  # For WhatsApp pairing code auth
     authMethod: Optional[str] = None  # pairing_code only
     forcePairing: Optional[bool] = None  # Force clearing existing auth state
@@ -2155,16 +2157,27 @@ async def set_mobile_platform_config(platform_id: str, config: MobilePlatformCon
 
     # Update with new values
     if config.token is not None:
-        existing["token"] = config.token  # TODO: encrypt
+        existing["token"] = config.token.strip()  # TODO: encrypt
     if config.enabled is not None:
         existing["enabled"] = config.enabled
+    if config.publicKey is not None:
+        existing["publicKey"] = config.publicKey.strip()
+    if config.applicationId is not None:
+        existing["applicationId"] = config.applicationId.strip()
     if config.phoneNumber is not None:
-        existing["phoneNumber"] = config.phoneNumber
+        existing["phoneNumber"] = config.phoneNumber.strip()
     if config.forcePairing is not None:
         existing["forcePairing"] = config.forcePairing
     if platform_id == "whatsapp":
         # WhatsApp always uses pairing-code auth in this app.
         existing["authMethod"] = "pairing_code"
+    if platform_id == "discord" and existing.get("enabled"):
+        if not existing.get("token"):
+            raise HTTPException(status_code=400, detail="Discord bot token is required.")
+        if not existing.get("publicKey"):
+            raise HTTPException(status_code=400, detail="Discord public key is required.")
+        if not existing.get("applicationId"):
+            raise HTTPException(status_code=400, detail="Discord application ID is required.")
 
     # Set initial status
     if "status" not in existing:

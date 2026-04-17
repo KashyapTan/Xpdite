@@ -6,6 +6,7 @@ import {
   encodeBaileysThreadId,
   decodeBaileysThreadId,
   getInboundSenderId,
+  normalizeInboundText,
   getWhatsAppInboundGateResult,
   getMessageText,
   getMessageTimestampMs,
@@ -193,6 +194,20 @@ describe('getMessageText', () => {
         },
       }),
     ).toBe('/pair 654321');
+  });
+});
+
+describe('normalizeInboundText', () => {
+  test('strips a leading Discord mention from server commands', () => {
+    expect(normalizeInboundText('discord', '<@1234567890> /pair 123456')).toBe('/pair 123456');
+  });
+
+  test('strips nick-style Discord mentions and punctuation', () => {
+    expect(normalizeInboundText('discord', '<@!1234567890>: hello there')).toBe('hello there');
+  });
+
+  test('leaves non-Discord text unchanged', () => {
+    expect(normalizeInboundText('telegram', '<@1234567890> /pair 123456')).toBe('<@1234567890> /pair 123456');
   });
 });
 

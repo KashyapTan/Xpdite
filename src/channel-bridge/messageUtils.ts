@@ -293,6 +293,18 @@ export function getMessageText(message: MessageWithTextLike): string {
   return message.text ?? '';
 }
 
+export function stripLeadingDiscordMentions(text: string): string {
+  return text.replace(/^(?:<@!?\d+>\s*[,;:-]?\s*)+/, '').trimStart();
+}
+
+export function normalizeInboundText(platform: Platform, text: string): string {
+  if (platform !== 'discord') {
+    return text;
+  }
+
+  return stripLeadingDiscordMentions(text);
+}
+
 function getWhatsAppMessageKey(message: MessageWithWhatsAppKeyLike): WhatsAppMessageKeyLike | undefined {
   if (!message.raw || typeof message.raw !== 'object') {
     return undefined;

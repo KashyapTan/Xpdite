@@ -224,7 +224,7 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
-- **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. WhatsApp uses phone-number + pairing-code linked-device auth.
+- **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. WhatsApp uses phone-number + pairing-code linked-device auth. Discord setup requires bot token, application ID, and public key; reconnect keeps the saved token unless the user replaces it.
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 - **`scheduled-jobs`** → `<SettingsScheduledJobs>` — Scheduled task controls (toggle, run-now, delete, per-job forwarding targets).
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`, `memory_block`, `artifacts_block`, `user_profile_block`.

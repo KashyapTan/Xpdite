@@ -16,7 +16,6 @@ Mobile relay:
     callback is registered via ``set_mobile_relay_callback()``.
 """
 
-import asyncio
 import contextvars
 import logging
 from typing import Callable, Coroutine, List, Dict, Any, Optional, Awaitable
@@ -161,11 +160,11 @@ class ConnectionManager:
             payload["tab_id"] = resolved_tab
         message = json.dumps(payload)
 
-        # Mobile relay hook - fire and forget, don't block main broadcast
+        # Mobile relay hook - enqueue in order before broadcasting.
+        # The registered callback should stay lightweight (e.g. queueing work)
+        # so websocket delivery is not delayed by platform HTTP calls.
         if _mobile_relay_callback is not None:
-            asyncio.create_task(
-                self._safe_mobile_relay(message_type, content, resolved_tab)
-            )
+            await self._safe_mobile_relay(message_type, content, resolved_tab)
 
         await self.broadcast(message)
 

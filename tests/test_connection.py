@@ -1,12 +1,14 @@
 """Tests for source/core/connection.py — ConnectionManager."""
 
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 
 from source.core.connection import (
     ConnectionManager,
     get_current_tab_id,
+    set_mobile_relay_callback,
     reset_current_tab_id,
     set_current_tab_id,
     wrap_with_tab_ctx,
@@ -31,6 +33,9 @@ class _FakeWebSocket:
 
 
 class TestConnectionManager:
+    def teardown_method(self):
+        set_mobile_relay_callback(None)
+
     @pytest.mark.asyncio
     async def test_connect_accepts_and_adds(self):
         mgr = ConnectionManager()
@@ -92,6 +97,16 @@ class TestConnectionManager:
     async def test_broadcast_empty_connections(self):
         mgr = ConnectionManager()
         await mgr.broadcast("no-one listening")  # should not raise
+
+    @pytest.mark.asyncio
+    async def test_broadcast_json_awaits_mobile_relay_callback(self):
+        mgr = ConnectionManager()
+        relay_callback = AsyncMock()
+        set_mobile_relay_callback(relay_callback)
+
+        await mgr.broadcast_json("response_chunk", "hello", tab_id="tab-1")
+
+        relay_callback.assert_awaited_once_with("response_chunk", "hello", "tab-1")
 
 
 class TestWrapWithTabCtx:

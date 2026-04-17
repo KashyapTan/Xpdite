@@ -12,6 +12,7 @@ Responsibilities:
 - Pairing verification: validate pairing codes from mobile users
 """
 
+import asyncio
 import logging
 import re
 import secrets
@@ -55,6 +56,13 @@ class MobileChannelService:
         # Streaming state per tab: tracks post+edit pattern for response chunks
         # tab_id -> {posted_message_id, accumulated_text, last_edit_time, platform, sender_id, thread_id, last_typing_time}
         self._streaming_state: dict[str, dict] = {}
+        # Tracks tabs that have emitted response_complete and are waiting for the
+        # authoritative persisted assistant turn from conversation_saved.
+        self._pending_response_completion: dict[str, dict[str, Any]] = {}
+        # Relay events must stay ordered per tab so a late response_complete
+        # cannot overwrite the next streamed answer.
+        self._relay_event_queues: dict[str, asyncio.Queue[tuple[str, Any]]] = {}
+        self._relay_workers: dict[str, asyncio.Task[None]] = {}
 
     @property
     def channel_bridge_url(self) -> str:
@@ -72,6 +80,17 @@ class MobileChannelService:
 
     async def close(self) -> None:
         """Clean up resources."""
+        worker_tasks = list(self._relay_workers.values())
+        self._relay_workers.clear()
+        self._relay_event_queues.clear()
+        self._streaming_state.clear()
+        self._pending_response_completion.clear()
+
+        for task in worker_tasks:
+            task.cancel()
+        if worker_tasks:
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
+
         if self._http_client and not self._http_client.is_closed:
             await self._http_client.aclose()
             self._http_client = None
@@ -569,6 +588,8 @@ Just send a message to chat with the AI."""
         message_type: str,
         content: str,
         thread_id: Optional[str] = None,
+        *,
+        render_mode: str = "markdown",
     ) -> Optional[str]:
         """
         Send a message to a mobile platform via the Channel Bridge.
@@ -584,6 +605,7 @@ Just send a message to chat with the AI."""
                 "sender_id": sender_id,
                 "message_type": message_type,
                 "content": content,
+                "render_mode": render_mode,
             }
             if thread_id:
                 payload["thread_id"] = thread_id
@@ -632,10 +654,17 @@ Just send a message to chat with the AI."""
         sender_id: str,
         response_text: str,
         thread_id: Optional[str] = None,
+        *,
+        render_mode: str = "markdown",
     ) -> Optional[str]:
         """Send final AI response."""
         return await self.relay_to_platform(
-            platform, sender_id, "response", response_text, thread_id
+            platform,
+            sender_id,
+            "response",
+            response_text,
+            thread_id,
+            render_mode=render_mode,
         )
 
     async def relay_error(
@@ -670,6 +699,8 @@ Just send a message to chat with the AI."""
         thread_id: str,
         message_id: str,
         content: str,
+        *,
+        render_mode: str = "markdown",
     ) -> bool:
         """Edit an existing message on a platform via the bridge."""
         try:
@@ -681,6 +712,7 @@ Just send a message to chat with the AI."""
                     "thread_id": thread_id,
                     "message_id": message_id,
                     "content": content,
+                    "render_mode": render_mode,
                 },
             )
             response.raise_for_status()
@@ -723,6 +755,63 @@ Just send a message to chat with the AI."""
     # Broadcast Event Relay (called by connection.py hook)
     # =========================================================================
 
+    async def enqueue_broadcast_event(
+        self, message_type: str, content: Any, tab_id: Optional[str]
+    ) -> None:
+        """Queue a broadcast event for ordered per-tab relay processing."""
+        if tab_id is None:
+            return
+
+        if self.get_mobile_tab_info(tab_id) is None:
+            return
+
+        queue = self._relay_event_queues.get(tab_id)
+        if queue is None:
+            queue = asyncio.Queue()
+            self._relay_event_queues[tab_id] = queue
+
+        queue.put_nowait((message_type, content))
+
+        worker = self._relay_workers.get(tab_id)
+        if worker is None or worker.done():
+            self._relay_workers[tab_id] = asyncio.create_task(
+                self._relay_event_worker(tab_id),
+                name=f"mobile-relay-{tab_id}",
+            )
+
+    async def _relay_event_worker(self, tab_id: str) -> None:
+        """Process queued relay events sequentially for one tab."""
+        queue = self._relay_event_queues.get(tab_id)
+        if queue is None:
+            return
+
+        try:
+            while True:
+                try:
+                    message_type, content = queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+
+                try:
+                    await self.handle_broadcast_event(message_type, content, tab_id)
+                finally:
+                    queue.task_done()
+        except asyncio.CancelledError:
+            raise
+        finally:
+            current_task = asyncio.current_task()
+            if self._relay_workers.get(tab_id) is current_task:
+                self._relay_workers.pop(tab_id, None)
+
+            if queue.empty():
+                if self._relay_event_queues.get(tab_id) is queue:
+                    self._relay_event_queues.pop(tab_id, None)
+            else:
+                self._relay_workers[tab_id] = asyncio.create_task(
+                    self._relay_event_worker(tab_id),
+                    name=f"mobile-relay-{tab_id}",
+                )
+
     async def handle_broadcast_event(
         self, message_type: str, content: Any, tab_id: Optional[str]
     ) -> None:
@@ -734,7 +823,8 @@ Just send a message to chat with the AI."""
 
         Events we relay:
         - response_chunk: Streaming AI response (post+edit pattern)
-        - response_complete: Final AI response
+        - response_complete: Stream finished; wait for persisted final turn
+        - conversation_saved: Authoritative final assistant turn
         - tool_call: Tool execution status (only 'calling' status)
         - error: Error messages
 
@@ -759,8 +849,13 @@ Just send a message to chat with the AI."""
             await self._handle_streaming_chunk(tab_id, platform, sender_id, thread_id, content)
 
         elif message_type == "response_complete":
-            # Send final edit with complete text, then clean up streaming state
             await self._finalize_streaming(tab_id, platform, sender_id, thread_id)
+
+        elif message_type == "conversation_saved":
+            if isinstance(content, dict):
+                await self._handle_conversation_saved(
+                    tab_id, platform, sender_id, thread_id, content
+                )
 
         elif message_type == "tool_call":
             # Relay tool status updates
@@ -785,6 +880,7 @@ Just send a message to chat with the AI."""
         elif message_type == "error":
             # Relay errors and clean up any streaming state
             self._streaming_state.pop(tab_id, None)
+            self._pending_response_completion.pop(tab_id, None)
             error_text = content if isinstance(content, str) else str(content)
             await self.relay_error(platform, sender_id, error_text, thread_id)
 
@@ -808,6 +904,20 @@ Just send a message to chat with the AI."""
         now = _time.time()
 
         state = self._streaming_state.get(tab_id)
+        if state is not None and state.get("response_complete_seen"):
+            logger.warning(
+                "Discarding stale completed streaming state before new chunk: %s",
+                tab_id,
+            )
+            self._streaming_state.pop(tab_id, None)
+            self._pending_response_completion.pop(tab_id, None)
+            state = None
+        elif tab_id in self._pending_response_completion:
+            logger.warning(
+                "Discarding stale pending mobile completion before new chunk: %s",
+                tab_id,
+            )
+            self._pending_response_completion.pop(tab_id, None)
 
         if state is None:
             # First chunk — post initial message and capture the message ID
@@ -819,13 +929,19 @@ Just send a message to chat with the AI."""
                 "sender_id": sender_id,
                 "thread_id": thread_id,
                 "posted_message_id": None,
+                "response_complete_seen": False,
             }
             self._streaming_state[tab_id] = state
 
             # Post the initial message and capture the returned message ID
             sanitized = self._sanitize_for_platform(chunk_text, platform)
             message_id = await self.relay_to_platform(
-                platform, sender_id, "response", sanitized, thread_id
+                platform,
+                sender_id,
+                "response",
+                sanitized,
+                thread_id,
+                render_mode="raw",
             )
             if message_id:
                 state["posted_message_id"] = message_id
@@ -848,7 +964,11 @@ Just send a message to chat with the AI."""
         if time_since_edit >= 1.0 and state["posted_message_id"] and thread_id:
             sanitized = self._sanitize_for_platform(state["accumulated_text"], platform)
             await self.relay_edit_message(
-                platform, thread_id, state["posted_message_id"], sanitized
+                platform,
+                thread_id,
+                state["posted_message_id"],
+                sanitized,
+                render_mode="raw",
             )
             state["last_edit_time"] = now
 
@@ -859,92 +979,135 @@ Just send a message to chat with the AI."""
         sender_id: str,
         thread_id: Optional[str],
     ) -> None:
-        """Finalize streaming by editing the message with the complete response.
+        """Mark a streamed response complete and wait for conversation_saved.
 
-        If streaming was active, sends a final edit.
-        Falls back to _relay_final_response if no streaming state exists.
+        ``response_complete`` arrives before the current assistant turn is
+        persisted. We therefore avoid reconstructing the final answer from chat
+        history here, because that can still point at the previous assistant
+        message. ``conversation_saved`` is the authoritative finalization event.
         """
-        state = self._streaming_state.pop(tab_id, None)
+        state = self._streaming_state.get(tab_id)
+        if state is not None:
+            state["response_complete_seen"] = True
 
-        if state is not None and state.get("posted_message_id") and thread_id:
-            # Streaming was active — send final edit with complete text from chat history
-            from ..chat.tab_manager_instance import tab_manager
+            # Flush the latest accumulated text immediately so the mobile client
+            # is as close as possible to the final answer while we wait for the
+            # persisted turn payload.
+            response_text = state.get("accumulated_text", "")
+            if response_text and state.get("posted_message_id") and thread_id:
+                sanitized = self._sanitize_for_platform(response_text, platform)
+                await self.relay_edit_message(
+                    platform,
+                    thread_id,
+                    state["posted_message_id"],
+                    sanitized,
+                    render_mode="raw",
+                )
+            return
 
-            tab_session = tab_manager.get_session(tab_id)
-            if tab_session and tab_session.state.chat_history:
-                # Get the last assistant message for the final text
-                response_text = ""
-                for msg in reversed(tab_session.state.chat_history):
-                    if msg.get("role") == "assistant":
-                        content = msg.get("content", "")
-                        if isinstance(content, str):
-                            response_text = content
-                        elif isinstance(content, list):
-                            text_parts = []
-                            for part in content:
-                                if isinstance(part, dict) and part.get("type") == "text":
-                                    text_parts.append(part.get("text", ""))
-                                elif isinstance(part, str):
-                                    text_parts.append(part)
-                            response_text = "\n".join(text_parts)
-                        break
+        self._pending_response_completion[tab_id] = {
+            "platform": platform,
+            "sender_id": sender_id,
+            "thread_id": thread_id,
+        }
 
-                if response_text:
-                    sanitized = self._sanitize_for_platform(response_text, platform)
-                    await self.relay_edit_message(
-                        platform, thread_id, state["posted_message_id"], sanitized
-                    )
-                    return
+    def _extract_message_text(self, message: Any) -> str:
+        """Extract plain text content from a persisted message payload."""
+        if not isinstance(message, dict):
+            return ""
 
-        # No streaming state or no message ID — fall back to posting full response
-        await self._relay_final_response(platform, sender_id, tab_id, thread_id)
+        def _join_text_parts(parts: Any) -> str:
+            if not isinstance(parts, list):
+                return ""
+            text_parts: list[str] = []
+            for part in parts:
+                if isinstance(part, dict):
+                    part_type = part.get("type")
+                    if part_type == "text":
+                        text_value = part.get("text", part.get("content", ""))
+                        if text_value:
+                            text_parts.append(str(text_value))
+                elif isinstance(part, str):
+                    text_parts.append(part)
+            return "\n".join(part for part in text_parts if part)
 
-    async def _relay_final_response(
+        content = message.get("content", "")
+        if isinstance(content, str):
+            if content:
+                return content
+        else:
+            list_text = _join_text_parts(content)
+            if list_text:
+                return list_text
+
+        blocks_text = _join_text_parts(message.get("content_blocks"))
+        if blocks_text:
+            return blocks_text
+
+        active_response_index = int(message.get("active_response_index", 0) or 0)
+        response_variants = message.get("response_variants")
+        if isinstance(response_variants, list):
+            for variant in response_variants:
+                if (
+                    isinstance(variant, dict)
+                    and int(variant.get("response_index", -1) or -1)
+                    == active_response_index
+                ):
+                    variant_text = self._extract_message_text(variant)
+                    if variant_text:
+                        return variant_text
+
+            for variant in response_variants:
+                variant_text = self._extract_message_text(variant)
+                if variant_text:
+                    return variant_text
+
+        return ""
+
+    async def _handle_conversation_saved(
         self,
+        tab_id: str,
         platform: str,
         sender_id: str,
-        tab_id: str,
-        thread_id: Optional[str] = None,
+        thread_id: Optional[str],
+        payload: dict[str, Any],
     ) -> None:
-        """
-        Relay the final response for a completed generation.
-
-        We need to get the actual response text from the conversation history,
-        since response_complete doesn't include the content.
-        """
-        from ..chat.tab_manager_instance import tab_manager
-
-        tab_session = tab_manager.get_session(tab_id)
-        if not tab_session:
+        """Finalize the current mobile response from the persisted saved turn."""
+        state = self._streaming_state.get(tab_id)
+        pending_completion = self._pending_response_completion.get(tab_id)
+        if state is None and pending_completion is None:
             return
 
-        # Get the last assistant message from chat history
-        state = tab_session.state
-        if not state.chat_history:
+        turn = payload.get("turn")
+        assistant_message = turn.get("assistant") if isinstance(turn, dict) else None
+        response_text = self._extract_message_text(assistant_message)
+
+        state = self._streaming_state.pop(tab_id, None)
+        self._pending_response_completion.pop(tab_id, None)
+
+        if not response_text and state is not None:
+            response_text = str(state.get("accumulated_text", ""))
+        if not response_text:
             return
 
-        # Find the last assistant message
-        response_text = ""
-        for msg in reversed(state.chat_history):
-            if msg.get("role") == "assistant":
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    response_text = content
-                elif isinstance(content, list):
-                    # Handle multi-part content
-                    text_parts = []
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            text_parts.append(part.get("text", ""))
-                        elif isinstance(part, str):
-                            text_parts.append(part)
-                    response_text = "\n".join(text_parts)
-                break
+        sanitized = self._sanitize_for_platform(response_text, platform)
+        if state is not None and state.get("posted_message_id") and thread_id:
+            await self.relay_edit_message(
+                platform,
+                thread_id,
+                state["posted_message_id"],
+                sanitized,
+                render_mode="markdown",
+            )
+            return
 
-        if response_text:
-            # Sanitize for platform (strip excessive markdown, etc.)
-            sanitized = self._sanitize_for_platform(response_text, platform)
-            await self.relay_response(platform, sender_id, sanitized, thread_id)
+        await self.relay_response(
+            platform,
+            sender_id,
+            sanitized,
+            thread_id,
+            render_mode="markdown",
+        )
 
     def _sanitize_for_platform(self, text: str, platform: str) -> str:
         """
@@ -962,8 +1125,9 @@ Just send a message to chat with the AI."""
         # - Convert code blocks to inline code on WhatsApp
         # - Truncate very long messages (Telegram has 4096 char limit)
 
-        # Basic truncation for all platforms (most have limits around 4000-8000)
-        max_length = 4000
+        # Discord overflow is split into continuation messages in the bridge, so
+        # avoid truncating there. Telegram/WhatsApp still keep a conservative cap.
+        max_length = 20000 if platform == "discord" else 4000
         if len(text) > max_length:
             text = text[: max_length - 100] + "\n\n[Message truncated due to length]"
 
@@ -977,7 +1141,7 @@ Just send a message to chat with the AI."""
         """
         from ...core.connection import set_mobile_relay_callback
 
-        set_mobile_relay_callback(self.handle_broadcast_event)
+        set_mobile_relay_callback(self.enqueue_broadcast_event)
         logger.info("Mobile relay callback registered")
 
     def unregister_relay_callback(self) -> None:

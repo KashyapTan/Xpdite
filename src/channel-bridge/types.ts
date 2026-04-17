@@ -89,12 +89,14 @@ export interface PairingRequest {
 // ============================================================================
 
 export type OutboundMessageType = 'ack' | 'status_update' | 'final_response' | 'error';
+export type OutboundRenderMode = 'markdown' | 'raw';
 
 export interface OutboundMessage {
   platform: Platform;
   senderId: string;
   message: string;
   messageType: OutboundMessageType;
+  renderMode?: OutboundRenderMode;
   replyToMessageId?: string;
 }
 
@@ -197,6 +199,7 @@ export interface SendMessageRequest {
   senderId: string;
   message: string;
   messageType: OutboundMessageType;
+  renderMode?: OutboundRenderMode;
   replyToMessageId?: string;
 }
 

@@ -34,6 +34,46 @@ interface PairingCode {
   expiresAt: number;
 }
 
+interface MobileChannelPlatformConfig {
+  enabled: boolean;
+  token?: string;
+  publicKey?: string;
+  applicationId?: string;
+  phoneNumber?: string;
+  authMethod?: string;
+  status?: 'connected' | 'disconnected' | 'error';
+}
+
+interface SetupFormState {
+  token: string;
+  publicKey: string;
+  applicationId: string;
+}
+
+const EMPTY_SETUP_FORM: SetupFormState = {
+  token: '',
+  publicKey: '',
+  applicationId: '',
+};
+
+function isPlatformConfigured(
+  platformId: string,
+  config?: MobileChannelPlatformConfig,
+): boolean {
+  if (!config) {
+    return false;
+  }
+
+  switch (platformId) {
+    case 'discord':
+      return Boolean(config.token && config.publicKey && config.applicationId);
+    case 'whatsapp':
+      return Boolean(config.phoneNumber);
+    default:
+      return Boolean(config.token);
+  }
+}
+
 // Platform icons
 const PLATFORM_ICONS: Record<string, string> = {
   telegram: '✈️',
@@ -72,7 +112,9 @@ const SettingsMobileChannels: React.FC = () => {
     },
   ]);
   const [setupModal, setSetupModal] = useState<string | null>(null);
-  const [tokenInput, setTokenInput] = useState('');
+  const [platformConfigs, setPlatformConfigs] = useState<Record<string, MobileChannelPlatformConfig>>({});
+  const [setupForm, setSetupForm] = useState<SetupFormState>(EMPTY_SETUP_FORM);
+  const [setupError, setSetupError] = useState<string | null>(null);
   // WhatsApp specific state
   const [whatsappPhoneNumber, setWhatsappPhoneNumber] = useState('');
   const [whatsappPairingCode, setWhatsappPairingCode] = useState<string | null>(null);
@@ -93,6 +135,8 @@ const SettingsMobileChannels: React.FC = () => {
     try {
       // Get config (enabled/configured) from Python backend database
       const config = await api.getMobileChannelsConfig();
+      const configPlatforms = config.platforms ?? {};
+      setPlatformConfigs(configPlatforms);
       
       // Get live connection status from Channel Bridge via Electron IPC
       // This is the source of truth for whether platforms are actually connected
@@ -114,11 +158,11 @@ const SettingsMobileChannels: React.FC = () => {
           const liveStatus = liveStatuses.find((s) => s.platform === p.id);
           return {
             ...p,
-            enabled: config.platforms?.[p.id]?.enabled ?? false,
-            configured: !!config.platforms?.[p.id]?.token,
+            enabled: configPlatforms[p.id]?.enabled ?? false,
+            configured: isPlatformConfigured(p.id, configPlatforms[p.id]),
             // Use live status from Channel Bridge if available, otherwise fallback to DB
             status: (liveStatus?.status as 'connected' | 'disconnected' | 'error') 
-              ?? config.platforms?.[p.id]?.status 
+              ?? configPlatforms[p.id]?.status 
               ?? 'disconnected',
             statusMessage: liveStatus?.error,
           };
@@ -233,17 +277,82 @@ const SettingsMobileChannels: React.FC = () => {
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const closeSetupModal = useCallback(() => {
+    setSetupModal(null);
+    setSetupForm(EMPTY_SETUP_FORM);
+    setSetupError(null);
+  }, []);
+
+  const openSetupModal = useCallback((platformId: string) => {
+    const existingConfig = platformConfigs[platformId];
+
+    setSetupModal(platformId);
+    setSetupError(null);
+    setSetupForm({
+      token: '',
+      publicKey: platformId === 'discord' ? existingConfig?.publicKey ?? '' : '',
+      applicationId: platformId === 'discord' ? existingConfig?.applicationId ?? '' : '',
+    });
+
+    if (platformId === 'whatsapp') {
+      setWhatsappPhoneNumber(existingConfig?.phoneNumber ?? '');
+    }
+  }, [platformConfigs]);
+
   // Save platform config
-  const savePlatformConfig = async (platformId: string, token: string) => {
+  const savePlatformConfig = useCallback(async (platformId: string) => {
+    const existingConfig = platformConfigs[platformId];
+    const trimmedToken = setupForm.token.trim();
+
+    if (!trimmedToken && !existingConfig?.token) {
+      setSetupError(
+        platformId === 'discord'
+          ? 'Discord bot token is required.'
+          : 'A bot token is required.',
+      );
+      return;
+    }
+
+    const payload: {
+      token?: string;
+      enabled: boolean;
+      publicKey?: string;
+      applicationId?: string;
+    } = {
+      enabled: true,
+    };
+
+    if (trimmedToken) {
+      payload.token = trimmedToken;
+    }
+
+    if (platformId === 'discord') {
+      const publicKey = setupForm.publicKey.trim();
+      const applicationId = setupForm.applicationId.trim();
+
+      if (!publicKey) {
+        setSetupError('Discord public key is required.');
+        return;
+      }
+      if (!applicationId) {
+        setSetupError('Discord application ID is required.');
+        return;
+      }
+
+      payload.publicKey = publicKey;
+      payload.applicationId = applicationId;
+    }
+
     try {
-      await api.setMobilePlatformConfig(platformId, { token, enabled: true });
-      setSetupModal(null);
-      setTokenInput('');
+      setSetupError(null);
+      await api.setMobilePlatformConfig(platformId, payload);
+      closeSetupModal();
       await loadPlatformStatuses();
     } catch (err) {
       console.error('Failed to save platform config:', err);
+      setSetupError(err instanceof Error ? err.message : 'Failed to save platform config.');
     }
-  };
+  }, [closeSetupModal, loadPlatformStatuses, platformConfigs, setupForm]);
 
   // Disconnect platform
   const disconnectPlatform = async (platformId: string) => {
@@ -262,19 +371,29 @@ const SettingsMobileChannels: React.FC = () => {
     const platform = platforms.find((p) => p.id === setupModal);
     if (!platform) return null;
 
+    const storedConfig = platformConfigs[setupModal];
+    const hasSavedToken = Boolean(storedConfig?.token);
+    const canSaveSetup = setupModal === 'discord'
+      ? (Boolean(setupForm.token.trim()) || hasSavedToken)
+        && Boolean(setupForm.publicKey.trim())
+        && Boolean(setupForm.applicationId.trim())
+      : Boolean(setupForm.token.trim()) || hasSavedToken;
+
     return (
-      <div className="setup-modal-overlay" onClick={() => setSetupModal(null)}>
+      <div className="setup-modal-overlay" onClick={closeSetupModal}>
         <div className="setup-modal" onClick={(e) => e.stopPropagation()}>
           <div className="setup-modal-header">
             <span className="setup-modal-title">
               {platform.icon} Set up {platform.name}
             </span>
-            <button className="setup-modal-close" onClick={() => setSetupModal(null)}>
+            <button className="setup-modal-close" onClick={closeSetupModal}>
               ×
             </button>
           </div>
 
           <div className="setup-modal-body">
+            {setupError && <div className="setup-error">{setupError}</div>}
+
             {setupModal === 'telegram' && (
               <>
                 <div className="setup-step">
@@ -304,11 +423,20 @@ const SettingsMobileChannels: React.FC = () => {
                   <input
                     type="password"
                     className="setup-input"
+                    aria-label="Telegram bot token"
                     placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
+                    value={setupForm.token}
+                    onChange={(e) => {
+                      setSetupError(null);
+                      setSetupForm((prev) => ({ ...prev, token: e.target.value }));
+                    }}
                     autoComplete="off"
                   />
+                  {hasSavedToken && (
+                    <p className="setup-input-hint">
+                      Leave this blank to keep the saved token.
+                    </p>
+                  )}
                 </div>
               </>
             )}
@@ -333,6 +461,39 @@ const SettingsMobileChannels: React.FC = () => {
 
                 <div className="setup-step">
                   <span className="setup-step-number">2</span>
+                  <span className="setup-step-title">Copy Application ID and Public Key</span>
+                  <p className="setup-step-desc">
+                    In General Information, copy the Application ID and Public Key.
+                    Both are required by the Discord adapter in addition to the bot token.
+                  </p>
+                  <input
+                    type="text"
+                    className="setup-input"
+                    aria-label="Discord application ID"
+                    placeholder="Application ID"
+                    value={setupForm.applicationId}
+                    onChange={(e) => {
+                      setSetupError(null);
+                      setSetupForm((prev) => ({ ...prev, applicationId: e.target.value }));
+                    }}
+                    autoComplete="off"
+                  />
+                  <input
+                    type="text"
+                    className="setup-input"
+                    aria-label="Discord public key"
+                    placeholder="Public Key"
+                    value={setupForm.publicKey}
+                    onChange={(e) => {
+                      setSetupError(null);
+                      setSetupForm((prev) => ({ ...prev, publicKey: e.target.value }));
+                    }}
+                    autoComplete="off"
+                  />
+                </div>
+
+                <div className="setup-step">
+                  <span className="setup-step-number">3</span>
                   <span className="setup-step-title">Create a Bot</span>
                   <p className="setup-step-desc">
                     In your application, go to the "Bot" tab and click "Add Bot".
@@ -340,7 +501,7 @@ const SettingsMobileChannels: React.FC = () => {
                 </div>
 
                 <div className="setup-step">
-                  <span className="setup-step-number">3</span>
+                  <span className="setup-step-number">4</span>
                   <span className="setup-step-title">Enable Message Content Intent</span>
                   <p className="setup-step-desc">
                     <strong>Important:</strong> In the Bot settings, scroll down to
@@ -350,19 +511,38 @@ const SettingsMobileChannels: React.FC = () => {
                 </div>
 
                 <div className="setup-step">
-                  <span className="setup-step-number">4</span>
+                  <span className="setup-step-number">5</span>
                   <span className="setup-step-title">Copy Your Bot Token</span>
                   <p className="setup-step-desc">
                     Click "Reset Token" to get your bot token, then paste it below.
+                    Application ID and Public Key come from General Information, not the Bot tab.
                   </p>
                   <input
                     type="password"
                     className="setup-input"
+                    aria-label="Discord bot token"
                     placeholder="MTIzNDU2Nzg5MDEyMzQ1Njc4OQ.Gh7aBC.xyz..."
-                    value={tokenInput}
-                    onChange={(e) => setTokenInput(e.target.value)}
+                    value={setupForm.token}
+                    onChange={(e) => {
+                      setSetupError(null);
+                      setSetupForm((prev) => ({ ...prev, token: e.target.value }));
+                    }}
                     autoComplete="off"
                   />
+                  {hasSavedToken && (
+                    <p className="setup-input-hint">
+                      Leave this blank to keep the saved token.
+                    </p>
+                  )}
+                </div>
+
+                <div className="setup-step">
+                  <span className="setup-step-number">6</span>
+                  <span className="setup-step-title">Invite the Bot</span>
+                  <p className="setup-step-desc">
+                    In OAuth2 → URL Generator, invite the bot with the permissions it
+                    needs to read and send messages in the server or thread you want to use.
+                  </p>
                 </div>
               </>
             )}
@@ -456,13 +636,13 @@ const SettingsMobileChannels: React.FC = () => {
 
           {setupModal !== 'whatsapp' && (
             <div className="setup-modal-footer">
-              <button className="setup-btn-cancel" onClick={() => setSetupModal(null)}>
+              <button className="setup-btn-cancel" onClick={closeSetupModal}>
                 Cancel
               </button>
               <button
                 className="setup-btn-save"
-                disabled={!tokenInput.trim()}
-                onClick={() => savePlatformConfig(setupModal, tokenInput)}
+                disabled={!canSaveSetup}
+                onClick={() => savePlatformConfig(setupModal)}
               >
                 Save & Connect
               </button>
@@ -556,7 +736,7 @@ const SettingsMobileChannels: React.FC = () => {
                 ) : (
                   <button
                     className="platform-btn configure"
-                    onClick={() => setSetupModal(platform.id)}
+                    onClick={() => openSetupModal(platform.id)}
                   >
                     {platform.configured ? 'Reconnect' : 'Set up'}
                   </button>

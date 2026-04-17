@@ -1,0 +1,45 @@
+export const DISCORD_OUTBOUND_CHUNK_LIMIT = 1900;
+
+function findPreferredSplitPoint(content: string, maxLength: number): number {
+  const minPreferred = Math.floor(maxLength * 0.6);
+  const candidates = [
+    content.lastIndexOf('\n\n', maxLength),
+    content.lastIndexOf('\n', maxLength),
+    content.lastIndexOf(' ', maxLength),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate >= minPreferred) {
+      if (content.startsWith('\n\n', candidate)) {
+        return Math.min(candidate + 2, maxLength);
+      }
+      return Math.min(candidate + 1, maxLength);
+    }
+  }
+
+  return maxLength;
+}
+
+export function splitDiscordOutboundContent(
+  content: string,
+  maxLength: number = DISCORD_OUTBOUND_CHUNK_LIMIT,
+): string[] {
+  if (content.length <= maxLength) {
+    return [content];
+  }
+
+  const chunks: string[] = [];
+  let remaining = content;
+
+  while (remaining.length > maxLength) {
+    const splitAt = findPreferredSplitPoint(remaining, maxLength);
+    chunks.push(remaining.slice(0, splitAt));
+    remaining = remaining.slice(splitAt);
+  }
+
+  if (remaining) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}

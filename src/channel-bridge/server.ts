@@ -13,7 +13,8 @@ import type {
   HealthResponse, 
   PlatformStatus,
   Platform,
-  OutboundMessageType 
+  OutboundMessageType,
+  OutboundRenderMode,
 } from './types.js';
 
 export interface ServerDependencies {
@@ -24,6 +25,7 @@ export interface ServerDependencies {
     messageType: OutboundMessageType,
     replyToMessageId?: string,
     threadId?: string,
+    renderMode?: OutboundRenderMode,
   ) => Promise<string | undefined>;
   startTypingIndicator: (
     platform: Platform,
@@ -34,6 +36,7 @@ export interface ServerDependencies {
     threadId: string,
     messageId: string,
     content: string,
+    renderMode?: OutboundRenderMode,
   ) => Promise<void>;
   getPlatformStatuses: () => PlatformStatus[];
 }
@@ -127,7 +130,9 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           body.senderId,
           body.message,
           body.messageType ?? 'final_response',
-          body.replyToMessageId
+          body.replyToMessageId,
+          undefined,
+          body.renderMode,
         );
 
         sendJson(res, 200, { success: true });
@@ -141,6 +146,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           sender_id: string;
           message_type: 'ack' | 'status' | 'response' | 'error';
           content: string;
+          render_mode?: OutboundRenderMode;
           thread_id?: string;
         }>(req);
         
@@ -163,7 +169,8 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           body.content,
           typeMap[body.message_type] ?? 'final_response',
           undefined,
-          body.thread_id
+          body.thread_id,
+          body.render_mode,
         );
 
         sendJson(res, 200, { success: true, message_id: messageId });
@@ -194,6 +201,7 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           thread_id: string;
           message_id: string;
           content: string;
+          render_mode?: OutboundRenderMode;
         }>(req);
         
         if (!body.platform || !body.thread_id || !body.message_id || !body.content) {
@@ -201,7 +209,13 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
           return;
         }
 
-        await deps.editPlatformMessage(body.platform, body.thread_id, body.message_id, body.content);
+        await deps.editPlatformMessage(
+          body.platform,
+          body.thread_id,
+          body.message_id,
+          body.content,
+          body.render_mode,
+        );
         sendJson(res, 200, { success: true });
         return;
       }
