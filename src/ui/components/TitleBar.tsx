@@ -110,11 +110,7 @@ const TitleBar: React.FC<TitleBarProps> = ({ setMini }) => {
             src={xpditeLogo}
             alt="Xpdite Logo"
             className='xpdite-logo'
-            onClick={() => {
-              console.log('Logo clicked, entering mini mode');
-              setMini(true);
-              window.electronAPI?.setMiniMode(true);
-            }}
+            onClick={() => { void setMini(true) }}
             style={{ cursor: 'pointer' }}
             title="Mini mode"
           />

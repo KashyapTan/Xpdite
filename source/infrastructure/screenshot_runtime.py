@@ -114,6 +114,7 @@ def copy_image_to_clipboard(image, dpi_scale=None):
         # Use c_void_p for handles to be safe on 64-bit
         kernel32.GlobalAlloc.restype = ctypes.c_void_p
         kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
+        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
         kernel32.GlobalLock.restype = ctypes.c_void_p
         kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
         kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
@@ -124,21 +125,32 @@ def copy_image_to_clipboard(image, dpi_scale=None):
         # Retry loop: Clipboard is often locked momentarily by managers or other apps
         for _ in range(10):
             if user32.OpenClipboard(0):
+                h_mem = None
                 try:
                     user32.EmptyClipboard()
                     # GMEM_MOVEABLE (0x0002) | GMEM_ZEROINIT (0x0040) = 0x0042
                     h_mem = kernel32.GlobalAlloc(0x0042, len(data))
-                    if h_mem:
-                        p_mem = kernel32.GlobalLock(h_mem)
-                        if p_mem:
-                            ctypes.memmove(p_mem, data, len(data))
-                            kernel32.GlobalUnlock(h_mem)
+                    if not h_mem:
+                        continue
 
-                            # CF_DIB = 8
-                            user32.SetClipboardData(8, h_mem)
+                    p_mem = kernel32.GlobalLock(h_mem)
+                    if not p_mem:
+                        continue
+
+                    ctypes.memmove(p_mem, data, len(data))
+                    kernel32.GlobalUnlock(h_mem)
+
+                    # CF_DIB = 8. Ownership transfers to the clipboard on success.
+                    if user32.SetClipboardData(8, h_mem):
+                        h_mem = None
+                        return True
                 finally:
+                    if h_mem:
+                        try:
+                            kernel32.GlobalFree(h_mem)
+                        except Exception:
+                            pass
                     user32.CloseClipboard()
-                return True
             time.sleep(0.05)
 
     except Exception as e:

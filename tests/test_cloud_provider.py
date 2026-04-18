@@ -13,6 +13,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from source.infrastructure.config import MAX_TOOL_RESULT_LENGTH
 from source.services.hooks_runtime.runtime import HookDispatchResult
 
 
@@ -206,9 +207,9 @@ class TestHelpers:
     def test_truncate_tool_result_long(self):
         from source.llm.providers.cloud_provider import _truncate_tool_result
 
-        long_text = "x" * 200_001
+        long_text = "x" * (MAX_TOOL_RESULT_LENGTH + 1)
         result = _truncate_tool_result(long_text)
-        assert result.startswith("x" * 200_000)
+        assert result.startswith("x" * MAX_TOOL_RESULT_LENGTH)
         assert result.endswith("[Output truncated due to length]")
 
     def test_format_image(self):

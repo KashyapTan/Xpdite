@@ -14,11 +14,9 @@ const Layout: React.FC = () => {
   useTabKeyboardShortcuts();
 
   const toggleMini = async (val: boolean) => {
-    console.log('toggleMini called with:', val);
     setMini(val);
     if (window.electronAPI) {
       await window.electronAPI.setMiniMode(val);
-      console.log('electronAPI.setMiniMode call finished');
     }
   };
 

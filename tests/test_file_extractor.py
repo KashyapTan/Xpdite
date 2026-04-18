@@ -1,13 +1,18 @@
 """Tests for source/services/media/file_extractor.py"""
 
 import base64
+import datetime
+import io
 import os
+import sys
 import tempfile
 import time
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+import source.services.media.file_extractor as file_extractor_module
 from source.services.media.file_extractor import (
     ARCHIVE_EXTENSIONS,
     EXTRACTED_IMAGE_PREFIX,
@@ -25,6 +30,14 @@ from source.services.media.file_extractor import (
     FileExtractor,
     ImageResult,
 )
+
+
+def _make_png_bytes(size=(100, 100), color="red"):
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", size, color=color).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 # ------------------------------------------------------------------------------
@@ -573,6 +586,454 @@ class TestFileExtractorDocumentDispatch:
             assert "Error extracting content" in result.text
 
 
+class TestFileExtractorStructuredExtractors:
+    """Tests for mocked document extractor branches."""
+
+    def test_extract_pdf_collects_text_images_and_warnings(self, extractor, temp_dir):
+        pdf_path = os.path.join(temp_dir, "report.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(b"%PDF-1.4")
+
+        valid_image = _make_png_bytes((120, 120))
+        oversized_image = b"x" * (file_extractor_module.MAX_EMBEDDED_IMAGE_BYTES + 1)
+        broken_image = b"not-an-image"
+
+        class FakePage:
+            def __init__(self, text, images):
+                self._text = text
+                self._images = images
+
+            def get_text(self):
+                return self._text
+
+            def get_images(self, full=True):
+                assert full is True
+                return self._images
+
+        class FakeDoc:
+            def __init__(self):
+                self.metadata = {"title": "Quarterly Report", "author": "Ops"}
+                self.closed = False
+                self._pages = [
+                    FakePage("Page one text", [(11,), (12,), (13,)]),
+                    FakePage("   ", []),
+                ]
+
+            def __len__(self):
+                return len(self._pages)
+
+            def __iter__(self):
+                return iter(self._pages)
+
+            def extract_image(self, xref):
+                return {
+                    11: {"image": valid_image, "ext": "png"},
+                    12: {"image": oversized_image, "ext": "png"},
+                    13: {"image": broken_image, "ext": "png"},
+                }[xref]
+
+            def close(self):
+                self.closed = True
+
+        fake_doc = FakeDoc()
+        fitz_module = ModuleType("fitz")
+        fitz_module.open = lambda path: fake_doc
+
+        saved_image = ExtractedImage(
+            path=os.path.join(temp_dir, "saved.png"),
+            page=1,
+            index=1,
+            width=120,
+            height=120,
+            description="Page 1, Image 1",
+        )
+
+        with (
+            patch.dict(sys.modules, {"fitz": fitz_module}),
+            patch.object(extractor, "_save_extracted_image", return_value=saved_image),
+        ):
+            result = extractor._extract_pdf(pdf_path)
+
+        assert fake_doc.closed is True
+        assert result.page_count == 2
+        assert result.metadata is not None
+        assert result.metadata.title == "Quarterly Report"
+        assert result.metadata.author == "Ops"
+        assert saved_image in result.extracted_images
+        assert "--- Page 1 ---" in result.text
+        assert "Page one text" in result.text
+        assert "[No text content on this page]" in result.text
+        assert extractor._format_inline_image_marker(saved_image) in result.text
+        assert any("too large" in warning for warning in result.warnings)
+        assert any("extraction failed" in warning for warning in result.warnings)
+
+    def test_extract_docx_preserves_document_order_and_appends_unmapped_images(
+        self, extractor, temp_dir
+    ):
+        docx_path = os.path.join(temp_dir, "report.docx")
+        with open(docx_path, "wb") as f:
+            f.write(b"docx")
+
+        class FakeDocxElement:
+            def __init__(self, tag, drawings=0):
+                self.tag = tag
+                self._drawings = drawings
+
+            def xpath(self, _expr):
+                return [object()] * self._drawings
+
+        para_element = FakeDocxElement("w:p", drawings=1)
+        table_element = FakeDocxElement("w:tbl")
+
+        paragraph = SimpleNamespace(_element=para_element, text="Intro paragraph")
+        header_row = SimpleNamespace(cells=[SimpleNamespace(text="Header"), SimpleNamespace(text="Value")])
+        data_row = SimpleNamespace(cells=[SimpleNamespace(text="A"), SimpleNamespace(text="1")])
+        table = SimpleNamespace(_element=table_element, rows=[header_row, data_row])
+
+        image_one = SimpleNamespace(
+            reltype="image/png",
+            target_part=SimpleNamespace(
+                blob=_make_png_bytes((120, 120)),
+                content_type="image/png",
+            ),
+        )
+        image_two = SimpleNamespace(
+            reltype="image/png",
+            target_part=SimpleNamespace(
+                blob=_make_png_bytes((140, 140), color="blue"),
+                content_type="image/png",
+            ),
+        )
+
+        fake_doc = SimpleNamespace(
+            core_properties=SimpleNamespace(
+                title="Doc Title",
+                author="Doc Author",
+                created=datetime.datetime(2024, 1, 2, 3, 4, 5),
+            ),
+            paragraphs=[paragraph],
+            tables=[table],
+            part=SimpleNamespace(rels={"rId1": image_one, "rId2": image_two}),
+            element=SimpleNamespace(body=[para_element, table_element]),
+        )
+
+        docx_module = ModuleType("docx")
+        docx_module.Document = lambda path: fake_doc
+
+        saved_images = [
+            ExtractedImage(
+                path=os.path.join(temp_dir, "img1.png"),
+                page=None,
+                index=1,
+                width=120,
+                height=120,
+                description="Image 1",
+            ),
+            ExtractedImage(
+                path=os.path.join(temp_dir, "img2.png"),
+                page=None,
+                index=2,
+                width=140,
+                height=140,
+                description="Image 2",
+            ),
+        ]
+
+        with (
+            patch.dict(sys.modules, {"docx": docx_module}),
+            patch.object(extractor, "_save_extracted_image", side_effect=saved_images),
+        ):
+            result = extractor._extract_docx(docx_path)
+
+        assert result.metadata is not None
+        assert result.metadata.format == "docx"
+        assert result.metadata.title == "Doc Title"
+        assert result.metadata.author == "Doc Author"
+        assert result.metadata.created_at == "2024-01-02T03:04:05"
+        assert result.extracted_images == saved_images
+        assert "Intro paragraph" in result.text
+        assert extractor._format_inline_image_marker(saved_images[0]) in result.text
+        assert "| Header | Value |" in result.text
+        assert extractor._format_inline_image_marker(saved_images[1]) in result.text
+
+    def test_extract_xlsx_formats_rows_and_truncates(self, extractor, temp_dir):
+        xlsx_path = os.path.join(temp_dir, "sheet.xlsx")
+        with open(xlsx_path, "wb") as f:
+            f.write(b"xlsx")
+
+        class FakeSheet:
+            def __init__(self, rows):
+                self._rows = rows
+
+            def iter_rows(self, values_only=True):
+                assert values_only is True
+                return iter(self._rows)
+
+        class FakeWorkbook:
+            def __init__(self):
+                self.sheetnames = ["Summary", "Empty"]
+                self.closed = False
+                self._sheets = {
+                    "Summary": FakeSheet([("alpha", 1), ("beta", 2)]),
+                    "Empty": FakeSheet([(None, None)]),
+                }
+
+            def __getitem__(self, name):
+                return self._sheets[name]
+
+            def close(self):
+                self.closed = True
+
+        workbook = FakeWorkbook()
+        openpyxl_module = ModuleType("openpyxl")
+        openpyxl_module.load_workbook = lambda path, read_only, data_only: workbook
+
+        with (
+            patch.dict(sys.modules, {"openpyxl": openpyxl_module}),
+            patch.object(file_extractor_module, "MAX_EXCEL_ROWS", 1),
+        ):
+            result = extractor._extract_xlsx(xlsx_path)
+
+        assert workbook.closed is True
+        assert result.metadata is not None
+        assert result.metadata.format == "xlsx"
+        assert result.metadata.sheet_names == ["Summary", "Empty"]
+        assert "--- Sheet: Summary ---" in result.text
+        assert "| alpha | 1 |" in result.text
+        assert "[Empty sheet]" in result.text
+        assert result.page_count == 2
+        assert result.warnings == ["Sheet 'Summary': truncated at 1 rows"]
+
+    def test_extract_xls_formats_rows_and_truncates(self, extractor, temp_dir):
+        xls_path = os.path.join(temp_dir, "legacy.xls")
+        with open(xls_path, "wb") as f:
+            f.write(b"xls")
+
+        class FakeSheet:
+            def __init__(self, rows):
+                self._rows = rows
+                self.nrows = len(rows)
+
+            def row_values(self, row_idx):
+                return self._rows[row_idx]
+
+        class FakeWorkbook:
+            def __init__(self):
+                self._sheets = {
+                    "Summary": FakeSheet([["alpha", 1], ["beta", 2]]),
+                    "Empty": FakeSheet([[None, None]]),
+                }
+
+            def sheet_names(self):
+                return list(self._sheets.keys())
+
+            def sheet_by_name(self, name):
+                return self._sheets[name]
+
+        xlrd_module = ModuleType("xlrd")
+        xlrd_module.open_workbook = lambda path: FakeWorkbook()
+
+        with (
+            patch.dict(sys.modules, {"xlrd": xlrd_module}),
+            patch.object(file_extractor_module, "MAX_EXCEL_ROWS", 1),
+        ):
+            result = extractor._extract_xls(xls_path)
+
+        assert result.metadata is not None
+        assert result.metadata.format == "xls"
+        assert result.metadata.sheet_names == ["Summary", "Empty"]
+        assert "| alpha | 1 |" in result.text
+        assert "[Empty sheet]" in result.text
+        assert result.page_count == 2
+        assert result.warnings == ["Sheet 'Summary': truncated at 1 rows"]
+
+    def test_extract_odf_reads_text_and_spreadsheet_cells(self, extractor, temp_dir):
+        ods_path = os.path.join(temp_dir, "book.ods")
+        with open(ods_path, "wb") as f:
+            f.write(b"ods")
+
+        class FakeTextNode:
+            TEXT_NODE = 3
+
+            def __init__(self, text):
+                self.nodeType = self.TEXT_NODE
+                self.childNodes = []
+                self._text = text
+
+            def __str__(self):
+                return self._text
+
+        class FakeElement:
+            def __init__(self, child_nodes=None, attrs=None):
+                self.nodeType = 1
+                self.childNodes = child_nodes or []
+                self._attrs = attrs or {}
+                self._typed_children = {}
+
+            def getElementsByType(self, type_):
+                return self._typed_children.get(type_, [])
+
+            def set_children(self, type_, children):
+                self._typed_children[type_] = children
+                return self
+
+            def getAttribute(self, name):
+                return self._attrs.get(name)
+
+        text_module = ModuleType("odf.text")
+        text_module.P = object()
+        table_module = ModuleType("odf.table")
+        table_module.Table = object()
+        table_module.TableRow = object()
+        table_module.TableCell = object()
+
+        paragraph = FakeElement([FakeTextNode("First paragraph")])
+        row = FakeElement().set_children(
+            table_module.TableCell,
+            [
+                FakeElement([FakeTextNode("A1")]),
+                FakeElement([FakeTextNode("B1")]),
+            ],
+        )
+        table = FakeElement(attrs={"name": "Sheet1"}).set_children(
+            table_module.TableRow,
+            [row],
+        )
+
+        class FakeOdfDocument:
+            def getElementsByType(self, type_):
+                if type_ is text_module.P:
+                    return [paragraph]
+                if type_ is table_module.Table:
+                    return [table]
+                return []
+
+        odf_module = ModuleType("odf")
+        odf_module.text = text_module
+        odf_module.table = table_module
+        odf_open_document = ModuleType("odf.opendocument")
+        odf_open_document.load = lambda path: FakeOdfDocument()
+
+        with patch.dict(
+            sys.modules,
+            {
+                "odf": odf_module,
+                "odf.text": text_module,
+                "odf.table": table_module,
+                "odf.opendocument": odf_open_document,
+            },
+        ):
+            result = extractor._extract_odf(ods_path, ".ods")
+
+        assert result.metadata is not None
+        assert result.metadata.format == "ods"
+        assert "First paragraph" in result.text
+        assert "--- Sheet: Sheet1 ---" in result.text
+        assert "| A1 | B1 |" in result.text
+        assert result.warnings == []
+
+    def test_extract_pptx_collects_titles_text_and_images(self, extractor, temp_dir):
+        pptx_path = os.path.join(temp_dir, "slides.pptx")
+        with open(pptx_path, "wb") as f:
+            f.write(b"pptx")
+
+        picture_type = 99
+
+        class FakeShapes(list):
+            def __init__(self, shapes, title):
+                super().__init__(shapes)
+                self.title = title
+
+        title_shape = SimpleNamespace(text="Quarterly Update")
+        text_shape = SimpleNamespace(
+            has_text_frame=True,
+            text_frame=SimpleNamespace(
+                paragraphs=[
+                    SimpleNamespace(text="Quarterly Update"),
+                    SimpleNamespace(text="Revenue grew 20%"),
+                ]
+            ),
+            shape_type=None,
+        )
+        picture_shape = SimpleNamespace(
+            has_text_frame=False,
+            shape_type=picture_type,
+            image=SimpleNamespace(blob=_make_png_bytes((150, 90)), ext="png"),
+        )
+        slide = SimpleNamespace(shapes=FakeShapes([text_shape, picture_shape], title_shape))
+        fake_presentation = SimpleNamespace(
+            core_properties=SimpleNamespace(
+                title="Deck Title",
+                author="Presenter",
+                created=datetime.datetime(2024, 2, 3, 4, 5, 6),
+            ),
+            slides=[slide],
+        )
+
+        pptx_module = ModuleType("pptx")
+        pptx_module.Presentation = lambda path: fake_presentation
+        pptx_enum_module = ModuleType("pptx.enum")
+        pptx_shapes_module = ModuleType("pptx.enum.shapes")
+        pptx_shapes_module.MSO_SHAPE_TYPE = SimpleNamespace(PICTURE=picture_type)
+
+        saved_image = ExtractedImage(
+            path=os.path.join(temp_dir, "slide-image.png"),
+            page=1,
+            index=1,
+            width=150,
+            height=90,
+            description="Page 1, Image 1",
+        )
+
+        with (
+            patch.dict(
+                sys.modules,
+                {
+                    "pptx": pptx_module,
+                    "pptx.enum": pptx_enum_module,
+                    "pptx.enum.shapes": pptx_shapes_module,
+                },
+            ),
+            patch.object(extractor, "_save_extracted_image", return_value=saved_image),
+        ):
+            result = extractor._extract_pptx(pptx_path)
+
+        assert result.metadata is not None
+        assert result.metadata.format == "pptx"
+        assert result.metadata.title == "Deck Title"
+        assert result.metadata.author == "Presenter"
+        assert result.metadata.created_at == "2024-02-03T04:05:06"
+        assert result.page_count == 1
+        assert "--- Slide 1: Quarterly Update ---" in result.text
+        assert "Revenue grew 20%" in result.text
+        assert result.text.count("Quarterly Update") == 1
+        assert extractor._format_inline_image_marker(saved_image) in result.text
+        assert result.extracted_images == [saved_image]
+
+    def test_get_odf_text_recurses_into_nested_nodes(self, extractor):
+        class FakeTextNode:
+            TEXT_NODE = 3
+
+            def __init__(self, text):
+                self.nodeType = self.TEXT_NODE
+                self.childNodes = []
+                self._text = text
+
+            def __str__(self):
+                return self._text
+
+        class FakeNode:
+            TEXT_NODE = 3
+
+            def __init__(self, child_nodes):
+                self.nodeType = 1
+                self.childNodes = child_nodes
+
+        nested = FakeNode([FakeTextNode("Hello "), FakeNode([FakeTextNode("World")])])
+
+        assert extractor._get_odf_text(nested) == "Hello World"
+
+
 class TestFileExtractorPagination:
     """Tests for pagination helpers."""
 
@@ -975,6 +1436,33 @@ class TestFileExtractorCleanup:
             with patch("os.path.exists", return_value=False):
                 removed = FileExtractor.cleanup_extracted_images()
                 assert removed == 0
+
+    def test_cleanup_continues_when_stat_fails_for_one_file(self, temp_dir):
+        stale_file = os.path.join(temp_dir, f"{EXTRACTED_IMAGE_PREFIX}stale.png")
+        blocked_file = os.path.join(temp_dir, f"{EXTRACTED_IMAGE_PREFIX}blocked.png")
+        with open(stale_file, "w", encoding="utf-8") as f:
+            f.write("stale")
+        with open(blocked_file, "w", encoding="utf-8") as f:
+            f.write("blocked")
+
+        old_time = time.time() - (25 * 3600)
+        os.utime(stale_file, (old_time, old_time))
+
+        real_getmtime = os.path.getmtime
+
+        def fake_getmtime(path):
+            if path == blocked_file:
+                raise OSError("stat failed")
+            return real_getmtime(path)
+
+        with patch("source.services.media.file_extractor.os.path.getmtime", side_effect=fake_getmtime):
+            removed = FileExtractor.cleanup_extracted_images(
+                screenshot_folder=temp_dir, max_age_hours=24
+            )
+
+        assert removed == 1
+        assert not os.path.exists(stale_file)
+        assert os.path.exists(blocked_file)
 
 
 # ------------------------------------------------------------------------------

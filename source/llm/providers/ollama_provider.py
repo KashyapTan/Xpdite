@@ -17,8 +17,7 @@ from typing import List, Dict, Any, Optional
 from ollama import AsyncClient as OllamaAsyncClient
 from ...infrastructure.config import OLLAMA_CTX_SIZE
 from ...core.connection import broadcast_message
-from ...core.request_context import get_current_model, get_current_request, is_current_request_cancelled
-from ...core.state import app_state
+from ...core.request_context import get_current_request, is_current_request_cancelled
 from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
 from ...mcp_integration.core.handlers import handle_mcp_tool_calls
 from ...mcp_integration.core.manager import mcp_manager
@@ -64,6 +63,7 @@ def _build_messages(
 
 
 async def stream_ollama_chat(
+    model_name: str,
     user_query: str,
     image_paths: List[str],
     chat_history: List[Dict[str, Any]],
@@ -97,7 +97,7 @@ async def stream_ollama_chat(
     tool_calls_list: List[Dict[str, Any]] = []
     _empty_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
 
-    ctx = get_current_request() or app_state.current_request
+    ctx = get_current_request()
 
     # Register cancel callback to close the HTTP transport immediately,
     # which makes the in-flight await raise an error and breaks out.
@@ -173,7 +173,7 @@ async def stream_ollama_chat(
 
     try:
         chat_kwargs: Dict[str, Any] = {
-            "model": get_current_model() or app_state.selected_model,
+            "model": model_name,
             "messages": messages,
             "stream": True,
             "options": {"num_ctx": OLLAMA_CTX_SIZE},
@@ -271,7 +271,23 @@ async def stream_ollama_chat(
                             stream_emitted_visible_output = True
 
             # Track final message and token stats
-            if hasattr(chunk, "done") and getattr(chunk, "done"):
+            if isinstance(chunk, dict) and chunk.get("done"):
+                token_stats = {
+                    "prompt_eval_count": chunk.get("prompt_eval_count", 0),
+                    "eval_count": chunk.get("eval_count", 0),
+                }
+                collected_token_stats["prompt_eval_count"] = (
+                    token_stats["prompt_eval_count"] or 0
+                )
+                collected_token_stats["eval_count"] = token_stats["eval_count"] or 0
+                await broadcast_message("token_usage", json.dumps(token_stats))
+
+                msg = chunk.get("message", {})
+                if isinstance(msg, dict):
+                    mc = msg.get("content")
+                    if isinstance(mc, str) and mc:
+                        final_message_content = mc
+            elif hasattr(chunk, "done") and getattr(chunk, "done"):
                 token_stats = {
                     "prompt_eval_count": getattr(chunk, "prompt_eval_count", 0),
                     "eval_count": getattr(chunk, "eval_count", 0),
@@ -326,7 +342,7 @@ async def stream_ollama_chat(
             try:
                 logger.warning("Stream empty. Attempting non-streamed fallback...")
                 fallback_kwargs: Dict[str, Any] = {
-                    "model": get_current_model() or app_state.selected_model,
+                    "model": model_name,
                     "messages": messages,
                     "stream": False,
                     "options": {"num_ctx": OLLAMA_CTX_SIZE},
@@ -335,7 +351,15 @@ async def stream_ollama_chat(
 
                 content_str = ""
                 fallback_thinking = ""
-                if hasattr(fallback, "message"):
+                if isinstance(fallback, dict):
+                    msg = fallback.get("message", {})
+                    if isinstance(msg, dict):
+                        if isinstance(msg.get("thinking"), str) and msg.get("thinking"):
+                            fallback_thinking = msg["thinking"]
+
+                        if isinstance(msg.get("content"), str) and msg.get("content"):
+                            content_str = msg["content"]
+                elif hasattr(fallback, "message"):
                     msg = getattr(fallback, "message")
                     if msg:
                         if hasattr(msg, "thinking") and msg.thinking:

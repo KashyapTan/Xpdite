@@ -39,8 +39,11 @@ function makeConfig(overrides?: Record<string, Record<string, unknown>>) {
 }
 
 describe('SettingsMobileChannels', () => {
+  let whatsappPairingCodeHandler: ((code: string) => void) | null = null;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    whatsappPairingCodeHandler = null;
     mockedApi.getMobilePairedDevices.mockResolvedValue({ devices: [] });
     mockedApi.getMobileChannelsConfig.mockResolvedValue(makeConfig());
     mockedApi.setMobilePlatformConfig.mockResolvedValue(undefined);
@@ -52,7 +55,10 @@ describe('SettingsMobileChannels', () => {
 
     window.electronAPI = {
       getChannelBridgeStatus: vi.fn().mockResolvedValue({ platforms: [] }),
-      onWhatsAppPairingCode: vi.fn(() => vi.fn()),
+      onWhatsAppPairingCode: vi.fn((handler: (code: string) => void) => {
+        whatsappPairingCodeHandler = handler;
+        return vi.fn();
+      }),
       onChannelBridgeStatus: vi.fn(() => vi.fn()),
     } as unknown as Window['electronAPI'];
   });
@@ -131,6 +137,33 @@ describe('SettingsMobileChannels', () => {
         publicKey: DISCORD_PUBLIC_KEY,
         applicationId: '123456789012345678',
       });
+    });
+  });
+
+  test('shows WhatsApp setup errors and clears them when a pairing code arrives', async () => {
+    mockedApi.setMobilePlatformConfig.mockRejectedValueOnce(new Error('Bridge unavailable'));
+    render(<SettingsMobileChannels />);
+
+    const whatsappCard = (await screen.findByText('WhatsApp')).closest('.platform-card');
+    expect(whatsappCard).not.toBeNull();
+
+    fireEvent.click(
+      within(whatsappCard as HTMLElement).getByRole('button', { name: 'Set up' }),
+    );
+
+    fireEvent.change(screen.getByPlaceholderText('+1234567890'), {
+      target: { value: '+15551234567' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Connect WhatsApp' }));
+
+    expect(await screen.findByText('Bridge unavailable')).toBeInTheDocument();
+
+    expect(whatsappPairingCodeHandler).not.toBeNull();
+    whatsappPairingCodeHandler?.('123-456');
+
+    expect(await screen.findByText('123-456')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText('Bridge unavailable')).not.toBeInTheDocument();
     });
   });
 });

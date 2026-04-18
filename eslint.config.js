@@ -11,6 +11,7 @@ export default tseslint.config(
     'build-temp',
     '.venv',
     'node_modules',
+    'coverage',
     'archive',
     'claude-code-reference-implementations',
   ] },

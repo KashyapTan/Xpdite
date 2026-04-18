@@ -1,6 +1,8 @@
 """Tests for TerminalService — escapes, ANSI stripping, session state."""
 
 import asyncio
+import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,11 @@ class _FakeStdout:
 class _TimeoutStdout:
     async def readline(self) -> bytes:
         raise asyncio.TimeoutError
+
+
+class _CancelledStdout:
+    async def readline(self) -> bytes:
+        raise asyncio.CancelledError
 
 
 class _FakeProcess:
@@ -48,6 +55,32 @@ async def _wait_for_timeout(awaitable, timeout):
     if callable(close):
         close()
     raise asyncio.TimeoutError
+
+
+class _FakePtyProcess:
+    def __init__(self, chunks=None, *, exitstatus: int = 0):
+        self._chunks = list(chunks or [])
+        self.exitstatus = exitstatus
+        self.writes: list[str] = []
+        self.terminated = False
+        self.size: tuple[int, int] | None = None
+
+    def read(self, _size: int) -> str:
+        if self._chunks:
+            value = self._chunks.pop(0)
+            if isinstance(value, BaseException):
+                raise value
+            return value
+        raise EOFError
+
+    def write(self, text: str) -> None:
+        self.writes.append(text)
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def setwinsize(self, rows: int, cols: int) -> None:
+        self.size = (rows, cols)
 
 
 class TestDecodeSafeEscapes:
@@ -521,7 +554,54 @@ class TestRunningNotices:
         assert mock_bcast.await_args_list[0].args[0] == "terminal_running_notice"
 
 
+class TestBroadcastHelpers:
+    @pytest.mark.asyncio
+    async def test_broadcast_output_and_complete_delegate_to_websocket(self):
+        ts = TerminalService()
+
+        with patch(
+            "source.services.shell.terminal.broadcast_message", new_callable=AsyncMock
+        ) as mock_bcast:
+            await ts.broadcast_output("req-1", "hello", stream=True, raw=True)
+            await ts.broadcast_complete("req-1", 0, 15)
+
+        assert mock_bcast.await_args_list[0].args == (
+            "terminal_output",
+            {
+                "text": "hello",
+                "request_id": "req-1",
+                "stream": True,
+                "raw": True,
+            },
+        )
+        assert mock_bcast.await_args_list[1].args == (
+            "terminal_command_complete",
+            {
+                "request_id": "req-1",
+                "exit_code": 0,
+                "duration_ms": 15,
+            },
+        )
+
+
 class TestExecuteCommand:
+    @pytest.mark.asyncio
+    async def test_command_analysis_errors_are_returned_without_execution(self):
+        ts = TerminalService()
+
+        with patch(
+            "source.services.shell.terminal.analyze_command",
+            side_effect=ValueError("unsupported shell"),
+        ):
+            output, exit_code, duration_ms, timed_out = await ts.execute_command(
+                "echo hi", "C:/repo"
+            )
+
+        assert output == "Error: unsupported shell"
+        assert exit_code == 1
+        assert duration_ms == 0
+        assert timed_out is False
+
     @pytest.mark.asyncio
     async def test_invalid_working_directory_short_circuits(self):
         ts = TerminalService()
@@ -679,6 +759,108 @@ class TestExecuteCommand:
         assert timed_out is False
 
     @pytest.mark.asyncio
+    async def test_cancelled_stream_read_kills_process_and_bubbles_cancellation(self):
+        ts = TerminalService()
+        analysis = SimpleNamespace(
+            shell=SimpleNamespace(name="powershell"),
+            hard_block_reason=None,
+        )
+        fake_process = _FakeProcess(_CancelledStdout(), wait_result=0, pid=445)
+
+        with (
+            patch("source.services.shell.terminal.analyze_command", return_value=analysis),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
+            patch(
+                "source.services.shell.terminal.build_subprocess_argv",
+                return_value=["pwsh", "-Command", "sleep"],
+            ),
+            patch(
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=fake_process,
+            ),
+            patch("source.services.shell.terminal._kill_process_tree") as mock_kill,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await ts.execute_command("sleep", "C:/repo")
+
+        mock_kill.assert_called_once_with(445)
+
+    @pytest.mark.asyncio
+    async def test_relative_cwd_is_normalized_and_semantics_message_is_appended(self):
+        ts = TerminalService()
+        ts.broadcast_output = AsyncMock()
+        analysis = SimpleNamespace(
+            shell=SimpleNamespace(name="powershell"),
+            hard_block_reason=None,
+        )
+        fake_process = _FakeProcess(_FakeStdout([b"line one\n", b""]), wait_result=0, pid=333)
+
+        with (
+            patch("source.services.shell.terminal.analyze_command", return_value=analysis),
+            patch("source.services.shell.terminal.os.path.isabs", return_value=False),
+            patch("source.services.shell.terminal.os.path.abspath", return_value="C:/repo"),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
+            patch(
+                "source.services.shell.terminal.build_subprocess_argv",
+                return_value=["pwsh", "-Command", "echo hi"],
+            ),
+            patch(
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=fake_process,
+            ),
+            patch(
+                "source.services.shell.terminal.interpret_command_result",
+                return_value=SimpleNamespace(is_error=False, message="Summary"),
+            ),
+        ):
+            output, exit_code, _, timed_out = await ts.execute_command(
+                "echo hi", "relative/path", request_id="req-rel"
+            )
+
+        assert output == "line one\n[Summary]"
+        assert exit_code == 0
+        assert timed_out is False
+
+    @pytest.mark.asyncio
+    async def test_semantic_message_replaces_no_output_placeholder(self):
+        ts = TerminalService()
+        analysis = SimpleNamespace(
+            shell=SimpleNamespace(name="powershell"),
+            hard_block_reason=None,
+        )
+        fake_process = _FakeProcess(_FakeStdout([b""]), wait_result=0, pid=334)
+
+        with (
+            patch("source.services.shell.terminal.analyze_command", return_value=analysis),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
+            patch(
+                "source.services.shell.terminal.build_subprocess_argv",
+                return_value=["pwsh", "-Command", "git diff --quiet"],
+            ),
+            patch(
+                "source.services.shell.terminal.asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=fake_process,
+            ),
+            patch(
+                "source.services.shell.terminal.interpret_command_result",
+                return_value=SimpleNamespace(is_error=False, message="No changes made."),
+            ),
+        ):
+            output, exit_code, _, timed_out = await ts.execute_command(
+                "git diff --quiet", "C:/repo"
+            )
+
+        assert output == "No changes made."
+        assert exit_code == 0
+        assert timed_out is False
+
+    @pytest.mark.asyncio
     async def test_non_error_exit_code_semantics_are_rendered_without_failure_suffix(self):
         ts = TerminalService()
         ts.broadcast_output = AsyncMock()
@@ -773,6 +955,15 @@ class TestSessionInteraction:
         assert "No active session" in result
 
     @pytest.mark.asyncio
+    async def test_read_output_missing_session_returns_terminal_guidance(self):
+        ts = TerminalService()
+
+        result = await ts.read_output("missing")
+
+        assert "No active session" in result
+        assert "do NOT call read_output or kill_process" in result
+
+    @pytest.mark.asyncio
     async def test_send_input_rejects_exited_session(self):
         ts = TerminalService()
         session = TerminalSession("sid", "rid", "cmd", "C:/")
@@ -833,6 +1024,21 @@ class TestSessionInteraction:
         assert "Input sent. Session is running." in result
 
     @pytest.mark.asyncio
+    async def test_send_input_returns_error_when_process_write_fails(self):
+        ts = TerminalService()
+        session = TerminalSession("sid", "rid", "cmd", "C:/")
+        session.process = MagicMock()
+        session.process.write.side_effect = RuntimeError("pty write failed")
+        ts._background_sessions["sid"] = session
+
+        with patch(
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+        ):
+            result = await ts.send_input("sid", "status")
+
+        assert result == "Error sending input: pty write failed"
+
+    @pytest.mark.asyncio
     async def test_read_output_running_session(self):
         ts = TerminalService()
         session = TerminalSession("sid", "rid", "cmd", "C:/")
@@ -884,10 +1090,77 @@ class TestSessionInteraction:
 
 class TestPtyResizeAndCleanup:
     @pytest.mark.asyncio
+    async def test_execute_command_pty_returns_helpful_error_without_pywinpty(self):
+        ts = TerminalService()
+
+        with patch.dict(sys.modules, {"winpty": SimpleNamespace()}, clear=False):
+            output, exit_code, duration_ms, timed_out, session_id = (
+                await ts.execute_command_pty("run", "C:/repo")
+            )
+
+        assert "pywinpty is not installed" in output
+        assert exit_code == 1
+        assert duration_ms == 0
+        assert timed_out is False
+        assert session_id is None
+
+    @pytest.mark.asyncio
+    async def test_execute_command_pty_finishes_once_without_duplicate_complete_events(self):
+        ts = TerminalService()
+        ts.broadcast_output = AsyncMock()
+        ts.broadcast_complete = AsyncMock()
+        analysis = SimpleNamespace(
+            shell=SimpleNamespace(name="powershell"),
+            hard_block_reason=None,
+        )
+        fake_pty = _FakePtyProcess(["\x1b[31mready\x1b[0m\x1b[c", EOFError()], exitstatus=0)
+        fake_winpty = SimpleNamespace(
+            PtyProcess=SimpleNamespace(spawn=MagicMock(return_value=fake_pty))
+        )
+
+        with (
+            patch.dict(sys.modules, {"winpty": fake_winpty}, clear=False),
+            patch("source.services.shell.terminal.analyze_command", return_value=analysis),
+            patch("source.services.shell.terminal.build_pty_command", return_value=["pwsh", "-Command", "run"]),
+            patch("source.services.shell.terminal.os.path.isdir", return_value=True),
+            patch("source.services.shell.terminal.check_blocklist", return_value=(False, "")),
+            patch("source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now),
+        ):
+            output, exit_code, duration_ms, timed_out, session_id = (
+                await ts.execute_command_pty("run", "C:/repo", request_id="req-pty")
+            )
+
+        assert "ready" in output
+        assert exit_code == 0
+        assert duration_ms >= 0
+        assert timed_out is False
+        assert session_id is None
+        assert fake_pty.writes == ["\x1b[?1;2c"]
+        assert ts.broadcast_complete.await_count == 1
+        assert ts.broadcast_complete.await_args_list[0].args[0] == "req-pty"
+        assert ts.broadcast_complete.await_args_list[0].args[1] == 0
+        assert ts._background_sessions == {}
+
+    @pytest.mark.asyncio
     async def test_resize_pty_updates_single_alive_session(self):
         ts = TerminalService()
         session = TerminalSession("sid", "rid", "cmd", "C:/")
         session.process = MagicMock()
+        ts._background_sessions["sid"] = session
+
+        with patch(
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+        ):
+            await ts.resize_pty("sid", cols=90, rows=40)
+
+        session.process.setwinsize.assert_called_once_with(40, 90)
+
+    @pytest.mark.asyncio
+    async def test_resize_pty_ignores_resize_failures(self):
+        ts = TerminalService()
+        session = TerminalSession("sid", "rid", "cmd", "C:/")
+        session.process = MagicMock()
+        session.process.setwinsize.side_effect = RuntimeError("no console")
         ts._background_sessions["sid"] = session
 
         with patch(
@@ -918,6 +1191,21 @@ class TestPtyResizeAndCleanup:
         dead.process.setwinsize.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_resize_all_pty_ignores_resize_failures(self):
+        ts = TerminalService()
+        alive = TerminalSession("sid-alive", "rid-1", "cmd", "C:/")
+        alive.process = MagicMock()
+        alive.process.setwinsize.side_effect = RuntimeError("resize failed")
+        ts._background_sessions["sid-alive"] = alive
+
+        with patch(
+            "source.services.shell.terminal.asyncio.to_thread", side_effect=_run_in_thread_now
+        ):
+            await ts.resize_all_pty(cols=120, rows=50)
+
+        alive.process.setwinsize.assert_called_once_with(50, 120)
+
+    @pytest.mark.asyncio
     async def test_kill_session_broadcasts_and_cleans_state(self):
         ts = TerminalService()
         session = TerminalSession("sid", "rid", "cmd", "C:/")
@@ -945,6 +1233,12 @@ class TestPtyResizeAndCleanup:
         )
         ts.broadcast_complete.assert_awaited_once()
         assert "sid" not in ts._background_sessions
+
+    @pytest.mark.asyncio
+    async def test_kill_session_missing_id_is_a_noop(self):
+        ts = TerminalService()
+
+        await ts._kill_session("missing", "ignored")
 
 
 class TestCancelAllPendingAdvanced:

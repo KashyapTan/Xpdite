@@ -34,7 +34,7 @@ class TestConstants:
         assert OLLAMA_CTX_SIZE == 32768
 
     def test_max_tool_result_length(self):
-        assert MAX_TOOL_RESULT_LENGTH == 100_000
+        assert MAX_TOOL_RESULT_LENGTH == 200_000
 
     def test_thread_pool_size_positive(self):
         assert THREAD_POOL_SIZE >= 1

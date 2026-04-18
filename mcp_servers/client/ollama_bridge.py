@@ -116,26 +116,43 @@ class McpOllamaBridge:
         # We need to manage the context manually since we want the connection
         # to stay alive across multiple chat() calls.
         
-        # Enter the stdio_client context
         stdio_ctx = stdio_client(server_params)
-        read, write = await stdio_ctx.__aenter__()
-        
-        # Enter the ClientSession context
-        session_ctx = ClientSession(read, write)
-        session = await session_ctx.__aenter__()
-        
-        # Initialize the MCP connection (required handshake)
-        await session.initialize()
-        
+        session_ctx = None
+        session = None
+
+        try:
+            # Enter the stdio_client context
+            read, write = await stdio_ctx.__aenter__()
+
+            # Enter the ClientSession context
+            session_ctx = ClientSession(read, write)
+            session = await session_ctx.__aenter__()
+
+            # Initialize the MCP connection (required handshake)
+            await session.initialize()
+
+            # Discover all tools this server provides before we mark the
+            # connection as live. That avoids leaking half-open connections if
+            # initialization or discovery fails partway through.
+            tools_result = await session.list_tools()
+        except Exception:
+            if session_ctx is not None:
+                try:
+                    await session_ctx.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            try:
+                await stdio_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            raise
+
         # Store the contexts so we can clean up later
         self._connections[server_name] = {
             "session": session,
             "stdio_ctx": stdio_ctx,
             "session_ctx": session_ctx,
         }
-        
-        # Discover all tools this server provides
-        tools_result = await session.list_tools()
         
         for tool in tools_result.tools:
             # Register the tool so we can route calls to the right server
@@ -217,6 +234,10 @@ class McpOllamaBridge:
         # Check if Ollama wants to call tool(s)
         # The tool-calling loop: Ollama might call multiple tools in sequence
         while response.message.tool_calls:
+            # Record the assistant tool-call request once per Ollama response,
+            # even if that response contains multiple tool calls.
+            self._chat_history.append(response.message.model_dump())
+
             # Process each tool call
             for tool_call in response.message.tool_calls:
                 fn_name = tool_call.function.name
@@ -227,9 +248,6 @@ class McpOllamaBridge:
                 # Route to the correct MCP server
                 result = await self._call_mcp_tool(fn_name, fn_args)
                 print(f"Tool result: {result[0:10]}...")  # Print first 100 chars of result
-                
-                # Add the assistant's tool call to history
-                self._chat_history.append(response.message.model_dump())
                 
                 # Add the tool result to history so Ollama can see it
                 self._chat_history.append({
@@ -256,13 +274,24 @@ class McpOllamaBridge:
     
     async def cleanup(self):
         """Disconnect from all MCP servers and clean up resources."""
-        for name, conn in self._connections.items():
+        for name, conn in list(self._connections.items()):
+            disconnect_error = None
+
             try:
                 await conn["session_ctx"].__aexit__(None, None, None)
+            except Exception as exc:
+                disconnect_error = exc
+
+            try:
                 await conn["stdio_ctx"].__aexit__(None, None, None)
+            except Exception as exc:
+                if disconnect_error is None:
+                    disconnect_error = exc
+
+            if disconnect_error is None:
                 print(f"Disconnected from MCP server '{name}'")
-            except Exception as e:
-                print(f"Error disconnecting from '{name}': {e}")
+            else:
+                print(f"Error disconnecting from '{name}': {disconnect_error}")
         self._connections.clear()
         self._tool_registry.clear()
         self._ollama_tools.clear()
@@ -273,5 +302,5 @@ class McpOllamaBridge:
 def load_server_config() -> dict:
     """Load server configuration from mcp_servers/config/servers.json"""
     config_path = Path(__file__).parent.parent / "config" / "servers.json"
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         return json.load(f)

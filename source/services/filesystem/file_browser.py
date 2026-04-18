@@ -14,6 +14,7 @@ import re
 import sqlite3
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from queue import Empty as QueueEmpty
@@ -157,8 +158,16 @@ class FileBrowserService:
         conn.execute("PRAGMA busy_timeout = 5000")
         return conn
 
+    @contextmanager
+    def _index_connection(self) -> sqlite3.Connection:
+        conn = self._connect_index()
+        try:
+            yield conn
+        finally:
+            conn.close()
+
     def _init_index_db(self) -> None:
-        with self._connect_index() as conn:
+        with self._index_connection() as conn:
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS file_entries (
@@ -206,7 +215,7 @@ class FileBrowserService:
             conn.commit()
 
     def _load_index_state(self) -> None:
-        with self._connect_index() as conn:
+        with self._index_connection() as conn:
             rows = conn.execute(
                 "SELECT root_path, last_indexed FROM indexed_roots"
             ).fetchall()
@@ -408,7 +417,7 @@ class FileBrowserService:
             for entry in entries
         ]
 
-        with self._connect_index() as conn:
+        with self._index_connection() as conn:
             conn.execute("BEGIN")
             conn.execute("DELETE FROM file_entries WHERE root_path = ?", (root,))
             if rows:
@@ -790,7 +799,7 @@ class FileBrowserService:
                 if len(candidates) >= self.CANDIDATE_LIMIT:
                     return
 
-        with self._connect_index() as conn:
+        with self._index_connection() as conn:
             run_query(conn, " AND lower_name = ?", query_lower)
             run_query(conn, " AND lower_relative_path = ?", query_lower)
             run_query(conn, " AND lower_name LIKE ?", prefix)
@@ -883,7 +892,7 @@ class FileBrowserService:
 
     def clear_cache(self) -> None:
         """Clear persisted indexes and in-memory state."""
-        with self._connect_index() as conn:
+        with self._index_connection() as conn:
             conn.execute("DELETE FROM file_entries")
             conn.execute("DELETE FROM indexed_roots")
             conn.commit()

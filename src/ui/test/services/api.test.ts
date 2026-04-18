@@ -1106,6 +1106,414 @@ describe('api singleton - HTTP endpoints', () => {
     });
   });
 
+  describe('mobile channels API', () => {
+    test('gets paired mobile devices', async () => {
+      const payload = {
+        devices: [
+          {
+            id: 1,
+            platform: 'telegram',
+            sender_id: '123',
+            display_name: 'Alice',
+            paired_at: 1700000000,
+            last_active: 1700000100,
+          },
+        ],
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.getMobilePairedDevices();
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/internal/mobile/devices');
+    });
+
+    test('generates a pairing code', async () => {
+      const payload = { code: 'PAIR-123', expires_in_seconds: 600 };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.generateMobilePairingCode();
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/internal/mobile/pair/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ expires_in_seconds: 600 }),
+      });
+    });
+
+    test('revokes a paired mobile device', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.revokeMobilePairedDevice(42);
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/internal/mobile/devices/42', {
+        method: 'DELETE',
+      });
+    });
+
+    test('returns empty mobile channel config when backend responds non-ok', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: false });
+
+      const result = await api.getMobileChannelsConfig();
+
+      expect(result).toEqual({ platforms: {} });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/mobile-channels/config');
+    });
+
+    test('saves mobile platform config', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.setMobilePlatformConfig('telegram', {
+        enabled: true,
+        token: 'bot-token',
+      });
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/mobile-channels/config/telegram', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: true,
+          token: 'bot-token',
+        }),
+      });
+    });
+
+    test('surfaces JSON detail errors when saving mobile platform config fails', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        text: () => Promise.resolve(JSON.stringify({ detail: 'Token is invalid' })),
+      });
+
+      await expect(
+        api.setMobilePlatformConfig('telegram', { token: 'bad-token' }),
+      ).rejects.toThrow('Token is invalid');
+    });
+
+    test('falls back to plain text errors when saving mobile platform config fails', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        text: () => Promise.resolve('Bridge unavailable'),
+      });
+
+      await expect(
+        api.setMobilePlatformConfig('telegram', { token: 'bad-token' }),
+      ).rejects.toThrow('Bridge unavailable');
+    });
+  });
+
+  describe('notifications API', () => {
+    test('gets notifications and unread count', async () => {
+      const payload = {
+        notifications: [
+          {
+            id: 'notif-1',
+            type: 'info',
+            title: 'Done',
+            body: 'Task finished',
+            payload: null,
+            created_at: 1700000000,
+          },
+        ],
+        unread_count: 1,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.getNotifications();
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/notifications');
+    });
+
+    test('gets notification count', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ count: 3 }),
+      });
+
+      const result = await api.getNotificationCount();
+
+      expect(result).toEqual({ count: 3 });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/notifications/count');
+    });
+
+    test('dismisses one notification', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.dismissNotification('notif-2');
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/notifications/notif-2', {
+        method: 'DELETE',
+      });
+    });
+
+    test('dismisses all notifications', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ dismissed_count: 5 }),
+      });
+
+      const result = await api.dismissAllNotifications();
+
+      expect(result).toEqual({ dismissed_count: 5 });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/notifications', {
+        method: 'DELETE',
+      });
+    });
+  });
+
+  describe('scheduled jobs API', () => {
+    test('gets scheduled jobs', async () => {
+      const payload = {
+        jobs: [
+          {
+            id: 'job-1',
+            name: 'Morning Brief',
+            cron_expression: '0 9 * * *',
+            instruction: 'Summarize the inbox',
+            model: null,
+            timezone: 'America/New_York',
+            delivery_platform: null,
+            delivery_sender_id: null,
+            enabled: true,
+            is_one_shot: false,
+            created_at: 1700000000,
+            last_run_at: null,
+            next_run_at: 1700003600,
+            run_count: 0,
+            missed: false,
+          },
+        ],
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.getScheduledJobs();
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/scheduled-jobs');
+    });
+
+    test('gets a single scheduled job', async () => {
+      const payload = {
+        id: 'job-1',
+        name: 'Morning Brief',
+        cron_expression: '0 9 * * *',
+        instruction: 'Summarize the inbox',
+        model: null,
+        timezone: 'America/New_York',
+        delivery_platform: null,
+        delivery_sender_id: null,
+        enabled: true,
+        is_one_shot: false,
+        created_at: 1700000000,
+        last_run_at: null,
+        next_run_at: 1700003600,
+        run_count: 0,
+        missed: false,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.getScheduledJob('job-1');
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/scheduled-jobs/job-1');
+    });
+
+    test('creates a scheduled job', async () => {
+      const input = {
+        name: 'Morning Brief',
+        cron_expression: '0 9 * * *',
+        instruction: 'Summarize the inbox',
+        timezone: 'America/New_York',
+      };
+      const payload = {
+        ...input,
+        id: 'job-1',
+        model: null,
+        delivery_platform: null,
+        delivery_sender_id: null,
+        enabled: true,
+        is_one_shot: false,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.createScheduledJob(input);
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/scheduled-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      });
+    });
+
+    test('updates a scheduled job', async () => {
+      const updates = {
+        delivery_platform: 'telegram',
+        delivery_sender_id: '@alice',
+      };
+      const payload = {
+        id: 'job-1',
+        name: 'Morning Brief',
+        cron_expression: '0 9 * * *',
+        instruction: 'Summarize the inbox',
+        timezone: 'America/New_York',
+        model: null,
+        enabled: true,
+        is_one_shot: false,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.updateScheduledJob('job-1', updates);
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/scheduled-jobs/job-1', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+    });
+
+    test('deletes a scheduled job', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.deleteScheduledJob('job-1');
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/scheduled-jobs/job-1', {
+        method: 'DELETE',
+      });
+    });
+
+    test('pauses, resumes, and runs a scheduled job immediately', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ id: 'job-1', name: 'Morning Brief', enabled: false }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ id: 'job-1', name: 'Morning Brief', enabled: true, next_run_at: 1700003600 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ success: true, conversation_id: 'conv-1', job_name: 'Morning Brief' }),
+        });
+
+      await expect(api.pauseScheduledJob('job-1')).resolves.toEqual({
+        id: 'job-1',
+        name: 'Morning Brief',
+        enabled: false,
+      });
+      await expect(api.resumeScheduledJob('job-1')).resolves.toEqual({
+        id: 'job-1',
+        name: 'Morning Brief',
+        enabled: true,
+        next_run_at: 1700003600,
+      });
+      await expect(api.runScheduledJobNow('job-1')).resolves.toEqual({
+        success: true,
+        conversation_id: 'conv-1',
+        job_name: 'Morning Brief',
+      });
+
+      expect(vi.mocked(fetch).mock.calls).toEqual([
+        ['http://localhost:8000/api/scheduled-jobs/job-1/pause', { method: 'POST' }],
+        ['http://localhost:8000/api/scheduled-jobs/job-1/resume', { method: 'POST' }],
+        ['http://localhost:8000/api/scheduled-jobs/job-1/run-now', { method: 'POST' }],
+      ]);
+    });
+
+    test('gets scheduled-job conversation lists', async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            conversations: [{ id: 'conv-1', job_id: 'job-1', job_name: 'Morning Brief', title: 'Summary', created_at: 1, updated_at: 2 }],
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            conversations: [{ id: 'conv-2', job_id: 'job-1', job_name: 'Morning Brief', title: 'Retry', created_at: 3, updated_at: 4 }],
+            job: { id: 'job-1', name: 'Morning Brief' },
+          }),
+        });
+
+      await expect(api.getScheduledJobConversations()).resolves.toEqual({
+        conversations: [{ id: 'conv-1', job_id: 'job-1', job_name: 'Morning Brief', title: 'Summary', created_at: 1, updated_at: 2 }],
+      });
+      await expect(api.getJobConversations('job-1')).resolves.toEqual({
+        conversations: [{ id: 'conv-2', job_id: 'job-1', job_name: 'Morning Brief', title: 'Retry', created_at: 3, updated_at: 4 }],
+        job: { id: 'job-1', name: 'Morning Brief' },
+      });
+
+      expect(vi.mocked(fetch).mock.calls).toEqual([
+        ['http://localhost:8000/api/scheduled-jobs/conversations'],
+        ['http://localhost:8000/api/scheduled-jobs/job-1/conversations'],
+      ]);
+    });
+  });
+
+  describe('file browser API', () => {
+    test('browses files with an optional query', async () => {
+      const payload = {
+        entries: [
+          {
+            name: 'README.md',
+            path: '/repo/README.md',
+            relative_path: 'README.md',
+            is_directory: false,
+            size: 123,
+            extension: 'md',
+          },
+        ],
+        current_path: '/repo',
+        parent_path: null,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+
+      const result = await api.browseFiles('readme');
+
+      expect(result).toEqual(payload);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/files/browse?query=readme');
+    });
+
+    test('surfaces browse file errors with backend detail', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        json: () => Promise.resolve({ detail: 'Search root is unavailable' }),
+      });
+
+      await expect(api.browseFiles('docs')).rejects.toThrow('Search root is unavailable');
+    });
+  });
+
   describe('artifact auth headers', () => {
     const originalElectronApi = window.electronAPI;
 

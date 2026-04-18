@@ -1413,12 +1413,22 @@ class FileExtractor:
                     continue
 
                 filepath = os.path.join(folder, filename)
-                if not os.path.isfile(filepath):
+                try:
+                    is_file = os.path.isfile(filepath)
+                except Exception as e:
+                    logger.warning("Failed to inspect %s: %s", filepath, e)
+                    continue
+
+                if not is_file:
                     continue
 
                 # Check age
                 if max_age_hours > 0:
-                    file_age = now - os.path.getmtime(filepath)
+                    try:
+                        file_age = now - os.path.getmtime(filepath)
+                    except Exception as e:
+                        logger.warning("Failed to stat %s: %s", filepath, e)
+                        continue
                     if file_age < max_age_seconds:
                         continue
 

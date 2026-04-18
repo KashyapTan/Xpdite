@@ -45,6 +45,8 @@ def divide(a: float, b: float) -> str:
     Returns:
         The result of dividing a by b
     """
+    if b == 0:
+        return "Error: Cannot divide by zero."
     return f"{a / b:.50f}"
 
 @mcp.tool(description=ADD_DESCRIPTION)

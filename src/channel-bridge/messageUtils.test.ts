@@ -292,7 +292,7 @@ describe('getWhatsAppInboundGateResult', () => {
             key: {
               fromMe: true,
             },
-            messageTimestamp: 1_700_000_000,
+            messageTimestamp: 1_700_000_008,
           },
         },
         {

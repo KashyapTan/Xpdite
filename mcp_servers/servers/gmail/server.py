@@ -111,9 +111,26 @@ def _parse_email_headers(headers: list) -> dict:
     result = {}
     for header in headers:
         name = header.get("name", "").lower()
-        if name in ("from", "to", "cc", "bcc", "subject", "date", "message-id"):
+        if name in (
+            "from",
+            "to",
+            "cc",
+            "bcc",
+            "subject",
+            "date",
+            "message-id",
+            "references",
+            "in-reply-to",
+        ):
             result[name] = header.get("value", "")
     return result
+
+
+def _split_csv_values(value: str | None) -> list[str]:
+    """Split a comma-separated list while discarding blank entries."""
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
 
 
 def _get_email_body(payload: dict) -> str:
@@ -336,9 +353,15 @@ def reply_to_email(message_id: str, body: str) -> str:
 
         # Threading headers
         msg_id = orig_headers.get("message-id", "")
+        existing_references = orig_headers.get("references", "").strip()
         if msg_id:
             reply["In-Reply-To"] = msg_id
-            reply["References"] = msg_id
+            references = [ref for ref in existing_references.split() if ref]
+            if msg_id not in references:
+                references.append(msg_id)
+            reply["References"] = " ".join(references)
+        elif existing_references:
+            reply["References"] = existing_references
 
         raw = base64.urlsafe_b64encode(reply.as_bytes()).decode("utf-8")
         sent = (
@@ -457,10 +480,8 @@ def modify_labels(
         service = _get_gmail_service()
 
         # Parse comma-separated label strings into lists
-        add_list = [label.strip() for label in add_labels.split(",")] if add_labels else []
-        remove_list = (
-            [label.strip() for label in remove_labels.split(",")] if remove_labels else []
-        )
+        add_list = _split_csv_values(add_labels)
+        remove_list = _split_csv_values(remove_labels)
 
         if not add_list and not remove_list:
             return json.dumps(

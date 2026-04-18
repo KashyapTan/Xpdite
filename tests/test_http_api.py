@@ -40,6 +40,49 @@ class TestHttpApiHelpers:
         detail = http_api._extract_openrouter_error(response)
         assert detail == "teapot body"
 
+    def test_extract_openrouter_error_uses_top_level_detail_and_status_fallback(self):
+        response = MagicMock()
+        response.status_code = 429
+        response.json.return_value = {"detail": "rate limited"}
+        response.text = ""
+
+        assert http_api._extract_openrouter_error(response) == "rate limited"
+
+        response.json.return_value = {}
+        assert http_api._extract_openrouter_error(response) == "HTTP 429"
+
+    def test_ollama_helper_parsers_cover_namespaced_refs_and_urls(self):
+        assert http_api._parse_ollama_model_ref("ollama/llama3.2:8b") == ("llama3.2", "8b")
+        assert http_api._parse_ollama_model_ref("namespace/model:latest") == (
+            "namespace/model",
+            "latest",
+        )
+        assert http_api._parse_ollama_model_ref("team/model:tag/extra") == (
+            "team/model:tag/extra",
+            "latest",
+        )
+        assert http_api._build_ollama_manifest_url("llama3.2", "latest").endswith(
+            "/library/llama3.2/manifests/latest"
+        )
+        assert http_api._build_ollama_blob_url("team/model", "sha256:abc").endswith(
+            "/team/model/blobs/sha256:abc"
+        )
+
+    def test_misc_helper_functions_handle_sizes_layers_and_validation(self):
+        assert http_api._human_readable_size(1536) == "1.50 KB"
+        assert http_api._human_readable_size(1024**5) == "1.00 PB"
+        assert http_api._parse_ollama_layer_type("application/vnd.ollama.image.model") == (
+            "model_weights"
+        )
+        assert http_api._parse_ollama_layer_type("application/unknown") == "unknown"
+        assert http_api._validate_artifact_type(None) is None
+        assert http_api._validate_artifact_status(None) is None
+
+        with pytest.raises(HTTPException):
+            http_api._validate_artifact_type("binary")
+        with pytest.raises(HTTPException):
+            http_api._validate_artifact_status("archived")
+
     @pytest.mark.anyio
     async def test_model_cache_returns_cached_payload_when_ttl_valid(self):
         with patch.object(http_api, "_MODEL_CACHE", {}):
@@ -243,6 +286,57 @@ class TestArtifactApiEndpoints:
 
         assert result == {"id": "artifact-1", "title": "Demo"}
         service.get_artifact.assert_called_once_with("artifact-1")
+
+    @pytest.mark.anyio
+    async def test_get_artifact_raises_404_when_missing(self):
+        service = MagicMock()
+        service.get_artifact.return_value = None
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_artifact("artifact-1")
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_create_artifact_rejects_blank_title(self):
+        with pytest.raises(HTTPException) as exc:
+            await http_api.create_artifact(
+                http_api.ArtifactCreateRequest(type="code", title="   ", content="x")
+            )
+
+        assert exc.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_update_artifact_with_changes_delegates_to_update_service(self):
+        service = MagicMock()
+        service.update_artifact.return_value = {"id": "artifact-1", "title": "Updated"}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.artifacts.artifact_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.update_artifact(
+                "artifact-1",
+                http_api.ArtifactUpdateRequest(title="Updated"),
+            )
+
+        assert result == {"id": "artifact-1", "title": "Updated"}
+        service.update_artifact.assert_called_once_with(
+            "artifact-1",
+            title="Updated",
+            content=None,
+            language=None,
+        )
 
 
 class TestMarketplaceApiEndpoints:
@@ -486,6 +580,75 @@ class TestMarketplaceApiEndpoints:
 
 class TestHttpApiEndpoints:
     @pytest.mark.anyio
+    async def test_get_ollama_models_handles_success_and_error_payloads(self):
+        success_response = SimpleNamespace(
+            models=[
+                SimpleNamespace(
+                    model="qwen3:latest",
+                    size=123,
+                    details=SimpleNamespace(
+                        parameter_size="8B",
+                        quantization_level="Q4_K_M",
+                    ),
+                )
+            ]
+        )
+
+        client = MagicMock()
+        client.list = AsyncMock(return_value=success_response)
+
+        with (
+            patch.object(http_api, "OllamaAsyncClient", return_value=client),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+        ):
+            result = await http_api.get_ollama_models(refresh=True)
+
+        assert result == [
+            {
+                "name": "qwen3:latest",
+                "size": 123,
+                "parameter_size": "8B",
+                "quantization": "Q4_K_M",
+            }
+        ]
+
+        client.list = AsyncMock(side_effect=RuntimeError("daemon offline"))
+        with (
+            patch.object(http_api, "OllamaAsyncClient", return_value=client),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+        ):
+            result = await http_api.get_ollama_models(refresh=True)
+
+        assert result["models"] == []
+        assert "Ollama not reachable" in result["error"]
+
+    @pytest.mark.anyio
+    async def test_get_ollama_model_info_handles_missing_name_and_config_digest(self):
+        assert await http_api.get_ollama_model_info("   ") == {
+            "success": False,
+            "error": "Model name is required",
+        }
+
+        manifest_response = MagicMock()
+        manifest_response.status_code = 200
+        manifest_response.raise_for_status.return_value = None
+        manifest_response.json.return_value = {"config": {}, "layers": []}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api.requests, "get", return_value=manifest_response),
+        ):
+            result = await http_api.get_ollama_model_info("qwen3")
+
+        assert result == {
+            "success": False,
+            "error": "No config digest found for 'qwen3:latest'",
+        }
+
+    @pytest.mark.anyio
     async def test_browse_files_lists_directory(self):
         fake_result = SimpleNamespace(
             entries=[SimpleNamespace(to_dict=lambda: {"name": "a.txt"})],
@@ -529,6 +692,32 @@ class TestHttpApiEndpoints:
 
         assert result["entries"] == []
         service.search.assert_called_once_with("foo", None)
+
+    @pytest.mark.anyio
+    async def test_get_tools_settings_handles_invalid_json_and_defaults_top_k(self):
+        db_mock = MagicMock()
+        db_mock.get_setting.side_effect = ["{bad-json", None]
+
+        with patch("source.infrastructure.database.db", db_mock):
+            result = await http_api.get_tools_settings()
+
+        assert result == {"always_on": [], "top_k": 5}
+
+    @pytest.mark.anyio
+    async def test_set_tools_settings_persists_json_payload(self):
+        db_mock = MagicMock()
+
+        with patch("source.infrastructure.database.db", db_mock):
+            result = await http_api.set_tools_settings(
+                http_api.ToolsSettingsUpdate(always_on=["terminal"], top_k=7)
+            )
+
+        assert result == {
+            "status": "updated",
+            "settings": {"always_on": ["terminal"], "top_k": 7},
+        }
+        db_mock.set_setting.assert_any_call("tool_always_on", '["terminal"]')
+        db_mock.set_setting.assert_any_call("tool_retriever_top_k", "7")
 
     @pytest.mark.anyio
     async def test_get_ollama_model_info_handles_cloud_manifest_without_layers(self):
@@ -605,6 +794,176 @@ class TestHttpApiEndpoints:
         assert response.status_code == 200
         assert response.json() == {"conversations": conversations_payload}
         get_job_conversations.assert_called_once_with()
+
+    @pytest.mark.anyio
+    async def test_list_scheduled_jobs_returns_scheduler_payload(self):
+        scheduler_service = MagicMock()
+        scheduler_service.list_jobs.return_value = [{"id": "job-1"}]
+
+        with patch(
+            "source.services.scheduling.scheduler.scheduler_service",
+            scheduler_service,
+        ):
+            result = await http_api.list_scheduled_jobs()
+
+        assert result == {"jobs": [{"id": "job-1"}]}
+
+    @pytest.mark.anyio
+    async def test_get_scheduled_job_raises_404_when_missing(self):
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = None
+
+        with patch(
+            "source.services.scheduling.scheduler.scheduler_service",
+            scheduler_service,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.get_scheduled_job("missing")
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_update_scheduled_job_returns_existing_job_when_no_changes(self):
+        existing_job = {
+            "id": "job-1",
+            "name": "Digest",
+            "cron_expression": "0 9 * * *",
+            "instruction": "Summarize",
+            "timezone": "UTC",
+        }
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = existing_job
+        db_mock = MagicMock()
+
+        with (
+            patch("source.infrastructure.database.db", db_mock),
+            patch(
+                "source.services.scheduling.scheduler.scheduler_service",
+                scheduler_service,
+            ),
+        ):
+            result = await http_api.update_scheduled_job(
+                "job-1",
+                http_api.ScheduledJobUpdate(),
+            )
+
+        assert result == existing_job
+        db_mock.update_scheduled_job.assert_not_called()
+        scheduler_service._reschedule_job.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_update_scheduled_job_rejects_invalid_cron_before_db_write(self):
+        existing_job = {
+            "id": "job-1",
+            "name": "Digest",
+            "cron_expression": "0 9 * * *",
+            "instruction": "Summarize",
+            "timezone": "UTC",
+        }
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = existing_job
+        db_mock = MagicMock()
+
+        with (
+            patch("source.infrastructure.database.db", db_mock),
+            patch(
+                "source.services.scheduling.scheduler.scheduler_service",
+                scheduler_service,
+            ),
+            patch.object(
+                http_api.CronTrigger,
+                "from_crontab",
+                side_effect=ValueError("bad cron"),
+            ),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.update_scheduled_job(
+                    "job-1",
+                    http_api.ScheduledJobUpdate(cron_expression="bad cron"),
+                )
+
+        assert exc.value.status_code == 400
+        assert "Invalid cron expression" in exc.value.detail
+        db_mock.update_scheduled_job.assert_not_called()
+        scheduler_service._reschedule_job.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_update_scheduled_job_persists_changes_and_reschedules(self):
+        existing_job = {
+            "id": "job-1",
+            "name": "Digest",
+            "cron_expression": "0 9 * * *",
+            "instruction": "Summarize",
+            "timezone": "UTC",
+        }
+        updated_job = {
+            **existing_job,
+            "name": "Updated Digest",
+            "delivery_platform": "telegram",
+        }
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = existing_job
+        scheduler_service._reschedule_job = AsyncMock()
+        db_mock = MagicMock()
+        db_mock.update_scheduled_job.return_value = updated_job
+
+        with (
+            patch("source.infrastructure.database.db", db_mock),
+            patch(
+                "source.services.scheduling.scheduler.scheduler_service",
+                scheduler_service,
+            ),
+            patch.object(http_api.CronTrigger, "from_crontab", return_value=MagicMock()),
+        ):
+            result = await http_api.update_scheduled_job(
+                "job-1",
+                http_api.ScheduledJobUpdate(
+                    name="Updated Digest",
+                    delivery_platform="telegram",
+                ),
+            )
+
+        assert result == updated_job
+        db_mock.update_scheduled_job.assert_called_once_with(
+            "job-1",
+            name="Updated Digest",
+            delivery_platform="telegram",
+        )
+        scheduler_service._reschedule_job.assert_awaited_once_with("job-1")
+
+    @pytest.mark.anyio
+    async def test_run_scheduled_job_now_returns_success_payload(self):
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = {"id": "job-1", "name": "Digest"}
+        scheduler_service.run_job_now = AsyncMock(return_value="conv-1")
+
+        with patch(
+            "source.services.scheduling.scheduler.scheduler_service",
+            scheduler_service,
+        ):
+            result = await http_api.run_scheduled_job_now("job-1")
+
+        assert result == {
+            "success": True,
+            "conversation_id": "conv-1",
+            "job_name": "Digest",
+        }
+
+    @pytest.mark.anyio
+    async def test_run_scheduled_job_now_maps_runtime_errors_to_500(self):
+        scheduler_service = MagicMock()
+        scheduler_service.get_job.return_value = {"id": "job-1", "name": "Digest"}
+        scheduler_service.run_job_now = AsyncMock(side_effect=RuntimeError("queue offline"))
+
+        with patch(
+            "source.services.scheduling.scheduler.scheduler_service",
+            scheduler_service,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.run_scheduled_job_now("job-1")
+
+        assert exc.value.status_code == 500
+        assert "queue offline" in exc.value.detail
 
     @pytest.mark.anyio
     async def test_health_check_returns_healthy(self):
@@ -1481,6 +1840,113 @@ class TestHttpApiEndpoints:
 
         assert exc.value.status_code == 500
         assert exc.value.detail == "Memory clear failed. See server logs for details."
+
+    @pytest.mark.anyio
+    async def test_memory_endpoints_map_validation_errors_to_400(self):
+        memory_service = MagicMock()
+        memory_service.list_memories.side_effect = ValueError("invalid folder")
+        memory_service.read_memory.side_effect = ValueError("bad path")
+        memory_service.upsert_memory.side_effect = ValueError("bad body")
+        memory_service.delete_memory.side_effect = ValueError("bad delete")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        body = http_api.MemoryFileUpdate(
+            path="semantic/prefs.md",
+            title="Prefs",
+            category="semantic",
+            importance=0.7,
+            tags=["prefs"],
+            abstract="Stores a preference.",
+            body="Be concise.",
+        )
+
+        with (
+            patch("source.services.memory_store.memory.memory_service", memory_service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            with pytest.raises(HTTPException) as list_exc:
+                await http_api.list_memories(folder="semantic")
+            with pytest.raises(HTTPException) as read_exc:
+                await http_api.get_memory_file("semantic/prefs.md")
+            with pytest.raises(HTTPException) as write_exc:
+                await http_api.update_memory_file(body)
+            with pytest.raises(HTTPException) as delete_exc:
+                await http_api.delete_memory_file("semantic/prefs.md")
+
+        assert list_exc.value.status_code == 400
+        assert read_exc.value.status_code == 400
+        assert write_exc.value.status_code == 400
+        assert delete_exc.value.status_code == 400
+
+    @pytest.mark.anyio
+    async def test_notifications_endpoints_return_counts_and_dismiss_results(self):
+        service = MagicMock()
+        service.list.return_value = [{"id": "note-1"}]
+        service.count.return_value = 2
+        service.dismiss = AsyncMock(return_value=True)
+        service.dismiss_all = AsyncMock(return_value=3)
+
+        with patch(
+            "source.services.scheduling.notifications.notification_service",
+            service,
+        ):
+            listed = await http_api.list_notifications()
+            counted = await http_api.get_notification_count()
+            dismissed = await http_api.dismiss_notification("note-1")
+            dismissed_all = await http_api.dismiss_all_notifications()
+
+        assert listed == {"notifications": [{"id": "note-1"}], "unread_count": 2}
+        assert counted == {"count": 2}
+        assert dismissed == {"success": True}
+        assert dismissed_all == {"success": True, "dismissed_count": 3}
+
+    @pytest.mark.anyio
+    async def test_dismiss_notification_raises_404_when_missing(self):
+        service = MagicMock()
+        service.dismiss = AsyncMock(return_value=False)
+
+        with patch(
+            "source.services.scheduling.notifications.notification_service",
+            service,
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.dismiss_notification("missing")
+
+        assert exc.value.status_code == 404
+
+    @pytest.mark.anyio
+    async def test_browse_files_maps_expected_error_types(self):
+        service = MagicMock()
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.filesystem.file_browser.file_browser_service", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            service.search.side_effect = FileNotFoundError("missing")
+            with pytest.raises(HTTPException) as missing_exc:
+                await http_api.browse_files()
+
+            service.search.side_effect = PermissionError("blocked")
+            with pytest.raises(HTTPException) as blocked_exc:
+                await http_api.browse_files()
+
+            service.search.side_effect = ValueError("bad query")
+            with pytest.raises(HTTPException) as bad_query_exc:
+                await http_api.browse_files()
+
+            service.search.side_effect = RuntimeError("boom")
+            with pytest.raises(HTTPException) as runtime_exc:
+                await http_api.browse_files()
+
+        assert missing_exc.value.status_code == 404
+        assert blocked_exc.value.status_code == 403
+        assert bad_query_exc.value.status_code == 400
+        assert runtime_exc.value.status_code == 500
 
     @pytest.mark.anyio
     async def test_get_system_prompt_returns_default_when_not_custom(self):

@@ -49,3 +49,4 @@ scripts/quality_test_results
 .marketplace*
 .tmp*
 .pytest*
+codex-temp

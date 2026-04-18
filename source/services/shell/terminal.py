@@ -752,10 +752,7 @@ class TerminalService:
                     exit_code = session.exit_code or 0
                     duration_ms = session.duration_ms
 
-                    # Broadcast completion
-                    await self.broadcast_complete(request_id, exit_code, duration_ms)
-
-                    # Clean up
+                    # The reader task already broadcast completion and removed the session.
                     self._background_sessions.pop(session_id, None)
 
                     semantics = interpret_command_result(
@@ -790,7 +787,6 @@ class TerminalService:
                     exit_code = session.exit_code or 0
                     duration_ms = session.duration_ms
 
-                    await self.broadcast_complete(request_id, exit_code, duration_ms)
                     self._background_sessions.pop(session_id, None)
 
                     semantics = interpret_command_result(

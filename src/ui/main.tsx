@@ -10,7 +10,7 @@ import Layout from './components/Layout.tsx'
 import App from './pages/App.tsx'
 type PageModule = { default: ComponentType }
 
-const pageModules = import.meta.glob('./pages/*.tsx') as Record<string, () => Promise<PageModule>>
+const pageModules = import.meta.glob(['./pages/*.tsx', '!./pages/App.tsx']) as Record<string, () => Promise<PageModule>>
 
 // Lazy-load non-chat pages to keep initial bundle small
 const Settings = lazy(pageModules['./pages/Settings.tsx'])

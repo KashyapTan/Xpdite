@@ -18,12 +18,9 @@ PREREQUISITES:
   - MCP SDK installed: `pip install "mcp[cli]"`
   - The `ollama` Python package: `pip install ollama`
 
-NOTE: Your current model (qwen3-vl:8b-instruct) is a VISION model and may not
-support tool calling. You may need a regular text model like:
-  - qwen3:8b
-  - llama3.1
-  - mistral
-Run `ollama list` to see your available models.
+By default this script uses `qwen3:8b`. Override it with the
+`OLLAMA_MCP_DEMO_MODEL` environment variable if you want to test a different
+tool-capable model. Run `ollama list` to see your available models.
 """
 
 import asyncio
@@ -43,7 +40,7 @@ async def main():
     # Change this to whatever tool-capable model you have.
     # Vision models (qwen3-vl) typically DON'T support tool calling.
     # gemma3:12b supports tool calling and you already have it pulled.
-    MODEL = "qwen3-vl:8b-instruct"
+    MODEL = os.environ.get("OLLAMA_MCP_DEMO_MODEL", "qwen3:8b")
     
     print("=" * 60)
     print("  MCP ↔ Ollama Bridge — Demo Test")

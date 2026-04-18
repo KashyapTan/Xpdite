@@ -408,7 +408,7 @@ class SchedulerService:
             except Exception:
                 pass
 
-        updated = db.update_scheduled_job(job_id, enabled=False)
+        updated = db.update_scheduled_job(job_id, enabled=False, next_run_at=None)
         logger.info(f"Paused scheduled job: {job['name']}")
         return updated
 
@@ -423,12 +423,10 @@ class SchedulerService:
         if not updated:
             return None
 
-        # Re-schedule with APScheduler
-        if self._running:
-            self._schedule_job(updated)
+        refreshed = await self._reschedule_job(job_id)
 
         logger.info(f"Resumed scheduled job: {job['name']}")
-        return updated
+        return refreshed or updated
 
     async def run_job_now(self, job_id: str) -> Optional[str]:
         """Manually trigger a job to run immediately.
@@ -453,6 +451,39 @@ class SchedulerService:
             await self._deliver_to_platform(job, conversation_id)
 
         return conversation_id
+
+    async def _reschedule_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        """Refresh scheduler state and next-run metadata after a job edit."""
+        job = db.get_scheduled_job(job_id)
+        if not job:
+            return None
+
+        if self._scheduler:
+            try:
+                self._scheduler.remove_job(job_id)
+            except Exception:
+                pass
+
+        if not job.get("enabled", True):
+            updated = db.update_scheduled_job(job_id, next_run_at=None)
+            return updated or job
+
+        try:
+            tz = ZoneInfo(job["timezone"])
+            trigger = CronTrigger.from_crontab(job["cron_expression"], timezone=tz)
+            next_fire = trigger.get_next_fire_time(None, datetime.now(tz))
+            next_run_at = next_fire.timestamp() if next_fire else None
+        except Exception as e:
+            raise ValueError(f"Invalid cron expression: {e}") from e
+
+        updated = db.update_scheduled_job(job_id, next_run_at=next_run_at)
+        if not updated:
+            return None
+
+        if self._running:
+            self._schedule_job(updated)
+
+        return updated
 
     def list_jobs(self, enabled_only: bool = False) -> list[Dict[str, Any]]:
         """List all scheduled jobs."""

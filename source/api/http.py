@@ -14,8 +14,10 @@ import os
 import secrets
 import time
 import uuid
+from zoneinfo import ZoneInfo
 
 import requests
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from ollama import AsyncClient as OllamaAsyncClient
@@ -2294,6 +2296,20 @@ async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
+    effective_cron = (
+        job_data.cron_expression
+        if job_data.cron_expression is not None
+        else job["cron_expression"]
+    )
+    effective_timezone = (
+        job_data.timezone if job_data.timezone is not None else job["timezone"]
+    )
+    try:
+        tz = ZoneInfo(effective_timezone)
+        CronTrigger.from_crontab(effective_cron, timezone=tz)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}") from e
+
     # Build update dict from non-None values
     updates: dict[str, Any] = {}
     if job_data.name is not None:
@@ -2328,6 +2344,8 @@ async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
         await scheduler_service._reschedule_job(job_id)
 
         return updated_job
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to update scheduled job: {e}")
         raise HTTPException(status_code=500, detail="Failed to update job")

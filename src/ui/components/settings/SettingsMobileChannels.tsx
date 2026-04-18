@@ -187,9 +187,9 @@ const SettingsMobileChannels: React.FC = () => {
   useEffect(() => {
     if (typeof window !== 'undefined' && window.electronAPI?.onWhatsAppPairingCode) {
       const unsubscribe = window.electronAPI.onWhatsAppPairingCode((code: string) => {
-        console.log('Received WhatsApp pairing code:', code);
         setWhatsappPairingCode(code);
         setWhatsappConnecting(false);
+        setSetupError(null);
       });
       return () => {
         unsubscribe();
@@ -281,6 +281,8 @@ const SettingsMobileChannels: React.FC = () => {
     setSetupModal(null);
     setSetupForm(EMPTY_SETUP_FORM);
     setSetupError(null);
+    setWhatsappPairingCode(null);
+    setWhatsappConnecting(false);
   }, []);
 
   const openSetupModal = useCallback((platformId: string) => {
@@ -288,6 +290,8 @@ const SettingsMobileChannels: React.FC = () => {
 
     setSetupModal(platformId);
     setSetupError(null);
+    setWhatsappPairingCode(null);
+    setWhatsappConnecting(false);
     setSetupForm({
       token: '',
       publicKey: platformId === 'discord' ? existingConfig?.publicKey ?? '' : '',
@@ -602,6 +606,7 @@ const SettingsMobileChannels: React.FC = () => {
                     disabled={!whatsappPhoneNumber.trim() || whatsappConnecting}
                     onClick={async () => {
                       if (!whatsappPhoneNumber.trim()) return;
+                      setSetupError(null);
                       setWhatsappConnecting(true);
                       setWhatsappPairingCode(null);
                       
@@ -624,6 +629,11 @@ const SettingsMobileChannels: React.FC = () => {
                       } catch (err) {
                         console.error('Failed to start WhatsApp connection:', err);
                         setWhatsappConnecting(false);
+                        setSetupError(
+                          err instanceof Error
+                            ? err.message
+                            : 'Failed to start WhatsApp connection.',
+                        );
                       }
                     }}
                   >

@@ -136,6 +136,8 @@ def read_file(
 
     try:
         clean_path = _get_safe_path(path)
+        if os.path.isdir(clean_path):
+            return f"Error: '{path}' is a directory, not a file. Use list_directory to see its contents."
         ext = Path(clean_path).suffix.lower()
         file_size = os.path.getsize(clean_path)
 
@@ -216,6 +218,8 @@ def read_file(
 def write_file(path: str, content: str) -> str:
     try:
         clean_path = _get_safe_path(path)
+        if os.path.isdir(clean_path):
+            return f"Error: '{path}' is a directory. You cannot write content to a directory path."
         parent_dir = os.path.dirname(clean_path)
         if not os.path.exists(parent_dir):
             return f"Error: The directory '{parent_dir}' does not exist. Please use create_folder first."

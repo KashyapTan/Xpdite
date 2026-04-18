@@ -358,7 +358,10 @@ def _extract_shell_signature(command: str, shell_name: str) -> str:
 
     first_statement = re.split(r"(?:&&|\|\||[;&\r\n])", trimmed, maxsplit=1)[0].strip()
     if not first_statement:
-        return trimmed
+        if shell_name == "powershell" and trimmed.startswith("&"):
+            first_statement = trimmed
+        else:
+            return trimmed
 
     if shell_name == "powershell":
         tokens = _split_tokens(first_statement, powershell=True)

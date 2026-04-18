@@ -159,12 +159,15 @@ class SkillManager:
         user_dir: Path,
         seed_dir: Path,
         preferences_file: Path,
+        *,
+        include_marketplace: bool = False,
     ) -> None:
         self._skills_dir = skills_dir
         self._builtin_dir = builtin_dir
         self._user_dir = user_dir
         self._seed_dir = seed_dir
         self._preferences_file = preferences_file
+        self._include_marketplace = include_marketplace
 
         # In-memory cache: maps skill name → Skill
         self._cache: Dict[str, Skill] = {}
@@ -297,6 +300,9 @@ class SkillManager:
         return skills
 
     def _scan_marketplace_skills(self) -> List[Skill]:
+        if not self._include_marketplace:
+            return []
+
         from ..marketplace.service import get_marketplace_service
 
         service = get_marketplace_service()
@@ -688,6 +694,7 @@ def get_skill_manager() -> SkillManager:
             user_dir=USER_SKILLS_DIR,
             seed_dir=SKILLS_SEED_DIR,
             preferences_file=SKILLS_PREFERENCES_FILE,
+            include_marketplace=True,
         )
         _instance.initialize()
         return _instance

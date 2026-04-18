@@ -33,7 +33,7 @@ DIVIDE_DESCRIPTION = build_tool_description(
         "after the decimal point."
     ),
     notes=(
-        "Division by zero is not handled in this wrapper and will raise the "
-        "underlying Python exception."
+        "Division by zero returns a user-facing error string instead of "
+        "raising an exception."
     ),
 )

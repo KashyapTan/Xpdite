@@ -169,6 +169,7 @@ async def route_chat(
         prefiltered_tools = retrieved_tools if retrieved_tools else None
 
         return await stream_ollama_chat(
+            model_name,
             user_query,
             image_paths,
             chat_history,

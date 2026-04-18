@@ -5,6 +5,7 @@ from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
 
+import source.services.chat.conversations as conversations_module
 from source.services.chat.conversations import (
     ConversationService,
     _extract_skill_slash_commands_sync,
@@ -128,6 +129,223 @@ class TestExtractSkillSlashCommands:
         matched, _ = self._call("/Terminal run this", skills)
         # "/Terminal" → token[1:].lower() = "terminal" → matches
         assert len(matched) == 1
+
+    async def test_async_wrapper_uses_run_in_thread(self, monkeypatch):
+        monkeypatch.setattr(
+            "source.services.chat.conversations.run_in_thread",
+            AsyncMock(return_value=(["skill"], "cleaned")),
+        )
+
+        matched, cleaned = await ConversationService.extract_skill_slash_commands(
+            "/skill do work"
+        )
+
+        assert matched == ["skill"]
+        assert cleaned == "cleaned"
+
+
+class TestConversationHelpers:
+    def test_truncate_and_format_attachment_helpers(self, monkeypatch):
+        over_limit = "x" * (conversations_module.MAX_TOOL_RESULT_LENGTH + 1)
+        truncated = conversations_module._truncate_attachment_tool_result(over_limit)
+        assert truncated.endswith("... [Output truncated due to length]")
+
+        assert (
+            conversations_module._format_attachment_tool_path(r"C:\tmp\file.txt")
+            .endswith("/file.txt")
+        )
+
+        class BrokenPath:
+            def __fspath__(self):
+                raise ValueError("boom")
+
+        assert (
+            conversations_module._format_attachment_tool_path(r"C:\tmp\file.txt")
+            == "C:/tmp/file.txt"
+        )
+        with patch.object(
+            conversations_module.Path,
+            "resolve",
+            side_effect=ValueError("boom"),
+        ):
+            assert (
+                conversations_module._format_attachment_tool_path(r"C:\tmp\file.txt")
+                == "C:/tmp/file.txt"
+            )
+
+    async def test_hydration_helpers_cover_image_and_turn_branches(
+        self, monkeypatch, tmp_path
+    ):
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"png")
+
+        monkeypatch.setattr(
+            "source.services.chat.conversations._get_thumbnail_creator",
+            lambda: (lambda path: f"thumb:{Path(path).name}"),
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.run_in_thread",
+            AsyncMock(side_effect=lambda fn, *args: fn(*args)),
+        )
+
+        hydrated = await ConversationService._hydrate_message_images(
+            {"role": "user", "images": [str(image_path)]}
+        )
+        passthrough = await ConversationService._hydrate_message_images(
+            {"role": "user", "images": [{"name": "existing"}]}
+        )
+        hydrated_turn = await ConversationService._hydrate_turn_payload(
+            {
+                "turn_id": "turn-1",
+                "user": {"role": "user", "images": [str(image_path)]},
+                "assistant": {"role": "assistant", "content": "hi"},
+            }
+        )
+
+        assert hydrated["images"] == [{"name": "image.png", "thumbnail": "thumb:image.png"}]
+        assert passthrough["images"] == [{"name": "existing"}]
+        assert hydrated_turn is not None
+        assert hydrated_turn["assistant"]["content"] == "hi"
+        assert await ConversationService._hydrate_turn_payload(None) is None
+
+    def test_chat_history_and_content_block_helpers(self, db_manager, monkeypatch):
+        cid = db_manager.start_new_conversation("History")
+        db_manager.add_message(cid, "user", "Hello")
+        tab_state = TabState(tab_id="default")
+
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        ConversationService._set_chat_history(cid, tab_state=tab_state)
+        assert tab_state.chat_history[0]["content"] == "Hello"
+
+        with patch.object(conversations_module.app_state, "chat_history", []):
+            ConversationService._set_chat_history(cid)
+            assert conversations_module.app_state.chat_history[0]["content"] == "Hello"
+
+        interleaved = ConversationService._build_content_blocks_data(
+            "",
+            [],
+            [{"type": "tool_result", "result": "ignore", "name": "demo"}],
+            interrupted=True,
+        )
+        tool_only = ConversationService._build_content_blocks_data(
+            "done",
+            [{"name": "search", "args": {"q": "x"}, "server": "web"}],
+            None,
+        )
+
+        assert interleaved == [
+            {"type": "tool_result", "name": "demo"},
+            {"type": "text", "content": "\n\n[Response interrupted]"},
+        ]
+        assert tool_only == [
+            {"type": "tool_call", "name": "search", "args": {"q": "x"}, "server": "web"},
+            {"type": "text", "content": "done"},
+        ]
+        assert ConversationService._build_content_blocks_data("", [], None) is None
+
+    async def test_artifact_helper_functions(self, monkeypatch):
+        artifact_ids = ConversationService._extract_artifact_ids(
+            [
+                {"type": "artifact", "artifact_id": "a1"},
+                {"type": "artifact", "artifact_id": " "},
+                {"type": "text", "content": "x"},
+            ]
+        )
+        payload = ConversationService._artifact_deleted_payload(
+            {
+                "id": "a2",
+                "conversation_id": "c1",
+                "message_id": "m1",
+                "reason": "replaced",
+            }
+        )
+        assert artifact_ids == ["a1"]
+        assert payload == {
+            "artifact_id": "a2",
+            "conversation_id": "c1",
+            "message_id": "m1",
+            "reason": "replaced",
+        }
+        assert ConversationService._artifact_deleted_payload("  ") is None
+
+        broadcast = AsyncMock()
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message",
+            broadcast,
+        )
+
+        await ConversationService._broadcast_deleted_artifacts(
+            ["a1", {"artifact_id": "a2"}, {"id": ""}]
+        )
+
+        assert broadcast.await_args_list[0].args == (
+            "artifact_deleted",
+            {"artifact_id": "a1"},
+        )
+        assert broadcast.await_args_list[1].args == (
+            "artifact_deleted",
+            {"artifact_id": "a2"},
+        )
+
+    def test_resolve_turn_context_validation_errors(self, monkeypatch):
+        fake_db = MagicMock()
+        fake_db.get_message_by_id.return_value = None
+        monkeypatch.setattr("source.services.chat.conversations.db", fake_db)
+
+        with pytest.raises(ValueError, match="could not be found"):
+            ConversationService._resolve_turn_context("missing")
+
+        fake_db.get_message_by_id.return_value = {
+            "conversation_id": "c1",
+            "turn_id": "t1",
+        }
+        fake_db.get_turn_messages.return_value = [{"role": "assistant", "content": "hi"}]
+        with pytest.raises(ValueError, match="does not have a user message"):
+            ConversationService._resolve_turn_context("m1")
+
+        fake_db.get_turn_messages.return_value = [{"role": "user", "content": "hi"}]
+        with pytest.raises(ValueError, match="assistant response yet"):
+            ConversationService._resolve_turn_context("m1")
+
+    async def test_clear_context_resets_tab_state_and_notifies(self, monkeypatch):
+        tab_state = TabState(tab_id="default")
+        tab_state.chat_history = [{"role": "user", "content": "hello"}]
+        tab_state.conversation_id = "c1"
+
+        fake_terminal = MagicMock()
+        fake_hooks_runtime = MagicMock()
+        fake_hooks_runtime.ensure_session_started = AsyncMock()
+        broadcast = AsyncMock()
+
+        monkeypatch.setattr(
+            "source.services.chat.conversations.ScreenshotHandler.clear_screenshots",
+            AsyncMock(),
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message",
+            broadcast,
+        )
+
+        terminal_module = MagicMock()
+        terminal_module.terminal_service = fake_terminal
+
+        with (
+            patch.dict("sys.modules", {"source.services.shell.terminal": terminal_module}),
+            patch(
+                "source.services.hooks_runtime.get_hooks_runtime",
+                return_value=fake_hooks_runtime,
+            ),
+        ):
+            await ConversationService.clear_context(tab_state=tab_state)
+
+        assert tab_state.chat_history == []
+        assert tab_state.conversation_id is None
+        fake_terminal.reset.assert_called_once_with()
+        fake_hooks_runtime.ensure_session_started.assert_awaited_once()
+        assert broadcast.await_args.args == (
+            "context_cleared",
+            "Context cleared. Ready for new conversation.",
+        )
 
 
 class TestConversationBranching:

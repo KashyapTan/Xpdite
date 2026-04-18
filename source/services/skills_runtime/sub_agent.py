@@ -145,27 +145,27 @@ def _log_sub_agent_call(
 def _resolve_tier_model(tier: str) -> str:
     """Resolve a tier label ("fast", "smart", "self") to a model identifier.
 
-    Falls back to the current model for all tiers if no user override is set.
+    Uses the current request model when available. ``fast``/``smart`` may also
+    use explicit DB overrides, which keeps sub-agent routing stable even when
+    no active request context exists.
     """
     current_model = get_current_model()
-    if not current_model:
-        from ...core.state import app_state
-        current_model = app_state.selected_model
-
-    if not current_model:
-        raise ValueError("No model available for sub-agent execution")
-
     if tier == "self":
-        return current_model
+        if current_model:
+            return current_model
+        raise ValueError("No active request model available for sub-agent tier 'self'")
 
-    # Check user-configured overrides in DB
     setting_key = f"sub_agent_tier_{tier}"
     configured = db.get_setting(setting_key)
     if configured and configured.strip():
         return configured.strip()
 
-    # Default: use current model
-    return current_model
+    if current_model:
+        return current_model
+
+    raise ValueError(
+        f"No model available for sub-agent tier '{tier}'. Configure {setting_key} or execute within an active request."
+    )
 
 
 def _uses_ollama_client(model_name: str) -> bool:
@@ -965,14 +965,31 @@ async def execute_sub_agent(
 
     agent_id = uuid.uuid4().hex[:12]
 
-    model_name = _resolve_tier_model(model_tier)
+    try:
+        model_name = _resolve_tier_model(model_tier)
+    except Exception as e:
+        logger.error(
+            "Failed to resolve model for sub-agent '%s': %s",
+            agent_name,
+            e,
+        )
+        return f"Error: Failed to resolve sub-agent model tier: {type(e).__name__}: {e}"
+
     logger.info(
         "Spawning sub-agent '%s' [%s] (tier=%s, model=%s)",
         agent_name, agent_id, model_tier, model_name,
     )
 
     # Retrieve tools for this sub-agent's instruction
-    tools = _get_sub_agent_tools(instruction)
+    try:
+        tools = _get_sub_agent_tools(instruction)
+    except Exception as e:
+        logger.error(
+            "Failed to prepare tools for sub-agent '%s': %s",
+            agent_name,
+            e,
+        )
+        return f"Error: Failed to prepare sub-agent tools: {type(e).__name__}: {e}"
 
     try:
         async with _concurrency_semaphore:
@@ -1007,20 +1024,20 @@ async def execute_sub_agent(
     error = result.get("error")
 
     # Log to debug file for inspection (offloaded to thread to avoid blocking)
-    await run_in_thread(
-        _log_sub_agent_call,
-        agent_id=agent_id,
-        agent_name=agent_name,
-        model_tier=model_tier,
-        model_name=model_name,
-        instruction=instruction,
-        result_text=response_text,
-        error=error,
-        token_stats=token_stats,
-    )
-
-    total_tokens = token_stats.get("prompt_tokens", 0) + token_stats.get("completion_tokens", 0)
-    token_label = f" \u2022 {total_tokens} tokens" if total_tokens else ""
+    try:
+        await run_in_thread(
+            _log_sub_agent_call,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model_tier=model_tier,
+            model_name=model_name,
+            instruction=instruction,
+            result_text=response_text,
+            error=error,
+            token_stats=token_stats,
+        )
+    except Exception as e:
+        logger.warning("Failed to write sub-agent debug log: %s", e)
 
     if error:
         return f"Error: {error}\n\nPartial response:\n{response_text}" if response_text else f"Error: {error}"
@@ -1049,9 +1066,14 @@ async def execute_sub_agents_parallel(
 
     # Pre-resolve tiers once to avoid repeated DB queries (H5 fix)
     tier_cache: Dict[str, str] = {}
-    for tier in normalized_tiers:
-        if tier not in tier_cache:
-            tier_cache[tier] = _resolve_tier_model(tier)
+    try:
+        for tier in normalized_tiers:
+            if tier not in tier_cache:
+                tier_cache[tier] = _resolve_tier_model(tier)
+    except Exception as e:
+        logger.error("Failed to resolve sub-agent batch model tier: %s", e)
+        error_text = f"Error: Failed to resolve sub-agent model tier: {type(e).__name__}: {e}"
+        return [error_text for _ in calls]
 
     # Check if ANY call resolves to local Ollama — if so, run all sequentially
     # to avoid overwhelming the local GPU

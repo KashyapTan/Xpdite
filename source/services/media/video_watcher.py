@@ -657,7 +657,7 @@ def _build_tool_output(
 
     truncation_note_template = (
         "\n\n[Transcript truncated: captured approximately {percent:.1f}% of the video "
-        "before hitting the 100,000-character tool limit. Ask for a specific time "
+        f"before hitting the {MAX_TOOL_RESULT_LENGTH:,}-character tool limit. Ask for a specific time "
         "range if you need the rest.]"
     )
     reserved_note_len = len(truncation_note_template.format(percent=100.0))

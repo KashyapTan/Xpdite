@@ -12,6 +12,63 @@ import pytest
 import source.mcp_integration.core.manager as manager_module
 
 
+def _install_fake_mcp(
+    monkeypatch,
+    *,
+    tools=None,
+    stdio_enter_exception: Exception | None = None,
+    initialize_exception: Exception | None = None,
+):
+    captured: dict[str, object] = {}
+    tools = list(tools or [])
+
+    class DummyClientSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def initialize(self):
+            if initialize_exception is not None:
+                raise initialize_exception
+            return None
+
+        async def list_tools(self):
+            return SimpleNamespace(tools=tools)
+
+    class DummyStdioClient:
+        def __init__(self, params):
+            captured["params"] = params
+
+        async def __aenter__(self):
+            if stdio_enter_exception is not None:
+                raise stdio_enter_exception
+            return object(), object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    fake_mcp = types.ModuleType("mcp")
+    fake_mcp.ClientSession = DummyClientSession
+    fake_mcp.StdioServerParameters = lambda command, args, env=None: SimpleNamespace(
+        command=command,
+        args=args,
+        env=env,
+    )
+    fake_mcp_client = types.ModuleType("mcp.client")
+    fake_mcp_client.__path__ = []
+    fake_mcp_stdio = types.ModuleType("mcp.client.stdio")
+    fake_mcp_stdio.stdio_client = lambda params: DummyStdioClient(params)
+    monkeypatch.setitem(sys.modules, "mcp", fake_mcp)
+    monkeypatch.setitem(sys.modules, "mcp.client", fake_mcp_client)
+    monkeypatch.setitem(sys.modules, "mcp.client.stdio", fake_mcp_stdio)
+    return captured
+
+
 @pytest.fixture()
 def reset_mcp_manager_state():
     """Reset the singleton manager around tests that inspect init flow."""
@@ -466,3 +523,396 @@ class TestGetTools:
         assert "additionalProperties" not in params
         assert params["properties"]["nested"]["additionalProperties"] is False
         assert manager._raw_tools[0]["input_schema"]["additionalProperties"] is False
+
+
+class TestManagerAdditionalCoverage:
+    @pytest.mark.asyncio
+    async def test_connect_server_returns_when_mcp_import_is_unavailable(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+        original_import = __import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name in {"mcp", "mcp.client.stdio"}:
+                raise ImportError("mcp missing")
+            return original_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", side_effect=fake_import):
+            await manager.connect_server("demo", "python", ["server.py"])
+
+        assert manager._connections == {}
+        assert manager._tool_registry == {}
+        assert manager.get_ollama_tools() is None
+
+    @pytest.mark.asyncio
+    async def test_connect_server_registers_prefixed_tools_and_extends_pythonpath(
+        self,
+        reset_mcp_manager_state,
+        monkeypatch,
+    ):
+        manager = reset_mcp_manager_state
+        captured = _install_fake_mcp(
+            monkeypatch,
+            tools=[
+                SimpleNamespace(
+                    name="beta",
+                    description="Beta tool",
+                    inputSchema=None,
+                ),
+                SimpleNamespace(
+                    name="Alpha",
+                    description="Alpha tool",
+                    inputSchema={"type": "object", "properties": {"q": {"type": "string"}}},
+                ),
+            ],
+        )
+
+        with patch(
+            "source.core.thread_pool.run_in_thread",
+            new=AsyncMock(side_effect=lambda fn: fn()),
+        ):
+            await manager.connect_server(
+                "demo",
+                "python",
+                ["server.py"],
+                env={"PYTHONPATH": "C:\\custom"},
+                tool_name_prefix="mcp__demo__",
+                display_name="Demo Display",
+            )
+
+        try:
+            assert manager.is_server_connected("demo") is True
+            env = captured["params"].env
+            assert env["PYTHONPATH"].split(manager_module.os.pathsep) == [
+                str(manager_module.PROJECT_ROOT),
+                "C:\\custom",
+            ]
+            assert set(manager._tool_registry) == {"mcp__demo__beta", "mcp__demo__Alpha"}
+            assert manager._tool_registry["mcp__demo__Alpha"]["server_display_name"] == "Demo Display"
+            assert manager._tool_registry["mcp__demo__Alpha"]["session_tool_name"] == "Alpha"
+            assert manager._tool_registry["mcp__demo__beta"]["display_tool_name"] == "beta"
+            assert manager.get_ollama_tools() is not None
+            assert manager.has_tools() is True
+            assert manager.get_tool_server_name("mcp__demo__beta") == "demo"
+            assert manager.get_tool_server_name("missing") == "unknown"
+            assert manager.tool_uses_mcp_session("mcp__demo__beta") is True
+            assert manager.tool_uses_mcp_session("missing") is False
+            assert manager.get_tools()[0]["function"]["name"] == "mcp__demo__beta"
+
+            assert manager.get_server_tools() == [
+                {
+                    "server": "demo",
+                    "display_name": "Demo Display",
+                    "tools": [
+                        {"id": "mcp__demo__Alpha", "name": "Alpha"},
+                        {"id": "mcp__demo__beta", "name": "beta"},
+                    ],
+                }
+            ]
+        finally:
+            await manager.disconnect_server("demo")
+
+    @pytest.mark.asyncio
+    async def test_connect_server_raises_when_stdio_lifecycle_fails_before_connect(
+        self,
+        reset_mcp_manager_state,
+        monkeypatch,
+    ):
+        manager = reset_mcp_manager_state
+        _install_fake_mcp(
+            monkeypatch,
+            stdio_enter_exception=RuntimeError("startup failed"),
+        )
+
+        with pytest.raises(RuntimeError, match="startup failed"):
+            await manager.connect_server("demo", "python", ["server.py"])
+
+        assert manager.is_server_connected("demo") is False
+        assert manager._tool_registry == {}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_returns_image_payload_when_json_text_contains_image_type(
+        self,
+    ):
+        manager = manager_module.McpToolManager()
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            text='{"type":"image","mime_type":"image/png","data":"abc"}'
+                        )
+                    ]
+                )
+            )
+        )
+        manager._tool_registry["image_tool"] = {
+            "session": session,
+            "server_name": "filesystem",
+        }
+
+        result = await manager.call_tool("image_tool", {"path": "x"})
+
+        assert result == {"type": "image", "mime_type": "image/png", "data": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_call_tool_keeps_text_when_json_decode_fails(self):
+        manager = manager_module.McpToolManager()
+        session = SimpleNamespace(
+            call_tool=AsyncMock(
+                return_value=SimpleNamespace(content=[SimpleNamespace(text="{not-json}")])
+            )
+        )
+        manager._tool_registry["broken_json_tool"] = {
+            "session": session,
+            "server_name": "filesystem",
+        }
+
+        result = await manager.call_tool("broken_json_tool", {"path": "x"})
+
+        assert result == "{not-json}"
+
+    def test_get_server_tools_groups_and_sorts_by_display_name_and_tool_name(self):
+        manager = manager_module.McpToolManager()
+        manager._tool_registry = {
+            "beta_id": {
+                "server_name": "zebra",
+                "server_display_name": "Zebra Server",
+                "display_tool_name": "beta",
+                "session": object(),
+            },
+            "alpha_id": {
+                "server_name": "zebra",
+                "server_display_name": "Zebra Server",
+                "display_tool_name": "Alpha",
+                "session": object(),
+            },
+            "gamma_id": {
+                "server_name": "aardvark",
+                "server_display_name": "Aardvark Server",
+                "display_tool_name": "gamma",
+                "session": object(),
+            },
+        }
+
+        assert manager.get_server_tools() == [
+            {
+                "server": "aardvark",
+                "display_name": "Aardvark Server",
+                "tools": [{"id": "gamma_id", "name": "gamma"}],
+            },
+            {
+                "server": "zebra",
+                "display_name": "Zebra Server",
+                "tools": [
+                    {"id": "alpha_id", "name": "Alpha"},
+                    {"id": "beta_id", "name": "beta"},
+                ],
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_disconnect_server_timeout_cancels_task_and_removes_tools(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+        task = asyncio.create_task(asyncio.sleep(3600))
+        manager._connections = {
+            "demo": {
+                "shutdown_event": asyncio.Event(),
+                "task": task,
+            }
+        }
+        manager._tool_registry = {"demo_tool": {"server_name": "demo", "session": object()}}
+        manager._ollama_tools = [{"function": {"name": "demo_tool", "description": "Demo"}}]
+        manager._raw_tools = [{"name": "demo_tool", "description": "Demo", "input_schema": {}}]
+
+        async def _timeout_wait_for(awaitable, timeout):
+            if hasattr(awaitable, "close"):
+                awaitable.close()
+            raise asyncio.TimeoutError
+
+        with (
+            patch.object(manager_module.asyncio, "wait_for", new=_timeout_wait_for),
+            patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
+        ):
+            await manager.disconnect_server("demo")
+
+        assert task.cancelled() is True
+        assert manager._connections == {}
+        assert manager._tool_registry == {}
+        assert manager._ollama_tools == []
+        assert manager._raw_tools == []
+        refresh_tool_embeddings.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_server_logs_shutdown_error_and_still_cleans_state(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+        manager._connections = {
+            "demo": {
+                "shutdown_event": asyncio.Event(),
+                "task": done_task,
+            }
+        }
+        manager._tool_registry = {
+            "demo_tool": {"server_name": "demo", "session": object()},
+            "keep_tool": {"server_name": "keep", "session": object()},
+        }
+        manager._ollama_tools = [
+            {"function": {"name": "demo_tool", "description": "Demo"}},
+            {"function": {"name": "keep_tool", "description": "Keep"}},
+        ]
+        manager._raw_tools = [
+            {"name": "demo_tool", "description": "Demo", "input_schema": {}},
+            {"name": "keep_tool", "description": "Keep", "input_schema": {}},
+        ]
+
+        async def _failing_wait_for(*_args, **_kwargs):
+            raise RuntimeError("close failed")
+
+        with (
+            patch.object(manager_module.asyncio, "wait_for", new=_failing_wait_for),
+            patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
+        ):
+            await manager.disconnect_server("demo")
+
+        assert "demo" not in manager._connections
+        assert list(manager._tool_registry) == ["keep_tool"]
+        assert [tool["function"]["name"] for tool in manager._ollama_tools] == ["keep_tool"]
+        assert [tool["name"] for tool in manager._raw_tools] == ["keep_tool"]
+        refresh_tool_embeddings.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_connect_google_servers_skips_when_token_file_is_missing(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+
+        with (
+            patch("source.mcp_integration.core.manager.os.path.exists", return_value=False),
+            patch.object(manager, "connect_server", new_callable=AsyncMock) as connect_server,
+            patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
+        ):
+            await manager.connect_google_servers()
+
+        connect_server.assert_not_awaited()
+        refresh_tool_embeddings.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_connect_google_servers_only_connects_missing_servers(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+
+        async def _passthrough_wait_for(coro, timeout):
+            return await coro
+
+        with (
+            patch("source.mcp_integration.core.manager.os.path.exists", return_value=True),
+            patch.object(manager, "is_server_connected", side_effect=[True, False]),
+            patch.object(manager, "connect_server", new_callable=AsyncMock) as connect_server,
+            patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
+            patch.object(manager_module.asyncio, "wait_for", new=_passthrough_wait_for),
+        ):
+            await manager.connect_google_servers()
+
+        connect_server.assert_awaited_once()
+        assert connect_server.await_args.args[0] == "calendar"
+        refresh_tool_embeddings.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_disconnect_google_servers_and_cleanup_only_disconnect_connected_servers(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+        manager._initialized = True
+        manager._connections = {"gmail": object(), "keep": object()}
+
+        async def _disconnect_server(name):
+            manager._connections.pop(name, None)
+            if name == "keep":
+                raise RuntimeError("boom")
+
+        with patch.object(manager, "disconnect_server", new=AsyncMock(side_effect=_disconnect_server)) as disconnect_server:
+            await manager.disconnect_google_servers()
+
+        disconnect_server.assert_awaited_once_with("gmail")
+
+        manager._connections = {"gmail": object(), "keep": object()}
+        manager._initialized = True
+        with patch.object(manager, "disconnect_server", new=AsyncMock(side_effect=_disconnect_server)):
+            await manager.cleanup()
+
+        assert manager._initialized is False
+        assert "keep" not in manager._connections
+
+    @pytest.mark.asyncio
+    async def test_init_mcp_servers_handles_connector_and_marketplace_failures(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+
+        terminal_mod = types.ModuleType("mcp_servers.servers.terminal.inline_tools")
+        terminal_mod.TERMINAL_INLINE_TOOLS = []
+        sub_agent_mod = types.ModuleType("mcp_servers.servers.sub_agent.inline_tools")
+        sub_agent_mod.SUB_AGENT_INLINE_TOOLS = []
+        video_mod = types.ModuleType("mcp_servers.servers.video_watcher.inline_tools")
+        video_mod.VIDEO_WATCHER_INLINE_TOOLS = []
+        skills_mod = types.ModuleType("mcp_servers.servers.skills.inline_tools")
+        skills_mod.SKILLS_INLINE_TOOLS = []
+        memory_mod = types.ModuleType("mcp_servers.servers.memory.inline_tools")
+        memory_mod.MEMORY_INLINE_TOOLS = []
+        scheduler_mod = types.ModuleType("mcp_servers.servers.scheduler.inline_tools")
+        scheduler_mod.SCHEDULER_INLINE_TOOLS = []
+
+        with (
+            patch.object(manager, "connect_server", new_callable=AsyncMock),
+            patch.object(manager, "register_inline_tools") as register_inline_tools,
+            patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
+            patch(
+                "source.services.integrations.external_connectors.init_external_connectors",
+                new=AsyncMock(side_effect=RuntimeError("external boom")),
+            ),
+            patch(
+                "source.services.marketplace.service.get_marketplace_service",
+                return_value=SimpleNamespace(
+                    reconnect_enabled_mcp_installs_async=AsyncMock(
+                        side_effect=RuntimeError("marketplace boom")
+                    )
+                ),
+            ),
+            patch.dict(
+                sys.modules,
+                {
+                    "mcp_servers.servers.terminal.inline_tools": terminal_mod,
+                    "mcp_servers.servers.sub_agent.inline_tools": sub_agent_mod,
+                    "mcp_servers.servers.video_watcher.inline_tools": video_mod,
+                    "mcp_servers.servers.skills.inline_tools": skills_mod,
+                    "mcp_servers.servers.memory.inline_tools": memory_mod,
+                    "mcp_servers.servers.scheduler.inline_tools": scheduler_mod,
+                },
+                clear=False,
+            ),
+        ):
+            await manager_module.init_mcp_servers()
+
+        assert register_inline_tools.call_count == 6
+        refresh_tool_embeddings.assert_called_once_with()
+        assert manager._initialized is True
+
+    @pytest.mark.asyncio
+    async def test_init_mcp_servers_returns_early_when_already_initialized(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+        manager._initialized = True
+
+        with patch.object(manager, "connect_server", new_callable=AsyncMock) as connect_server:
+            await manager_module.init_mcp_servers()
+
+        connect_server.assert_not_awaited()

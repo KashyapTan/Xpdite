@@ -228,6 +228,37 @@ class TestReadAPI:
         assert mgr.get_skill_content("nope") is None
 
 
+class TestMarketplaceIsolation:
+    def test_custom_manager_skips_marketplace_scan_by_default(self, tmp_path, monkeypatch):
+        skills_dir = tmp_path / "skills"
+        builtin_dir = skills_dir / "builtin"
+        user_dir = skills_dir / "user"
+        seed_dir = tmp_path / "skills_seed"
+        prefs_file = skills_dir / "preferences.json"
+
+        _make_seed_skill(seed_dir, "terminal")
+
+        def _unexpected_marketplace_lookup():
+            raise AssertionError("custom managers should not scan marketplace installs by default")
+
+        monkeypatch.setattr(
+            "source.services.marketplace.service.get_marketplace_service",
+            _unexpected_marketplace_lookup,
+        )
+
+        mgr = SkillManager(
+            skills_dir=skills_dir,
+            builtin_dir=builtin_dir,
+            user_dir=user_dir,
+            seed_dir=seed_dir,
+            preferences_file=prefs_file,
+        )
+
+        mgr.initialize()
+
+        assert mgr.get_skill_by_name("terminal") is not None
+
+
 # ── Skill dataclass ──────────────────────────────────────────────
 
 

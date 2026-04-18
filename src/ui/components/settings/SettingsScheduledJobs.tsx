@@ -109,12 +109,11 @@ const SettingsScheduledJobs: React.FC = () => {
             const updated = { ...prev };
             for (const bridgeStatus of platformStatuses as Array<{ platform: string; status: string }>) {
               const platformId = bridgeStatus.platform as Platform;
-              if (updated[platformId]) {
-                updated[platformId] = {
-                  ...updated[platformId],
-                  status: bridgeStatus.status as 'connected' | 'disconnected' | 'error',
-                };
-              }
+              updated[platformId] = {
+                enabled: updated[platformId]?.enabled ?? false,
+                token: updated[platformId]?.token,
+                status: bridgeStatus.status as 'connected' | 'disconnected' | 'error',
+              };
             }
             return updated;
           });

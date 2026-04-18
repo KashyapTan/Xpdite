@@ -2,6 +2,8 @@
 
 import json
 import logging
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -75,6 +77,133 @@ class TestConfiguration:
             "search",
             "inbox",
         ]
+
+    def test_ensure_sentence_transformers_available_uses_cached_global(self, monkeypatch):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        sentinel = object()
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", sentinel)
+        monkeypatch.setattr(
+            retriever_module,
+            "_SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED",
+            False,
+        )
+
+        assert retriever_module._ensure_sentence_transformers_available() is True
+        assert retriever_module.SentenceTransformer is sentinel
+
+    def test_ensure_sentence_transformers_available_does_not_retry_failed_import(
+        self, monkeypatch
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", None)
+        monkeypatch.setattr(
+            retriever_module,
+            "_SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED",
+            True,
+        )
+
+        assert retriever_module._ensure_sentence_transformers_available() is False
+
+    def test_ensure_sentence_transformers_available_imports_module_when_present(
+        self, monkeypatch
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        fake_module = SimpleNamespace(SentenceTransformer=object())
+        monkeypatch.setitem(sys.modules, "sentence_transformers", fake_module)
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", None)
+        monkeypatch.setattr(
+            retriever_module,
+            "_SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED",
+            False,
+        )
+
+        assert retriever_module._ensure_sentence_transformers_available() is True
+        assert (
+            retriever_module.SentenceTransformer
+            is fake_module.SentenceTransformer
+        )
+
+
+class TestBackendSelection:
+    def test_check_embedding_backend_prefers_matching_ollama_model_dict_payload(self):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        with (
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache",
+            ),
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache_index",
+            ),
+            patch.object(
+                retriever_module.ollama,
+                "list",
+                return_value={"models": [{"name": "all-minilm:latest"}]},
+            ),
+        ):
+            tool_retriever = retriever_module.ToolRetriever()
+
+        assert tool_retriever._embedding_model_type == "ollama"
+        assert tool_retriever._ollama_model_name == "all-minilm:latest"
+
+    def test_check_embedding_backend_falls_back_to_sentence_transformers(self):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        with (
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache",
+            ),
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache_index",
+            ),
+            patch.object(
+                retriever_module.ollama,
+                "list",
+                side_effect=RuntimeError("offline"),
+            ),
+            patch.object(
+                retriever_module,
+                "_ensure_sentence_transformers_available",
+                return_value=True,
+            ),
+        ):
+            tool_retriever = retriever_module.ToolRetriever()
+
+        assert tool_retriever._embedding_model_type == "sentence-transformers"
+
+    def test_check_embedding_backend_marks_none_when_no_backend_is_available(self):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        with (
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache",
+            ),
+            patch.object(
+                retriever_module.ToolRetriever,
+                "_load_cache_index",
+            ),
+            patch.object(
+                retriever_module.ollama,
+                "list",
+                return_value=[{"model": "llama3"}],
+            ),
+            patch.object(
+                retriever_module,
+                "_ensure_sentence_transformers_available",
+                return_value=False,
+            ),
+        ):
+            tool_retriever = retriever_module.ToolRetriever()
+
+        assert tool_retriever._embedding_model_type == "none"
 
 
 class TestIndexBuild:
@@ -359,6 +488,31 @@ class TestRetrieveTools:
         assert any("bm25_score=" in message for message in score_logs)
         assert any("rrf_score=" in message for message in score_logs)
 
+    def test_bm25_zero_scores_fall_back_to_always_on_with_warning(
+        self, retriever, caplog
+    ):
+        descriptions = {
+            "always_tool": "Always include this tool",
+            "search_docs": "Search internal docs",
+        }
+        vectors = {
+            "always_tool": np.array([1.0, 0.0]),
+            "search_docs": np.array([0.0, 1.0]),
+        }
+        tools = _embed_tools_with_vectors(retriever, descriptions, vectors)
+
+        with patch.object(retriever, "_get_embedding", return_value=None):
+            with caplog.at_level(logging.WARNING):
+                result = retriever.retrieve_tools(
+                    "no keyword overlap here",
+                    tools,
+                    always_on=["always_tool"],
+                    top_k=1,
+                )
+
+        assert _tool_names(result) == ["always_tool"]
+        assert "BM25 produced no keyword matches" in caplog.text
+
 
 class TestEmbedToolsCacheCleanup:
     def test_incremental_refresh_keeps_cache_for_temporarily_absent_tools(
@@ -408,6 +562,255 @@ class TestEmbedToolsCacheCleanup:
                 "read_file": read_key,
                 "list_calendars": calendar_key,
             }
+
+
+class TestRetrieverAdditionalCoverage:
+    def test_get_embedding_uses_ollama_backend_and_returns_float32(self, retriever):
+        retriever._embedding_model_type = "ollama"
+        retriever._ollama_model_name = "demo-embed"
+
+        with patch(
+            "source.mcp_integration.core.retriever.ollama.embeddings",
+            return_value={"embedding": [1, 2, 3]},
+        ):
+            embedding = retriever._get_embedding("hello")
+
+        assert embedding.dtype == np.float32
+        assert np.allclose(embedding, np.array([1, 2, 3], dtype=np.float32))
+
+    def test_get_embedding_returns_none_when_ollama_embedding_fails(
+        self, retriever, caplog
+    ):
+        retriever._embedding_model_type = "ollama"
+
+        with patch(
+            "source.mcp_integration.core.retriever.ollama.embeddings",
+            side_effect=RuntimeError("boom"),
+        ):
+            with caplog.at_level(logging.WARNING):
+                embedding = retriever._get_embedding("hello")
+
+        assert embedding is None
+        assert "Ollama embedding failed" in caplog.text
+
+    def test_get_embedding_lazy_loads_sentence_transformers_model(
+        self, retriever, monkeypatch
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        constructed = {}
+
+        class FakeSentenceTransformer:
+            def __init__(self, model_name):
+                constructed["model_name"] = model_name
+
+            def encode(self, text):
+                assert text == "hello"
+                return [0.25, 0.75]
+
+        retriever._embedding_model_type = "sentence-transformers"
+        retriever._st_model = None
+        monkeypatch.setattr(
+            retriever_module,
+            "SentenceTransformer",
+            FakeSentenceTransformer,
+        )
+
+        with patch.object(
+            retriever_module,
+            "_ensure_sentence_transformers_available",
+            return_value=True,
+        ):
+            embedding = retriever._get_embedding("hello")
+
+        assert constructed["model_name"] == retriever_module._SENTENCE_TRANSFORMER_MODEL
+        assert np.allclose(embedding, np.array([0.25, 0.75], dtype=np.float32))
+
+    def test_get_embedding_uses_existing_sentence_transformer_numpy_output(
+        self, retriever
+    ):
+        retriever._embedding_model_type = "sentence-transformers"
+        retriever._st_model = SimpleNamespace(
+            encode=lambda _text: np.array([0.1, 0.9], dtype=np.float64)
+        )
+
+        embedding = retriever._get_embedding("hello")
+
+        assert embedding.dtype == np.float32
+        assert np.allclose(embedding, np.array([0.1, 0.9], dtype=np.float32))
+
+    def test_load_cache_reads_npz_embeddings_from_disk(self, retriever):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        retriever_module.os.makedirs(retriever_module._CACHE_DIR, exist_ok=True)
+        np.savez(
+            retriever_module._CACHE_FILE,
+            first=np.array([1.0, 2.0], dtype=np.float32),
+        )
+        retriever._embedding_cache = {}
+
+        retriever._load_cache()
+
+        assert "first" in retriever._embedding_cache
+        assert np.allclose(
+            retriever._embedding_cache["first"],
+            np.array([1.0, 2.0], dtype=np.float32),
+        )
+
+    def test_load_cache_warns_and_clears_state_for_invalid_npz(
+        self, retriever, caplog
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        retriever_module.os.makedirs(retriever_module._CACHE_DIR, exist_ok=True)
+        with open(retriever_module._CACHE_FILE, "wb") as fh:
+            fh.write(b"not-a-valid-npz")
+
+        retriever._embedding_cache = {"stale": np.array([1.0], dtype=np.float32)}
+        with caplog.at_level(logging.WARNING):
+            retriever._load_cache()
+
+        assert retriever._embedding_cache == {}
+        assert "Could not load embedding cache" in caplog.text
+
+    def test_save_cache_logs_warning_when_atomic_write_fails(
+        self, retriever, caplog
+    ):
+        retriever._embedding_cache = {"tool": np.array([1.0], dtype=np.float32)}
+
+        with patch.object(
+            retriever,
+            "_write_file_atomically",
+            side_effect=OSError("disk full"),
+        ):
+            with caplog.at_level(logging.WARNING):
+                retriever._save_cache()
+
+        assert "Could not save embedding cache" in caplog.text
+
+    def test_load_cache_index_accepts_valid_string_mapping(self, retriever):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        retriever_module.os.makedirs(retriever_module._CACHE_DIR, exist_ok=True)
+        with open(retriever_module._CACHE_INDEX_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"tool": "cache-key"}, fh)
+
+        retriever._tool_cache_index = {}
+        retriever._load_cache_index()
+
+        assert retriever._tool_cache_index == {"tool": "cache-key"}
+
+    def test_load_cache_index_rejects_invalid_mapping_values(
+        self, retriever, caplog
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        retriever_module.os.makedirs(retriever_module._CACHE_DIR, exist_ok=True)
+        with open(retriever_module._CACHE_INDEX_FILE, "w", encoding="utf-8") as fh:
+            json.dump({"tool": 123}, fh)
+
+        retriever._tool_cache_index = {"stale": "value"}
+        with caplog.at_level(logging.WARNING):
+            retriever._load_cache_index()
+
+        assert retriever._tool_cache_index == {}
+        assert "Embedding cache index is invalid" in caplog.text
+
+    def test_load_cache_index_warns_on_json_error(self, retriever, caplog):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        retriever_module.os.makedirs(retriever_module._CACHE_DIR, exist_ok=True)
+        with open(retriever_module._CACHE_INDEX_FILE, "w", encoding="utf-8") as fh:
+            fh.write("{invalid-json")
+
+        with caplog.at_level(logging.WARNING):
+            retriever._load_cache_index()
+
+        assert retriever._tool_cache_index == {}
+        assert "Could not load embedding cache index" in caplog.text
+
+    def test_save_cache_index_logs_warning_when_atomic_write_fails(
+        self, retriever, caplog
+    ):
+        retriever._tool_cache_index = {"tool": "cache-key"}
+
+        with patch.object(
+            retriever,
+            "_write_file_atomically",
+            side_effect=OSError("disk full"),
+        ):
+            with caplog.at_level(logging.WARNING):
+                retriever._save_cache_index()
+
+        assert "Could not save cache index" in caplog.text
+
+    def test_embed_tools_with_no_backend_clears_active_indexes(self, retriever):
+        retriever._embedding_model_type = "none"
+        retriever._embedding_matrix = np.array([[1.0]], dtype=np.float32)
+        retriever._tool_name_index = ["tool"]
+        retriever._bm25_index = object()
+
+        retriever.embed_tools(_make_tools({"tool": "desc"}))
+
+        assert retriever._embedding_matrix.shape == (0, 0)
+        assert retriever._tool_name_index == []
+        assert retriever._bm25_index is None
+
+    def test_rebuild_retrieval_index_disables_bm25_once_when_dependency_missing(
+        self, retriever, monkeypatch, caplog
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        monkeypatch.setattr(retriever_module, "BM25_AVAILABLE", False)
+        monkeypatch.setattr(retriever_module, "BM25Okapi", None)
+        retriever._bm25_warning_emitted = False
+
+        with caplog.at_level(logging.WARNING):
+            retriever._rebuild_retrieval_index(
+                [("tool", "tool desc", np.array([1.0, 0.0], dtype=np.float32))]
+            )
+            retriever._rebuild_retrieval_index(
+                [("tool", "tool desc", np.array([1.0, 0.0], dtype=np.float32))]
+            )
+
+        assert retriever._bm25_index is None
+        assert caplog.text.count("rank_bm25 is unavailable") == 1
+
+    def test_format_helpers_handle_missing_values(self, retriever):
+        assert retriever._format_float(None) == "n/a"
+        assert retriever._format_rank(None) == "n/a"
+
+    def test_lazy_retriever_constructs_singleton_once_and_delegates(
+        self, monkeypatch
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        constructions = []
+
+        class FakeRetriever:
+            marker = "ready"
+
+            def __init__(self):
+                constructions.append("init")
+
+            def retrieve_tools(self, *args, **kwargs):
+                return ("retrieve", args, kwargs)
+
+            def embed_tools(self, *args, **kwargs):
+                return ("embed", args, kwargs)
+
+        monkeypatch.setattr(retriever_module, "_retriever_instance", None)
+        monkeypatch.setattr(retriever_module, "ToolRetriever", FakeRetriever)
+        proxy = retriever_module._LazyRetriever()
+
+        assert proxy.retrieve_tools("query", [], []) == (
+            "retrieve",
+            ("query", [], []),
+            {},
+        )
+        assert proxy.embed_tools([]) == ("embed", ([],), {})
+        assert proxy.marker == "ready"
+        assert constructions == ["init"]
 
     def test_description_change_keeps_old_cache_until_reembed_succeeds(self, retriever):
         initial_tools = _make_tools({"search_docs": "Search the docs"})

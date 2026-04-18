@@ -71,7 +71,7 @@ describe('TitleBar', () => {
     fireEvent.click(screen.getByTitle('Mini mode'));
 
     expect(setMini).toHaveBeenCalledWith(true);
-    expect(window.electronAPI?.setMiniMode).toHaveBeenCalledWith(true);
+    expect(window.electronAPI?.setMiniMode).not.toHaveBeenCalled();
   });
 });
 

@@ -27,6 +27,7 @@ const navigateMock = vi.fn();
 const wsSendMock = vi.fn();
 const wsSubscribeMock = vi.fn();
 const setIsHiddenMock = vi.fn();
+const createTabMock = vi.fn();
 
 const updateTabTitleMock = vi.fn();
 const setQueueItemsMock = vi.fn();
@@ -38,6 +39,7 @@ const registerOnTabClosedMock = vi.fn(() => () => {});
 
 let wsSubscriber: ((event: WebSocketEvent) => void) | null = null;
 let latestResponseAreaProps: ResponseAreaProps | null = null;
+let locationStateMock: unknown = null;
 
 const tabContextState = {
   tabs: [
@@ -150,7 +152,7 @@ vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return {
     ...actual,
-    useLocation: () => ({ pathname: '/', state: null }),
+    useLocation: () => ({ pathname: '/', state: locationStateMock }),
     useNavigate: () => navigateMock,
     useOutletContext: () => ({ setMini: vi.fn(), setIsHidden: setIsHiddenMock, isHidden: false }),
   };
@@ -165,6 +167,7 @@ vi.mock('../../contexts/TabContext', () => ({
     tabs: tabContextState.tabs,
     activeTabId: tabContextState.activeTabId,
     updateTabTitle: updateTabTitleMock,
+    createTab: createTabMock,
     queueMap: {},
     setQueueItems: setQueueItemsMock,
     getTabSnapshot: getTabSnapshotMock,
@@ -243,6 +246,7 @@ vi.mock('../../components/input/ModeSelector', () => ({
 
 describe('App websocket-driven behavior', () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     latestResponseAreaProps = null;
     wsSubscriber = null;
@@ -260,6 +264,8 @@ describe('App websocket-driven behavior', () => {
       { id: 'tab-2', title: 'Tab 2' },
     ];
     tabContextState.activeTabId = 'tab-1';
+    createTabMock.mockReturnValue('tab-3');
+    locationStateMock = null;
     tabSnapshots.clear();
     chatStateMock.chatHistory = [];
     chatStateMock.query = 'hello from test';
@@ -300,6 +306,42 @@ describe('App websocket-driven behavior', () => {
         }),
       );
     });
+  });
+
+  test('handles /new commands by creating a tab and optionally submitting the initial message there', async () => {
+    vi.useFakeTimers();
+    chatStateMock.query = '/new draft a follow-up';
+
+    render(<App />);
+
+    fireEvent.click(screen.getByText('submit-query'));
+
+    expect(chatStateMock.setQuery).toHaveBeenCalledWith('');
+    expect(createTabMock).toHaveBeenCalledTimes(1);
+    expect(setTabSnapshotMock).toHaveBeenCalledWith(
+      'tab-1',
+      expect.objectContaining({
+        chat: expect.objectContaining({ query: '' }),
+      }),
+    );
+
+    await act(async () => {
+      await vi.runAllTimersAsync();
+    });
+
+    expect(chatStateMock.startQuery).toHaveBeenCalledWith('draft a follow-up');
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tab_id: 'tab-3',
+        type: 'submit_query',
+        content: 'draft a follow-up',
+        capture_mode: 'precision',
+        model: '',
+        attached_files: [],
+      }),
+    );
+
+    vi.useRealTimers();
   });
 
   test('bootstraps tab state on ws_connected event', () => {
@@ -854,6 +896,80 @@ describe('App websocket-driven behavior', () => {
 
     expect(wsSendMock).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'stop_streaming', tab_id: 'tab-1' }),
+    );
+  });
+
+  test('normalizes capture mode from navigation state and meeting recording fallbacks', () => {
+    locationStateMock = { selectedCaptureMode: 'fullscreen' };
+
+    render(<App />);
+
+    expect(screenshotStateMock.setMeetingRecordingMode).toHaveBeenCalledWith(false);
+    expect(screenshotStateMock.setCaptureMode).toHaveBeenCalledWith('fullscreen');
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'set_capture_mode', mode: 'fullscreen', tab_id: 'tab-1' }),
+    );
+
+    locationStateMock = null;
+    document.body.innerHTML = '';
+    wsSendMock.mockClear();
+    screenshotStateMock.setMeetingRecordingMode.mockClear();
+    screenshotStateMock.setCaptureMode.mockClear();
+    screenshotStateMock.meetingRecordingMode = true;
+    screenshotStateMock.captureMode = 'none';
+
+    render(<App />);
+
+    expect(screenshotStateMock.setMeetingRecordingMode).toHaveBeenCalledWith(false);
+    expect(screenshotStateMock.setCaptureMode).toHaveBeenCalledWith('precision');
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'set_capture_mode', mode: 'precision', tab_id: 'tab-1' }),
+    );
+  });
+
+  test('starts and stops voice recording through websocket', async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByTitle('Start voice input'));
+
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'start_recording', tab_id: 'tab-1' }),
+    );
+    expect(chatStateMock.setStatus).toHaveBeenCalledWith('Listening...');
+
+    await waitFor(() => {
+      expect(screen.getByTitle('Stop recording')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTitle('Stop recording'));
+
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'stop_recording', tab_id: 'tab-1' }),
+    );
+    expect(chatStateMock.setStatus).toHaveBeenCalledWith('Transcribing...');
+  });
+
+  test('renders terminal session request and active session controls', async () => {
+    render(<App />);
+
+    emitWebSocketEvent({
+      type: 'terminal_session_request',
+      tab_id: 'tab-1',
+      content: { title: 'Autonomous mode', reason: 'Need terminal access' },
+    });
+
+    expect(screen.getByText('Autonomous mode requested')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'terminal_session_response', approved: true, tab_id: 'tab-1' }),
+    );
+
+    emitWebSocketEvent({ type: 'terminal_session_started', tab_id: 'tab-1' });
+    expect(screen.getByText('Autonomous mode active')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'terminal_stop_session', tab_id: 'tab-1' }),
     );
   });
 

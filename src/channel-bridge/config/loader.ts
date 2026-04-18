@@ -13,7 +13,7 @@ import { parseConfigFile, getDefaultConfig } from './types.js';
 
 export interface ConfigLoader {
   load: () => Promise<LoadedConfig>;
-  startWatching: (onChange: (config: LoadedConfig) => void) => void;
+  startWatching: (onChange: (config: LoadedConfig) => void | Promise<void>) => void;
   stopWatching: () => void;
   getConfigPath: () => string;
 }
@@ -57,7 +57,7 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
       return parseConfigFile(configFile);
     },
 
-    startWatching(onChange: (config: LoadedConfig) => void): void {
+    startWatching(onChange: (config: LoadedConfig) => void | Promise<void>): void {
       if (watchAbortController) {
         return; // Already watching
       }
@@ -76,7 +76,7 @@ export function createConfigLoader(userDataDir: string, defaultPythonPort: numbe
             const configFile = await loadConfigFile();
             const config = parseConfigFile(configFile);
             debugLog(`[ConfigLoader] Config changed, notifying listeners`);
-            onChange(config);
+            await onChange(config);
           } catch (err) {
             errorLog(`[ConfigLoader] Error reloading config:`, err);
           }

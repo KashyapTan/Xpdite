@@ -23,6 +23,10 @@ def _write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _inline_to_thread(func, *args, **kwargs):
+    return func(*args, **kwargs)
+
+
 class _FakeResponse:
     def __init__(self, status_code: int, payload=None, *, content: bytes = b"", url: str = ""):
         self.status_code = status_code
@@ -100,6 +104,7 @@ def marketplace_env(tmp_path, monkeypatch):
         user_dir=tmp_path / "skills" / "user",
         seed_dir=tmp_path / "skills_seed",
         preferences_file=tmp_path / "skills" / "preferences.json",
+        include_marketplace=True,
     )
     skill_manager.initialize()
     monkeypatch.setattr(
@@ -1035,3 +1040,706 @@ class TestMarketplaceService:
         joined_args = " ".join(runtime["args"])
         assert "https://acme.example.com/mcp" in joined_args
         assert "Authorization: Bearer secret" in joined_args
+
+
+class TestMarketplaceAdditionalCoverage:
+    def test_create_source_rejects_direct_repo_inputs_for_package_runners(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with pytest.raises(
+            ValueError,
+            match="Direct Claude Repos",
+        ):
+            service.create_source("npx", "example/demo")
+
+    def test_delete_source_rejects_builtin_and_installed_sources(
+        self, marketplace_env, local_manifest_root
+    ):
+        service, _, _ = marketplace_env
+
+        with pytest.raises(ValueError, match="Built-in marketplace sources"):
+            service.delete_source("builtin-claude-plugins")
+
+        source = service.create_source("Local Catalog", str(local_manifest_root / "marketplace.json"))
+        service._refresh_source_sync(source["id"])
+        service._install_item_sync(source["id"], "planner-skill", {})
+
+        with pytest.raises(ValueError, match="installed items"):
+            service.delete_source(source["id"])
+
+    @pytest.mark.anyio
+    async def test_install_package_async_broadcasts_success(self, marketplace_env):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(service, "_install_package_sync", return_value={"id": "install-1"}),
+            patch.object(
+                service,
+                "_connect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-1", "status": "connected"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as broadcast_json,
+        ):
+            install = await service.install_package_async(
+                runner="npx",
+                package_input="@modelcontextprotocol/server-demo",
+            )
+
+        assert install["status"] == "connected"
+        assert [call.args[0] for call in broadcast_json.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_completed",
+        ]
+
+    @pytest.mark.anyio
+    async def test_install_package_async_broadcasts_failure(self, marketplace_env):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "_install_package_sync",
+                side_effect=ValueError("boom"),
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as broadcast_json,
+        ):
+            with pytest.raises(ValueError, match="boom"):
+                await service.install_package_async(
+                    runner="npx",
+                    package_input="@modelcontextprotocol/server-demo",
+                )
+
+        assert [call.args[0] for call in broadcast_json.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_failed",
+        ]
+        assert broadcast_json.await_args_list[-1].args[1]["error"] == "boom"
+
+    @pytest.mark.anyio
+    async def test_install_repo_async_broadcasts_success_and_failure(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(service, "_install_repo_sync", return_value={"id": "install-2"}),
+            patch.object(
+                service,
+                "_connect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-2", "status": "connected"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as broadcast_json,
+        ):
+            install = await service.install_repo_async(repo_input="example/demo")
+
+        assert install["status"] == "connected"
+        assert [call.args[0] for call in broadcast_json.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_completed",
+        ]
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(service, "_install_repo_sync", side_effect=ValueError("boom")),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as failed_broadcast,
+        ):
+            with pytest.raises(ValueError, match="boom"):
+                await service.install_repo_async(repo_input="example/demo")
+
+        assert [call.args[0] for call in failed_broadcast.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_failed",
+        ]
+
+    @pytest.mark.anyio
+    async def test_refresh_and_install_item_async_broadcast_lifecycle(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "_refresh_source_sync",
+                return_value={"id": "source-1", "last_sync_at": 123.0},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as broadcast_json,
+        ):
+            refreshed = await service.refresh_source_async("source-1")
+
+        assert refreshed["last_sync_at"] == 123.0
+        assert [call.args[0] for call in broadcast_json.await_args_list] == [
+            "marketplace_sync_started",
+            "marketplace_sync_completed",
+        ]
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "_install_item_sync",
+                return_value={"id": "install-3"},
+            ),
+            patch.object(
+                service,
+                "_connect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-3", "status": "connected"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as install_broadcast,
+        ):
+            install = await service.install_item_async(
+                source_id="source-1",
+                manifest_item_id="item-1",
+            )
+
+        assert install["status"] == "connected"
+        assert [call.args[0] for call in install_broadcast.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_completed",
+        ]
+
+    @pytest.mark.anyio
+    async def test_refresh_and_install_item_async_broadcast_failures(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(service, "_refresh_source_sync", side_effect=ValueError("boom")),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as refresh_broadcast,
+        ):
+            with pytest.raises(ValueError, match="boom"):
+                await service.refresh_source_async("source-1")
+
+        assert [call.args[0] for call in refresh_broadcast.await_args_list] == [
+            "marketplace_sync_started",
+            "marketplace_sync_failed",
+        ]
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(service, "_install_item_sync", side_effect=ValueError("boom")),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as install_broadcast,
+        ):
+            with pytest.raises(ValueError, match="boom"):
+                await service.install_item_async(
+                    source_id="source-1",
+                    manifest_item_id="item-1",
+                )
+
+        assert [call.args[0] for call in install_broadcast.await_args_list] == [
+            "marketplace_install_started",
+            "marketplace_install_failed",
+        ]
+
+    @pytest.mark.anyio
+    async def test_enable_disable_and_uninstall_async_broadcast_updates(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "_set_install_enabled_sync",
+                return_value={"id": "install-1", "status": "connected"},
+            ),
+            patch.object(
+                service,
+                "_connect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-1", "status": "connected"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as enable_broadcast,
+        ):
+            enabled = await service.enable_install_async("install-1")
+
+        assert enabled["status"] == "connected"
+        assert enable_broadcast.await_args.args[0] == "marketplace_update_completed"
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-1", "enabled": True},
+            ),
+            patch.object(
+                service,
+                "_disconnect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "_set_install_enabled_sync",
+                return_value={"id": "install-1", "status": "disabled"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as disable_broadcast,
+        ):
+            disabled = await service.disable_install_async("install-1")
+
+        assert disabled["status"] == "disabled"
+        assert disable_broadcast.await_args.args[1]["action"] == "disable"
+
+        with (
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch.object(
+                service,
+                "get_install",
+                return_value={"id": "install-1"},
+            ),
+            patch.object(
+                service,
+                "_disconnect_install_runtime_if_needed",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                service,
+                "_uninstall_sync",
+                return_value={"success": True, "install_id": "install-1"},
+            ),
+            patch.object(
+                marketplace_module.manager,
+                "broadcast_json",
+                new=AsyncMock(),
+            ) as uninstall_broadcast,
+        ):
+            removed = await service.uninstall_async("install-1")
+
+        assert removed["success"] is True
+        assert [call.args[0] for call in uninstall_broadcast.await_args_list] == [
+            "marketplace_uninstall_started",
+            "marketplace_uninstall_completed",
+        ]
+
+    def test_reinstall_existing_install_routes_direct_package_and_repo_sources(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        with (
+            patch.object(
+                service,
+                "get_install",
+                return_value={
+                    "id": "install-1",
+                    "source_id": None,
+                    "enabled": True,
+                    "manifest_item_id": "item-1",
+                    "raw_source": {
+                        "kind": "direct_package",
+                        "runner": "npx",
+                        "package_command": "@demo/server --flag",
+                    },
+                },
+            ),
+            patch.object(service, "_install_package_sync", return_value={"id": "replacement"}) as install_package,
+        ):
+            replacement = service._reinstall_existing_install_sync("install-1", {"TOKEN": "secret"})
+
+        assert replacement["id"] == "replacement"
+        install_package.assert_called_once_with(
+            runner="npx",
+            package_input="@demo/server --flag",
+            secrets_override={"TOKEN": "secret"},
+            enabled=True,
+            replacement_install_id="install-1",
+        )
+
+        with (
+            patch.object(
+                service,
+                "get_install",
+                return_value={
+                    "id": "install-2",
+                    "source_id": None,
+                    "enabled": True,
+                    "manifest_item_id": "item-2",
+                    "raw_source": {
+                        "kind": "direct_repo",
+                        "repo_input": "example/demo",
+                    },
+                },
+            ),
+            patch.object(service, "_build_direct_repo_install_request", return_value=None),
+        ):
+            with pytest.raises(ValueError, match="valid direct repo source"):
+                service._reinstall_existing_install_sync("install-2", {})
+
+    @pytest.mark.anyio
+    async def test_reconnect_enabled_mcp_installs_async_skips_manual_and_existing_servers(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+        install = {"id": "install-1", "enabled": True}
+
+        with (
+            patch.object(service, "list_installs", return_value=[install]),
+            patch.object(service, "build_runtime_server_config", return_value={"server_name": "seed"}),
+            patch.object(
+                service,
+                "build_runtime_server_configs",
+                return_value=[
+                    {
+                        "server_name": "manual",
+                        "manual_auth_required": True,
+                        "command": "cmd",
+                        "args": [],
+                    },
+                    {
+                        "server_name": "existing",
+                        "manual_auth_required": False,
+                        "command": "cmd",
+                        "args": [],
+                    },
+                    {
+                        "server_name": "new-server",
+                        "manual_auth_required": False,
+                        "command": "cmd",
+                        "args": [],
+                        "display_name": "New Server",
+                        "tool_name_prefix": "mcp__new__",
+                    },
+                ],
+            ),
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.is_server_connected",
+                side_effect=lambda name: name == "existing",
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.connect_server",
+                new=AsyncMock(),
+            ) as connect_server,
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.refresh_tool_embeddings",
+            ) as refresh_tool_embeddings,
+            patch.object(
+                service,
+                "_set_install_runtime_state_sync",
+                return_value=install,
+            ) as set_state,
+        ):
+            await service.reconnect_enabled_mcp_installs_async()
+
+        connect_server.assert_awaited_once_with(
+            "new-server",
+            "cmd",
+            [],
+            env=None,
+            skip_embed=True,
+            tool_name_prefix="mcp__new__",
+            display_name="New Server",
+        )
+        set_state.assert_called_once_with(
+            "install-1",
+            status="connected",
+            last_error=None,
+        )
+        refresh_tool_embeddings.assert_called_once_with()
+
+    @pytest.mark.anyio
+    async def test_reconnect_enabled_mcp_installs_async_marks_errors_without_refresh(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+        install = {"id": "install-1", "enabled": True, "display_name": "Demo"}
+
+        with (
+            patch.object(service, "list_installs", return_value=[install]),
+            patch.object(service, "build_runtime_server_config", return_value={"server_name": "seed"}),
+            patch.object(
+                service,
+                "build_runtime_server_configs",
+                return_value=[
+                    {
+                        "server_name": "broken-server",
+                        "manual_auth_required": False,
+                        "command": "cmd",
+                        "args": [],
+                    }
+                ],
+            ),
+            patch.object(
+                marketplace_module.asyncio,
+                "to_thread",
+                new=AsyncMock(side_effect=_inline_to_thread),
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.is_server_connected",
+                return_value=False,
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.connect_server",
+                new=AsyncMock(side_effect=RuntimeError("boom")),
+            ),
+            patch(
+                "source.mcp_integration.core.manager.mcp_manager.refresh_tool_embeddings",
+            ) as refresh_tool_embeddings,
+            patch.object(service, "_friendly_runtime_error", return_value="friendly boom"),
+            patch.object(
+                service,
+                "_set_install_runtime_state_sync",
+                return_value=install,
+            ) as set_state,
+        ):
+            await service.reconnect_enabled_mcp_installs_async()
+
+        set_state.assert_called_once_with(
+            "install-1",
+            status="error",
+            last_error="friendly boom",
+        )
+        refresh_tool_embeddings.assert_not_called()
+
+    def test_runtime_builders_cover_disabled_configs_remote_sse_and_invalid_manifests(
+        self, marketplace_env, tmp_path
+    ):
+        service, _, _ = marketplace_env
+
+        assert service.build_runtime_server_configs({"enabled": False}) == []
+        assert service.build_runtime_server_config({"enabled": False}) is None
+
+        with pytest.raises(ValueError, match="Unsupported MCP manifest"):
+            service._build_runtime_from_component("install-1", {})
+
+        runtime = service._build_runtime_from_mcp_manifest(
+            "install-1",
+            {
+                "name": "demo",
+                "url": "http://localhost:8787/mcp",
+                "transport": "sse",
+                "headers": {"Authorization": "Bearer ${TOKEN}"},
+            },
+            install_root=str(tmp_path / "plugin-root"),
+            secrets_override={"TOKEN": "secret"},
+            config_index=1,
+        )
+
+        assert runtime["server_name"].endswith("-2")
+        assert "--transport" in runtime["args"]
+        assert "sse-only" in runtime["args"]
+        assert "--allow-http" in runtime["args"]
+        assert runtime["manual_auth_required"] is False
+
+        with pytest.raises(ValueError, match="Unsupported MCP manifest"):
+            service._build_runtime_from_mcp_manifest(
+                "install-1",
+                {"name": "demo"},
+                secrets_override={},
+            )
+
+    def test_component_counts_and_warnings_cover_builtin_skill_and_mcp_hints(
+        self, marketplace_env
+    ):
+        service, _, _ = marketplace_env
+
+        counts = service._estimate_component_counts(
+            {"id": "builtin-claude-skills"},
+            "plugin",
+            {
+                "description": "Adds an MCP integration",
+                "hooks": {"SessionStart": [{"hooks": [{"type": "command"}]}]},
+            },
+        )
+
+        warnings = service._compatibility_warnings(
+            "mcp",
+            {
+                "agents": ["planner"],
+                "resources": ["db"],
+                "prompts": ["summarize"],
+                "lsp": True,
+            },
+        )
+
+        assert counts == {"skills": 1, "mcp_servers": 1, "hooks": 1}
+        assert len(warnings) == 4
+
+    def test_materialize_install_root_handles_inline_and_descriptor_errors(
+        self, marketplace_env, tmp_path
+    ):
+        service, _, _ = marketplace_env
+        install_root = tmp_path / "install"
+        install_root.mkdir(parents=True, exist_ok=True)
+
+        resolved = service._materialize_install_root(
+            None,
+            install_root,
+            {"source": "xpdite-inline", "name": "demo"},
+            "mcp",
+        )
+
+        assert resolved == "builtin://xpdite-inline"
+        assert json.loads((install_root / ".mcp.json").read_text(encoding="utf-8"))["name"] == "demo"
+
+        with pytest.raises(ValueError, match="source context"):
+            service._materialize_install_root(None, install_root, "./relative/path", "plugin")
+
+        with pytest.raises(ValueError, match="Unsupported marketplace descriptor"):
+            service._materialize_install_root(None, install_root, 123, "plugin")
+
+    def test_materialize_install_root_downloads_github_and_url_descriptors(
+        self, marketplace_env, tmp_path
+    ):
+        service, _, _ = marketplace_env
+        install_root = tmp_path / "install"
+        install_root.mkdir(parents=True, exist_ok=True)
+
+        with (
+            patch.object(
+                service,
+                "_download_github_subdir",
+                return_value="github-ok",
+            ) as download_github_subdir,
+            patch.object(
+                service,
+                "_download_url_to_root",
+                return_value="url-ok",
+            ) as download_url_to_root,
+        ):
+            github_result = service._materialize_install_root(
+                None,
+                install_root,
+                {
+                    "source": "url",
+                    "url": "https://github.com/example/demo",
+                    "ref": "main",
+                    "path": "plugins/sample",
+                },
+                "plugin",
+            )
+            url_result = service._materialize_install_root(
+                None,
+                install_root,
+                {"url": "https://example.com/archive.zip"},
+                "plugin",
+            )
+
+        assert github_result == "github-ok"
+        assert url_result == "url-ok"
+        download_github_subdir.assert_called_once_with(
+            "example/demo",
+            "main",
+            "plugins/sample",
+            install_root,
+        )
+        download_url_to_root.assert_called_once_with(
+            "https://example.com/archive.zip",
+            install_root,
+        )

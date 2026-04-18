@@ -231,7 +231,8 @@ export function createBridgeServer(deps: ServerDependencies): BridgeServer {
 
     } catch (err) {
       errorLog('[BridgeServer] Error handling request:', err);
-      sendError(res, 500, err instanceof Error ? err.message : 'Internal server error');
+      const message = err instanceof Error ? err.message : 'Internal server error';
+      sendError(res, message === 'Invalid JSON body' ? 400 : 500, message);
     }
   }
 

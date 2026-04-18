@@ -429,16 +429,17 @@ Just send a message to chat with the AI."""
 
         # Import here to avoid circular imports
         from ..chat.tab_manager_instance import tab_manager
+        from ..media.video_watcher import video_watcher_service
+        from ..shell.terminal import terminal_service
 
         tab_session = tab_manager.get_session(tab_id)
         if not tab_session:
             return "No active conversation to stop."
 
-        # Cancel the current generation
-        # The queue handles cancellation via the tab's stop flag
-        from ...core.state import app_state
-
-        app_state.stop_streaming = True
+        # Cancel the active request using the tab-scoped queue/context path.
+        await tab_session.queue.stop_current()
+        terminal_service.cancel_all_pending()
+        video_watcher_service.cancel_all_pending()
 
         # Broadcast stop to the tab
         await broadcast_to_tab(tab_id, "generation_stopped", {"source": "mobile"})

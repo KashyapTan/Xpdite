@@ -210,6 +210,17 @@ def run_command(
     except ValueError as exc:
         return f"Error: {exc}"
 
+    if background:
+        return (
+            "Error: background execution is only supported by the main app's "
+            "inline terminal runtime."
+        )
+    if pty:
+        return (
+            "Error: PTY execution is only supported by the main app's inline "
+            "terminal runtime."
+        )
+
     analysis = analyze_command(command, shell_spec.name)
     if analysis.hard_block_reason:
         return f"BLOCKED: {analysis.hard_block_reason}"

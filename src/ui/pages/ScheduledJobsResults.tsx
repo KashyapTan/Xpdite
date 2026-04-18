@@ -31,12 +31,14 @@ const ScheduledJobsResults: React.FC = () => {
   const [conversations, setConversations] = useState<JobConversation[]>([]);
   const [jobs, setJobs] = useState<Record<string, ScheduledJob>>({});
   const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
+      setError(null);
       const [convosData, jobsData] = await Promise.all([
         api.getScheduledJobConversations(),
         api.getScheduledJobs(),
@@ -52,6 +54,7 @@ const ScheduledJobsResults: React.FC = () => {
       setJobs(jobMap);
     } catch (error) {
       console.error('Failed to fetch scheduled job results:', error);
+      setError(error instanceof Error ? error.message : 'Failed to fetch scheduled job results.');
     } finally {
       setLoading(false);
     }
@@ -208,6 +211,7 @@ const ScheduledJobsResults: React.FC = () => {
             />
           </form>
         </div>
+        {error ? <div className="task-results-empty-state">{error}</div> : null}
 
         {uniqueJobIds.length > 0 && (
           <div className="task-results-filter">

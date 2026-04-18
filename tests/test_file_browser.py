@@ -18,7 +18,10 @@ def browser(tmp_path):
         enable_watcher=False,
     )
     service.get_home_directory = lambda: str(home_path)  # type: ignore[method-assign]
-    return service
+    try:
+        yield service
+    finally:
+        service.shutdown()
 
 
 def test_list_directory_returns_entries_sorted_dirs_first(browser):
