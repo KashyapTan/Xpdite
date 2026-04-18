@@ -477,7 +477,7 @@
 
 .settings-marketplace-modal {
   width: min(520px, 100%);
-  background: var(--color-background);
+  background: var(--color-bg);
   border: 1px solid var(--color-surface-strong);
   border-radius: 12px;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
@@ -524,17 +524,26 @@
 .settings-marketplace-modal-footer button {
   background-color: var(--color-button-primary-background);
   color: var(--color-button-primary-text);
-  border: 1px solid var(--color-button-primary-border);
+  border: none;
   padding: 7px 12px;
   border-radius: 6px;
   cursor: pointer;
   font-family: var(--font-family-ui);
   font-size: 0.85rem;
 }
+.settings-marketplace-modal-footer button:hover{
+  background-color: var(--color-button-primary-background-hover);
+}
 
 .settings-marketplace-modal-close {
   min-width: 36px;
   padding: 6px 10px;
+  border: none;
+  background-color: var(--color-button-neutral-background)
+}
+
+.settings-marketplace-modal-close:hover{
+  background-color: var(--color-button-neutral-background-hover);
 }
 
 .settings-marketplace-modal-body {
