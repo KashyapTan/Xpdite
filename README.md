@@ -7,10 +7,6 @@
 <h3 align="center">Xpdite - Your AI Assistant and Agent Harness</h3>
 
 <p align="center">
-  Local-first desktop AI with streaming chat, screenshot understanding, and remote access from WhatsApp, Telegram, and Discord.
-</p>
-
-<p align="center">
   <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/KashyapTan/xpdite"></a>
   <a href="https://github.com/KashyapTan/xpdite/releases"><img alt="Release" src="https://img.shields.io/github/v/release/KashyapTan/xpdite?include_prereleases"></a>
   <a href="https://github.com/KashyapTan/xpdite/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KashyapTan/xpdite?style=social"></a>
