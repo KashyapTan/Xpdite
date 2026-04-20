@@ -28,7 +28,7 @@
 
 ## Xpdite
 
-An AI assistant and agent harness that is truly **yours**. It runs your desktop using any model provider (local or cloud), is completely open-source, 100% customizable, and built for everyone (technical or not).
+An AI assistant and agent harness that is truly **yours**. It runs your desktop using any model provider, is completely open-source, 100% customizable, and built for everyone.
 Use it as a desktop copilot, then continue the same experience from mobile channels through WhatsApp, Telegram, or Discord.
 
 ## Why Xpdite
