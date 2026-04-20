@@ -3,74 +3,105 @@
     <img alt="xpdite" width="240" src="./assets/xpdite-logo-github-bg.svg">
   </a>
 </div>
-<h3 align="center">Your AI Assistant and Agent Harness with Xpdite.</h3>
-<h4 align="center">| Free | Easy | Open Source | Private |</h4>
+
+<h3 align="center">Xpdite - Your AI Assistant and Agent Harness</h3>
+
+<p align="center">
+  Local-first desktop AI with streaming chat, screenshot understanding, and remote access from WhatsApp, Telegram, and Discord.
+</p>
+
+<p align="center">
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/KashyapTan/xpdite"></a>
+  <a href="https://github.com/KashyapTan/xpdite/releases"><img alt="Release" src="https://img.shields.io/github/v/release/KashyapTan/xpdite?include_prereleases"></a>
+  <a href="https://github.com/KashyapTan/xpdite/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KashyapTan/xpdite?style=social"></a>
+</p>
+
+<p align="center">
+  <a href="./docs/getting-started.md"><strong>Get Started</strong></a>
+  |
+  <a href="./docs/README.md"><strong>Documentation</strong></a>
+  |
+  <a href="./docs/contributing.md"><strong>Contributing</strong></a>
+</p>
 
 ---
 
-# Xpdite
+## Xpdite
 
-An AI assistant and agent harness that is truly **yours**. It runs your desktop using any model provider (local or cloud), is completely open-source, 100% customizable, and built for everyone (technical or not).
+Xpdite is an open-source AI assistant and agent harness that runs on your machine and adapts to your workflow.
+Use it as a desktop copilot, then continue the same experience from mobile channels through WhatsApp, Telegram, or Discord.
 
-## Key Features
+## Why Xpdite
 
-- **Screenshot + Vision AI** -- Capture any region of your screen (Alt+.) and ask questions about it
-- **Multi-Model Support** -- Local Ollama models + cloud (Claude, GPT, Gemini, OpenRouter) from one UI
-- **Streaming Responses** -- Real-time token-by-token display with thinking/reasoning visibility
-- **Multi-Tab** -- Multiple independent AI conversations running in parallel
-- **MCP Tool Integration** -- File ops, web search, Gmail, Calendar, and terminal via Model Context Protocol
-- **Inline Terminal** -- AI-commanded shell execution with approval flow inline in the chat
-- **Skills / Slash Commands** -- Type `/terminal`, `/filesystem`, `/websearch` etc. to force-inject expert instruction sets
-- **Meeting Recorder** -- System audio capture + AI transcription (WhisperX + diarization) + action extraction
-- **Response Retry / Edit** -- Re-generate any response or edit past messages; browse alternate versions with arrows
-- **Cloud Models** -- Anthropic (Claude), OpenAI (GPT / o-series), Google Gemini, and OpenRouter via LiteLLM
-- **Gmail & Calendar** -- Read, send emails and manage calendar events via your Google account
-- **Web Search** -- DuckDuckGo-powered search and web page reading through MCP tools
-- **Voice Input** -- Voice-to-text transcription via faster-whisper
-- **Chat History** -- SQLite-backed conversation persistence with full-text search (FTS5)
-- **Token Tracking** -- Context window usage monitoring per conversation
-- **Always-on-Top** -- Frameless, transparent floating window that stays above all apps (including fullscreen)
-- **Mini Mode** -- Collapse to a 52×52 widget when not in use
+- **Agent harness, not just chat** -- Supports multi-step execution with approval-aware actions and structured task flows.
+- **Desktop-first workflow** -- Always-on-top app, screenshot-first interaction (`Alt + .`), and fast context switching.
+- **Model flexibility** -- Use local Ollama models and/or cloud providers from a single interface.
+- **Parallel context** -- Multi-tab chat with isolated session state and per-tab queueing.
+- **Remote continuity** -- Mobile Channel Bridge keeps conversations accessible from messaging apps.
+- **Extensible by design** -- Built for customization, integrations, and long-term evolution.
+
+## Core Features
+
+- **Comprehensive execution timeline UI** -- Beautiful in-chat thinking and tool-call rendering that shows model steps, live tool progress, terminal output, and completion states in a single readable flow.
+- **Claude-style inline artifacts** -- Models can generate inline artifacts (code, markdown, and HTML) that are persisted, searchable, and easy to revisit from chat history.
+- **`@` file attachments like a coding harness** -- Attach files instantly with `@<file_name>` from the input, then send mixed text + file context in one prompt.
+- **Broad file intelligence** -- Reads and extracts content from code files, PDFs, Office documents, ODF/RTF formats, ZIP listings, and image files so context loading stays frictionless.
+- **Advanced custom tool ecosystem** -- Includes high-capability web search, YouTube video watcher flows, an approval-aware terminal/bash runtime, and many more MCP/inline tools.
+- **Mobile + desktop continuity** -- Start on desktop and continue from WhatsApp, Telegram, or Discord with paired session routing.
+
+### Architecture Diagram
+
+```text
++--------------------+          IPC           +----------------------+
+| Electron Host      | <--------------------> | React UI (Renderer)  |
+| window + lifecycle |                        | chat + settings      |
++---------+----------+                        +----------+-----------+
+          |                                              |
+          | starts/monitors                              | WebSocket + REST
+          v                                              v
++--------------------+   stdio + inline tools   +--------------------+
+| Python Backend     | <-----------------------> | MCP Integrations   |
+| FastAPI + services |                           | tools + connectors |
++---------+----------+                           +--------------------+
+          |
+          | /internal/mobile/*
+          v
++--------------------+ <-----------------------> +--------------------+
+| Channel Bridge     |     Telegram/Discord/    | Mobile Platforms   |
+| (TypeScript svc)   |     WhatsApp adapters    | (remote chat)      |
++--------------------+                          +--------------------+
+```
 
 ## Getting Started
 
-### Prerequisites
+### End users
 
-- **Ollama** -- Download from [ollama.com](https://ollama.com/) and pull a model:
-  ```bash
-  ollama pull qwen3.5:9b
-  ```
+1. Download the latest build from [Releases](https://github.com/KashyapTan/xpdite/releases).
+2. Launch Xpdite and wait for startup checks to finish.
+3. Press `Alt + .` to capture a screenshot and ask your question.
 
-### Quick Install
+See [docs/getting-started.md](./docs/getting-started.md) for full setup details and optional channel pairing.
 
-Xpdite is currently in deveopment, however, the beta will be released very soon.
+### Developers
 
-### Usage
+Requirements: Bun, Python 3.13+, UV, Git.
 
-1. Launch Xpdite
-2. Take a screenshot with `Alt + .` (period)
-3. Type a question.
-4. Get streaming AI responses in real-time
+```bash
+git clone https://github.com/KashyapTan/xpdite.git
+cd xpdite
+bun install
+bun run install:python
+bun run dev
+```
 
-## Custom MCP Tools
+Useful checks:
 
-Xpdite allows your model to take action. It can read files, search the web, send emails, manage your calendar, and run terminal commands — all from within the chat.
-
-| Server | What it can do | Status |
-|--------|---------------|--------|
-| **Filesystem** | Read, write, move, rename files and folders | Active |
-| **Web Search** | Search DuckDuckGo, read any web page as clean text | Active |
-| **Gmail** | Search, read, send, reply, draft, trash, label emails | Available after Google connect |
-| **Calendar** | List, search, create, update, delete events; check free/busy | Available after Google connect |
-| **Terminal** | Run shell commands inline in chat with per-command approval | Active |
-| Discord | Message operations | In Progress |
-| Canvas | LMS integration | In Progress |
-
-Adding new tools is straightforward -- see the [MCP Guide](./docs/mcp-guide.md).
-
-## Feature Inventory
-
-For the complete, up-to-date feature catalog, see `docs/features-overview.md`.
+```bash
+bun run lint
+bun run test:frontend
+uv run python -m pytest tests/ -v
+bun run build
+```
 
 ## Documentation
 
@@ -99,13 +130,9 @@ For the complete, up-to-date feature catalog, see `docs/features-overview.md`.
 | [Troubleshooting](./docs/troubleshooting.md) | Common issues and fixes |
 | [Contributing](./docs/contributing.md) | How to contribute |
 
-## Development
-
-See the [Getting Started guide](./docs/getting-started.md) for dev setup and the [Development guide](./docs/development.md) for conventions, common tasks, and how to add new features.
-
 ## Contributing
 
-See [Contributing Guide](./docs/contributing.md) for details.
+Contributions are welcome. Read [docs/contributing.md](./docs/contributing.md) before opening a PR.
 
 ## License
 
