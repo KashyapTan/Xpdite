@@ -29,9 +29,10 @@ const STARTUP_POLL_INTERVAL_MS = 250;
 const STARTUP_HEALTHCHECK_TIMEOUT_MS = 1500;
 const STARTUP_TIMEOUT_MS = 90_000;
 const PROCESS_RELEASE_GRACE_MS = 350;
-const OWNED_PROCESS_NAME_PATTERNS = ['python', 'xpdite', 'uvicorn', 'fastapi'];
-const OWNED_COMMAND_LINE_PATTERNS = ['source.main', 'xpdite-server', 'uvicorn', 'fastapi'];
-const OWNED_EXECUTABLE_NAMES = ['python.exe', 'pythonw.exe', 'xpdite-server.exe'];
+const PROCESS_TERMINATION_GRACE_MS = 500;
+const OWNED_PROCESS_NAME_PATTERNS = ['python', 'xpdite'];
+const OWNED_COMMAND_LINE_PATTERNS = ['source.main', 'xpdite-server'];
+const OWNED_EXECUTABLE_NAMES = ['python.exe', 'pythonw.exe', 'xpdite-server.exe', 'python', 'python3', 'xpdite-server'];
 
 type PythonOutputSource = 'stdout' | 'stderr';
 type ProcessRecord = {
@@ -46,46 +47,60 @@ function delay(ms: number): Promise<void> {
 
 function parseListeningPidsByPort(netstatOutput: string, ports: Set<number>): Map<number, Set<string>> {
     const pidsByPort = new Map<number, Set<string>>();
+    const isWindows = process.platform === 'win32';
 
     for (const line of netstatOutput.split(/\r?\n/)) {
-        if (!line.includes('LISTENING')) {
-            continue;
+        if (isWindows) {
+            if (!line.includes('LISTENING')) {
+                continue;
+            }
+
+            const parts = line.trim().split(/\s+/);
+            if (parts.length < 5) {
+                continue;
+            }
+
+            const localAddress = parts[1];
+            const pid = parts[parts.length - 1];
+            const portText = localAddress.split(':').pop();
+            const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
+
+            if (!Number.isInteger(port) || !ports.has(port) || !pid) {
+                continue;
+            }
+
+            const portPids = pidsByPort.get(port) ?? new Set<string>();
+            portPids.add(pid);
+            pidsByPort.set(port, portPids);
+        } else {
+            // macOS/Linux lsof -i -n -P output:
+            // COMMAND   PID USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+            // Python  12345 kash    3u  IPv4 0x...      0t0  TCP 127.0.0.1:8000 (LISTEN)
+            if (!line.includes('(LISTEN)')) {
+                continue;
+            }
+
+            const parts = line.trim().split(/\s+/);
+            if (parts.length < 9) {
+                continue;
+            }
+
+            const pid = parts[1];
+            const name = parts[8];
+            const portText = name.split(':').pop();
+            const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
+
+            if (!Number.isInteger(port) || !ports.has(port) || !pid) {
+                continue;
+            }
+
+            const portPids = pidsByPort.get(port) ?? new Set<string>();
+            portPids.add(pid);
+            pidsByPort.set(port, portPids);
         }
-
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 5) {
-            continue;
-        }
-
-        const localAddress = parts[1];
-        const pid = parts[parts.length - 1];
-        const portText = localAddress.split(':').pop();
-        const port = portText ? Number.parseInt(portText, 10) : Number.NaN;
-
-        if (!Number.isInteger(port) || !ports.has(port) || !pid) {
-            continue;
-        }
-
-        const portPids = pidsByPort.get(port) ?? new Set<string>();
-        portPids.add(pid);
-        pidsByPort.set(port, portPids);
     }
 
     return pidsByPort;
-}
-
-function parseTasklistProcessName(tasklistOutput: string): string | null {
-    const firstLine = tasklistOutput
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .find(Boolean);
-
-    if (!firstLine || firstLine.startsWith('INFO:')) {
-        return null;
-    }
-
-    const match = firstLine.match(/^"([^"]+)"/);
-    return match?.[1] ?? null;
 }
 
 function isOwnedProcess(processName: string | null): boolean {
@@ -120,20 +135,40 @@ async function collectKnownBackendPids(
     execAsync: (command: string) => Promise<{ stdout: string; stderr: string }>,
     pidsToKill: Set<string>,
 ): Promise<void> {
-    const command = `powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $processes = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'pythonw.exe', 'xpdite-server.exe') } | Select-Object ProcessId, Name, CommandLine; if ($null -ne $processes) { $processes | ConvertTo-Json -Compress }"`;
+    const isWindows = process.platform === 'win32';
+    const command = isWindows
+        ? `powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $processes = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'pythonw.exe', 'xpdite-server.exe') } | Select-Object ProcessId, Name, CommandLine; if ($null -ne $processes) { $processes | ConvertTo-Json -Compress }"`
+        : `ps -eo pid,comm,args | grep -E "python|xpdite-server" | grep -v grep`;
 
     try {
         const { stdout } = await execAsync(command);
-        for (const record of parseProcessRecords(stdout)) {
-            const processId = record.ProcessId;
-            const processName = record.Name?.toLowerCase();
+        if (isWindows) {
+            for (const record of parseProcessRecords(stdout)) {
+                const processId = record.ProcessId;
+                const processName = record.Name?.toLowerCase();
 
-            if (!processId || !processName || !OWNED_EXECUTABLE_NAMES.includes(processName)) {
-                continue;
+                if (!processId || !processName || !OWNED_EXECUTABLE_NAMES.includes(processName)) {
+                    continue;
+                }
+
+                if (isOwnedCommandLine(record.CommandLine)) {
+                    pidsToKill.add(String(processId));
+                }
             }
+        } else {
+            // Unify macOS ps -eo pid,comm,args format:
+            // PID COMMAND ARGS
+            // 12345 python3 source.main
+            for (const line of stdout.split(/\r?\n/)) {
+                const parts = line.trim().split(/\s+/);
+                if (parts.length < 3) continue;
+                const pid = parts[0];
+                const comm = parts[1];
+                const args = parts.slice(2).join(' ');
 
-            if (isOwnedCommandLine(record.CommandLine)) {
-                pidsToKill.add(String(processId));
+                if (isOwnedProcess(comm) && isOwnedCommandLine(args)) {
+                    pidsToKill.add(pid);
+                }
             }
         }
     } catch (error) {
@@ -141,28 +176,88 @@ async function collectKnownBackendPids(
     }
 }
 
+type ProcessIdentity = {
+    processName: string | null;
+    commandLine: string | null;
+};
+
+async function getProcessIdentityByPid(
+    pid: string,
+    execAsync: (command: string) => Promise<{ stdout: string; stderr: string }>,
+): Promise<ProcessIdentity> {
+    const isWindows = process.platform === 'win32';
+    if (isWindows) {
+        const command = `powershell -NoProfile -Command "$ErrorActionPreference = 'Stop'; $proc = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object Name, CommandLine; if ($null -ne $proc) { $proc | ConvertTo-Json -Compress }"`;
+        const { stdout } = await execAsync(command);
+        const records = parseProcessRecords(stdout);
+        const record = records[0];
+        return {
+            processName: record?.Name ?? null,
+            commandLine: record?.CommandLine ?? null,
+        };
+    }
+
+    const [{ stdout: processNameStdout }, { stdout: commandLineStdout }] = await Promise.all([
+        execAsync(`ps -p ${pid} -o comm=`),
+        execAsync(`ps -p ${pid} -o args=`),
+    ]);
+
+    const processName = processNameStdout.trim() || null;
+    const commandLine = commandLineStdout.trim() || null;
+    return { processName, commandLine };
+}
+
+async function terminateOwnedProcessByPid(
+    pid: string,
+    execAsync: (command: string) => Promise<{ stdout: string; stderr: string }>,
+): Promise<void> {
+    const isWindows = process.platform === 'win32';
+    if (isWindows) {
+        try {
+            await execAsync(`taskkill /T /PID ${pid}`);
+        } catch {
+            await execAsync(`taskkill /F /T /PID ${pid}`);
+        }
+        return;
+    }
+
+    await execAsync(`kill -15 ${pid}`);
+    await delay(PROCESS_TERMINATION_GRACE_MS);
+
+    try {
+        await execAsync(`kill -0 ${pid}`);
+        await execAsync(`kill -9 ${pid}`);
+    } catch {
+        // Process exited after SIGTERM.
+    }
+}
+
 function findPythonExecutable(): string {
+    const isWindows = process.platform === 'win32';
     if (isDev()) {
         // In development, use the virtual environment
-        const venvPython = path.join(process.cwd(), '.venv', 'Scripts', 'python.exe');
-        if (fs.existsSync(venvPython)) {
-            return venvPython;
+        const venvPythonStr = isWindows
+            ? path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')
+            : path.join(process.cwd(), '.venv', 'bin', 'python');
+
+        if (fs.existsSync(venvPythonStr)) {
+            return venvPythonStr;
         }
-        
+
         // Fallback to system Python
-        return 'python';
+        return isWindows ? 'python' : 'python3';
     } else {
         // In production, use the PyInstaller-generated executable
         const resourcesPath = process.resourcesPath;
-        const serverExecutable = path.join(resourcesPath, 'python-server', 'xpdite-server.exe');
-        
+        const exeName = isWindows ? 'xpdite-server.exe' : 'xpdite-server';
+        const serverExecutable = path.join(resourcesPath, 'python-server', exeName);
         if (fs.existsSync(serverExecutable)) {
             return serverExecutable;
         }
         
         // Fallback: try in app directory
         const appPath = path.dirname(process.execPath);
-        const fallbackExecutable = path.join(appPath, 'resources', 'python-server', 'xpdite-server.exe');
+        const fallbackExecutable = path.join(appPath, 'resources', 'python-server', exeName);
         
         if (fs.existsSync(fallbackExecutable)) {
             return fallbackExecutable;
@@ -194,7 +289,9 @@ async function killProcessesOnPorts(ports: number[]): Promise<void> {
     console.log(`Checking for existing backend processes on ports ${rangeLabel}...`);
 
     try {
-        const { stdout } = await execAsync('netstat -ano -p tcp');
+        const isWindows = process.platform === 'win32';
+        const netstatCmd = isWindows ? 'netstat -ano -p tcp' : 'lsof -iTCP -sTCP:LISTEN -P -n';
+        const { stdout } = await execAsync(netstatCmd);
         const pidsByPort = parseListeningPidsByPort(stdout, portSet);
 
         for (const port of ports) {
@@ -221,16 +318,15 @@ async function killProcessesOnPorts(ports: number[]): Promise<void> {
 
     for (const pid of pidsToKill) {
         try {
-            const { stdout: processInfo } = await execAsync(`tasklist /FI "PID eq ${pid}" /NH /FO CSV`);
-            const processName = parseTasklistProcessName(processInfo);
+            const { processName, commandLine } = await getProcessIdentityByPid(pid, execAsync);
 
-            if (!isOwnedProcess(processName)) {
+            if (!isOwnedProcess(processName) || !isOwnedCommandLine(commandLine)) {
                 console.log(`Leaving unrelated process ${processName} (PID: ${pid}) running.`);
                 continue;
             }
 
             console.log(`Terminating process ${processName ?? 'unknown'} (PID: ${pid})`);
-            await execAsync(`taskkill /F /T /PID ${pid}`);
+            await terminateOwnedProcessByPid(pid, execAsync);
         } catch (error) {
             console.warn(`Failed to terminate PID ${pid}: ${error instanceof Error ? error.message : 'Unknown error'}`);
         }

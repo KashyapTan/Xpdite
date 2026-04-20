@@ -398,6 +398,7 @@ app.on('ready', async () => {
         maximizable: false,
         fullscreenable: false,
         skipTaskbar: true,
+        type: 'panel',
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -405,6 +406,17 @@ app.on('ready', async () => {
             preload: preloadPath,
         }
     });
+
+    if (process.platform === 'darwin') {
+        // Required for macOS to show over full-screen apps and other spaces
+        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+        // Hide dock icon to enable NSWindowCollectionBehaviorFullScreenAuxiliary flavor.
+        // Check for existence of 'dock' to satisfy TypeScript (undefined on Windows/Linux).
+        if (app.dock) {
+            app.dock.hide();
+        }
+    }
 
     normalBounds = mainWindow.getBounds();
     mainWindow.setAlwaysOnTop(true, 'screen-saver');

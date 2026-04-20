@@ -12,6 +12,14 @@ const existsSyncMock = vi.fn();
 const isDevMock = vi.fn();
 const spawnMock = vi.fn();
 
+const expectedVenvPythonPath = () => (
+  process.platform === 'win32'
+    ? path.join('.venv', 'Scripts', 'python.exe')
+    : path.join('.venv', 'bin', 'python')
+);
+
+const expectedFallbackPython = () => (process.platform === 'win32' ? 'python' : 'python3');
+
 class FakeChildProcess extends EventEmitter {
   stdout = new PassThrough();
   stderr = new PassThrough();
@@ -68,14 +76,26 @@ describe('pythonApi', () => {
     global.fetch = vi.fn();
     isDevMock.mockReturnValue(true);
     existsSyncMock.mockImplementation((value: string) => (
-      value.includes(path.join('.venv', 'Scripts', 'python.exe'))
+      value.includes(expectedVenvPythonPath())
     ));
     execMock.mockImplementation((command: string, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
       if (command.startsWith('netstat')) {
         callback(null, '', '');
         return;
       }
+      if (command.startsWith('lsof')) {
+        callback(null, '', '');
+        return;
+      }
       if (command.includes('Get-CimInstance')) {
+        callback(null, '', '');
+        return;
+      }
+      if (command.startsWith('ps -eo')) {
+        callback(null, '', '');
+        return;
+      }
+      if (command.startsWith('ps -p')) {
         callback(null, '', '');
         return;
       }
@@ -84,6 +104,10 @@ describe('pythonApi', () => {
         return;
       }
       if (command.startsWith('taskkill')) {
+        callback(null, '', '');
+        return;
+      }
+      if (command.startsWith('kill ')) {
         callback(null, '', '');
         return;
       }
@@ -118,7 +142,7 @@ describe('pythonApi', () => {
     await Promise.resolve();
 
     expect(spawnMock).toHaveBeenCalledWith(
-      expect.stringContaining(path.join('.venv', 'Scripts', 'python.exe')),
+      expect.stringMatching(new RegExp(`(${expectedVenvPythonPath().replace(/\\/g, '\\\\')})|(${expectedFallbackPython()})`)),
       ['-m', 'source.main'],
       expect.objectContaining({
         cwd: process.cwd(),

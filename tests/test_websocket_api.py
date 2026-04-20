@@ -1,6 +1,7 @@
 """Tests for source/api/websocket.py endpoint behavior."""
 
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -116,11 +117,12 @@ class TestWebsocketEndpoint:
         ws = _FakeWebSocket(incoming=[WebSocketDisconnect()])
         await websocket_api.websocket_endpoint(ws)  # type: ignore[arg-type]
 
+        hotkey_text = "Control+." if sys.platform == "darwin" else "Alt+."
         decoded = [json.loads(msg) for msg in ws.sent]
         assert decoded == [
             {
                 "type": "ready",
-                "content": "Server ready. You can start chatting or take a screenshot (Alt+.)",
+                "content": f"Server ready. You can start chatting or take a screenshot ({hotkey_text})",
             }
         ]
 

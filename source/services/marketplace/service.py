@@ -309,7 +309,16 @@ def _format_command_tokens(tokens: list[str]) -> str:
         return ""
     if os.name == "nt":
         return subprocess.list2cmdline(tokens)
-    return shlex.join(tokens)
+
+    rendered: list[str] = []
+    for token in tokens:
+        if _PLACEHOLDER_ONLY_RE.fullmatch(token) or re.fullmatch(
+            r"[A-Za-z_][A-Za-z0-9_]*=\$\{[^}]+\}", token
+        ):
+            rendered.append(token)
+            continue
+        rendered.append(shlex.quote(token))
+    return " ".join(rendered)
 
 
 def _contains_placeholder(value: str) -> bool:

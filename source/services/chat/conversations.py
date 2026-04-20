@@ -97,10 +97,13 @@ async def _run_read_file_for_attachment(path: str) -> str | dict[str, Any]:
 
 def _format_attachment_tool_path(path: str) -> str:
     """Return a tool-safe attachment path for prompt injection."""
+    normalized = path.replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", normalized):
+        return normalized
     try:
         return Path(path).resolve(strict=False).as_posix()
     except Exception:
-        return path.replace("\\", "/")
+        return normalized
 
 
 @lru_cache(maxsize=1)

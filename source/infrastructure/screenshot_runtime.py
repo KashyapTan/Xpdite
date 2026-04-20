@@ -205,10 +205,13 @@ class ScreenshotService:
                 self.capturing = False
 
     def start_listener(self, save_folder="screenshots"):
-        """Start listening for Alt+. keyboard shortcut (strict)."""
+        """Start listening for Control+. (macOS) or Alt+. (Windows) keyboard shortcut."""
         self.running = True
+        is_mac = platform.system() == "Darwin"
+        hotkey_text = "Control+." if is_mac else "Alt+."
         logger.info(
-            "Screenshot service started. Press Alt+. to take a region screenshot."
+            "Screenshot service started. Press %s to take a region screenshot.",
+            hotkey_text
         )
         logger.info("Press Ctrl+C to stop the service.")
 
@@ -234,7 +237,8 @@ class ScreenshotService:
                 target=self._do_capture, args=(save_folder,), daemon=True
             ).start()
 
-        self.listener = keyboard.GlobalHotKeys({"<alt>+.": on_activate})
+        hotkey = "<ctrl>+." if is_mac else "<alt>+."
+        self.listener = keyboard.GlobalHotKeys({hotkey: on_activate})
         self.listener.start()
         try:
             while self.running:

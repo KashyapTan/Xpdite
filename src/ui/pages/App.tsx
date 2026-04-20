@@ -2440,6 +2440,9 @@ function App() {
   };
 
   const getPlaceholder = () => {
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const hotkeyText = isMac ? "Control+." : "Alt+.";
+
     if (chatState.chatHistory.length > 0) {
       return screenshotState.screenshots.length > 0
         ? "Ask a follow-up about the screenshot(s)..."
@@ -2451,7 +2454,7 @@ function App() {
     if (screenshotState.captureMode === 'precision') {
       return screenshotState.screenshots.length > 0
         ? "Ask about the screenshot(s)..."
-        : "Ask Xpdite about a region on your screen (Alt+.)";
+        : "Ask Xpdite about a region on your screen (" + hotkeyText + ")";
     }
     return "Ask Xpdite anything...";
   };

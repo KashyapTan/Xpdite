@@ -133,7 +133,7 @@ def _apply_offset_limit(
     if limit is None or limit == 0:
         return sliced, False, None
     truncated = len(sliced) > limit
-    return sliced[:limit], truncated, limit if truncated else None
+    return sliced[:limit], truncated, limit
 
 
 def _truncate_output_line(line: str) -> str:
@@ -231,8 +231,10 @@ def _iter_candidate_files(
             candidates.append((display_path, clean_candidate))
             if len(candidates) >= _GREP_MAX_FILES:
                 truncated = True
+                candidates.sort(key=lambda item: item[0])
                 return candidates, truncated
 
+    candidates.sort(key=lambda item: item[0])
     return candidates, truncated
 
 

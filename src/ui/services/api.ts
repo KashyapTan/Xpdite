@@ -128,6 +128,17 @@ interface RawProviderModel {
   context_length?: unknown;
 }
 
+interface RawMcpServerToolSummary {
+  id?: unknown;
+  name?: unknown;
+}
+
+interface RawMcpServerSummary {
+  server?: unknown;
+  display_name?: unknown;
+  tools?: unknown;
+}
+
 /**
  * External MCP connector status from backend.
  */
@@ -320,6 +331,92 @@ function normalizeProviderModel(provider: string, rawModel: RawProviderModel): P
     provider_group: typeof rawModel.provider_group === 'string' ? rawModel.provider_group : undefined,
     context_length: typeof rawModel.context_length === 'number' ? rawModel.context_length : undefined,
   };
+}
+
+function normalizeMcpServerTool(rawTool: unknown): McpServerToolSummary | null {
+  if (typeof rawTool === 'string') {
+    const value = rawTool.trim();
+    if (!value) {
+      return null;
+    }
+    return { id: value, name: value };
+  }
+
+  if (!rawTool || typeof rawTool !== 'object') {
+    return null;
+  }
+
+  const tool = rawTool as RawMcpServerToolSummary;
+  const id = typeof tool.id === 'string'
+    ? tool.id
+    : typeof tool.name === 'string'
+      ? tool.name
+      : '';
+
+  if (!id) {
+    return null;
+  }
+
+  const name = typeof tool.name === 'string' ? tool.name : id;
+  return { id, name };
+}
+
+function normalizeMcpToolList(rawTools: unknown): McpServerToolSummary[] {
+  if (!Array.isArray(rawTools)) {
+    return [];
+  }
+
+  return rawTools
+    .map((rawTool) => normalizeMcpServerTool(rawTool))
+    .filter((tool): tool is McpServerToolSummary => tool !== null);
+}
+
+function normalizeMcpServerSummary(rawServer: unknown): McpServerSummary | null {
+  if (!rawServer || typeof rawServer !== 'object') {
+    return null;
+  }
+
+  const serverData = rawServer as RawMcpServerSummary;
+  const server = typeof serverData.server === 'string' ? serverData.server.trim() : '';
+  if (!server) {
+    return null;
+  }
+
+  const displayName = typeof serverData.display_name === 'string' && serverData.display_name.trim()
+    ? serverData.display_name
+    : server;
+
+  return {
+    server,
+    display_name: displayName,
+    tools: normalizeMcpToolList(serverData.tools),
+  };
+}
+
+function normalizeMcpServersPayload(payload: unknown): McpServerSummary[] {
+  if (Array.isArray(payload)) {
+    return payload
+      .map((rawServer) => normalizeMcpServerSummary(rawServer))
+      .filter((server): server is McpServerSummary => server !== null);
+  }
+
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  return Object.entries(payload as Record<string, unknown>)
+    .map(([serverName, rawTools]) => {
+      const server = serverName.trim();
+      if (!server) {
+        return null;
+      }
+      return {
+        server,
+        display_name: server,
+        tools: normalizeMcpToolList(rawTools),
+      };
+    })
+    .filter((server): server is McpServerSummary => server !== null);
 }
 
 async function readErrorDetail(response: Response, fallback: string): Promise<string> {
@@ -735,7 +832,8 @@ export const api = {
       const base = await baseUrl();
       const response = await fetch(`${base}/api/mcp/servers`);
       if (!response.ok) throw new Error('Failed to fetch MCP servers');
-      return response.json();
+      const payload = await response.json();
+      return normalizeMcpServersPayload(payload);
     } catch {
       return [];
     }

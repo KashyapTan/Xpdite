@@ -11,17 +11,23 @@ This guide covers initial setup for both end users and contributors.
 
 ### Prerequisites
 
-1. **Windows 10/11**
-2. **Ollama** (optional, required for local models)
-   - Install from [ollama.com](https://ollama.ai/)
-   - Pull a default model:
-     ```bash
-     ollama pull qwen3-vl:8b-instruct
-     ```
-3. **Cloud API keys** (optional)
-   - Anthropic, OpenAI, Gemini, or OpenRouter
-4. **Google account** (optional)
-   - Needed only for Gmail and Calendar tools
+1.  **OS**: Windows 10/11 or macOS (11.0+)
+2.  **System Dependencies (macOS only)**:
+    - Install [Homebrew](https://brew.sh)
+    - Install PortAudio for audio features:
+      ```bash
+      brew install portaudio
+      ```
+3.  **Ollama** (optional, required for local models)
+    - Install from [ollama.com](https://ollama.ai/)
+    - Pull a default model:
+      ```bash
+      ollama pull qwen3-vl:8b-instruct
+      ```
+4.  **Cloud API keys** (optional)
+    - Anthropic, OpenAI, Gemini, or OpenRouter
+5.  **Google account** (optional)
+    - Needed only for Gmail and Calendar tools
 
 ### Install
 

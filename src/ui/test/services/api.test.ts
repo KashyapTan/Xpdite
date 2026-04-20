@@ -723,6 +723,36 @@ describe('api singleton - HTTP endpoints', () => {
       const result = await api.getMcpServers();
       expect(result).toEqual([]);
     });
+
+    test('normalizes legacy object payload into server summaries', async () => {
+      const legacyPayload = {
+        filesystem: ['read', 'write'],
+        terminal: [{ id: 'run_command', name: 'run_command' }],
+      };
+
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(legacyPayload),
+      });
+
+      const result = await api.getMcpServers();
+
+      expect(result).toEqual([
+        {
+          server: 'filesystem',
+          display_name: 'filesystem',
+          tools: [
+            { id: 'read', name: 'read' },
+            { id: 'write', name: 'write' },
+          ],
+        },
+        {
+          server: 'terminal',
+          display_name: 'terminal',
+          tools: [{ id: 'run_command', name: 'run_command' }],
+        },
+      ]);
+    });
   });
 
   describe('getToolsSettings', () => {

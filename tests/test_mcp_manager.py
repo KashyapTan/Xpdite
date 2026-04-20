@@ -117,8 +117,9 @@ class TestInitMcpServers:
         ):
             await manager_module.init_mcp_servers()
 
-        # 5 servers: filesystem, glob, grep, websearch, windows_mcp
-        assert connect_server.await_count == 5
+        # 4 built-in servers on non-Windows, plus windows_mcp on Windows.
+        expected_server_count = 5 if sys.platform == "win32" else 4
+        assert connect_server.await_count == expected_server_count
         # 6 inline tool registrations: terminal, sub_agent, video_watcher,
         # skills, memory, scheduler
         assert register_inline_tools.call_count == 6
@@ -584,10 +585,10 @@ class TestManagerAdditionalCoverage:
         try:
             assert manager.is_server_connected("demo") is True
             env = captured["params"].env
-            assert env["PYTHONPATH"].split(manager_module.os.pathsep) == [
-                str(manager_module.PROJECT_ROOT),
-                "C:\\custom",
-            ]
+            assert env["PYTHONPATH"].startswith(
+                f"{manager_module.PROJECT_ROOT}{manager_module.os.pathsep}"
+            )
+            assert env["PYTHONPATH"].endswith("C:\\custom")
             assert set(manager._tool_registry) == {"mcp__demo__beta", "mcp__demo__Alpha"}
             assert manager._tool_registry["mcp__demo__Alpha"]["server_display_name"] == "Demo Display"
             assert manager._tool_registry["mcp__demo__Alpha"]["session_tool_name"] == "Alpha"

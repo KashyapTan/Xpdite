@@ -6,6 +6,7 @@ Handles bidirectional WebSocket connections with the frontend.
 
 import json
 import logging
+import sys
 
 from fastapi import WebSocket, WebSocketDisconnect
 from ..core.connection import manager
@@ -127,11 +128,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
 
     # Notify client that server is ready
+    is_mac = sys.platform == "darwin"
+    hotkey_text = "Control+." if is_mac else "Alt+."
     await websocket.send_text(
         json.dumps(
             {
                 "type": "ready",
-                "content": "Server ready. You can start chatting or take a screenshot (Alt+.)",
+                "content": f"Server ready. You can start chatting or take a screenshot ({hotkey_text})",
             }
         )
     )

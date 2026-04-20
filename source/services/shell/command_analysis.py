@@ -148,6 +148,13 @@ def _basename(command_name: str) -> str:
     return value
 
 
+def _shell_display_name(executable: str) -> str:
+    display_name = _basename(executable)
+    if display_name:
+        return display_name
+    return Path(executable).name
+
+
 def _resolve_powershell_executable() -> str | None:
     for candidate in _WINDOWS_POWERSHELL_NAMES:
         resolved = shutil.which(candidate)
@@ -223,7 +230,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
                 name="cmd",
                 executable=executable,
                 argv_prefix=(executable, "/d", "/s", "/c"),
-                display_name=Path(executable).name,
+                display_name=_shell_display_name(executable),
             )
 
         shell_path = os.environ.get("SHELL") or shutil.which("bash") or shutil.which("sh") or "/bin/sh"
@@ -235,7 +242,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
             name="bash" if shell_name == "bash" else "sh",
             executable=executable,
             argv_prefix=(executable, "-lc" if use_login else "-c"),
-            display_name=Path(executable).name,
+            display_name=_shell_display_name(executable),
         )
 
     if requested == "cmd":
@@ -247,7 +254,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
             name="cmd",
             executable=executable,
             argv_prefix=(executable, "/d", "/s", "/c"),
-            display_name=Path(executable).name,
+            display_name=_shell_display_name(executable),
         )
 
     if requested == "powershell":
@@ -256,7 +263,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
             raise ValueError(
                 "shell='powershell' was requested, but neither pwsh nor powershell was found on PATH."
             )
-        exe_name = Path(executable).name.lower()
+        exe_name = _basename(executable).lower()
         if exe_name.startswith("powershell"):
             argv_prefix = (
                 executable,
@@ -280,7 +287,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
             name="powershell",
             executable=executable,
             argv_prefix=argv_prefix,
-            display_name=Path(executable).name,
+            display_name=_shell_display_name(executable),
         )
 
     executable = shutil.which(requested)
@@ -292,7 +299,7 @@ def resolve_shell(shell: str | None, command: str | None = None) -> ResolvedShel
         name=requested,
         executable=executable,
         argv_prefix=(executable, "-lc" if requested == "bash" else "-c"),
-        display_name=Path(executable).name,
+        display_name=_shell_display_name(executable),
     )
 
 
@@ -508,6 +515,24 @@ def _find_first_match_warning(
 
 def analyze_command(command: str, shell: str | None) -> CommandAnalysis:
     """Analyze a terminal command before approval/execution."""
+
+    requested = normalize_shell(shell)
+    if requested == "powershell":
+        hard_block = _find_first_match_warning(command, _POWERSHELL_HARD_BLOCKS)
+        warning = _find_first_match_warning(command, _POWERSHELL_DESTRUCTIVE_WARNINGS)
+        if hard_block:
+            return CommandAnalysis(
+                shell=ResolvedShell(
+                    requested="powershell",
+                    name="powershell",
+                    executable="powershell",
+                    argv_prefix=("powershell", "-Command"),
+                    display_name="powershell",
+                ),
+                approval_signature=_extract_shell_signature(command, "powershell"),
+                hard_block_reason=hard_block,
+                destructive_warning=warning,
+            )
 
     resolved_shell = resolve_shell(shell, command)
     shell_name = resolved_shell.name

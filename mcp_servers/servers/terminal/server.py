@@ -195,6 +195,12 @@ def run_command(
     background: bool = False,
     yield_ms: int = 10000,
 ) -> str:
+    if cwd and any(char in cwd for char in ("\\", "/")):
+        normalized_cwd = cwd.replace("\\", "/")
+        if len(normalized_cwd) >= 3 and normalized_cwd[1] == ":" and normalized_cwd[2] == "/":
+            if not os.path.isdir(cwd):
+                return f"Error: Working directory does not exist: {cwd}"
+
     # Enforce timeout ceiling
     timeout = min(timeout, _MAX_FOREGROUND_TIMEOUT)
 

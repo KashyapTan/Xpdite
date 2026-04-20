@@ -217,7 +217,9 @@ class McpToolManager:
                             else {"type": "object", "properties": {}},
                         }
                     )
-                    logger.debug("Registered tool: %s (from %s)", registered_name, server_name)
+                    logger.debug(
+                        "Registered tool: %s (from %s)", registered_name, server_name
+                    )
             except Exception:
                 try:
                     await self.disconnect_server(server_name)
@@ -400,20 +402,28 @@ class McpToolManager:
                 server_name,
                 {
                     "server": server_name,
-                    "display_name": str(entry.get("server_display_name") or server_name),
+                    "display_name": str(
+                        entry.get("server_display_name") or server_name
+                    ),
                     "tools": [],
                 },
             )
             server_entry["tools"].append(
                 {
                     "id": tool_id,
-                    "name": str(entry.get("display_tool_name") or entry.get("session_tool_name") or tool_id),
+                    "name": str(
+                        entry.get("display_tool_name")
+                        or entry.get("session_tool_name")
+                        or tool_id
+                    ),
                 }
             )
 
         result = list(servers.values())
         for server in result:
-            server["tools"] = sorted(server["tools"], key=lambda tool: str(tool["name"]).lower())
+            server["tools"] = sorted(
+                server["tools"], key=lambda tool: str(tool["name"]).lower()
+            )
         return sorted(result, key=lambda item: str(item["display_name"]).lower())
 
     def get_tools(self) -> List[Dict] | None:
@@ -652,7 +662,7 @@ async def init_mcp_servers():
         except Exception as e:
             logger.warning("MCP server '%s' connection failed: %s", name, e)
 
-    await asyncio.gather(
+    server_tasks = [
         _connect_with_timeout(
             "filesystem",
             sys.executable,
@@ -681,13 +691,19 @@ async def init_mcp_servers():
             sys.executable,
             [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
         ),
-        # _connect_with_timeout(
-        #     "windows_mcp",
-        #     "uvx",
-        #     ["windows-mcp"],
-        #     timeout_s=60.0,  # Windows MCP can take a while to start on first run due to antivirus scans
-        # ),
-    )
+    ]
+
+    if sys.platform == "win32":
+        server_tasks.append(
+            _connect_with_timeout(
+                "windows_mcp",
+                "uvx",
+                ["windows-mcp"],
+                timeout_s=60.0,
+            )
+        )
+
+    await asyncio.gather(*server_tasks)
 
     # ── Terminal tools (inline — no subprocess) ─────────────────────
     # Terminal tools are intercepted at the handler layer and executed

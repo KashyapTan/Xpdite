@@ -37,6 +37,11 @@ TERMINAL_TOOLS = {
 }
 
 
+def _looks_like_windows_drive_path(path: str) -> bool:
+    normalized = path.strip().replace("\\", "/")
+    return len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/"
+
+
 def is_terminal_tool(fn_name: str, server_name: str) -> bool:
     """Check if a tool call should be handled inline as a terminal tool."""
     return server_name == "terminal" and fn_name in TERMINAL_TOOLS
@@ -100,6 +105,14 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
         )
         return f"Error: {exc}"
 
+    execution_shell_name = analysis.shell.name
+    if (
+        requested_shell is None
+        and _looks_like_windows_drive_path(cwd)
+        and analysis.shell.name in {"sh", "bash"}
+    ):
+        execution_shell_name = "cmd"
+
     if analysis.hard_block_reason:
         blocked_message = f"BLOCKED: {analysis.hard_block_reason}"
         _save_terminal_event(
@@ -116,7 +129,7 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
     approved, request_id = await terminal_service.check_approval(
         command,
         cwd,
-        shell=analysis.shell.name,
+        shell=execution_shell_name,
         warning=analysis.destructive_warning,
     )
 
@@ -161,7 +174,7 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
                 request_id=request_id,
                 background=background,
                 yield_ms=yield_ms,
-                shell=analysis.shell.name,
+                shell=execution_shell_name,
             )
         else:
             (
@@ -174,7 +187,7 @@ async def _handle_run_command(fn_name: str, fn_args: dict, server_name: str) -> 
                 cwd=cwd,
                 timeout=timeout,
                 request_id=request_id,
-                shell=analysis.shell.name,
+                shell=execution_shell_name,
             )
             session_id = None
     finally:

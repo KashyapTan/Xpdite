@@ -2,6 +2,7 @@
 
 import base64
 import os
+import platform
 import sys
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -523,8 +524,9 @@ def test_start_listener_debounces_hotkey_and_runs_callbacks(tmp_path):
             self.stopped = False
 
         def start(self):
-            self.mapping["<alt>+."]()
-            self.mapping["<alt>+."]()
+            hotkey = "<ctrl>+." if platform.system() == "Darwin" else "<alt>+."
+            self.mapping[hotkey]()
+            self.mapping[hotkey]()
 
         def stop(self):
             self.stopped = True

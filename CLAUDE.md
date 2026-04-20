@@ -92,8 +92,8 @@ bun run dist:win         # full production package for Windows (x64)
 bun run dist:mac         # full production package for macOS (arm64)
 bun run dist:linux       # full production package for Linux (x64)
 
-# Python (run from project root with .venv active)
-.venv\Scripts\python.exe -m source.main      # start Python server directly
+# Python (run from project root)
+uv run python -m source.main                   # start Python server directly
 uv sync --group dev                           # install / update Python deps
 uv add <pkg>                                  # add a new Python package
 uv run <file_name>                            # run python files for testing

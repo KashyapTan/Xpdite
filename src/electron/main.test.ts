@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 
@@ -46,6 +47,7 @@ class MockBrowserWindow extends EventEmitter {
   });
   getBounds = vi.fn(() => ({ width: 420, height: 420, x: 100, y: 100 }));
   setAlwaysOnTop = vi.fn();
+  setVisibleOnAllWorkspaces = vi.fn();
   setResizable = vi.fn();
   setMinimumSize = vi.fn();
   setPosition = vi.fn();
@@ -165,7 +167,7 @@ describe('electron main entrypoint', () => {
     expect(latestWindow?.setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
     expect(startPythonServerMock).toHaveBeenCalledTimes(1);
     expect(startChannelBridgeMock).toHaveBeenCalledWith(8123);
-    expect(latestWindow?.loadFile).toHaveBeenCalledWith('C:\\Program Files\\Xpdite\\dist-react\\index.html');
+    expect(latestWindow?.loadFile).toHaveBeenCalledWith(path.join('C:/Program Files/Xpdite', 'dist-react', 'index.html'));
 
     const event = trustedEvent();
     expect(ipcHandlers.get('get-server-port')?.(event)).toBe(8123);
