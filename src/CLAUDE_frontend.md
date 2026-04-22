@@ -18,7 +18,7 @@ src/
     ├── main.tsx              # React entry, createHashRouter (7 routes), TabProvider wrap
     ├── pages/
     │   ├── App.tsx                  # Main chat page (query input, response, tool calls, screenshots, tab routing)
-    │   ├── Settings.tsx             # Settings page (models, tools, skills, memory, artifacts, tasks, mobile, providers, prompt)
+    │   ├── Settings.tsx             # Settings page (models, tools, marketplace, skills, memory, artifacts, tasks, mobile, providers, prompt)
     │   ├── ChatHistory.tsx          # Past conversations browser with full-text search
     │   ├── MeetingRecorder.tsx      # Live meeting recording UI
     │   ├── MeetingAlbum.tsx         # Past meeting recordings list (grouped by date)
@@ -87,7 +87,7 @@ src/
     │   ├── useTokenUsage.ts   # Token count display
     │   └── index.ts
     ├── services/
-    │   ├── api.ts             # createApiService (WS helpers) + singleton `api` (HTTP helpers, 18+ endpoints)
+    │   ├── api.ts             # singleton `api` (HTTP helpers)
     │   ├── portDiscovery.ts   # Dynamic server port discovery (IPC-first, then probe 8000–8009)
     │   └── index.ts
     ├── types/
@@ -149,7 +149,7 @@ This is intentional: mutating React state inside a streaming callback causes sta
 - Performance telemetry is emitted from the renderer (`[chat-performance] ...`) and includes DOM reduction and cycle timing fields.
 
 ### Content blocks — interleaved rendering
-The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, `{ type: 'terminal_command' }`, `{ type: 'thinking' }`, and `{ type: 'youtube_transcription_approval' }` entries to render tool calls and approval UI inline between text segments. Do not use a flat `response` string for display when tool calls are present — use `contentBlocks`.
+The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, `{ type: 'terminal_command' }`, `{ type: 'thinking' }`, `{ type: 'youtube_transcription_approval' }`, and `{ type: 'artifact' }` entries to render tool calls, artifacts, and approval UI inline between text segments. Do not use a flat `response` string for display when tool calls or artifacts are present — use `contentBlocks`.
 
 ### Shared inline icons
 Reuse `src/ui/components/icons/AppIcons.tsx` for UI iconography instead of pasted Unicode glyphs or ad-hoc SVG duplication. If a non-React DOM builder needs the same icon (for example `QueryInput.tsx` chip rendering), reuse `src/ui/components/icons/iconPaths.ts` so the SVG path data stays centralized.
@@ -220,8 +220,9 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
+`models → connections → tools → marketplace → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
 
+- **`marketplace`** → `<MarketplaceSettings>` — Community extension manager for skills, prompts, and server installs.
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
 - **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. WhatsApp uses phone-number + pairing-code linked-device auth. Discord setup requires bot token, application ID, and public key; reconnect keeps the saved token unless the user replaces it.
@@ -229,8 +230,9 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 - **`scheduled-jobs`** → `<SettingsScheduledJobs>` — Scheduled task controls (toggle, run-now, delete, per-job forwarding targets).
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`, `memory_block`, `artifacts_block`, `user_profile_block`.
 
-### `createApiService` vs `api` singleton
-- `createApiService(send)` — wraps the WS `send` function into typed helpers. Use for any real-time action.
+### `api` singleton
+- The `api` object provides typed HTTP helpers.
+- Use `useWebSocket().send` for real-time actions.
 - `api` singleton in `api.ts` — plain `fetch` calls for one-shot HTTP operations. Import `api` directly; don't create new instances.
 
 `QueryInput` uses `api.browseFiles(query?)` for the `@` file picker. Backend responses are relevance-ranked globally from the home subtree (no folder navigation), so the top suggestion is the closest match for the typed token.

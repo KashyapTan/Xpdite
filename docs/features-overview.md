@@ -23,6 +23,11 @@ Use this as the product-level index, then jump to dedicated docs for architectur
 - Inline tools for terminal, sub-agents, memory, scheduler, skills, and video watcher.
 - Semantic tool retrieval with configurable `always_on` and `top_k`.
 
+## Marketplace & Extensions
+
+- Built-in Marketplace platform for discovering community extensions, skills, and prompts.
+- Claude-compatible hooks runtime for pre/post generation modification.
+
 ## Artifacts
 
 - Detects structured generated artifact blocks from model streams.

@@ -11,7 +11,7 @@ Notifications provide global visibility for asynchronous events.
 
 - `job_complete`
 - `job_error`
-- `tab_complete`
+- `tab_completed`
 
 ## Data and Delivery
 

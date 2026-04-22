@@ -28,6 +28,7 @@ Host binding is configurable through `XPDITE_SERVER_HOST`. Binding to non-loopba
 ### Health
 
 - `GET /api/health`
+- `GET /api/health/session`
 
 Returns backend health status.
 
@@ -212,6 +213,25 @@ Destructive operation note:
 ```
 
 Allowed values: `always`, `on-miss`, `off`.
+
+### Marketplace
+
+- `GET /api/marketplace/sources`
+- `POST /api/marketplace/sources`
+- `DELETE /api/marketplace/sources/{source_id}`
+- `POST /api/marketplace/sources/{source_id}/refresh`
+- `GET /api/marketplace/catalog`
+- `GET /api/marketplace/installs`
+- `POST /api/marketplace/install`
+- `POST /api/marketplace/install-package`
+- `POST /api/marketplace/install-repo`
+- `POST /api/marketplace/installs/{install_id}/enable`
+- `POST /api/marketplace/installs/{install_id}/disable`
+- `POST /api/marketplace/installs/{install_id}/update`
+- `DELETE /api/marketplace/installs/{install_id}`
+- `PUT /api/marketplace/installs/{install_id}/secrets`
+
+Requires local-api-access.
 
 ### File Browser
 

@@ -112,7 +112,7 @@ uv run <file_name>                            # run python files for testing
 **TypeScript / React**
 - Functional components only, hooks for all stateful logic
 - Streaming state uses **both** React state (for renders) and refs (for mutations mid-stream) — never mutate state directly during streaming
-- All WS messages sent via `createApiService(send)` — never call `ws.send()` directly in a component
+- All WS messages sent via `useWebSocket().send` wrapped in local hook contexts — never call `ws.send()` directly in a component without proper scoping.
 - Import order: React → third-party → internal (use path aliases, not `../../`)
 - Never use `any` unless bridging an untyped external API; prefer `unknown` + narrow
 
@@ -138,7 +138,7 @@ uv run <file_name>                            # run python files for testing
 
 **New page in the UI** → add a file under `src/ui/pages/`, register a route in `src/ui/main.tsx`, add a nav link in `src/ui/components/Layout.tsx`.
 
-**New WebSocket message type (client → server)** → add `_handle_<type>` method to `MessageHandler` in `source/api/handlers.py`; add the send helper to `createApiService` in `src/ui/services/api.ts`.
+**New WebSocket message type (client → server)** → add `_handle_<type>` method to `MessageHandler` in `source/api/handlers.py`; add the send helper inside the relevant context or hook (e.g. `useChat`).
 
 **New REST endpoint** → add a route to `source/api/http.py` (or `terminal.py` for terminal-related settings); add the fetch call to the `api` singleton in `src/ui/services/api.ts`.
 
@@ -150,7 +150,7 @@ uv run <file_name>                            # run python files for testing
 
 **New builtin skill** → create a folder under `source/skills_seed/<name>/` with `skill.json` (name, description, slash_command, trigger_servers, version) and `SKILL.md` (prompt content). It will be auto-seeded to `user_data/skills/builtin/` on every app startup.
 
-**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `source/mcp_integration/core/manager.py`). Add interception in both `source/llm/providers/cloud_provider.py` (`_execute_and_broadcast_tool`) and `source/api/handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, `skills`, `memory`, and `scheduler`.
+**New inline tool (like terminal or sub_agent)** → register via `mcp_manager.register_inline_tools("server_name", [...])` in `init_mcp_servers()` (see `source/mcp_integration/core/manager.py`). Add interception in both `source/llm/providers/cloud_provider.py` (`_execute_and_broadcast_tool`) and `source/mcp_integration/core/handlers.py` (Ollama tool loop) with `elif fn_name == "tool_name" and server_name == "server_name"`. Implement execution logic in `source/services/`. Current inline servers include `terminal`, `sub_agent`, `video_watcher`, `skills`, `memory`, and `scheduler`.
 
 **YouTube analysis flow (`watch_youtube_video`)** → The `video_watcher` inline tool first tries native YouTube captions; if captions are unavailable it emits a `youtube_transcription_approval` content block in chat, waits for `youtube_transcription_approval_response`, then (if approved) downloads audio and transcribes with Whisper using detected compute backend (`cuda`/`cpu`) and estimated timing metadata.
 

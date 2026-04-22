@@ -136,7 +136,7 @@ mcp_servers/
 
 **Tool output is normalized to Markdown before it reaches the model/UI.** Structured JSON-style payloads from subprocess MCP tools are converted into Markdown summaries plus fenced content blocks at the app layer, so tools like `read_file`, `glob_files`, and `grep_files` can keep returning structured data internally without exposing raw JSON to the model.
 
-**Tool output is truncated at 100,000 chars.** Design tools to return focused payloads.
+**Tool output is truncated at 200,000 chars.** Design tools to return focused payloads.
 
 **Subprocess lifecycle is task-bound.** `stdio_client` and `ClientSession` must enter/exit on the same background task; do not bypass manager lifecycle rules.
 
@@ -144,7 +144,7 @@ mcp_servers/
 
 **Terminal is approval-gated and inline-executed.** Do not rely on `mcp_servers/servers/terminal/server.py` for primary runtime behavior.
 
-**Sub-agent is inline and restricted.** `spawn_agent` executes in `source/services/skills_runtime/sub_agent.py`; it excludes terminal tools and recursive `spawn_agent` calls.
+**Sub-agent is inline and restricted.** `spawn_agent` executes in `source/services/skills_runtime/sub_agent.py`; it excludes terminal tools and recursive `spawn_agent` calls. The `spawn_agent` tool has a control-plane exception keeping it always included in the available tools list regardless of semantic retrieval. Cloud tool execution strictly rejects unlisted tools to prevent hallucinations.
 
 **Video watcher is inline.** `watch_youtube_video` executes via `video_watcher_executor.py` and emits approval blocks before Whisper fallback when captions are unavailable.
 

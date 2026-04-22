@@ -68,6 +68,8 @@ Responsibilities:
 - MCP tool execution (subprocess and inline).
 - Persistence (SQLite + filesystem-backed memory/artifacts).
 - Scheduler and notification services.
+- Marketplace platform for discovering and installing community extensions, skills, and prompts.
+- Claude-compatible hooks runtime for pre/post generation modification.
 
 Core architecture patterns:
 

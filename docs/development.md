@@ -58,7 +58,7 @@ uv run ruff check .
 - Use function components and hooks only.
 - For streaming callbacks, pair `useState` with `useRef` when needed to avoid stale closures.
 - Use typed interfaces from `src/ui/types/index.ts`.
-- Send WebSocket messages via `createApiService(send)` methods.
+- Send WebSocket messages using `useWebSocket().send` with local wrapper functions, not just `createApiService`.
 
 ### MCP Integration
 

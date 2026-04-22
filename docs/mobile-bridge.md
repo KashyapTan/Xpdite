@@ -6,7 +6,7 @@ The Mobile Bridge is a standalone TypeScript process that connects messaging pla
 
 - Telegram
 - Discord
-- WhatsApp
+- WhatsApp (strict "self-chat-only" flow enforced)
 
 ## High-Level Flow
 
