@@ -58,6 +58,7 @@ Safety checks before bypassing SmartScreen:
 
 - Add provider keys in Settings for cloud models.
 - Connect Google in Settings > Connections for Gmail/Calendar tools.
+- Add your Hugging Face token in Settings > Meeting if you want speaker diarization.
 - Pair mobile channels in Settings > Mobile if you want remote chat.
 
 ## Developer Setup
@@ -107,11 +108,55 @@ bun run dev:pyserver
 bun run build
 ```
 
+`bun run build` now does all packaging prerequisites:
+
+- regenerates the Electron app icons from `assets/xpdite-logo-black-bg.svg`
+- builds the PyInstaller backend executable
+- copies the Python runtime and MCP server sources into `dist-python-runtime/`
+- writes a packaged Google OAuth env file that includes only `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`
+- compiles the channel bridge, Electron process, and React UI
+
+Packaging is host-specific:
+
+- `bun run dist:win` must be run on Windows.
+- `bun run dist:mac` must be run on macOS. This repo targets Apple Silicon (`arm64`) for beta DMG builds.
+
 For packaged Windows output:
 
 ```bash
 bun run dist:win
 ```
+
+For packaged macOS output:
+
+```bash
+bun run dist:mac
+```
+
+### Packaged Google OAuth
+
+Local development can continue to read Google OAuth credentials from the repo `.env`.
+
+Packaged builds do not read the repo `.env` at runtime. Instead, the build step writes `dist-runtime-config/google-oauth.env` with only:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+That runtime env file is bundled into the app and passed explicitly to the packaged Python backend. The Google OAuth desktop flow still uses loopback redirect handling with PKCE.
+
+### GitHub Beta Releases
+
+GitHub Actions now has two packaging workflows:
+
+- `CI`: runs frontend tests, backend pytest, Electron transpile, and channel-bridge compile on pull requests and pushes to `main`
+- `Beta Release`: builds unsigned prerelease assets only on `v*` tags or manual dispatch
+
+The beta workflow expects repository secrets named:
+
+- `GOOGLE_CLIENT_ID`
+- `GOOGLE_CLIENT_SECRET`
+
+Manual dispatch requires a beta version string and can optionally include a custom release name and release notes.
 
 ## Repository Layout
 

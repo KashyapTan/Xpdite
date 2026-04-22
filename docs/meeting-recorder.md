@@ -48,6 +48,20 @@ This document covers meeting recording, transcript handling, and analysis flows.
 - Recordings and transcript metadata are persisted in backend storage.
 - Analysis model preference can be stored and reused.
 
+## Hugging Face Token Setup
+
+Speaker diarization now requires each user to add their own Hugging Face token in Settings > Meeting.
+
+Setup flow:
+
+1. Create a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens).
+2. Accept the model licenses for:
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+3. Paste the token into the Hugging Face field in Settings > Meeting and save it.
+
+The token is encrypted through the existing key-manager flow before it is stored. The meeting recorder no longer reads `HF_TOKEN` from `.env` or process environment variables.
+
 ## Related Docs
 
 - `docs/api-reference.md`
