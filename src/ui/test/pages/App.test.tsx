@@ -28,6 +28,7 @@ const wsSendMock = vi.fn();
 const wsSubscribeMock = vi.fn();
 const setIsHiddenMock = vi.fn();
 const createTabMock = vi.fn();
+let isConnectedMock = true;
 
 const updateTabTitleMock = vi.fn();
 const setQueueItemsMock = vi.fn();
@@ -184,7 +185,7 @@ vi.mock('../../contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     send: wsSendMock,
     subscribe: wsSubscribeMock,
-    isConnected: true,
+    isConnected: isConnectedMock,
   }),
 }));
 
@@ -277,6 +278,7 @@ describe('App websocket-driven behavior', () => {
     ];
     tabContextState.activeTabId = 'tab-1';
     createTabMock.mockReturnValue('tab-3');
+    isConnectedMock = true;
     locationStateMock = null;
     tabSnapshots.clear();
     chatStateMock.chatHistory = [];
@@ -314,6 +316,38 @@ describe('App websocket-driven behavior', () => {
           content: 'hello from test',
           capture_mode: 'precision',
           model: 'openai/gpt-4o',
+          tab_id: 'tab-1',
+        }),
+      );
+    });
+  });
+
+  test('retries loading enabled models after the websocket connects', async () => {
+    isConnectedMock = false;
+    vi.mocked(api.getEnabledModels)
+      .mockRejectedValueOnce(new Error('backend warming up'))
+      .mockResolvedValueOnce(['anthropic/claude-3-7-sonnet']);
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(api.getEnabledModels).toHaveBeenCalledTimes(1);
+    });
+
+    isConnectedMock = true;
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(api.getEnabledModels).toHaveBeenCalledTimes(2);
+    });
+
+    fireEvent.click(screen.getByText('submit-query'));
+
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'submit_query',
+          model: 'anthropic/claude-3-7-sonnet',
           tab_id: 'tab-1',
         }),
       );

@@ -1,16 +1,19 @@
 import hashlib
+import importlib.util
 import io
 import json
 import logging
 import os
+import sys
 import tempfile
 import threading
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import ollama
 
-from ...infrastructure.config import USER_DATA_DIR
+from ...infrastructure.config import CHILD_PYTHON_EXECUTABLE, USER_DATA_DIR
 
 try:
     from rank_bm25 import BM25Okapi
@@ -34,6 +37,9 @@ _CACHE_INDEX_FILE = os.path.join(_CACHE_DIR, "tool_embedding_index.json")
 RRF_K = 10
 DEBUG_SCORE_LOG_LIMIT = 10
 _SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
+_BUNDLED_SENTENCE_TRANSFORMER_SUBDIR = (
+    Path("embedding-models") / _SENTENCE_TRANSFORMER_MODEL
+)
 
 
 def _ensure_sentence_transformers_available() -> bool:
@@ -46,13 +52,127 @@ def _ensure_sentence_transformers_available() -> bool:
         return False
 
     _SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED = True
-    try:
-        from sentence_transformers import SentenceTransformer as _SentenceTransformer
-    except ImportError:
+    import_error: Optional[Exception] = None
+
+    for attempt in range(2):
+        try:
+            SentenceTransformer = _import_sentence_transformer_class()
+            return True
+        except Exception as exc:
+            import_error = exc
+            if attempt == 0 and _inject_child_python_site_packages():
+                _clear_modules_for_retry(
+                    (
+                        "sentence_transformers",
+                        "transformers",
+                        "huggingface_hub",
+                        "requests",
+                        "yaml",
+                        "jinja2",
+                        "markupsafe",
+                    )
+                )
+                continue
+            break
+
+    logger.warning("Failed to import sentence_transformers: %s", import_error)
+    return False
+
+
+def _import_sentence_transformer_class():
+    from sentence_transformers import SentenceTransformer as _SentenceTransformer
+
+    return _SentenceTransformer
+
+
+def _clear_modules_for_retry(prefixes: tuple[str, ...]) -> None:
+    """Drop partially imported modules before retrying against a new sys.path."""
+    for module_name in list(sys.modules):
+        if any(
+            module_name == prefix or module_name.startswith(f"{prefix}.")
+            for prefix in prefixes
+        ):
+            sys.modules.pop(module_name, None)
+
+
+def _resolve_child_python_site_packages() -> Optional[Path]:
+    """Find the packaged plain-Python site-packages directory, if available."""
+    child_python = CHILD_PYTHON_EXECUTABLE or os.environ.get(
+        "XPDITE_CHILD_PYTHON_EXECUTABLE", ""
+    ).strip()
+    if not child_python:
+        return None
+
+    executable = Path(child_python).expanduser()
+    candidates: List[Path] = []
+
+    if executable.parent.name in {"bin", "Scripts"}:
+        venv_root = executable.parent.parent
+        candidates.append(venv_root / "Lib" / "site-packages")
+        lib_dir = venv_root / "lib"
+        if lib_dir.exists():
+            candidates.extend(sorted(lib_dir.glob("python*/site-packages")))
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _inject_child_python_site_packages() -> bool:
+    """Retry imports against the packaged child runtime when PyInstaller falls short."""
+    site_packages = _resolve_child_python_site_packages()
+    if site_packages is None:
         return False
 
-    SentenceTransformer = _SentenceTransformer
+    site_packages_str = str(site_packages)
+    if site_packages_str in sys.path:
+        return False
+
+    sys.path.insert(0, site_packages_str)
+    importlib.invalidate_caches()
+    logger.info(
+        "Retrying sentence-transformers import using child runtime site-packages: %s",
+        site_packages,
+    )
     return True
+
+
+def _resolve_bundled_sentence_transformer_dir() -> Optional[Path]:
+    """Locate the packaged MiniLM model copy bundled with the frozen backend."""
+    env_dir = os.environ.get("XPDITE_SENTENCE_TRANSFORMER_MODEL_DIR", "").strip()
+    if env_dir:
+        candidate = Path(env_dir).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+
+    candidates: List[Path] = []
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / _BUNDLED_SENTENCE_TRANSFORMER_SUBDIR)
+
+    executable_dir = Path(sys.executable).resolve().parent
+    candidates.extend(
+        [
+            executable_dir / "_internal" / _BUNDLED_SENTENCE_TRANSFORMER_SUBDIR,
+            executable_dir / _BUNDLED_SENTENCE_TRANSFORMER_SUBDIR,
+        ]
+    )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    return None
+
+
+def _sentence_transformers_is_importable() -> bool:
+    """Cheap package-presence check that avoids importing heavy modules at startup."""
+    if SentenceTransformer is not None:
+        return True
+    return importlib.util.find_spec("sentence_transformers") is not None
 
 
 class ToolRetriever:
@@ -127,11 +247,17 @@ class ToolRetriever:
         except Exception as exc:
             logger.warning("Ollama check failed: %s", exc)
 
-        if _ensure_sentence_transformers_available():
+        if _sentence_transformers_is_importable():
             self._embedding_model_type = "sentence-transformers"
+            bundled_model_dir = _resolve_bundled_sentence_transformer_dir()
+            model_ref = (
+                str(bundled_model_dir)
+                if bundled_model_dir is not None
+                else _SENTENCE_TRANSFORMER_MODEL
+            )
             logger.info(
                 "Embedding backend active: sentence-transformers (%s)",
-                _SENTENCE_TRANSFORMER_MODEL,
+                model_ref,
             )
             return
 
@@ -151,19 +277,33 @@ class ToolRetriever:
                 return None
 
         if self._embedding_model_type == "sentence-transformers":
-            if (
-                self._st_model is None
-                and _ensure_sentence_transformers_available()
-                and SentenceTransformer is not None
-            ):
-                logger.info("Loading sentence-transformers model...")
-                self._st_model = SentenceTransformer(_SENTENCE_TRANSFORMER_MODEL)  # type: ignore
+            try:
+                if (
+                    self._st_model is None
+                    and _ensure_sentence_transformers_available()
+                    and SentenceTransformer is not None
+                ):
+                    bundled_model_dir = _resolve_bundled_sentence_transformer_dir()
+                    model_ref = (
+                        str(bundled_model_dir)
+                        if bundled_model_dir is not None
+                        else _SENTENCE_TRANSFORMER_MODEL
+                    )
+                    kwargs = {"local_files_only": True} if bundled_model_dir else {}
+                    logger.info("Loading sentence-transformers model: %s", model_ref)
+                    self._st_model = SentenceTransformer(model_ref, **kwargs)  # type: ignore[arg-type]
 
-            if self._st_model:
-                embedding = self._st_model.encode(text)
-                if isinstance(embedding, np.ndarray):
-                    return embedding.astype(np.float32, copy=False)
-                return np.asarray(embedding, dtype=np.float32)
+                if self._st_model:
+                    embedding = self._st_model.encode(
+                        text,
+                        show_progress_bar=False,
+                    )
+                    if isinstance(embedding, np.ndarray):
+                        return embedding.astype(np.float32, copy=False)
+                    return np.asarray(embedding, dtype=np.float32)
+            except Exception as exc:
+                logger.warning("Sentence-transformers embedding failed: %s", exc)
+                return None
 
         return None
 

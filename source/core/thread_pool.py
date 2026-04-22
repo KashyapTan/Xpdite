@@ -39,3 +39,8 @@ async def run_in_thread(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
     loop = asyncio.get_running_loop()
     call = functools.partial(func, *args, **kwargs)
     return await loop.run_in_executor(_app_executor, call)
+
+
+def shutdown_thread_pool(wait: bool = True, cancel_futures: bool = False) -> None:
+    """Shut down the shared executor during application teardown."""
+    _app_executor.shutdown(wait=wait, cancel_futures=cancel_futures)

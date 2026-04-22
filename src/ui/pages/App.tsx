@@ -1371,7 +1371,8 @@ function App() {
   ]);
 
   // ============================================
-  // Fetch enabled models on mount & when returning from Settings
+  // Fetch enabled models on mount, on reconnect, and when returning from Settings.
+  // This avoids a blank model picker when the first HTTP request races backend boot.
   // ============================================
   useEffect(() => {
     const fetchEnabledModels = async () => {
@@ -1386,10 +1387,9 @@ function App() {
 
     void fetchEnabledModels().catch((error) => {
       console.warn('[models] Failed to fetch enabled models', error);
-      setEnabledModels([]);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]); // re-fetch when user navigates back from Settings
+  }, [isConnected, location.pathname]); // re-fetch when backend connects or user returns from Settings
 
   // ============================================
   // WebSocket Message Handler (tab-aware)

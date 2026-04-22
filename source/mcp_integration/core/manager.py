@@ -762,7 +762,7 @@ async def init_mcp_servers():
     mcp_manager.register_inline_tools(
         "skills",
         SKILLS_INLINE_TOOLS,
-        skip_embed=False,  # Include in semantic retrieval
+        skip_embed=True,  # Batch startup embedding into the final refresh pass
     )
 
     # - Memory tools (inline - no subprocess) ----------------------
@@ -774,7 +774,7 @@ async def init_mcp_servers():
     mcp_manager.register_inline_tools(
         "memory",
         MEMORY_INLINE_TOOLS,
-        skip_embed=False,  # Include in semantic retrieval
+        skip_embed=True,  # Batch startup embedding into the final refresh pass
     )
 
     # ── Scheduler tools (inline — no subprocess) ─────────────────

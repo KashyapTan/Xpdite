@@ -126,6 +126,131 @@ class TestConfiguration:
             is fake_module.SentenceTransformer
         )
 
+    def test_sentence_transformers_is_importable_uses_cached_global(self, monkeypatch):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        sentinel = object()
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", sentinel)
+
+        assert retriever_module._sentence_transformers_is_importable() is True
+
+    def test_resolve_bundled_sentence_transformer_dir_prefers_meipass(
+        self, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        bundled_dir = (
+            tmp_path
+            / "bundle"
+            / "embedding-models"
+            / retriever_module._SENTENCE_TRANSFORMER_MODEL
+        )
+        bundled_dir.mkdir(parents=True)
+
+        monkeypatch.setattr(retriever_module.sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+        monkeypatch.setattr(retriever_module.sys, "executable", str(tmp_path / "app" / "xpdite-server"))
+
+        assert retriever_module._resolve_bundled_sentence_transformer_dir() == bundled_dir
+
+    def test_resolve_bundled_sentence_transformer_dir_uses_env_override(
+        self, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        bundled_dir = tmp_path / "custom-model"
+        bundled_dir.mkdir()
+
+        monkeypatch.setenv("XPDITE_SENTENCE_TRANSFORMER_MODEL_DIR", str(bundled_dir))
+
+        assert retriever_module._resolve_bundled_sentence_transformer_dir() == bundled_dir
+
+    def test_resolve_child_python_site_packages_finds_bundled_venv(
+        self, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        child_python = tmp_path / ".venv" / "bin" / "python"
+        site_packages = tmp_path / ".venv" / "lib" / "python3.13" / "site-packages"
+        child_python.parent.mkdir(parents=True)
+        child_python.write_text("")
+        site_packages.mkdir(parents=True)
+
+        monkeypatch.setattr(
+            retriever_module,
+            "CHILD_PYTHON_EXECUTABLE",
+            str(child_python),
+        )
+
+        assert retriever_module._resolve_child_python_site_packages() == site_packages
+
+    def test_resolve_child_python_site_packages_keeps_symlinked_venv_layout(
+        self, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        real_python = tmp_path / "uv" / "python"
+        child_python = tmp_path / ".venv" / "bin" / "python"
+        site_packages = tmp_path / ".venv" / "lib" / "python3.13" / "site-packages"
+        real_python.parent.mkdir(parents=True)
+        real_python.write_text("")
+        child_python.parent.mkdir(parents=True)
+        child_python.symlink_to(real_python)
+        site_packages.mkdir(parents=True)
+
+        monkeypatch.setattr(
+            retriever_module,
+            "CHILD_PYTHON_EXECUTABLE",
+            str(child_python),
+        )
+
+        assert retriever_module._resolve_child_python_site_packages() == site_packages
+
+    def test_ensure_sentence_transformers_available_retries_with_child_runtime(
+        self, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        child_python = tmp_path / ".venv" / "bin" / "python"
+        site_packages = tmp_path / ".venv" / "lib" / "python3.13" / "site-packages"
+        child_python.parent.mkdir(parents=True)
+        child_python.write_text("")
+        site_packages.mkdir(parents=True)
+
+        sentinel = object()
+        import_attempts = {"count": 0}
+        original_sys_path = list(sys.path)
+
+        def fake_import():
+            import_attempts["count"] += 1
+            if import_attempts["count"] == 1:
+                raise ImportError("initial failure")
+            return sentinel
+
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", None)
+        monkeypatch.setattr(
+            retriever_module,
+            "_SENTENCE_TRANSFORMERS_IMPORT_ATTEMPTED",
+            False,
+        )
+        monkeypatch.setattr(
+            retriever_module,
+            "CHILD_PYTHON_EXECUTABLE",
+            str(child_python),
+        )
+        monkeypatch.setattr(
+            retriever_module,
+            "_import_sentence_transformer_class",
+            fake_import,
+        )
+
+        try:
+            assert retriever_module._ensure_sentence_transformers_available() is True
+            assert retriever_module.SentenceTransformer is sentinel
+            assert sys.path[0] == str(site_packages)
+            assert import_attempts["count"] == 2
+        finally:
+            sys.path[:] = original_sys_path
+
 
 class TestBackendSelection:
     def test_check_embedding_backend_prefers_matching_ollama_model_dict_payload(self):
@@ -170,7 +295,7 @@ class TestBackendSelection:
             ),
             patch.object(
                 retriever_module,
-                "_ensure_sentence_transformers_available",
+                "_sentence_transformers_is_importable",
                 return_value=True,
             ),
         ):
@@ -197,7 +322,7 @@ class TestBackendSelection:
             ),
             patch.object(
                 retriever_module,
-                "_ensure_sentence_transformers_available",
+                "_sentence_transformers_is_importable",
                 return_value=False,
             ),
         ):
@@ -601,11 +726,13 @@ class TestRetrieverAdditionalCoverage:
         constructed = {}
 
         class FakeSentenceTransformer:
-            def __init__(self, model_name):
+            def __init__(self, model_name, **kwargs):
                 constructed["model_name"] = model_name
+                constructed["kwargs"] = kwargs
 
-            def encode(self, text):
+            def encode(self, text, **kwargs):
                 assert text == "hello"
+                assert kwargs == {"show_progress_bar": False}
                 return [0.25, 0.75]
 
         retriever._embedding_model_type = "sentence-transformers"
@@ -624,14 +751,54 @@ class TestRetrieverAdditionalCoverage:
             embedding = retriever._get_embedding("hello")
 
         assert constructed["model_name"] == retriever_module._SENTENCE_TRANSFORMER_MODEL
+        assert constructed["kwargs"] == {}
         assert np.allclose(embedding, np.array([0.25, 0.75], dtype=np.float32))
+
+    def test_get_embedding_uses_bundled_sentence_transformer_model(
+        self, retriever, monkeypatch, tmp_path
+    ):
+        import source.mcp_integration.core.retriever as retriever_module
+
+        constructed = {}
+        bundled_dir = tmp_path / "embedding-models" / retriever_module._SENTENCE_TRANSFORMER_MODEL
+        bundled_dir.mkdir(parents=True)
+
+        class FakeSentenceTransformer:
+            def __init__(self, model_name, **kwargs):
+                constructed["model_name"] = model_name
+                constructed["kwargs"] = kwargs
+
+            def encode(self, text, **kwargs):
+                assert text == "hello"
+                assert kwargs == {"show_progress_bar": False}
+                return [0.4, 0.6]
+
+        retriever._embedding_model_type = "sentence-transformers"
+        retriever._st_model = None
+        monkeypatch.setattr(retriever_module, "SentenceTransformer", FakeSentenceTransformer)
+        monkeypatch.setattr(
+            retriever_module,
+            "_resolve_bundled_sentence_transformer_dir",
+            lambda: bundled_dir,
+        )
+
+        with patch.object(
+            retriever_module,
+            "_ensure_sentence_transformers_available",
+            return_value=True,
+        ):
+            embedding = retriever._get_embedding("hello")
+
+        assert constructed["model_name"] == str(bundled_dir)
+        assert constructed["kwargs"] == {"local_files_only": True}
+        assert np.allclose(embedding, np.array([0.4, 0.6], dtype=np.float32))
 
     def test_get_embedding_uses_existing_sentence_transformer_numpy_output(
         self, retriever
     ):
         retriever._embedding_model_type = "sentence-transformers"
         retriever._st_model = SimpleNamespace(
-            encode=lambda _text: np.array([0.1, 0.9], dtype=np.float64)
+            encode=lambda _text, **_kwargs: np.array([0.1, 0.9], dtype=np.float64)
         )
 
         embedding = retriever._get_embedding("hello")

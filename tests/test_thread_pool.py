@@ -1,10 +1,11 @@
-"""Tests for source/core/thread_pool.py — run_in_thread."""
+"""Tests for source/core/thread_pool.py."""
 
 import time
+from types import SimpleNamespace
 
 import pytest
 
-from source.core.thread_pool import run_in_thread
+from source.core.thread_pool import run_in_thread, shutdown_thread_pool
 
 
 class TestRunInThread:
@@ -49,3 +50,16 @@ class TestRunInThread:
 
         result = await run_in_thread(noop)
         assert result is None
+
+
+class TestShutdownThreadPool:
+    def test_shutdown_thread_pool_forwards_flags(self, monkeypatch):
+        calls = {}
+        fake_executor = SimpleNamespace(
+            shutdown=lambda **kwargs: calls.update(kwargs)
+        )
+        monkeypatch.setattr("source.core.thread_pool._app_executor", fake_executor)
+
+        shutdown_thread_pool(wait=False, cancel_futures=True)
+
+        assert calls == {"wait": False, "cancel_futures": True}

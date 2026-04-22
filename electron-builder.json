@@ -8,7 +8,7 @@
     ],
     "extraResources": [
         {
-            "from": "dist-python",
+            "from": "dist-python/xpdite-server",
             "to": "python-server",
             "filter": [
                 "**/*"

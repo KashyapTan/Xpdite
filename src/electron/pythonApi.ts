@@ -250,23 +250,24 @@ function findPythonExecutable(): string {
         // Fallback to system Python
         return isWindows ? 'python' : 'python3';
     } else {
-        // In production, use the PyInstaller-generated executable
-        const resourcesPath = process.resourcesPath;
         const exeName = isWindows ? 'xpdite-server.exe' : 'xpdite-server';
-        const serverExecutable = path.join(resourcesPath, 'python-server', exeName);
-        if (fs.existsSync(serverExecutable)) {
-            return serverExecutable;
-        }
-        
-        // Fallback: try in app directory
+        const resourcesPath = process.resourcesPath;
         const appPath = path.dirname(process.execPath);
-        const fallbackExecutable = path.join(appPath, 'resources', 'python-server', exeName);
-        
-        if (fs.existsSync(fallbackExecutable)) {
-            return fallbackExecutable;
+
+        const candidates = [
+            path.join(resourcesPath, 'python-server', exeName),
+            path.join(resourcesPath, 'python-server', 'xpdite-server', exeName),
+            path.join(appPath, 'resources', 'python-server', exeName),
+            path.join(appPath, 'resources', 'python-server', 'xpdite-server', exeName),
+        ];
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+                return candidate;
+            }
         }
-        
-        throw new Error(`Python server executable not found at: ${serverExecutable} or ${fallbackExecutable}`);
+
+        throw new Error(`Python server executable not found. Checked: ${candidates.join(', ')}`);
     }
 }
 
