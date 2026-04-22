@@ -51,6 +51,14 @@ class TestRunInThread:
         result = await run_in_thread(noop)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_recreates_executor_after_shutdown(self):
+        shutdown_thread_pool()
+
+        result = await run_in_thread(lambda: "recreated")
+
+        assert result == "recreated"
+
 
 class TestShutdownThreadPool:
     def test_shutdown_thread_pool_forwards_flags(self, monkeypatch):

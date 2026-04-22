@@ -60,11 +60,19 @@ class TestLifecycleHooks:
 
         monkeypatch.delitem(__import__("sys").modules, "source.core.state", raising=False)
         real_import = builtins.__import__
+
+        def _failing_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if (name, level) in {
+                ("state", 1),
+                ("mcp_integration.core.manager", 2),
+                ("infrastructure.config", 2),
+            }:
+                raise ImportError("boom")
+            return real_import(name, globals, locals, fromlist, level)
+
         monkeypatch.setattr(
             "builtins.__import__",
-            lambda name, *args, **kwargs: (_ for _ in ()).throw(ImportError("boom"))
-            if name in {".state", "..mcp_integration.core.manager", "..config"}
-            else real_import(name, *args, **kwargs),
+            _failing_import,
         )
 
         cleanup_resources()

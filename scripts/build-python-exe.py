@@ -193,9 +193,7 @@ def build_python_server():
         sys.exit(1)
 
     try:
-        bundled_model_dir = prepare_sentence_transformer_model(
-            project_root, python_executable
-        )
+        prepare_sentence_transformer_model(project_root, python_executable)
     except subprocess.CalledProcessError as error:
         print("Failed to prepare bundled sentence-transformers model.")
         print("STDOUT:", error.stdout)
