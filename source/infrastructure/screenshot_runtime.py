@@ -13,6 +13,8 @@ import subprocess
 
 logger = logging.getLogger(__name__)
 
+MACOS_REGION_CAPTURE_DELAY_SECONDS = 0.3
+
 # Fix for high DPI displays on Windows
 if platform.system() == "Windows":
     try:
@@ -114,7 +116,8 @@ def copy_image_to_clipboard(image, dpi_scale=None):
         # Use c_void_p for handles to be safe on 64-bit
         kernel32.GlobalAlloc.restype = ctypes.c_void_p
         kernel32.GlobalAlloc.argtypes = [ctypes.c_uint, ctypes.c_size_t]
-        kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
+        if hasattr(kernel32, "GlobalFree"):
+            kernel32.GlobalFree.argtypes = [ctypes.c_void_p]
         kernel32.GlobalLock.restype = ctypes.c_void_p
         kernel32.GlobalLock.argtypes = [ctypes.c_void_p]
         kernel32.GlobalUnlock.argtypes = [ctypes.c_void_p]
@@ -145,7 +148,7 @@ def copy_image_to_clipboard(image, dpi_scale=None):
                         h_mem = None
                         return True
                 finally:
-                    if h_mem:
+                    if h_mem and hasattr(kernel32, "GlobalFree"):
                         try:
                             kernel32.GlobalFree(h_mem)
                         except Exception:
@@ -177,13 +180,24 @@ def copy_file_to_clipboard(filepath):
         return False
 
 
+def _is_precision_capture_enabled():
+    """Return whether the hotkey should launch a region capture right now."""
+    from ..core.state import app_state
+    from .config import CaptureMode
+
+    return app_state.capture_mode == CaptureMode.PRECISION
+
+
 class ScreenshotService:
-    def __init__(self, callback=None, start_callback=None):
+    def __init__(self, callback=None, start_callback=None, cancel_callback=None):
         self.listener = None
         self.running = False
         self.callback = callback  # Function to call when screenshot is taken
         self.start_callback = (
             start_callback  # Function to call when screenshot capture starts
+        )
+        self.cancel_callback = (
+            cancel_callback  # Function to call when screenshot capture is cancelled
         )
         self.capturing = False
         self._lock = threading.Lock()
@@ -200,6 +214,8 @@ class ScreenshotService:
                     ).start()
             else:
                 logger.info("Screenshot cancelled.")
+                if self.cancel_callback:
+                    threading.Thread(target=self.cancel_callback, daemon=True).start()
         finally:
             with self._lock:
                 self.capturing = False
@@ -219,6 +235,11 @@ class ScreenshotService:
             current_time = time.time()
             with self._lock:
                 if not self.running:  # Check if service is still running
+                    return
+                if not _is_precision_capture_enabled():
+                    logger.debug(
+                        "Hotkey ignored - region capture is only active in precision mode"
+                    )
                     return
                 if self.capturing:
                     return
@@ -260,12 +281,84 @@ class ScreenshotService:
             self.listener = None
 
 
+def _ensure_screenshot_folder(save_folder):
+    """Create the screenshot folder if needed and return its absolute path."""
+    os.makedirs(save_folder, exist_ok=True)
+    return os.path.abspath(save_folder)
+
+
+def _build_screenshot_path(save_folder, prefix):
+    """Build a timestamped PNG path inside *save_folder*."""
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    filename = f"{prefix}_{timestamp}.png"
+    return os.path.join(save_folder, filename)
+
+
+def _cleanup_partial_capture(filepath):
+    """Remove a zero-byte or partial capture file left behind by a failed capture."""
+    try:
+        if os.path.exists(filepath) and os.path.getsize(filepath) == 0:
+            os.remove(filepath)
+    except OSError as e:
+        logger.warning("Failed to cleanup partial screenshot '%s': %s", filepath, e)
+
+
+def _take_macos_interactive_region_screenshot(save_folder):
+    """Use the native macOS selection UI instead of Tkinter/AppKit."""
+    filepath = _build_screenshot_path(save_folder, "screenshot")
+
+    # The hotkey includes Control on macOS, and the frontend also needs a beat
+    # to hide itself before the native selection UI appears.
+    time.sleep(MACOS_REGION_CAPTURE_DELAY_SECONDS)
+
+    try:
+        result = subprocess.run(
+            ["screencapture", "-d", "-x", "-i", "-s", filepath],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        logger.error("macOS screencapture utility is unavailable")
+        return None
+    except Exception as e:
+        logger.error("Error launching macOS interactive screenshot: %s", e)
+        return None
+
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "").strip()
+        _cleanup_partial_capture(filepath)
+        if details:
+            logger.warning(
+                "macOS interactive screenshot failed (exit=%s): %s",
+                result.returncode,
+                details,
+            )
+        else:
+            logger.info(
+                "macOS interactive screenshot cancelled (exit=%s)",
+                result.returncode,
+            )
+        return None
+
+    if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
+        _cleanup_partial_capture(filepath)
+        logger.warning(
+            "macOS interactive screenshot completed without a saved file"
+        )
+        return None
+
+    return filepath
+
+
 def take_region_screenshot(save_folder="screenshots", debug=False):
     """
     Opens a region selection tool and returns the path to the saved screenshot
     """
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    save_folder = _ensure_screenshot_folder(save_folder)
+
+    if platform.system() == "Darwin":
+        return _take_macos_interactive_region_screenshot(save_folder)
 
     class RegionSelector:
         def __init__(self, debug=False):
@@ -460,17 +553,14 @@ def take_fullscreen_screenshot(save_folder="screenshots"):
     Capture entire screen without UI overlay.
     Returns the path to the saved screenshot.
     """
-    if not os.path.exists(save_folder):
-        os.makedirs(save_folder)
+    save_folder = _ensure_screenshot_folder(save_folder)
 
     try:
         # Capture the entire screen
         screen = ImageGrab.grab()
 
         # Generate unique filename with timestamp
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        filename = f"fullscreen_{timestamp}.png"
-        filepath = os.path.join(save_folder, filename)
+        filepath = _build_screenshot_path(save_folder, "fullscreen")
 
         # Save the screenshot
         screen.save(filepath)

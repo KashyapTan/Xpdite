@@ -73,6 +73,7 @@ async def websocket_endpoint(websocket: WebSocket):
       - screenshot_removed: Screenshot removed from context
       - screenshots_cleared: All screenshots cleared
       - screenshot_ready: Legacy message for backwards compatibility
+      - screenshot_cancelled: Region capture was cancelled
       - query: Echo of submitted query
       - thinking_chunk: Streaming thinking/reasoning
       - thinking_complete: Thinking finished

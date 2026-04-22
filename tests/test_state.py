@@ -17,7 +17,7 @@ class TestAppState:
         assert state.conversation_id is None
         assert state.is_streaming is False
         assert state.stop_streaming is False
-        assert state.capture_mode == "fullscreen"
+        assert state.capture_mode == "precision"
         assert state.active_tab_id == "default"
 
     def test_reset_conversation(self):

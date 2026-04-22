@@ -122,7 +122,7 @@ Never call `ws.send()` directly in a component — go through `useWebSocket().se
 - **TabContext** (`contexts/TabContext.tsx`) manages the list of open tabs, active tab ID, per-tab queue items, and a persistent `Map<string, TabSnapshot>` registry that survives route changes.
 - **State registry** is accessed by `App.tsx` through `getTabSnapshot()` / `setTabSnapshot()`. On tab switch, the outgoing tab's state is snapshot'ed (via hook `.getSnapshot()` methods) and the incoming tab's state is restored (via `.restoreSnapshot()`). `App.tsx` also saves the active tab during unmount so navigating to Settings / History does not blank tabs.
 - **Three-tier WS routing** in `App.tsx`:
-  1. **Global messages** (e.g., `screenshot_start`, `ready`, `screenshot_ready`) — applied regardless of tab
+  1. **Global messages** (e.g., `screenshot_start`, `ready`, `screenshot_ready`, `screenshot_cancelled`) — applied regardless of tab
   2. **Active tab messages** — routed to live React state via hooks (includes `screenshot_added`, `screenshot_removed`, `screenshots_cleared`)
   3. **Background tab messages** — applied to the registry via `applyToBackgroundTab()` mini-reducer (handles `screenshot_added`, `screenshot_removed`, `screenshots_cleared` in the snapshot)
 - **`wsSend`** helper auto-injects `tab_id: activeTabIdRef.current` as a default, but explicit `tab_id` fields in the message object override it (spread order: `{ tab_id: default, ...msg }`).

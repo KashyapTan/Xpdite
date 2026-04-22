@@ -370,6 +370,21 @@ describe('App websocket-driven behavior', () => {
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_capture_mode', mode: 'precision', tab_id: 'tab-1' }));
   });
 
+  test('reshows the app window when screenshot capture is cancelled', () => {
+    render(<App />);
+    setIsHiddenMock.mockClear();
+    chatStateMock.setStatus.mockClear();
+    chatStateMock.setError.mockClear();
+
+    emitWebSocketEvent({ type: 'screenshot_start', content: 'Screenshot capture starting' });
+    emitWebSocketEvent({ type: 'screenshot_cancelled', content: 'Screenshot cancelled.' });
+
+    expect(setIsHiddenMock).toHaveBeenNthCalledWith(1, true);
+    expect(setIsHiddenMock).toHaveBeenNthCalledWith(2, false);
+    expect(chatStateMock.setStatus).toHaveBeenCalledWith('Screenshot cancelled.');
+    expect(chatStateMock.setError).toHaveBeenCalledWith('');
+  });
+
   test('syncs runtime tab create and close events to the backend', async () => {
     const { rerender } = render(<App />);
     wsSendMock.mockClear();

@@ -518,6 +518,66 @@ class TestPrecisionModeBehavior:
             app_state.active_tab_id = saved_active_tab
 
     @pytest.mark.asyncio
+    async def test_on_screenshot_start_force_broadcasts_even_if_mode_changes(self):
+        from source.services.media.screenshots import ScreenshotHandler
+
+        saved_capture_mode = app_state.capture_mode
+        saved_active_tab = app_state.active_tab_id
+        app_state.capture_mode = "none"
+        app_state.active_tab_id = "tab-precision"
+        try:
+            with patch(
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
+            ) as mock_broadcast:
+                await ScreenshotHandler.on_screenshot_start(force=True)
+
+            mock_broadcast.assert_awaited_once_with(
+                "tab-precision", "screenshot_start", "Screenshot capture starting"
+            )
+        finally:
+            app_state.capture_mode = saved_capture_mode
+            app_state.active_tab_id = saved_active_tab
+
+    @pytest.mark.asyncio
+    async def test_on_screenshot_cancelled_ignores_non_precision(self):
+        from source.services.media.screenshots import ScreenshotHandler
+
+        saved_capture_mode = app_state.capture_mode
+        app_state.capture_mode = "none"
+        try:
+            with patch(
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
+            ) as mock_broadcast:
+                await ScreenshotHandler.on_screenshot_cancelled()
+
+            mock_broadcast.assert_not_awaited()
+        finally:
+            app_state.capture_mode = saved_capture_mode
+
+    @pytest.mark.asyncio
+    async def test_on_screenshot_cancelled_force_reshows_window(self):
+        from source.services.media.screenshots import ScreenshotHandler
+
+        saved_capture_mode = app_state.capture_mode
+        saved_active_tab = app_state.active_tab_id
+        app_state.capture_mode = "none"
+        app_state.active_tab_id = "tab-precision"
+        try:
+            with patch(
+                "source.services.media.screenshots.broadcast_to_tab", new_callable=AsyncMock
+            ) as mock_broadcast:
+                await ScreenshotHandler.on_screenshot_cancelled(force=True)
+
+            mock_broadcast.assert_awaited_once_with(
+                "tab-precision",
+                "screenshot_cancelled",
+                "Screenshot cancelled.",
+            )
+        finally:
+            app_state.capture_mode = saved_capture_mode
+            app_state.active_tab_id = saved_active_tab
+
+    @pytest.mark.asyncio
     async def test_on_screenshot_captured_non_precision_deletes_file(self):
         from source.services.media.screenshots import ScreenshotHandler
 
@@ -587,6 +647,40 @@ class TestPrecisionModeBehavior:
                 ) as mock_broadcast,
             ):
                 await ScreenshotHandler.on_screenshot_captured("/tmp/precision.png")
+
+            mock_add.assert_awaited_once_with("/tmp/precision.png", tab_state=None)
+            mock_broadcast.assert_awaited_once_with(
+                "tab-precision",
+                "screenshot_ready",
+                "Screenshot captured. Enter your query and press Enter.",
+            )
+        finally:
+            app_state.capture_mode = saved_capture_mode
+            app_state.active_tab_id = saved_active_tab
+
+    @pytest.mark.asyncio
+    async def test_on_screenshot_captured_force_adds_even_if_mode_changes(self):
+        from source.services.media.screenshots import ScreenshotHandler
+
+        saved_capture_mode = app_state.capture_mode
+        saved_active_tab = app_state.active_tab_id
+        app_state.capture_mode = "fullscreen"
+        app_state.active_tab_id = "tab-precision"
+        try:
+            with (
+                patch.object(
+                    ScreenshotHandler,
+                    "add_screenshot",
+                    new=AsyncMock(return_value="ss_1"),
+                ) as mock_add,
+                patch(
+                    "source.services.media.screenshots.broadcast_to_tab",
+                    new_callable=AsyncMock,
+                ) as mock_broadcast,
+            ):
+                await ScreenshotHandler.on_screenshot_captured(
+                    "/tmp/precision.png", force=True
+                )
 
             mock_add.assert_awaited_once_with("/tmp/precision.png", tab_state=None)
             mock_broadcast.assert_awaited_once_with(

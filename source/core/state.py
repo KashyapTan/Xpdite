@@ -34,7 +34,8 @@ class AppState:
         self.__stream_lock: Optional[asyncio.Lock] = None
 
         # Capture mode: 'fullscreen' | 'precision' | 'none'
-        self.capture_mode: str = "fullscreen"
+        # Match the frontend's default so the hotkey is live on first launch.
+        self.capture_mode: str = "precision"
 
         # Active tab — updated from every incoming WS message so that
         # background-thread screenshot captures route to the correct tab.

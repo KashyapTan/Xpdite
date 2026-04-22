@@ -206,6 +206,60 @@ def test_take_fullscreen_screenshot_returns_none_on_capture_failure(tmp_path):
         assert sr.take_fullscreen_screenshot(str(tmp_path)) is None
 
 
+def test_take_region_screenshot_uses_native_macos_capture_and_skips_tk(tmp_path):
+    recorded = {}
+
+    def fake_run(args, capture_output, text, check):
+        recorded["args"] = args
+        Image.new("RGB", (120, 80), color="orange").save(args[-1])
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    with (
+        patch("source.infrastructure.screenshot_runtime.platform.system", return_value="Darwin"),
+        patch("source.infrastructure.screenshot_runtime.time.sleep") as mock_sleep,
+        patch("source.infrastructure.screenshot_runtime.subprocess.run", side_effect=fake_run),
+        patch(
+            "source.infrastructure.screenshot_runtime.tk.Tk",
+            side_effect=AssertionError("Tk should not be used on macOS"),
+        ),
+        patch("source.infrastructure.screenshot_runtime.copy_image_to_clipboard") as mock_copy_image,
+        patch("source.infrastructure.screenshot_runtime.copy_file_to_clipboard") as mock_copy_file,
+    ):
+        path = sr.take_region_screenshot(str(tmp_path))
+
+    assert path is not None
+    assert os.path.exists(path)
+    assert os.path.basename(path).startswith("screenshot_")
+    assert recorded["args"][:5] == ["screencapture", "-d", "-x", "-i", "-s"]
+    assert recorded["args"][-1] == path
+    mock_sleep.assert_called_once_with(sr.MACOS_REGION_CAPTURE_DELAY_SECONDS)
+    mock_copy_image.assert_not_called()
+    mock_copy_file.assert_not_called()
+
+
+def test_take_region_screenshot_returns_none_when_macos_capture_is_cancelled(tmp_path):
+    recorded = {}
+
+    def fake_run(args, capture_output, text, check):
+        recorded["path"] = args[-1]
+        open(args[-1], "wb").close()
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    with (
+        patch("source.infrastructure.screenshot_runtime.platform.system", return_value="Darwin"),
+        patch("source.infrastructure.screenshot_runtime.time.sleep"),
+        patch("source.infrastructure.screenshot_runtime.subprocess.run", side_effect=fake_run),
+        patch(
+            "source.infrastructure.screenshot_runtime.tk.Tk",
+            side_effect=AssertionError("Tk should not be used on macOS"),
+        ),
+    ):
+        path = sr.take_region_screenshot(str(tmp_path))
+
+    assert path is None
+    assert not os.path.exists(recorded["path"])
+
+
 def test_take_region_screenshot_saves_scaled_selection_and_copies_outputs(tmp_path):
     roots = []
     canvases = []
@@ -490,6 +544,36 @@ def test_screenshot_service_do_capture_handles_cancelled_selection(tmp_path):
     callback.assert_not_called()
 
 
+def test_screenshot_service_do_capture_invokes_cancel_callback_on_cancel(tmp_path):
+    callback = MagicMock()
+    cancel_callback = MagicMock()
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.target = target
+            self.args = args
+            started_threads.append((target, args, daemon))
+
+        def start(self):
+            if self.target:
+                self.target(*self.args)
+
+    service = sr.ScreenshotService(callback=callback, cancel_callback=cancel_callback)
+    service.capturing = True
+
+    with (
+        patch("source.infrastructure.screenshot_runtime.take_region_screenshot", return_value=None),
+        patch("source.infrastructure.screenshot_runtime.threading.Thread", FakeThread),
+    ):
+        service._do_capture(str(tmp_path))
+
+    assert service.capturing is False
+    callback.assert_not_called()
+    cancel_callback.assert_called_once_with()
+    assert started_threads[0][1] == ()
+
+
 def test_stop_listener_handles_listener_stop_errors():
     class BadListener:
         def stop(self):
@@ -535,22 +619,78 @@ def test_start_listener_debounces_hotkey_and_runs_callbacks(tmp_path):
         callback=lambda path: events.append(("callback", path)),
         start_callback=lambda: events.append(("start", None)),
     )
+    from source.core.state import app_state
 
     time_values = iter([100.0, 100.2])
 
     def fake_sleep(_seconds):
         service.running = False
 
-    with (
-        patch("source.infrastructure.screenshot_runtime.keyboard.GlobalHotKeys", FakeListener),
-        patch("source.infrastructure.screenshot_runtime.threading.Thread", FakeThread),
-        patch("source.infrastructure.screenshot_runtime.take_region_screenshot", return_value=screenshot_path),
-        patch("source.infrastructure.screenshot_runtime.time.time", side_effect=lambda: next(time_values)),
-        patch("source.infrastructure.screenshot_runtime.time.sleep", side_effect=fake_sleep),
-    ):
-        service.start_listener(str(tmp_path))
+    saved_capture_mode = app_state.capture_mode
+    app_state.capture_mode = "precision"
+    try:
+        with (
+            patch("source.infrastructure.screenshot_runtime.keyboard.GlobalHotKeys", FakeListener),
+            patch("source.infrastructure.screenshot_runtime.threading.Thread", FakeThread),
+            patch("source.infrastructure.screenshot_runtime.take_region_screenshot", return_value=screenshot_path),
+            patch("source.infrastructure.screenshot_runtime.time.time", side_effect=lambda: next(time_values)),
+            patch("source.infrastructure.screenshot_runtime.time.sleep", side_effect=fake_sleep),
+        ):
+            service.start_listener(str(tmp_path))
+    finally:
+        app_state.capture_mode = saved_capture_mode
 
     assert events == [("start", None), ("callback", screenshot_path)]
+    assert service.listener is None
+
+
+def test_start_listener_ignores_hotkey_when_precision_mode_is_disabled(tmp_path):
+    events = []
+
+    class FakeThread:
+        def __init__(self, target=None, args=(), daemon=None):
+            self.target = target
+            self.args = args
+
+        def start(self):
+            if self.target:
+                self.target(*self.args)
+
+    class FakeListener:
+        def __init__(self, mapping):
+            self.mapping = mapping
+
+        def start(self):
+            hotkey = "<ctrl>+." if platform.system() == "Darwin" else "<alt>+."
+            self.mapping[hotkey]()
+
+        def stop(self):
+            return None
+
+    service = sr.ScreenshotService(
+        callback=lambda path: events.append(("callback", path)),
+        start_callback=lambda: events.append(("start", None)),
+    )
+    from source.core.state import app_state
+
+    def fake_sleep(_seconds):
+        service.running = False
+
+    saved_capture_mode = app_state.capture_mode
+    app_state.capture_mode = "fullscreen"
+    try:
+        with (
+            patch("source.infrastructure.screenshot_runtime.keyboard.GlobalHotKeys", FakeListener),
+            patch("source.infrastructure.screenshot_runtime.threading.Thread", FakeThread),
+            patch("source.infrastructure.screenshot_runtime.take_region_screenshot") as mock_capture,
+            patch("source.infrastructure.screenshot_runtime.time.sleep", side_effect=fake_sleep),
+        ):
+            service.start_listener(str(tmp_path))
+    finally:
+        app_state.capture_mode = saved_capture_mode
+
+    mock_capture.assert_not_called()
+    assert events == []
     assert service.listener is None
 
 

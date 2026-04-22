@@ -1455,6 +1455,12 @@ function App() {
         setIsHidden(false);
         return true;
 
+      case 'screenshot_cancelled':
+        chatState.setStatus(String(data.content) || 'Screenshot cancelled.');
+        chatState.setError('');
+        setIsHidden(false);
+        return true;
+
       case 'transcription_result':
         chatState.setQuery((prev) => prev + (prev ? ' ' : '') + String(data.content));
         setIsRecording(false);

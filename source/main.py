@@ -70,7 +70,11 @@ from .bootstrap.app_factory import app
 from .mcp_integration.core.manager import init_mcp_servers
 
 # Import screenshot service hooks
-from .services.media.screenshots import process_screenshot, process_screenshot_start
+from .services.media.screenshots import (
+    process_screenshot,
+    process_screenshot_cancelled,
+    process_screenshot_start,
+)
 
 # Configure logging before runtime startup.
 logging.basicConfig(
@@ -197,7 +201,7 @@ def start_screenshot_service():
         from .infrastructure.screenshot_runtime import ScreenshotService
 
         app_state.screenshot_service = ScreenshotService(
-            process_screenshot, process_screenshot_start
+            process_screenshot, process_screenshot_start, process_screenshot_cancelled
         )
         app_state.service_thread = threading.Thread(
             target=app_state.screenshot_service.start_listener,

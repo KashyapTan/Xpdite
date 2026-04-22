@@ -230,10 +230,10 @@ class ScreenshotHandler:
         await broadcast_to_tab(target.tab_id, "screenshots_cleared", "")
 
     @staticmethod
-    async def on_screenshot_start():
+    async def on_screenshot_start(force: bool = False):
         """Called when screenshot capture starts via hotkey."""
         # Only process in precision mode
-        if app_state.capture_mode != CaptureMode.PRECISION:
+        if not force and app_state.capture_mode != CaptureMode.PRECISION:
             logger.debug("Hotkey capture ignored - not in precision mode")
             return
 
@@ -253,10 +253,10 @@ class ScreenshotHandler:
         )
 
     @staticmethod
-    async def on_screenshot_captured(image_path: str):
+    async def on_screenshot_captured(image_path: str, force: bool = False):
         """Called when a screenshot is captured via hotkey."""
         # Only process in precision mode
-        if app_state.capture_mode != CaptureMode.PRECISION:
+        if not force and app_state.capture_mode != CaptureMode.PRECISION:
             logger.debug("Hotkey capture ignored - not in precision mode")
             try:
                 await run_in_thread(
@@ -297,6 +297,25 @@ class ScreenshotHandler:
             "Screenshot captured. Enter your query and press Enter.",
         )
 
+    @staticmethod
+    async def on_screenshot_cancelled(force: bool = False):
+        """Called when the hotkey-driven region capture is cancelled."""
+        if not force and app_state.capture_mode != CaptureMode.PRECISION:
+            logger.debug("Screenshot cancel ignored - not in precision mode")
+            return
+
+        target_tab_id = app_state.active_tab_id or "default"
+        try:
+            target_tab_id = ScreenshotHandler._resolve_tab_state().tab_id
+        except Exception as e:
+            logger.debug("Could not resolve tab for cancelled screenshot: %s", e)
+
+        await broadcast_to_tab(
+            target_tab_id,
+            "screenshot_cancelled",
+            "Screenshot cancelled.",
+        )
+
 
 def process_screenshot_start():
     """Hook for screenshot service thread when capture starts."""
@@ -313,7 +332,9 @@ def process_screenshot_start():
     def schedule():
         from ...core.connection import wrap_with_tab_ctx
 
-        coro = wrap_with_tab_ctx(active_tab, ScreenshotHandler.on_screenshot_start())
+        coro = wrap_with_tab_ctx(
+            active_tab, ScreenshotHandler.on_screenshot_start(force=True)
+        )
         asyncio.create_task(coro)
 
     try:
@@ -337,7 +358,8 @@ def process_screenshot(image_path: str):
         from ...core.connection import wrap_with_tab_ctx
 
         coro = wrap_with_tab_ctx(
-            active_tab, ScreenshotHandler.on_screenshot_captured(image_path)
+            active_tab,
+            ScreenshotHandler.on_screenshot_captured(image_path, force=True),
         )
         asyncio.create_task(coro)
 
@@ -345,4 +367,28 @@ def process_screenshot(image_path: str):
         server_loop.call_soon_threadsafe(schedule)
     except Exception as e:
         logger.error("Failed to schedule screenshot handling: %s", e)
+    return None
+
+
+def process_screenshot_cancelled():
+    """Hook for screenshot service thread when region capture is cancelled."""
+    server_loop = app_state.server_loop_holder.get("loop")
+    if server_loop is None:
+        logger.warning("Server loop not ready yet.")
+        return None
+
+    active_tab = app_state.active_tab_id or "default"
+
+    def schedule():
+        from ...core.connection import wrap_with_tab_ctx
+
+        coro = wrap_with_tab_ctx(
+            active_tab, ScreenshotHandler.on_screenshot_cancelled(force=True)
+        )
+        asyncio.create_task(coro)
+
+    try:
+        server_loop.call_soon_threadsafe(schedule)
+    except Exception as e:
+        logger.error("Failed to schedule screenshot cancel handling: %s", e)
     return None
