@@ -40,6 +40,7 @@ const registerOnTabClosedMock = vi.fn(() => () => {});
 let wsSubscriber: ((event: WebSocketEvent) => void) | null = null;
 let latestResponseAreaProps: ResponseAreaProps | null = null;
 let locationStateMock: unknown = null;
+let afterSwitchHandler: ((newTabId: string) => void) | null = null;
 
 const tabContextState = {
   tabs: [
@@ -250,6 +251,7 @@ describe('App websocket-driven behavior', () => {
     vi.clearAllMocks();
     latestResponseAreaProps = null;
     wsSubscriber = null;
+    afterSwitchHandler = null;
     wsSubscribeMock.mockImplementation((handler: (event: WebSocketEvent) => void) => {
       wsSubscriber = handler;
       return () => {
@@ -258,6 +260,16 @@ describe('App websocket-driven behavior', () => {
         }
       };
     });
+    registerBeforeSwitchMock.mockImplementation(() => () => {});
+    registerAfterSwitchMock.mockImplementation((handler: (newTabId: string) => void) => {
+      afterSwitchHandler = handler;
+      return () => {
+        if (afterSwitchHandler === handler) {
+          afterSwitchHandler = null;
+        }
+      };
+    });
+    registerOnTabClosedMock.mockImplementation(() => () => {});
 
     tabContextState.tabs = [
       { id: 'tab-1', title: 'Tab 1' },
@@ -356,6 +368,73 @@ describe('App websocket-driven behavior', () => {
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'tab_created', tab_id: 'tab-2' }));
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'tab_activated', tab_id: 'tab-1' }));
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'set_capture_mode', mode: 'precision', tab_id: 'tab-1' }));
+  });
+
+  test('syncs runtime tab create and close events to the backend', async () => {
+    const { rerender } = render(<App />);
+    wsSendMock.mockClear();
+
+    tabContextState.tabs = [
+      { id: 'tab-1', title: 'Tab 1' },
+      { id: 'tab-2', title: 'Tab 2' },
+      { id: 'tab-3', title: 'Tab 3' },
+    ];
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'tab_created', tab_id: 'tab-3' }),
+      );
+    });
+
+    wsSendMock.mockClear();
+
+    tabContextState.tabs = [
+      { id: 'tab-1', title: 'Tab 1' },
+      { id: 'tab-3', title: 'Tab 3' },
+    ];
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'tab_closed', tab_id: 'tab-2' }),
+      );
+    });
+  });
+
+  test('syncs restored capture mode to the backend when switching tabs', () => {
+    tabSnapshots.set('tab-2', {
+      chat: chatStateMock.getSnapshot(),
+      screenshots: {
+        screenshots: [],
+        captureMode: 'fullscreen',
+        meetingRecordingMode: false,
+      },
+      tokens: tokenStateMock.getSnapshot(),
+      terminal: {
+        terminalSessionActive: false,
+        terminalSessionRequest: null,
+      },
+      generatingModel: '',
+    });
+
+    render(<App />);
+    wsSendMock.mockClear();
+
+    act(() => {
+      afterSwitchHandler?.('tab-2');
+    });
+
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'tab_activated', tab_id: 'tab-2' }),
+    );
+    expect(wsSendMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'set_capture_mode',
+        tab_id: 'tab-2',
+        mode: 'fullscreen',
+      }),
+    );
   });
 
   test('routes background-tab messages into snapshots, not active state handlers', () => {

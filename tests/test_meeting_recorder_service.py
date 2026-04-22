@@ -695,3 +695,27 @@ class TestMeetingAnalysisServiceGenerateAnalysis:
         assert result["error"] == "llm down"
         assert result["summary"] is None
         assert result["actions"] == []
+
+
+class TestMeetingRecorderSecrets:
+    def test_get_huggingface_token_uses_encrypted_key_manager(self, monkeypatch):
+        pipeline = mr.PostProcessingPipeline(mr.MeetingRecorderService())
+        monkeypatch.setenv("HF_TOKEN", "hf-env-should-not-be-used")
+
+        with patch(
+            "source.llm.core.key_manager.key_manager.get_api_key",
+            return_value="  hf_encrypted_token  ",
+        ) as mock_get_api_key:
+            token = pipeline._get_huggingface_token()
+
+        mock_get_api_key.assert_called_once_with("huggingface")
+        assert token == "hf_encrypted_token"
+
+    def test_get_huggingface_token_returns_empty_when_key_lookup_fails(self):
+        pipeline = mr.PostProcessingPipeline(mr.MeetingRecorderService())
+
+        with patch(
+            "source.llm.core.key_manager.key_manager.get_api_key",
+            side_effect=RuntimeError("db unavailable"),
+        ):
+            assert pipeline._get_huggingface_token() == ""

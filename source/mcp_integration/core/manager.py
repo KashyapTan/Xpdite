@@ -12,7 +12,10 @@ import sys
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from ...infrastructure.config import PROJECT_ROOT
+from ...infrastructure.config import (
+    CHILD_PYTHON_EXECUTABLE,
+    RUNTIME_ROOT,
+)
 from .retriever import retriever
 from .tool_output import format_tool_output
 
@@ -24,6 +27,11 @@ _SERVER_TOOL_TIMEOUT_SECONDS: Dict[str, int] = {
     "websearch": 25,
 }
 _MCP_TOOL_TIMEOUT_BUFFER_SECONDS = 5
+
+
+def _resolve_python_launcher() -> str:
+    """Return the interpreter used for Python-backed MCP child processes."""
+    return CHILD_PYTHON_EXECUTABLE or sys.executable
 
 
 class McpToolManager:
@@ -105,7 +113,7 @@ class McpToolManager:
             # resolve absolute imports like "from mcp_servers.servers.xxx import ..."
             if env is None:
                 env = {**os.environ}
-            project_root_str = str(PROJECT_ROOT)
+            project_root_str = str(RUNTIME_ROOT)
             existing_pypath = env.get("PYTHONPATH", "")
             if existing_pypath:
                 if project_root_str not in existing_pypath.split(os.pathsep):
@@ -550,10 +558,10 @@ class McpToolManager:
                 _connect_with_timeout(
                     self.connect_server(
                         "gmail",
-                        sys.executable,
+                        _resolve_python_launcher(),
                         [
                             str(
-                                PROJECT_ROOT
+                                RUNTIME_ROOT
                                 / "mcp_servers"
                                 / "servers"
                                 / "gmail"
@@ -572,10 +580,10 @@ class McpToolManager:
                 _connect_with_timeout(
                     self.connect_server(
                         "calendar",
-                        sys.executable,
+                        _resolve_python_launcher(),
                         [
                             str(
-                                PROJECT_ROOT
+                                RUNTIME_ROOT
                                 / "mcp_servers"
                                 / "servers"
                                 / "calendar"
@@ -665,10 +673,10 @@ async def init_mcp_servers():
     server_tasks = [
         _connect_with_timeout(
             "filesystem",
-            sys.executable,
+            _resolve_python_launcher(),
             [
                 str(
-                    PROJECT_ROOT
+                    RUNTIME_ROOT
                     / "mcp_servers"
                     / "servers"
                     / "filesystem"
@@ -678,18 +686,18 @@ async def init_mcp_servers():
         ),
         _connect_with_timeout(
             "glob",
-            sys.executable,
-            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "glob" / "server.py")],
+            _resolve_python_launcher(),
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "glob" / "server.py")],
         ),
         _connect_with_timeout(
             "grep",
-            sys.executable,
-            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "grep" / "server.py")],
+            _resolve_python_launcher(),
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "grep" / "server.py")],
         ),
         _connect_with_timeout(
             "websearch",
-            sys.executable,
-            [str(PROJECT_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
+            _resolve_python_launcher(),
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
         ),
     ]
 

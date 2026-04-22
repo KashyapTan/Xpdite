@@ -970,6 +970,37 @@ class TestHttpApiEndpoints:
         result = await http_api.health_check()
         assert result == {"status": "healthy"}
 
+    def test_public_health_route_stays_unauthenticated(self):
+        app = FastAPI()
+        app.include_router(http_api.router)
+        client = TestClient(app)
+
+        response = client.get("/api/health")
+
+        assert response.status_code == 200
+        assert response.json() == {"status": "healthy"}
+
+    def test_session_health_route_requires_current_server_token(self):
+        app = FastAPI()
+        app.include_router(http_api.router)
+
+        with patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"):
+            client = TestClient(app)
+            unauthorized = client.get("/api/health/session")
+            wrong_token = client.get(
+                "/api/health/session",
+                headers={"X-Xpdite-Server-Token": "wrong"},
+            )
+            authorized = client.get(
+                "/api/health/session",
+                headers={"X-Xpdite-Server-Token": "secret-token"},
+            )
+
+        assert unauthorized.status_code == 403
+        assert wrong_token.status_code == 403
+        assert authorized.status_code == 200
+        assert authorized.json() == {"status": "healthy"}
+
     @pytest.mark.anyio
     async def test_get_enabled_models_reads_from_db(self):
         with patch(
@@ -1064,6 +1095,61 @@ class TestHttpApiEndpoints:
             with pytest.raises(HTTPException) as exc:
                 await http_api.save_api_key(
                     "openrouter", http_api.ApiKeyUpdate(key="sk-invalid")
+                )
+
+        assert exc.value.status_code == 401
+        assert "Invalid API key" in str(exc.value.detail)
+        key_manager.save_api_key.assert_not_called()
+
+    @pytest.mark.anyio
+    async def test_save_api_key_huggingface_success_saves_and_masks(self):
+        key_manager = MagicMock()
+        key_manager.mask_key.return_value = "hf-...1234"
+        response = SimpleNamespace(status_code=200, text="ok")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.llm.core.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.VALID_PROVIDERS", ("huggingface",)),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api.requests, "get", return_value=response),
+            patch.object(http_api, "_invalidate_model_cache") as invalidate_mock,
+        ):
+            result = await http_api.save_api_key(
+                "huggingface",
+                http_api.ApiKeyUpdate(key="  hf-secret-token  "),
+            )
+
+        key_manager.save_api_key.assert_called_once_with(
+            "huggingface", "hf-secret-token"
+        )
+        invalidate_mock.assert_called_once_with("huggingface")
+        assert result == {
+            "status": "saved",
+            "provider": "huggingface",
+            "masked": "hf-...1234",
+        }
+
+    @pytest.mark.anyio
+    async def test_save_api_key_huggingface_validation_failure_returns_401(self):
+        key_manager = MagicMock()
+        response = SimpleNamespace(status_code=401, text="invalid token")
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.llm.core.key_manager.key_manager", key_manager),
+            patch("source.llm.core.key_manager.VALID_PROVIDERS", ("huggingface",)),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api.requests, "get", return_value=response),
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.save_api_key(
+                    "huggingface",
+                    http_api.ApiKeyUpdate(key="hf-invalid"),
                 )
 
         assert exc.value.status_code == 401

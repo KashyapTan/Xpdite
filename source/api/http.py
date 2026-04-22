@@ -239,6 +239,14 @@ async def _require_marketplace_access(
     await _require_local_api_access(request, server_token=marketplace_token)
 
 
+@router.get("/health/session")
+async def session_health_check(
+    _local_access: None = Depends(_require_local_api_access),
+):
+    """Check if this request reached the currently running app session."""
+    return {"status": "healthy"}
+
+
 def _validate_artifact_type(artifact_type: Optional[str]) -> Optional[str]:
     if artifact_type is None:
         return None
@@ -736,6 +744,19 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
             response = await _run_in_thread(_validate_openrouter)
             if response.status_code != 200:
                 raise ValueError(_extract_openrouter_error(response))
+
+        elif provider == "huggingface":
+
+            def _validate_huggingface() -> requests.Response:
+                return requests.get(
+                    "https://huggingface.co/api/whoami-v2",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=20,
+                )
+
+            response = await _run_in_thread(_validate_huggingface)
+            if response.status_code != 200:
+                raise ValueError(response.text.strip()[:200] or f"HTTP {response.status_code}")
 
     except Exception as e:
         error_msg = str(e)

@@ -133,6 +133,111 @@
     color: var(--color-text);
 }
 
+.meeting-settings-input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-surface);
+    border-radius: 6px;
+    color: var(--color-text);
+    font-size: 0.85rem;
+    outline: none;
+    transition: border-color 0.2s;
+    font-family: var(--font-family-ui);
+    box-sizing: border-box;
+}
+
+.meeting-settings-input:hover {
+    border-color: var(--color-surface-strong);
+}
+
+.meeting-settings-input:focus {
+    border-color: var(--color-border-strong);
+}
+
+.meeting-settings-field-label {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
+.meeting-settings-token-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.meeting-settings-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.meeting-settings-status-badge.is-configured {
+    background: var(--color-green-soft);
+    color: var(--color-green);
+}
+
+.meeting-settings-status-badge.is-missing {
+    background: var(--color-surface-strong);
+    color: var(--color-text-muted);
+}
+
+.meeting-settings-token-mask {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
+.meeting-settings-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.meeting-settings-button {
+    border: 1px solid var(--color-border-strong);
+    background: var(--color-thumbtack-selected);
+    color: var(--color-text);
+    border-radius: 6px;
+    padding: 9px 12px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: opacity 0.2s ease;
+    font-family: var(--font-family-ui);
+}
+
+.meeting-settings-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.meeting-settings-button-secondary {
+    background: transparent;
+}
+
+.meeting-settings-instructions {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.meeting-settings-instructions a {
+    color: var(--color-text);
+}
+
+.meeting-settings-error {
+    font-size: 0.78rem;
+    color: var(--color-red);
+}
+
+.meeting-settings-success {
+    font-size: 0.78rem;
+    color: var(--color-green);
+}
+
 /* ── Toggle switch ── */
 .meeting-settings-toggle {
     display: flex;

@@ -83,6 +83,12 @@ class TestSaveGetDeleteApiKey:
             retrieved = km.get_api_key("anthropic")
             assert retrieved == "sk-ant-test-123"
 
+    def test_save_and_get_huggingface(self):
+        km, fake_db, _ = _make_key_manager()
+        with patch(_DB_PATCH_TARGET, fake_db):
+            km.save_api_key("huggingface", "hf-test-token")
+            assert km.get_api_key("huggingface") == "hf-test-token"
+
     def test_get_missing_returns_none(self):
         km, fake_db, _ = _make_key_manager()
         with patch(_DB_PATCH_TARGET, fake_db):
@@ -161,6 +167,7 @@ class TestValidProviders:
         assert "openai" in VALID_PROVIDERS
         assert "gemini" in VALID_PROVIDERS
         assert "openrouter" in VALID_PROVIDERS
+        assert "huggingface" in VALID_PROVIDERS
 
     def test_no_extras(self):
-        assert len(VALID_PROVIDERS) == 4
+        assert len(VALID_PROVIDERS) == 5

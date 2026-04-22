@@ -1,5 +1,7 @@
 """Tests for source/infrastructure/config.py — verify constants and CaptureMode."""
 
+import importlib
+
 from source.infrastructure.config import (
     DEFAULT_PORT,
     MAX_PORT_ATTEMPTS,
@@ -64,3 +66,53 @@ class TestCaptureMode:
 
     def test_none(self):
         assert CaptureMode.NONE == "none"
+
+
+class TestRuntimeEnvLoading:
+    def test_packaged_runtime_env_file_loads_google_credentials(
+        self, tmp_path, monkeypatch
+    ):
+        env_file = tmp_path / "google-oauth.env"
+        env_file.write_text(
+            "GOOGLE_CLIENT_ID=test-client.apps.googleusercontent.com\n"
+            "GOOGLE_CLIENT_SECRET=test-secret\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("XPDITE_RUNTIME_ROOT", str(tmp_path))
+        monkeypatch.setenv("XPDITE_RUNTIME_ENV_FILE", str(env_file))
+        monkeypatch.setenv("XPDITE_USER_DATA_DIR", str(tmp_path / "user-data"))
+        monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+        monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+
+        import source.infrastructure.config as config_module
+
+        reloaded = importlib.reload(config_module)
+
+        assert reloaded.IS_PACKAGED_RUNTIME is True
+        assert reloaded.GOOGLE_CLIENT_ID == "test-client.apps.googleusercontent.com"
+        assert reloaded.GOOGLE_CLIENT_SECRET == "test-secret"
+        assert reloaded.GOOGLE_CLIENT_CONFIG is not None
+        monkeypatch.delenv("XPDITE_RUNTIME_ROOT", raising=False)
+        monkeypatch.delenv("XPDITE_RUNTIME_ENV_FILE", raising=False)
+        monkeypatch.delenv("XPDITE_USER_DATA_DIR", raising=False)
+        importlib.reload(config_module)
+
+    def test_packaged_runtime_missing_google_credentials_sets_clear_error(
+        self, tmp_path, monkeypatch
+    ):
+        monkeypatch.setenv("XPDITE_RUNTIME_ROOT", str(tmp_path))
+        monkeypatch.setenv("XPDITE_RUNTIME_ENV_FILE", str(tmp_path / "missing.env"))
+        monkeypatch.setenv("XPDITE_USER_DATA_DIR", str(tmp_path / "user-data"))
+        monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+        monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+
+        import source.infrastructure.config as config_module
+
+        reloaded = importlib.reload(config_module)
+
+        assert reloaded.GOOGLE_CLIENT_CONFIG is None
+        assert "packaged build" in reloaded.GOOGLE_CLIENT_CONFIG_ERROR
+        monkeypatch.delenv("XPDITE_RUNTIME_ROOT", raising=False)
+        monkeypatch.delenv("XPDITE_RUNTIME_ENV_FILE", raising=False)
+        monkeypatch.delenv("XPDITE_USER_DATA_DIR", raising=False)
+        importlib.reload(config_module)

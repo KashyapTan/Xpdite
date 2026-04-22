@@ -367,6 +367,46 @@ async def test_stream_returns_precomputed_already_streamed_response():
 
 
 @pytest.mark.asyncio
+async def test_stream_broadcasts_detailed_response_error_to_ui():
+    class ResponseError(Exception):
+        pass
+
+    client = AsyncMock()
+    client.chat = AsyncMock(
+        side_effect=ResponseError(
+            "this model requires a subscription, upgrade for access (status code: 403)"
+        )
+    )
+    client._client = SimpleNamespace(aclose=AsyncMock())
+
+    with (
+        patch("source.llm.providers.ollama_provider.OllamaAsyncClient", return_value=client),
+        patch("source.llm.providers.ollama_provider.mcp_manager.has_tools", return_value=False),
+        patch("source.llm.providers.ollama_provider.broadcast_message", new_callable=AsyncMock) as mock_broadcast,
+        patch("source.llm.providers.ollama_provider.get_current_request", return_value=None),
+        patch("source.llm.providers.ollama_provider.is_current_request_cancelled", return_value=False),
+    ):
+        from source.llm.providers.ollama_provider import stream_ollama_chat
+
+        text, stats, tool_calls, blocks = await stream_ollama_chat(
+            "glm-5:cloud",
+            "hello",
+            [],
+            [],
+            "",
+        )
+
+    assert text == ""
+    assert stats == {"prompt_eval_count": 0, "eval_count": 0}
+    assert tool_calls == []
+    assert blocks is None
+    assert ("error", "this model requires a subscription, upgrade for access (status code: 403)") in [
+        call.args for call in mock_broadcast.await_args_list
+    ]
+    assert ("response_complete", "") in [call.args for call in mock_broadcast.await_args_list]
+
+
+@pytest.mark.asyncio
 async def test_stream_legacy_precomputed_path_uses_broadcast_helper():
     client = AsyncMock()
     client._client = SimpleNamespace(aclose=AsyncMock())

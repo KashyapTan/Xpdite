@@ -23,7 +23,13 @@ import logging
 import threading
 from typing import Optional
 
-from ...infrastructure.config import GOOGLE_CLIENT_CONFIG, GOOGLE_TOKEN_FILE, GOOGLE_SCOPES
+from ...infrastructure.config import (
+    GOOGLE_CLIENT_CONFIG,
+    GOOGLE_CLIENT_CONFIG_ERROR,
+    GOOGLE_OAUTH_REDIRECT_HOST,
+    GOOGLE_TOKEN_FILE,
+    GOOGLE_SCOPES,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -139,13 +145,21 @@ class GoogleAuthService:
         try:
             from google_auth_oauthlib.flow import InstalledAppFlow
 
+            if GOOGLE_CLIENT_CONFIG is None:
+                logger.error("Google OAuth requested without configured credentials")
+                return {"success": False, "error": GOOGLE_CLIENT_CONFIG_ERROR}
+
             flow = InstalledAppFlow.from_client_config(
-                GOOGLE_CLIENT_CONFIG, GOOGLE_SCOPES
+                GOOGLE_CLIENT_CONFIG,
+                GOOGLE_SCOPES,
+                autogenerate_code_verifier=True,
             )
 
             # run_local_server opens the browser and waits for the callback
             # port=0 means pick a random available port
             creds = flow.run_local_server(
+                host=GOOGLE_OAUTH_REDIRECT_HOST,
+                bind_addr=GOOGLE_OAUTH_REDIRECT_HOST,
                 port=0,
                 prompt="consent",
                 success_message="Authentication successful! You can close this tab and return to Xpdite.",

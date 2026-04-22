@@ -52,13 +52,18 @@ class _FakeTabManager:
         self.closed.append(tab_id)
         self.tab_ids = [existing for existing in self.tab_ids if existing != tab_id]
 
-    def get_or_create(self, _tab_id: str):
+    def get_or_create(self, tab_id: str):
+        if tab_id not in self.tab_ids:
+            self.created.append(tab_id)
+            self.tab_ids.append(tab_id)
         return self.session
 
     def get_session(self, _tab_id: str):
         return self.session
 
-    def get_state(self, _tab_id: str):
+    def get_state(self, tab_id: str):
+        if tab_id not in self.tab_ids:
+            return None
         return self.session.state
 
     def get_all_tab_ids(self):
@@ -135,7 +140,18 @@ class TestRoutingAndTabs:
         await handler._handle_tab_activated({"tab_id": "tab-2"})
 
         assert manager.closed == ["tab-2"]
+        assert manager.created == ["tab-2"]
         assert app_state.active_tab_id == "tab-2"
+
+    @pytest.mark.asyncio
+    async def test_tab_activated_creates_missing_tab_before_switching(self, handler):
+        manager = _FakeTabManager(tab_ids=["default"])
+        handler._get_tab_manager = lambda: manager
+
+        await handler._handle_tab_activated({"tab_id": "tab-fresh"})
+
+        assert manager.created == ["tab-fresh"]
+        assert app_state.active_tab_id == "tab-fresh"
 
     @pytest.mark.asyncio
     async def test_tab_closed_switches_active_when_closed_tab_was_active(self, handler):
@@ -491,7 +507,7 @@ class TestScreenshotAndCaptureMode:
             "remove_screenshot",
             new=AsyncMock(),
         ) as mock_remove:
-            await handler._handle_remove_screenshot({"tab_id": "t", "id": "ss-1"})
+            await handler._handle_remove_screenshot({"tab_id": "tab-1", "id": "ss-1"})
 
         mock_remove.assert_awaited_once_with("ss-1", tab_state=session.state)
 

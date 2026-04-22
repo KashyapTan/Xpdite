@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { BoltIcon, MonitorIcon } from '../icons/AppIcons';
+import { api } from '../../services/api';
 import '../../CSS/settings/SettingsMeetingRecorder.css';
 
 interface ComputeInfo {
@@ -16,6 +17,11 @@ interface MeetingSettings {
     diarization_enabled: string;
 }
 
+type HuggingFaceStatus = {
+    has_key: boolean;
+    masked: string | null;
+};
+
 const MeetingRecorderSettings: React.FC = () => {
     const { send, subscribe } = useWebSocket();
     const [computeInfo, setComputeInfo] = useState<ComputeInfo | null>(null);
@@ -25,8 +31,18 @@ const MeetingRecorderSettings: React.FC = () => {
         diarization_enabled: 'true',
     });
     const [saving, setSaving] = useState(false);
+    const [hfToken, setHfToken] = useState('');
+    const [hfStatus, setHfStatus] = useState<HuggingFaceStatus>({
+        has_key: false,
+        masked: null,
+    });
+    const [hfBusy, setHfBusy] = useState(false);
+    const [hfMessage, setHfMessage] = useState('');
+    const [hfError, setHfError] = useState('');
 
     useEffect(() => {
+        let cancelled = false;
+
         // Subscribe for WS responses
         const unsubscribe = subscribe((data) => {
             if (data.type === 'meeting_compute_info') {
@@ -41,7 +57,17 @@ const MeetingRecorderSettings: React.FC = () => {
         send({ type: 'meeting_get_compute_info' });
         send({ type: 'meeting_get_settings' });
 
-        return unsubscribe;
+        void api.getApiKeyStatus().then((status) => {
+            if (cancelled) {
+                return;
+            }
+            setHfStatus(status.huggingface ?? { has_key: false, masked: null });
+        });
+
+        return () => {
+            cancelled = true;
+            unsubscribe();
+        };
     }, [send, subscribe]);
 
     const updateSetting = (key: string, value: string) => {
@@ -52,6 +78,45 @@ const MeetingRecorderSettings: React.FC = () => {
         });
         // Optimistic update
         setSettings((prev) => ({ ...prev, [key]: value }));
+    };
+
+    const handleSaveHfToken = async () => {
+        const trimmed = hfToken.trim();
+        if (!trimmed) {
+            setHfError('Enter a Hugging Face token before saving.');
+            setHfMessage('');
+            return;
+        }
+
+        setHfBusy(true);
+        setHfError('');
+        setHfMessage('');
+        try {
+            const result = await api.saveApiKey('huggingface', trimmed);
+            setHfStatus({ has_key: true, masked: result.masked });
+            setHfToken('');
+            setHfMessage('Hugging Face token saved.');
+        } catch (error) {
+            setHfError(error instanceof Error ? error.message : 'Failed to save Hugging Face token.');
+        } finally {
+            setHfBusy(false);
+        }
+    };
+
+    const handleRemoveHfToken = async () => {
+        setHfBusy(true);
+        setHfError('');
+        setHfMessage('');
+        try {
+            await api.deleteApiKey('huggingface');
+            setHfStatus({ has_key: false, masked: null });
+            setHfToken('');
+            setHfMessage('Hugging Face token removed.');
+        } catch (error) {
+            setHfError(error instanceof Error ? error.message : 'Failed to remove Hugging Face token.');
+        } finally {
+            setHfBusy(false);
+        }
     };
 
     const gpuLabel = computeInfo
@@ -121,6 +186,77 @@ const MeetingRecorderSettings: React.FC = () => {
                         <span className="meeting-settings-toggle-slider"></span>
                     </label>
                 </div>
+            </div>
+
+            {/* Hugging Face token */}
+            <div className="meeting-settings-card">
+                <div className="meeting-settings-card-info">
+                    <h3 className="meeting-settings-card-title">Hugging Face Token</h3>
+                    <p className="meeting-settings-card-description">
+                        Required only for speaker diarization. The token is encrypted before it is stored on this machine.
+                    </p>
+                </div>
+                <div className="meeting-settings-token-status">
+                    <span className={`meeting-settings-status-badge ${hfStatus.has_key ? 'is-configured' : 'is-missing'}`}>
+                        {hfStatus.has_key ? 'Configured' : 'Not configured'}
+                    </span>
+                    {hfStatus.masked && (
+                        <span className="meeting-settings-token-mask">{hfStatus.masked}</span>
+                    )}
+                </div>
+                <label className="meeting-settings-field-label" htmlFor="meeting-hf-token">
+                    Personal access token
+                </label>
+                <input
+                    id="meeting-hf-token"
+                    className="meeting-settings-input"
+                    type="password"
+                    placeholder="hf_..."
+                    autoComplete="off"
+                    value={hfToken}
+                    onChange={(e) => setHfToken(e.target.value)}
+                />
+                <div className="meeting-settings-actions">
+                    <button
+                        type="button"
+                        className="meeting-settings-button"
+                        onClick={() => { void handleSaveHfToken(); }}
+                        disabled={hfBusy}
+                    >
+                        {hfBusy ? 'Saving...' : 'Save token'}
+                    </button>
+                    <button
+                        type="button"
+                        className="meeting-settings-button meeting-settings-button-secondary"
+                        onClick={() => { void handleRemoveHfToken(); }}
+                        disabled={hfBusy || !hfStatus.has_key}
+                    >
+                        Remove token
+                    </button>
+                </div>
+                <div className="meeting-settings-instructions">
+                    <p className="meeting-settings-card-description">
+                        1. Create a Read token at{' '}
+                        <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noreferrer">
+                            huggingface.co/settings/tokens
+                        </a>.
+                    </p>
+                    <p className="meeting-settings-card-description">
+                        2. Accept the model licenses for{' '}
+                        <a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noreferrer">
+                            pyannote/speaker-diarization-3.1
+                        </a>{' '}
+                        and{' '}
+                        <a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noreferrer">
+                            pyannote/segmentation-3.0
+                        </a>.
+                    </p>
+                    <p className="meeting-settings-card-description">
+                        3. Save the token here, then leave speaker diarization enabled for future recordings.
+                    </p>
+                </div>
+                {hfError && <div className="meeting-settings-error">{hfError}</div>}
+                {hfMessage && <div className="meeting-settings-success">{hfMessage}</div>}
             </div>
 
             {/* Keep Raw Audio */}

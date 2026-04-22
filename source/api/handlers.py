@@ -145,8 +145,21 @@ class MessageHandler:
             )
 
     async def _handle_tab_activated(self, data: Dict[str, Any]):
-        """Handle tab switch from frontend — updates active_tab_id."""
+        """Handle tab switch from frontend — ensure tab exists and activate it."""
         tab_id = self._get_tab_id(data)
+        tab_manager = self._get_tab_manager()
+
+        if tab_manager.get_state(tab_id) is None:
+            try:
+                tab_manager.create_tab(tab_id)
+            except ValueError as e:
+                await self.websocket.send_text(
+                    json.dumps(
+                        {"type": "error", "content": str(e), "tab_id": tab_id}
+                    )
+                )
+                return
+
         app_state.active_tab_id = tab_id
         logger.debug("Active tab set to: %s", tab_id)
 

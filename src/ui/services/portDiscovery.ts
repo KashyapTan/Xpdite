@@ -5,7 +5,8 @@
  * port in the range 8000–8009.  In production Electron asks the main process
  * (which parses the server's stdout) for the port via IPC.  In dev mode
  * (or if IPC isn't available) we fall back to probing the range with a
- * lightweight `/health` request.
+ * lightweight health request. In packaged Electron we use the per-launch
+ * server token so stale leftover backends from prior runs are rejected.
  *
  * Usage:
  *   import { discoverServerPort, getHttpBaseUrl, getWsBaseUrl } from './portDiscovery';
@@ -36,7 +37,7 @@ let discoveryPromise: Promise<number> | null = null;
  * Discover which port the Python backend is listening on.
  *
  * 1. Tries the Electron IPC channel (`getServerPort`) — instant in production.
- * 2. Falls back to probing ports 8000–8009 via `GET /health`.
+ * 2. Falls back to probing ports 8000–8009 via a lightweight health request.
  * 3. Caches the result so subsequent calls are free.
  */
 export async function discoverServerPort(): Promise<number> {
@@ -56,6 +57,8 @@ export async function discoverServerPort(): Promise<number> {
 }
 
 async function _discover(): Promise<number> {
+    const probeConfig = await getHealthProbeConfig();
+
     // ---- Electron IPC (production) ----
     // In dev mode the main process doesn't start Python, so detectedPort
     // stays at the default 8000 which may be occupied by another app.
@@ -67,10 +70,7 @@ async function _discover(): Promise<number> {
             if (typeof port === 'number' && port > 0) {
                 // Verify the port actually has our server
                 try {
-                    const controller = new AbortController();
-                    const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
-                    const res = await fetch(`http://localhost:${port}/api/health`, { signal: controller.signal });
-                    clearTimeout(timeout);
+                    const res = await probePort(port, probeConfig);
                     if (res.ok) {
                         resolvedPort = port;
                         discoveryDone = true;
@@ -98,11 +98,9 @@ async function _discover(): Promise<number> {
         for (const port of ports) {
             const controller = new AbortController();
             controllers.push(controller);
-            const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
 
-            fetch(`http://localhost:${port}/api/health`, { signal: controller.signal })
+            probePort(port, probeConfig, controller)
                 .then((res) => {
-                    clearTimeout(timeout);
                     if (res.ok && !settled) {
                         settled = true;
                         resolve(port);
@@ -113,7 +111,6 @@ async function _discover(): Promise<number> {
                     }
                 })
                 .catch(() => {
-                    clearTimeout(timeout);
                     if (--pending === 0 && !settled) resolve(null);
                 });
         }
@@ -131,6 +128,52 @@ async function _discover(): Promise<number> {
     lastFailureTs = Date.now();
     console.warn('[PortDiscovery] No server found, using default port');
     return DEFAULT_PORT;
+}
+
+const HEALTHCHECK_PATH = '/api/health';
+const SESSION_HEALTHCHECK_PATH = '/api/health/session';
+const SERVER_TOKEN_HEADER = 'X-Xpdite-Server-Token';
+
+type HealthProbeConfig = {
+    headers?: HeadersInit;
+    path: string;
+};
+
+async function getHealthProbeConfig(): Promise<HealthProbeConfig> {
+    const electronAPI = window.electronAPI;
+    if (!electronAPI?.getServerToken) {
+        return { path: HEALTHCHECK_PATH };
+    }
+
+    try {
+        const token = await electronAPI.getServerToken();
+        if (typeof token === 'string' && token.trim()) {
+            return {
+                path: SESSION_HEALTHCHECK_PATH,
+                headers: { [SERVER_TOKEN_HEADER]: token.trim() },
+            };
+        }
+    } catch {
+        console.warn('[PortDiscovery] Failed to fetch server token, using public health probe');
+    }
+
+    return { path: HEALTHCHECK_PATH };
+}
+
+async function probePort(
+    port: number,
+    probeConfig: HealthProbeConfig,
+    controller = new AbortController(),
+): Promise<Response> {
+    const timeout = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS);
+    try {
+        return await fetch(`http://localhost:${port}${probeConfig.path}`, {
+            headers: probeConfig.headers,
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
 }
 
 /** Reset discovery state (useful when the server restarts on a new port). */

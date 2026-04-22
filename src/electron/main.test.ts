@@ -71,6 +71,7 @@ const appMock = {
     appHandlers.set(event, handler);
     return appMock;
   }),
+  exit: vi.fn(),
   quit: vi.fn(),
 };
 
@@ -206,14 +207,18 @@ describe('electron main entrypoint', () => {
     expect(latestWindow?.focus).toHaveBeenCalledTimes(1);
   });
 
-  test('runs process cleanup on before-quit', async () => {
+  test('blocks quit until process cleanup finishes, then exits', async () => {
     await import('./main.js');
     const beforeQuitHandler = appHandlers.get('before-quit');
     expect(beforeQuitHandler).toBeTypeOf('function');
 
-    await beforeQuitHandler?.();
+    const preventDefault = vi.fn();
+    beforeQuitHandler?.({ preventDefault });
+    await flushPromises();
 
+    expect(preventDefault).toHaveBeenCalledTimes(1);
     expect(stopChannelBridgeMock).toHaveBeenCalledTimes(1);
     expect(stopPythonServerMock).toHaveBeenCalledTimes(1);
+    expect(appMock.exit).toHaveBeenCalledWith(0);
   });
 });

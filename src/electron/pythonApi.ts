@@ -25,6 +25,9 @@ export function getServerToken(): string {
 /** Full port range the Python backend may bind to (must stay in sync with source/config.py). */
 const SERVER_PORT_RANGE = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
 const HEALTHCHECK_HOST = '127.0.0.1';
+const HEALTHCHECK_PATH = '/api/health';
+const SESSION_HEALTHCHECK_PATH = '/api/health/session';
+const SERVER_TOKEN_HEADER = 'X-Xpdite-Server-Token';
 const STARTUP_POLL_INTERVAL_MS = 250;
 const STARTUP_HEALTHCHECK_TIMEOUT_MS = 1500;
 const STARTUP_TIMEOUT_MS = 90_000;
@@ -267,6 +270,169 @@ function findPythonExecutable(): string {
     }
 }
 
+function waitForChildProcessExit(
+    childProcess: ChildProcess,
+    timeoutMs: number,
+): Promise<boolean> {
+    if (childProcess.exitCode !== null || childProcess.signalCode !== null) {
+        return Promise.resolve(true);
+    }
+
+    return new Promise((resolve) => {
+        let settled = false;
+
+        const cleanup = () => {
+            childProcess.off('close', handleExit);
+            childProcess.off('exit', handleExit);
+            childProcess.off('error', handleError);
+            clearTimeout(timeoutId);
+        };
+
+        const finish = (value: boolean) => {
+            if (settled) {
+                return;
+            }
+            settled = true;
+            cleanup();
+            resolve(value);
+        };
+
+        const handleExit = () => finish(true);
+        const handleError = () => finish(false);
+        const timeoutId = setTimeout(() => finish(false), timeoutMs);
+
+        childProcess.once('close', handleExit);
+        childProcess.once('exit', handleExit);
+        childProcess.once('error', handleError);
+    });
+}
+
+async function terminateTrackedPythonProcess(childProcess: ChildProcess): Promise<void> {
+    const pid = childProcess.pid;
+    if (!pid) {
+        return;
+    }
+
+    if (process.platform === 'win32') {
+        const { exec } = await import('child_process');
+        const { promisify } = await import('util');
+        const execAsync = promisify(exec);
+        try {
+            await execAsync(`taskkill /T /PID ${pid}`);
+        } catch {
+            await execAsync(`taskkill /F /T /PID ${pid}`);
+        }
+
+        const exited = await waitForChildProcessExit(childProcess, 1_500);
+        if (!exited) {
+            try {
+                await execAsync(`taskkill /F /T /PID ${pid}`);
+            } catch {
+                // Ignore repeated force-kill failures and continue with port cleanup.
+            }
+            await waitForChildProcessExit(childProcess, 1_500);
+        }
+        return;
+    }
+
+    try {
+        childProcess.kill('SIGTERM');
+    } catch {
+        return;
+    }
+
+    const exited = await waitForChildProcessExit(childProcess, 1_000);
+    if (exited) {
+        return;
+    }
+
+    try {
+        childProcess.kill('SIGKILL');
+    } catch {
+        return;
+    }
+
+    await waitForChildProcessExit(childProcess, 1_000);
+}
+
+async function probeServerHealth(
+    port: number,
+    sessionToken?: string,
+): Promise<boolean> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), STARTUP_HEALTHCHECK_TIMEOUT_MS);
+    const headers = sessionToken
+        ? { [SERVER_TOKEN_HEADER]: sessionToken }
+        : undefined;
+    const healthPath = sessionToken ? SESSION_HEALTHCHECK_PATH : HEALTHCHECK_PATH;
+
+    try {
+        const response = await fetch(`http://${HEALTHCHECK_HOST}:${port}${healthPath}`, {
+            method: 'GET',
+            headers,
+            signal: controller.signal,
+        }).catch(() => null);
+
+        return Boolean(response?.ok);
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function findRuntimeRoot(): string {
+    const resourcesPath = process.resourcesPath;
+    const primary = path.join(resourcesPath, 'python-runtime');
+    if (fs.existsSync(primary)) {
+        return primary;
+    }
+
+    const appPath = path.dirname(process.execPath);
+    const fallback = path.join(appPath, 'resources', 'python-runtime');
+    if (fs.existsSync(fallback)) {
+        return fallback;
+    }
+
+    throw new Error(`Bundled Python runtime not found at: ${primary} or ${fallback}`);
+}
+
+function findBundledChildPythonExecutable(runtimeRoot: string): string {
+    const candidates = process.platform === 'win32'
+        ? [
+            path.join(runtimeRoot, '.venv', 'Scripts', 'python.exe'),
+            path.join(runtimeRoot, 'python.exe'),
+          ]
+        : [
+            path.join(runtimeRoot, '.venv', 'bin', 'python'),
+            path.join(runtimeRoot, '.venv', 'bin', 'python3'),
+            path.join(runtimeRoot, 'bin', 'python3'),
+            path.join(runtimeRoot, 'bin', 'python'),
+          ];
+
+    for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+            return candidate;
+        }
+    }
+
+    throw new Error(`Bundled child Python interpreter not found under: ${runtimeRoot}`);
+}
+
+function findRuntimeEnvFile(): string {
+    const resourcesPath = process.resourcesPath;
+    const primary = path.join(resourcesPath, 'runtime-config', 'google-oauth.env');
+    if (fs.existsSync(primary)) {
+        return primary;
+    }
+
+    const appPath = path.dirname(process.execPath);
+    const fallback = path.join(appPath, 'resources', 'runtime-config', 'google-oauth.env');
+    if (fs.existsSync(fallback)) {
+        return fallback;
+    }
+
+    throw new Error(`Runtime env file not found at: ${primary} or ${fallback}`);
+}
+
 function getPythonServerArgs(): string[] {
     if (isDev()) {
         // In development, run as module
@@ -343,6 +509,9 @@ export async function startPythonServer(): Promise<void> {
     return new Promise((resolve, reject) => {
         const pythonPath = findPythonExecutable();
         const args = getPythonServerArgs();
+        const runtimeRoot = !isDev() ? findRuntimeRoot() : undefined;
+        const runtimeEnvFile = !isDev() ? findRuntimeEnvFile() : undefined;
+        const childPythonExecutable = runtimeRoot ? findBundledChildPythonExecutable(runtimeRoot) : undefined;
         
         console.log(`Starting Python server...`);
         console.log(`Python executable: ${pythonPath}`);
@@ -356,7 +525,14 @@ export async function startPythonServer(): Promise<void> {
                 // In production this resolves to Electron's userData path
                 // (e.g. %APPDATA%/Xpdite on Windows). In dev the Python
                 // config.py falls back to <PROJECT_ROOT>/user_data.
-                ...(!isDev() ? { XPDITE_USER_DATA_DIR: app.getPath('userData') } : {}),
+                ...(!isDev()
+                    ? {
+                        XPDITE_USER_DATA_DIR: app.getPath('userData'),
+                        XPDITE_RUNTIME_ROOT: runtimeRoot,
+                        XPDITE_RUNTIME_ENV_FILE: runtimeEnvFile,
+                        XPDITE_CHILD_PYTHON_EXECUTABLE: childPythonExecutable,
+                      }
+                    : {}),
                 XPDITE_SERVER_TOKEN: serverToken,
             },
         };
@@ -506,17 +682,7 @@ export async function startPythonServer(): Promise<void> {
                     
                     for (const port of portsToTry) {
                         try {
-                            const controller = new AbortController();
-                            const timeoutId = setTimeout(() => controller.abort(), STARTUP_HEALTHCHECK_TIMEOUT_MS);
-                            
-                            const response = await fetch(`http://${HEALTHCHECK_HOST}:${port}/api/health`, {
-                                method: 'GET',
-                                signal: controller.signal
-                            }).catch(() => null);
-                            
-                            clearTimeout(timeoutId);
-                            
-                            if (response && response.ok) {
+                            if (await probeServerHealth(port, serverToken)) {
                                 detectedPort = port;
                                 console.log(`Python server found on port ${port}`);
                                 safeResolve();
@@ -567,21 +733,15 @@ export async function stopPythonServer(): Promise<void> {
     try {
     
     // First try to gracefully stop the process
-    if (pythonProcess) {
+    const trackedProcess = pythonProcess;
+    pythonProcess = null;
+
+    if (trackedProcess) {
         try {
-            pythonProcess.kill('SIGTERM');
-            
-            // Wait a bit for graceful shutdown
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // If still running, force kill
-            if (!pythonProcess.killed) {
-                pythonProcess.kill('SIGKILL');
-            }
+            await terminateTrackedPythonProcess(trackedProcess);
         } catch (error) {
             console.error('Error stopping Python process:', error);
         }
-        pythonProcess = null;
     }
     
     // Also kill any remaining Python processes on the known ports

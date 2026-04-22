@@ -495,6 +495,23 @@ describe('api singleton - HTTP endpoints', () => {
         'Failed to save API key'
       );
     });
+
+    test('supports saving the Hugging Face token through the generic key endpoint', async () => {
+      const mockResponse = { status: 'saved', provider: 'huggingface', masked: 'hf-***xyz' };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockResponse),
+      });
+
+      const result = await api.saveApiKey('huggingface', 'hf-secret-token');
+
+      expect(result).toEqual(mockResponse);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/keys/huggingface', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'hf-secret-token' }),
+      });
+    });
   });
 
   describe('deleteApiKey', () => {
@@ -514,6 +531,16 @@ describe('api singleton - HTTP endpoints', () => {
       await expect(api.deleteApiKey('openai')).resolves.toBeUndefined();
       expect(consoleSpy).toHaveBeenCalledWith('Failed to delete API key for openai');
       consoleSpy.mockRestore();
+    });
+
+    test('removes the Hugging Face token through the generic key endpoint', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+
+      await api.deleteApiKey('huggingface');
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/keys/huggingface', {
+        method: 'DELETE',
+      });
     });
   });
 

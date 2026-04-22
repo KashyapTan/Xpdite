@@ -602,6 +602,7 @@ function App() {
   const activeTabIdRef = useRef(activeTabId);
   const saveTabStateRef = useRef<(tabId: string) => void>(() => {});
   const hasRestoredInitialTabRef = useRef(false);
+  const syncedTabIdsRef = useRef<Set<string>>(new Set(tabs.map((tab) => tab.id)));
 
   // ============================================
   // Context from Layout
@@ -737,11 +738,19 @@ function App() {
       saveTabState(oldTabId);
     });
     const unregisterAfterSwitch = registerAfterSwitch((newTabId: string) => {
+      const nextTabSnapshot = getTabSnapshot(newTabId) ?? freshSnapshot();
+      const nextCaptureMode = nextTabSnapshot.screenshots.meetingRecordingMode
+        ? 'none'
+        : nextTabSnapshot.screenshots.captureMode;
+
       activeTabIdRef.current = newTabId;
       restoreTabState(newTabId);
+      captureModeRef.current = nextTabSnapshot.screenshots.captureMode;
       setShowScrollBottom(false);
       // Notify the backend so hotkey-captured screenshots route to the correct tab
+      // and use the restored tab's capture mode.
       wsSend({ type: 'tab_activated', tab_id: newTabId });
+      wsSend({ type: 'set_capture_mode', tab_id: newTabId, mode: nextCaptureMode });
     });
     const unregisterOnTabClosed = registerOnTabClosed((closedTabId: string) => {
       deleteTabSnapshot(closedTabId);
@@ -752,7 +761,17 @@ function App() {
       unregisterAfterSwitch();
       unregisterOnTabClosed();
     };
-  }, [registerBeforeSwitch, registerAfterSwitch, registerOnTabClosed, saveTabState, restoreTabState, wsSend, deleteTabSnapshot]);
+  }, [
+    deleteTabSnapshot,
+    freshSnapshot,
+    getTabSnapshot,
+    registerBeforeSwitch,
+    registerAfterSwitch,
+    registerOnTabClosed,
+    restoreTabState,
+    saveTabState,
+    wsSend,
+  ]);
 
   // Keep activeTabIdRef in sync when activeTabId changes (e.g. from external triggers)
   useEffect(() => {
@@ -762,6 +781,25 @@ function App() {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
+
+  useEffect(() => {
+    const previousTabIds = syncedTabIdsRef.current;
+    const nextTabIds = new Set(tabs.map((tab) => tab.id));
+
+    for (const tab of tabs) {
+      if (!previousTabIds.has(tab.id)) {
+        wsSend({ type: 'tab_created', tab_id: tab.id });
+      }
+    }
+
+    for (const tabId of previousTabIds) {
+      if (!nextTabIds.has(tabId)) {
+        wsSend({ type: 'tab_closed', tab_id: tabId });
+      }
+    }
+
+    syncedTabIdsRef.current = nextTabIds;
+  }, [tabs, wsSend]);
 
   useEffect(() => {
     captureModeRef.current = screenshotState.captureMode;

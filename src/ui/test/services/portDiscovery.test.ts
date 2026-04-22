@@ -74,8 +74,10 @@ describe('portDiscovery', () => {
     describe('with Electron IPC', () => {
       test('uses port from Electron IPC when valid and health check passes', async () => {
         const mockGetServerPort = vi.fn().mockResolvedValue(8005);
+        const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
         (window as { electronAPI?: unknown }).electronAPI = {
           getServerPort: mockGetServerPort,
+          getServerToken: mockGetServerToken,
         };
 
         global.fetch = vi.fn().mockResolvedValue({ ok: true });
@@ -88,16 +90,22 @@ describe('portDiscovery', () => {
         expect(port).toBe(8005);
         expect(getServerPort()).toBe(8005);
         expect(mockGetServerPort).toHaveBeenCalled();
+        expect(mockGetServerToken).toHaveBeenCalled();
         expect(fetch).toHaveBeenCalledWith(
-          'http://localhost:8005/api/health',
-          expect.objectContaining({ signal: expect.any(AbortSignal) })
+          'http://localhost:8005/api/health/session',
+          expect.objectContaining({
+            headers: { 'X-Xpdite-Server-Token': 'session-token' },
+            signal: expect.any(AbortSignal),
+          })
         );
       });
 
       test('falls back to probing when IPC port fails health check', async () => {
         const mockGetServerPort = vi.fn().mockResolvedValue(8005);
+        const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
         (window as { electronAPI?: unknown }).electronAPI = {
           getServerPort: mockGetServerPort,
+          getServerToken: mockGetServerToken,
         };
 
         // IPC port fails, but port 8001 succeeds
@@ -125,13 +133,15 @@ describe('portDiscovery', () => {
 
       test('falls back to probing when IPC returns invalid port', async () => {
         const mockGetServerPort = vi.fn().mockResolvedValue(-1);
+        const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
         (window as { electronAPI?: unknown }).electronAPI = {
           getServerPort: mockGetServerPort,
+          getServerToken: mockGetServerToken,
         };
 
         // Port 8002 succeeds during probing
         global.fetch = vi.fn().mockImplementation((url: string) => {
-          if (url.includes('8002')) {
+          if (url.includes('8002/api/health/session')) {
             return Promise.resolve({ ok: true });
           }
           return new Promise(() => {});
@@ -147,12 +157,14 @@ describe('portDiscovery', () => {
 
       test('falls back to probing when IPC throws error', async () => {
         const mockGetServerPort = vi.fn().mockRejectedValue(new Error('IPC error'));
+        const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
         (window as { electronAPI?: unknown }).electronAPI = {
           getServerPort: mockGetServerPort,
+          getServerToken: mockGetServerToken,
         };
 
         global.fetch = vi.fn().mockImplementation((url: string) => {
-          if (url.includes('8003')) {
+          if (url.includes('8003/api/health/session')) {
             return Promise.resolve({ ok: true });
           }
           return new Promise(() => {});
@@ -164,6 +176,35 @@ describe('portDiscovery', () => {
         const port = await discoverServerPort();
         
         expect(port).toBe(8003);
+      });
+
+      test('rejects stale prior-session backends and finds the port for the current token', async () => {
+        const mockGetServerPort = vi.fn().mockResolvedValue(-1);
+        const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
+        (window as { electronAPI?: unknown }).electronAPI = {
+          getServerPort: mockGetServerPort,
+          getServerToken: mockGetServerToken,
+        };
+
+        global.fetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+          if (url.includes('8000/api/health/session')) {
+            return Promise.resolve({ ok: false, status: 403 });
+          }
+          if (
+            url.includes('8001/api/health/session')
+            && (init?.headers as Record<string, string> | undefined)?.['X-Xpdite-Server-Token'] === 'session-token'
+          ) {
+            return Promise.resolve({ ok: true });
+          }
+          return Promise.reject(new Error('Connection refused'));
+        });
+
+        const { discoverServerPort, resetDiscovery } = await import('../../services/portDiscovery');
+        resetDiscovery();
+
+        const port = await discoverServerPort();
+
+        expect(port).toBe(8001);
       });
     });
 
@@ -410,15 +451,17 @@ describe('portDiscovery', () => {
 
     test('IPC health check with non-ok response triggers fallback', async () => {
       const mockGetServerPort = vi.fn().mockResolvedValue(8005);
+      const mockGetServerToken = vi.fn().mockResolvedValue('session-token');
       (window as { electronAPI?: unknown }).electronAPI = {
         getServerPort: mockGetServerPort,
+        getServerToken: mockGetServerToken,
       };
 
       global.fetch = vi.fn().mockImplementation((url: string) => {
-        if (url.includes('8005')) {
+        if (url.includes('8005/api/health/session')) {
           return Promise.resolve({ ok: false }); // IPC port returns non-ok
         }
-        if (url.includes('8000')) {
+        if (url.includes('8000/api/health/session')) {
           return Promise.resolve({ ok: true }); // Probe finds 8000
         }
         return Promise.reject(new Error('Connection refused'));

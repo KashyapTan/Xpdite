@@ -149,16 +149,29 @@ class TestGoogleAuthService:
     def test_start_oauth_flow_success(self, tmp_path, monkeypatch):
         token_file = tmp_path / "token.json"
         monkeypatch.setattr(ga, "GOOGLE_TOKEN_FILE", str(token_file))
+        monkeypatch.setattr(
+            ga,
+            "GOOGLE_CLIENT_CONFIG",
+            {
+                "installed": {
+                    "client_id": "test-client.apps.googleusercontent.com",
+                    "client_secret": "test-secret",
+                }
+            },
+        )
 
         fake_creds = _FakeCredentials(json_payload={"token": "saved-token"})
+        captured = {}
 
         class _Flow:
-            def run_local_server(self, **_kwargs):
+            def run_local_server(self, **kwargs):
+                captured["run_local_server_kwargs"] = kwargs
                 return fake_creds
 
         class _InstalledAppFlow:
             @staticmethod
-            def from_client_config(_client_config, _scopes):
+            def from_client_config(_client_config, _scopes, **kwargs):
+                captured["from_client_config_kwargs"] = kwargs
                 return _Flow()
 
         monkeypatch.setitem(
@@ -177,9 +190,37 @@ class TestGoogleAuthService:
 
         assert result == {"success": True, "email": "ok@example.com"}
         assert service._auth_in_progress is False
+        assert captured["from_client_config_kwargs"] == {
+            "autogenerate_code_verifier": True
+        }
+        assert captured["run_local_server_kwargs"]["host"] == "127.0.0.1"
+        assert captured["run_local_server_kwargs"]["bind_addr"] == "127.0.0.1"
         assert (
             json.loads(token_file.read_text(encoding="utf-8"))["token"] == "saved-token"
         )
+
+    def test_start_oauth_flow_missing_client_config_returns_clear_error(
+        self, monkeypatch
+    ):
+        monkeypatch.setattr(ga, "GOOGLE_CLIENT_CONFIG", None)
+        monkeypatch.setattr(
+            ga,
+            "GOOGLE_CLIENT_CONFIG_ERROR",
+            "Google OAuth is not configured in this packaged build.",
+        )
+        monkeypatch.setitem(
+            sys.modules,
+            "google_auth_oauthlib.flow",
+            types.SimpleNamespace(InstalledAppFlow=object()),
+        )
+
+        service = ga.GoogleAuthService()
+        result = service.start_oauth_flow()
+
+        assert result == {
+            "success": False,
+            "error": "Google OAuth is not configured in this packaged build.",
+        }
 
     def test_start_oauth_flow_failure_resets_state(self, monkeypatch):
         class _Flow:

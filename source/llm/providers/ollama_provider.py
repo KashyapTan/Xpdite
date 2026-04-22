@@ -62,6 +62,14 @@ def _build_messages(
     return messages
 
 
+def _format_ollama_error(exc: Exception) -> str:
+    """Return a user-facing Ollama error message with the original detail when available."""
+    detail = str(exc).strip()
+    if detail:
+        return detail[:500]
+    return f"LLM API error ({type(exc).__name__})"
+
+
 async def stream_ollama_chat(
     model_name: str,
     user_query: str,
@@ -422,8 +430,8 @@ async def stream_ollama_chat(
         if is_current_request_cancelled():
             logger.info("Ollama stream aborted by user cancel")
         else:
-            error_msg = f"LLM API error ({type(e).__name__})"
-            logger.error("Ollama error: %s", e)
+            error_msg = _format_ollama_error(e)
+            logger.error("Ollama error for model %s: %s", model_name, e)
             await broadcast_message("error", error_msg)
 
         await broadcast_message("response_complete", "")

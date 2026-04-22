@@ -69,6 +69,7 @@ let whatsAppSdkPromise: Promise<{
   createChatSDKBaileysAdapter: BaileysAdapterFactory;
   useMultiFileAuthState: UseMultiFileAuthState;
 }> | null = null;
+const validateOnlyMode = process.env.XPDITE_CHANNEL_BRIDGE_VALIDATE_ONLY === '1';
 
 function loadChatSdkCore() {
   if (!chatSdkCorePromise) {
@@ -116,6 +117,15 @@ function loadWhatsAppSdk() {
   }
 
   return whatsAppSdkPromise;
+}
+
+async function validateRuntimeDependencies(): Promise<void> {
+  await Promise.all([
+    loadChatSdkCore(),
+    loadTelegramAdapterFactory(),
+    loadDiscordAdapterFactory(),
+    loadWhatsAppSdk(),
+  ]);
 }
 
 // ============================================================================
@@ -383,6 +393,13 @@ async function main(): Promise<void> {
   infoLog('[ChannelBridge] Starting...');
   debugLog(`[ChannelBridge] User data dir: ${userDataDir}`);
   debugLog(`[ChannelBridge] Python server port: ${pythonPort}`);
+
+  if (validateOnlyMode) {
+    await validateRuntimeDependencies();
+    infoLog('[ChannelBridge] Runtime dependency validation complete');
+    console.log('CHANNEL_BRIDGE_VALIDATE_OK');
+    return;
+  }
   
   // Create Python client
   const pythonClient = createPythonClient(`http://127.0.0.1:${pythonPort}`);

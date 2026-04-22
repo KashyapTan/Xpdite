@@ -15,33 +15,46 @@
             ]
         },
         {
+            "from": "dist-python-runtime",
+            "to": "python-runtime",
+            "filter": [
+                "**/*"
+            ]
+        },
+        {
             "from": "dist-channel-bridge",
             "to": "channel-bridge",
             "filter": [
                 "**/*"
             ]
+        },
+        {
+            "from": "dist-runtime-config",
+            "to": "runtime-config",
+            "filter": [
+                "**/*"
+            ]
         }
     ],
-    "icon": "./assets/xpdite-logo-black-bg.svg",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "icon": "./assets/xpdite-icon.png",
     "mac": {
-        "target": "dmg"
+        "target": "dmg",
+        "icon": "./assets/xpdite.icns"
     },
     "linux": {
         "target": "AppImage",
-        "category": "Utility"
+        "category": "Utility",
+        "icon": "./assets/xpdite-icon.png"
     },
     "win": {
         "target": [
             {
                 "target": "nsis",
                 "arch": ["x64"]
-            },
-            {
-                "target": "portable",
-                "arch": ["x64"]
             }
         ],
-        "icon": "./assets/xpdite-logo-black-bg.svg"
+        "icon": "./assets/xpdite.ico"
     },
     "nsis": {
         "oneClick": false,

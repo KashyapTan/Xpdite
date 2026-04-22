@@ -696,9 +696,9 @@ class PostProcessingPipeline:
     def _diarize(self, audio_path: str, backend: str) -> dict | None:
         """Speaker diarization via pyannote/whisperx.
 
-        Requires a Hugging Face auth token (HF_TOKEN env-var) because the
-        underlying pyannote models are gated.  The token is loaded from
-        the .env file at project root.
+        Requires a user-supplied Hugging Face auth token because the
+        underlying pyannote models are gated. The token is loaded from
+        encrypted settings via ``key_manager``.
 
         Note: pyannote/speaker-diarization-3.1 uses AgglomerativeClustering
         which does NOT need PLDA, but pyannote's SpeakerDiarization.__init__
@@ -714,11 +714,12 @@ class PostProcessingPipeline:
             logger.warning("whisperx not installed — skipping diarization")
             return None
 
-        hf_token = os.environ.get("HF_TOKEN", "").strip()
+        hf_token = self._get_huggingface_token()
         if not hf_token:
             logger.warning(
-                "HF_TOKEN not set — skipping diarization. "
-                "Add HF_TOKEN=hf_xxx to the .env file at the project root."
+                "Hugging Face token not configured — skipping diarization. "
+                "Add it in Settings > Meeting and accept the "
+                "pyannote/speaker-diarization-3.1 and pyannote/segmentation-3.0 licenses."
             )
             return None
 
@@ -759,6 +760,17 @@ class PostProcessingPipeline:
         diarize_segments = diarize_model(audio)
 
         return diarize_segments
+
+    @staticmethod
+    def _get_huggingface_token() -> str:
+        """Load the stored Hugging Face token from encrypted settings."""
+        try:
+            from ...llm.core.key_manager import key_manager
+
+            return (key_manager.get_api_key("huggingface") or "").strip()
+        except Exception as e:
+            logger.warning("Failed to load Hugging Face token from settings: %s", e)
+            return ""
 
     def _merge_results(
         self,

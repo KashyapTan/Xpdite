@@ -22,6 +22,9 @@ const isWhatsAppSelfAuthoredMessageMock = vi.fn(() => false);
 
 const createMemoryStateMock = vi.fn(() => ({}));
 const createTelegramSdkAdapterMock = vi.fn();
+const createDiscordSdkAdapterMock = vi.fn();
+const createBaileysSdkAdapterMock = vi.fn();
+const useMultiFileAuthStateMock = vi.fn();
 
 const serverStartMock = vi.fn();
 const serverStopMock = vi.fn();
@@ -108,6 +111,18 @@ vi.mock('@chat-adapter/telegram', () => ({
   createTelegramAdapter: createTelegramSdkAdapterMock,
 }));
 
+vi.mock('@chat-adapter/discord', () => ({
+  createDiscordAdapter: createDiscordSdkAdapterMock,
+}));
+
+vi.mock('chat-adapter-baileys', () => ({
+  createBaileysAdapter: createBaileysSdkAdapterMock,
+}));
+
+vi.mock('baileys', () => ({
+  useMultiFileAuthState: useMultiFileAuthStateMock,
+}));
+
 async function flushPromises(iterations: number = 6): Promise<void> {
   for (let index = 0; index < iterations; index += 1) {
     await Promise.resolve();
@@ -125,6 +140,7 @@ describe('channel-bridge entrypoint', () => {
     vi.resetModules();
     vi.clearAllMocks();
     vi.useFakeTimers();
+    vi.unstubAllEnvs();
     signalHandlers = {};
     watchCallback = null;
     latestChatInstance = null;
@@ -181,6 +197,12 @@ describe('channel-bridge entrypoint', () => {
       postMessage: vi.fn(async () => ({ id: 'telegram-sent-1' })),
       startTyping: vi.fn(async () => {}),
     });
+    createDiscordSdkAdapterMock.mockReturnValue({});
+    createBaileysSdkAdapterMock.mockReturnValue({});
+    useMultiFileAuthStateMock.mockResolvedValue({
+      state: {},
+      saveCreds: vi.fn(async () => {}),
+    });
 
     consoleLogMock.mockClear();
     consoleErrorMock.mockClear();
@@ -215,6 +237,18 @@ describe('channel-bridge entrypoint', () => {
     expect(loaderStopWatchingMock).toHaveBeenCalledTimes(1);
     expect(serverStopMock).toHaveBeenCalledTimes(1);
     expect(processExitSpy).toHaveBeenCalledWith(0);
+  });
+
+  test('validate-only mode loads all mobile provider runtimes without starting the bridge server', async () => {
+    vi.stubEnv('XPDITE_CHANNEL_BRIDGE_VALIDATE_ONLY', '1');
+
+    await import('./index.js');
+    await vi.dynamicImportSettled();
+    await flushPromises(12);
+
+    expect(createBridgeServerMock).not.toHaveBeenCalled();
+    expect(createConfigLoaderMock).not.toHaveBeenCalled();
+    expect(consoleLogMock).toHaveBeenCalledWith('CHANNEL_BRIDGE_VALIDATE_OK');
   });
 
   test('initializes Telegram adapters and routes inbound messages into the Python queue flow', async () => {

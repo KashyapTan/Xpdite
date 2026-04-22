@@ -1,20 +1,46 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from pathlib import Path
+from PyInstaller.utils.hooks import collect_data_files, copy_metadata
+
+PROJECT_ROOT = Path.cwd()
+LITELLM_DATA_FILES = collect_data_files(
+    "litellm",
+    includes=[
+        "anthropic_beta_headers_config.json",
+        "containers/*.json",
+        "cost.json",
+        "integrations/*.json",
+        "integrations/generic_api/*.json",
+        "litellm_core_utils/tokenizers/*.json",
+        "llms/huggingface/huggingface_llms_metadata/*.txt",
+        "llms/openai_like/*.json",
+        "model_prices_and_context_window_backup.json",
+        "policy_templates_backup.json",
+    ],
+)
+LITELLM_METADATA = copy_metadata("litellm")
+
 a = Analysis(
-    ['source/main.py'],
-    pathex=[],
+    ['source/__main__.py'],
+    pathex=[str(PROJECT_ROOT)],
     binaries=[],
-    datas=[],
+    datas=LITELLM_DATA_FILES + LITELLM_METADATA,
     hiddenimports=[
         'fastapi',
         'crawl4ai',
+        'litellm',
         'mcp',
         'mcp.cli',
-        'playwright'
+        'playwright',
         'uvicorn',
         'uvicorn.protocols.http.auto',
         'uvicorn.protocols.websockets.auto',
         'uvicorn.lifespan.on',
+        'google_auth_oauthlib.flow',
+        'google.oauth2.credentials',
+        'google.auth.transport.requests',
+        'googleapiclient.discovery',
         'ollama',
         'pynput',
         'pynput.mouse',

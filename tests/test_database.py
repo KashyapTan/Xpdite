@@ -3,6 +3,7 @@
 
 import pytest
 import sqlite3
+from pathlib import Path
 
 
 @pytest.fixture()
@@ -12,6 +13,41 @@ def db_manager(tmp_path):
     from source.infrastructure.database import DatabaseManager
 
     return DatabaseManager(database_path=db_path)
+
+
+class TestDatabasePathing:
+    def test_default_database_path_uses_user_data_dir(self, tmp_path, monkeypatch):
+        import source.infrastructure.database as database_module
+
+        expected_user_data = tmp_path / "app-data"
+        monkeypatch.setattr(database_module, "USER_DATA_DIR", expected_user_data)
+
+        assert database_module._default_database_path() == (
+            expected_user_data / "xpdite_app.db"
+        )
+
+    def test_default_database_migrates_legacy_cwd_database(
+        self, tmp_path, monkeypatch
+    ):
+        import source.infrastructure.database as database_module
+
+        legacy_root = tmp_path / "legacy-root"
+        legacy_db = legacy_root / "user_data" / "xpdite_app.db"
+        legacy_db.parent.mkdir(parents=True, exist_ok=True)
+
+        legacy_manager = database_module.DatabaseManager(database_path=str(legacy_db))
+        legacy_manager.set_setting("tool_always_on", '["spawn_agent"]')
+
+        target_user_data = tmp_path / "app-data"
+        monkeypatch.chdir(legacy_root)
+        monkeypatch.setattr(database_module, "USER_DATA_DIR", target_user_data)
+
+        migrated_manager = database_module.DatabaseManager()
+
+        assert Path(migrated_manager.database_path) == (
+            target_user_data / "xpdite_app.db"
+        )
+        assert migrated_manager.get_setting("tool_always_on") == '["spawn_agent"]'
 
 
 # ------------------------------------------------------------------

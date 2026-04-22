@@ -10,8 +10,10 @@
         "esModuleInterop": true,
         "declaration": true,
         "declarationMap": true,
-        "sourceMap": true
+        "sourceMap": true,
+        "incremental": true,
+        "tsBuildInfoFile": "../../dist-channel-bridge/.tsbuildinfo"
     },
     "include": ["./**/*.ts"],
-    "exclude": ["node_modules"]
+    "exclude": ["node_modules", "./**/*.test.ts"]
 }

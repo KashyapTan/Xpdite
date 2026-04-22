@@ -164,6 +164,8 @@ let currentBootState: BootState = {
 };
 let channelBridgeStarted = false;
 let channelBridgeStartupPromise: Promise<void> | null = null;
+let shutdownInProgress = false;
+let shutdownCompleted = false;
 
 function publishBootState(state: BootState) {
     currentBootState = state;
@@ -366,6 +368,19 @@ async function startBootSequence(): Promise<void> {
     } finally {
         bootSequenceInProgress = false;
     }
+}
+
+async function cleanupAppProcesses(): Promise<void> {
+    if (shutdownCompleted) {
+        return;
+    }
+
+    perfLogRateStateBySender.clear();
+    await stopChannelBridge();
+    await stopPythonServer();
+    channelBridgeStarted = false;
+    channelBridgeStartupPromise = null;
+    shutdownCompleted = true;
 }
 
 app.on('ready', async () => {
@@ -572,14 +587,26 @@ app.on('window-all-closed', () => {
     }
 });
 
-// Single cleanup hook — stopPythonServer() is itself idempotent, but there
-// is no reason to invoke it from every lifecycle event.  `before-quit` fires
-// before the window closes and before `will-quit`, so one handler is enough.
-app.on('before-quit', async () => {
+// Electron does not await async lifecycle handlers. Block the first quit
+// attempt until child processes are fully cleaned up, then exit explicitly.
+app.on('before-quit', (event) => {
+    if (shutdownCompleted) {
+        return;
+    }
+
+    event.preventDefault();
+    if (shutdownInProgress) {
+        return;
+    }
+
+    shutdownInProgress = true;
     console.log('App is quitting, cleaning up processes...');
-    perfLogRateStateBySender.clear();
-    await stopChannelBridge();
-    await stopPythonServer();
-    channelBridgeStarted = false;
-    channelBridgeStartupPromise = null;
+    void cleanupAppProcesses()
+        .catch((error) => {
+            console.error('Process cleanup failed during quit:', error);
+        })
+        .finally(() => {
+            shutdownInProgress = false;
+            app.exit(0);
+        });
 });

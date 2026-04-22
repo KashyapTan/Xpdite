@@ -132,7 +132,7 @@ describe('channelBridgeApi helpers', () => {
     const child = new FakeChildProcess();
     spawnMock.mockReturnValue(child);
     existsSyncMock.mockImplementation((value: string) => (
-      value.includes(path.join('dist-channel-bridge', 'index.js'))
+      value.includes(path.join('dist-channel-bridge', 'index.cjs'))
     ));
     const { startChannelBridge } = await import('./channelBridgeApi.js');
 
@@ -142,7 +142,7 @@ describe('channelBridgeApi helpers', () => {
 
     expect(spawnMock).toHaveBeenCalledWith(
       'node',
-      [expect.stringContaining(path.join('dist-channel-bridge', 'index.js'))],
+      [expect.stringContaining(path.join('dist-channel-bridge', 'index.cjs'))],
       expect.any(Object),
     );
   });
@@ -152,7 +152,7 @@ describe('channelBridgeApi helpers', () => {
     forkMock.mockReturnValue(child);
     isDevMock.mockReturnValue(false);
     existsSyncMock.mockImplementation((value: string) => (
-      value.includes(path.join('channel-bridge', 'index.js'))
+      value.includes(path.join('channel-bridge', 'index.cjs'))
     ));
     const { startChannelBridge } = await import('./channelBridgeApi.js');
 
@@ -161,7 +161,7 @@ describe('channelBridgeApi helpers', () => {
     await expect(startPromise).resolves.toBeUndefined();
 
     expect(forkMock).toHaveBeenCalledWith(
-      expect.stringContaining(path.join('channel-bridge', 'index.js')),
+      expect.stringContaining(path.join('channel-bridge', 'index.cjs')),
       [],
       expect.objectContaining({
         stdio: ['pipe', 'pipe', 'pipe', 'ipc'],

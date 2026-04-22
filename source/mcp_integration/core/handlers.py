@@ -39,6 +39,13 @@ from .tool_output import format_tool_output
 
 logger = logging.getLogger(__name__)
 
+_ALWAYS_INCLUDED_CONTROL_TOOLS = {
+    # Control-plane tool: if the prompt encourages delegation but retrieval
+    # omits spawn_agent, some models emit literal <sub_agent> tags instead of
+    # a real tool call. Keep it available on every request.
+    "spawn_agent",
+}
+
 
 def _get_request_model() -> str:
     """Resolve model from request-scoped context with safe fallback."""
@@ -94,6 +101,21 @@ def retrieve_relevant_tools(user_query: str) -> list:
     filtered_tools = retriever.retrieve_tools(
         query=user_query, all_tools=all_tools, always_on=always_on, top_k=top_k
     )
+
+    if _ALWAYS_INCLUDED_CONTROL_TOOLS:
+        included_names = {
+            tool.get("function", {}).get("name")
+            for tool in filtered_tools
+            if tool.get("function", {}).get("name")
+        }
+        for tool in all_tools:
+            tool_name = tool.get("function", {}).get("name")
+            if (
+                tool_name in _ALWAYS_INCLUDED_CONTROL_TOOLS
+                and tool_name not in included_names
+            ):
+                filtered_tools.append(tool)
+                included_names.add(tool_name)
 
     if len(filtered_tools) < len(all_tools):
         logger.debug(

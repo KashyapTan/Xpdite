@@ -114,6 +114,12 @@ class TestInitMcpServers:
                 "source.services.integrations.external_connectors.init_external_connectors",
                 new_callable=AsyncMock,
             ),
+            patch(
+                "source.services.marketplace.service.get_marketplace_service",
+                return_value=SimpleNamespace(
+                    reconnect_enabled_mcp_installs_async=AsyncMock()
+                ),
+            ),
         ):
             await manager_module.init_mcp_servers()
 
@@ -586,7 +592,7 @@ class TestManagerAdditionalCoverage:
             assert manager.is_server_connected("demo") is True
             env = captured["params"].env
             assert env["PYTHONPATH"].startswith(
-                f"{manager_module.PROJECT_ROOT}{manager_module.os.pathsep}"
+                f"{manager_module.RUNTIME_ROOT}{manager_module.os.pathsep}"
             )
             assert env["PYTHONPATH"].endswith("C:\\custom")
             assert set(manager._tool_registry) == {"mcp__demo__beta", "mcp__demo__Alpha"}

@@ -16,6 +16,7 @@ let detectedPort: number = 9000;
 
 /** Default port for the Channel Bridge */
 const DEFAULT_BRIDGE_PORT = 9000;
+const COMPILED_CHANNEL_BRIDGE_ENTRYPOINT = 'index.cjs';
 
 /** Callback for status messages from the Channel Bridge */
 type BridgeMessageCallback = (message: {
@@ -48,7 +49,7 @@ function findBridgeExecutable(): { executable: string; args: string[]; useFork?:
         }
         
         // Fallback to compiled JS
-        const compiledPath = path.join(process.cwd(), 'dist-channel-bridge', 'index.js');
+        const compiledPath = path.join(process.cwd(), 'dist-channel-bridge', COMPILED_CHANNEL_BRIDGE_ENTRYPOINT);
         if (fs.existsSync(compiledPath)) {
             return {
                 executable: 'node',
@@ -61,7 +62,7 @@ function findBridgeExecutable(): { executable: string; args: string[]; useFork?:
         // In production, use the bundled JS 
         // The Channel Bridge uses Node.js APIs so we run it via fork() from Electron
         const resourcesPath = process.resourcesPath;
-        const bundledJs = path.join(resourcesPath, 'channel-bridge', 'index.js');
+        const bundledJs = path.join(resourcesPath, 'channel-bridge', COMPILED_CHANNEL_BRIDGE_ENTRYPOINT);
         
         if (fs.existsSync(bundledJs)) {
             // Use fork for production - Electron can fork child Node.js processes

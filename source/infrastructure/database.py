@@ -3,19 +3,98 @@ import json
 import uuid
 import time
 import os
+import sys
+import logging
 from contextlib import contextmanager
+from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
 from ..llm.core.artifacts import serialize_blocks_for_model_content
+from .config import USER_DATA_DIR
+
+
+logger = logging.getLogger(__name__)
+
+
+def _default_database_path() -> Path:
+    """Return the primary SQLite path for the active runtime."""
+    return USER_DATA_DIR / "xpdite_app.db"
+
+
+def _legacy_database_candidates(target_path: Path) -> list[Path]:
+    """Return known legacy SQLite locations that older packaged builds used."""
+    candidates: list[Path] = []
+    fallback_roots = [Path.cwd()]
+
+    executable = getattr(sys, "executable", "")
+    if executable:
+        fallback_roots.append(Path(executable).resolve().parent)
+
+    resolved_target = target_path.resolve()
+    seen: set[Path] = set()
+    for root in fallback_roots:
+        candidate = (root / "user_data" / target_path.name).resolve()
+        if candidate == resolved_target or candidate in seen:
+            continue
+        seen.add(candidate)
+        candidates.append(candidate)
+
+    return candidates
+
+
+def _migrate_legacy_database_if_needed(target_path: Path) -> None:
+    """Copy the last packaged-relative database into the real user-data location."""
+    if target_path.exists() and target_path.stat().st_size > 0:
+        return
+
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    for legacy_path in _legacy_database_candidates(target_path):
+        if not legacy_path.exists() or not legacy_path.is_file():
+            continue
+        try:
+            if legacy_path.stat().st_size <= 0:
+                continue
+        except OSError:
+            continue
+
+        try:
+            if target_path.exists():
+                target_path.unlink()
+            with sqlite3.connect(str(legacy_path), check_same_thread=False) as source_conn:
+                with sqlite3.connect(str(target_path), check_same_thread=False) as target_conn:
+                    source_conn.backup(target_conn)
+            logger.info(
+                "Migrated legacy database from '%s' to '%s'",
+                legacy_path,
+                target_path,
+            )
+            return
+        except Exception as exc:
+            logger.warning(
+                "Failed to migrate legacy database from '%s' to '%s': %s",
+                legacy_path,
+                target_path,
+                exc,
+            )
+            try:
+                if target_path.exists() and target_path.stat().st_size == 0:
+                    target_path.unlink()
+            except OSError:
+                pass
 
 
 class DatabaseManager:
-    def __init__(self, database_path: str = "user_data/xpdite_app.db"):
+    def __init__(self, database_path: str | os.PathLike[str] | None = None):
         """Initialize the database manager with the given file path."""
-        db_dir = os.path.dirname(database_path)
+        resolved_path = Path(database_path) if database_path is not None else _default_database_path()
+        if database_path is None:
+            _migrate_legacy_database_if_needed(resolved_path)
+
+        db_dir = os.path.dirname(str(resolved_path))
         if db_dir:
             os.makedirs(db_dir, exist_ok=True)
-        self.database_path = database_path
+        self.database_path = str(resolved_path)
         self._init_db()
 
     def _get_connection(self) -> sqlite3.Connection:

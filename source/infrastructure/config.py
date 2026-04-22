@@ -5,6 +5,7 @@ Centralizes all configuration values and constants.
 """
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -14,8 +15,45 @@ _THIS_FILE = Path(__file__).resolve()
 PROJECT_ROOT = _THIS_FILE.parents[2]
 SOURCE_DIR = _THIS_FILE.parents[1]
 
-# Load environment variables from .env file
-load_dotenv(os.path.join(PROJECT_ROOT, ".env"))
+
+def _resolve_runtime_root() -> Path:
+    """Resolve the filesystem root for runtime assets.
+
+    In development this is the repository root. In packaged builds Electron
+    passes ``XPDITE_RUNTIME_ROOT`` pointing at bundled plain files such as
+    ``source/`` and ``mcp_servers/`` that child Python interpreters can import.
+    """
+    runtime_root = os.environ.get("XPDITE_RUNTIME_ROOT", "").strip()
+    if runtime_root:
+        return Path(runtime_root).resolve()
+    return PROJECT_ROOT
+
+
+RUNTIME_ROOT = _resolve_runtime_root()
+IS_PACKAGED_RUNTIME = bool(
+    getattr(sys, "frozen", False)
+    or os.environ.get("XPDITE_RUNTIME_ROOT")
+    or os.environ.get("XPDITE_RUNTIME_ENV_FILE")
+)
+RUNTIME_ENV_FILE = os.environ.get("XPDITE_RUNTIME_ENV_FILE", "").strip()
+CHILD_PYTHON_EXECUTABLE = os.environ.get("XPDITE_CHILD_PYTHON_EXECUTABLE", "").strip()
+
+
+def _load_runtime_environment() -> None:
+    """Load environment variables for the current runtime shape.
+
+    Resolution order:
+    1. Explicit packaged env file path supplied by Electron
+    2. Repository ``.env`` file during development only
+    """
+    if RUNTIME_ENV_FILE:
+        load_dotenv(RUNTIME_ENV_FILE, override=False)
+
+    if not IS_PACKAGED_RUNTIME:
+        load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+
+_load_runtime_environment()
 
 
 def _resolve_user_data_dir() -> Path:
@@ -41,7 +79,11 @@ os.makedirs(SCREENSHOT_FOLDER, exist_ok=True)
 SKILLS_DIR = USER_DATA_DIR / "skills"
 BUILTIN_SKILLS_DIR = SKILLS_DIR / "builtin"
 USER_SKILLS_DIR = SKILLS_DIR / "user"
-SKILLS_SEED_DIR = SOURCE_DIR / "skills_seed"
+SKILLS_SEED_DIR = (
+    RUNTIME_ROOT / "source" / "skills_seed"
+    if (RUNTIME_ROOT / "source" / "skills_seed").exists()
+    else SOURCE_DIR / "skills_seed"
+)
 SKILLS_PREFERENCES_FILE = SKILLS_DIR / "preferences.json"
 
 # Marketplace directories
@@ -114,6 +156,8 @@ class CaptureMode:
 GOOGLE_USER_DATA = str(USER_DATA_DIR / "google")
 os.makedirs(GOOGLE_USER_DATA, exist_ok=True)
 GOOGLE_TOKEN_FILE = os.path.join(GOOGLE_USER_DATA, "token.json")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
     "https://www.googleapis.com/auth/gmail.send",
@@ -121,6 +165,36 @@ GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/calendar.events",
 ]
+GOOGLE_OAUTH_REDIRECT_HOST = "127.0.0.1"
+GOOGLE_OAUTH_REDIRECT_URI = f"http://{GOOGLE_OAUTH_REDIRECT_HOST}"
+
+
+def _build_google_client_config() -> dict | None:
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return None
+    return {
+        "installed": {
+            "client_id": GOOGLE_CLIENT_ID,
+            "client_secret": GOOGLE_CLIENT_SECRET,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "redirect_uris": [GOOGLE_OAUTH_REDIRECT_URI],
+        }
+    }
+
+
+def _build_google_config_error() -> str:
+    if IS_PACKAGED_RUNTIME:
+        return (
+            "Google OAuth is not configured in this packaged build. Rebuild the app "
+            "with GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET present in the root .env "
+            "so the packaged runtime env resource can be generated."
+        )
+    return (
+        "Google OAuth is not configured. Add GOOGLE_CLIENT_ID and "
+        "GOOGLE_CLIENT_SECRET to the project .env file."
+    )
+
 
 # Google OAuth client configuration (Desktop app type).
 # Get these from: Google Cloud Console > APIs & Services > Credentials
@@ -128,14 +202,5 @@ GOOGLE_SCOPES = [
 # For desktop apps the client secret is NOT confidential — this is the
 # standard Google-recommended pattern (see:
 # https://developers.google.com/identity/protocols/oauth2/native-app).
-GOOGLE_CLIENT_CONFIG = {
-    "installed": {
-        "client_id": os.environ.get(
-            "GOOGLE_CLIENT_ID", "YOUR_CLIENT_ID.apps.googleusercontent.com"
-        ),
-        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET", "YOUR_CLIENT_SECRET"),
-        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "redirect_uris": ["http://localhost"],
-    }
-}
+GOOGLE_CLIENT_CONFIG = _build_google_client_config()
+GOOGLE_CLIENT_CONFIG_ERROR = _build_google_config_error()

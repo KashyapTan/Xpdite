@@ -103,6 +103,62 @@ class TestRetrieveRelevantTools:
         assert result == filtered
         assert mock_retrieve.call_args.kwargs["top_k"] == 5
 
+    def test_always_includes_spawn_agent_control_tool(self, handlers_module):
+        all_tools = [
+            {"function": {"name": "read_file"}},
+            {"function": {"name": "spawn_agent"}},
+        ]
+        filtered = [all_tools[0]]
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module.mcp_manager, "get_ollama_tools", return_value=all_tools
+            ),
+            patch.object(
+                handlers_module.retriever, "retrieve_tools", return_value=filtered
+            ),
+            patch(
+                "source.infrastructure.database.db.get_setting",
+                side_effect=[None, None],
+            ),
+        ):
+            result = handlers_module.retrieve_relevant_tools("summarize this")
+
+        assert [tool["function"]["name"] for tool in result] == [
+            "read_file",
+            "spawn_agent",
+        ]
+
+    def test_does_not_duplicate_spawn_agent_when_already_retrieved(
+        self, handlers_module
+    ):
+        all_tools = [
+            {"function": {"name": "read_file"}},
+            {"function": {"name": "spawn_agent"}},
+        ]
+        filtered = [all_tools[1], all_tools[0]]
+
+        with (
+            patch.object(handlers_module.mcp_manager, "has_tools", return_value=True),
+            patch.object(
+                handlers_module.mcp_manager, "get_ollama_tools", return_value=all_tools
+            ),
+            patch.object(
+                handlers_module.retriever, "retrieve_tools", return_value=filtered
+            ),
+            patch(
+                "source.infrastructure.database.db.get_setting",
+                side_effect=[None, None],
+            ),
+        ):
+            result = handlers_module.retrieve_relevant_tools("delegate this")
+
+        assert [tool["function"]["name"] for tool in result] == [
+            "spawn_agent",
+            "read_file",
+        ]
+
 
 class TestTruncateResult:
     def test_truncates_large_result_with_suffix(self, handlers_module):

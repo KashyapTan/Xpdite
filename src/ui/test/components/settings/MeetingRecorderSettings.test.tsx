@@ -6,12 +6,29 @@ import MeetingRecorderSettings from '../../../components/settings/MeetingRecorde
 const sendMock = vi.fn();
 const subscribeMock = vi.fn();
 const unsubscribeMock = vi.fn();
+const {
+  getApiKeyStatusMock,
+  saveApiKeyMock,
+  deleteApiKeyMock,
+} = vi.hoisted(() => ({
+  getApiKeyStatusMock: vi.fn(),
+  saveApiKeyMock: vi.fn(),
+  deleteApiKeyMock: vi.fn(),
+}));
 
 vi.mock('../../../contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
     send: sendMock,
     subscribe: subscribeMock,
   }),
+}));
+
+vi.mock('../../../services/api', () => ({
+  api: {
+    getApiKeyStatus: getApiKeyStatusMock,
+    saveApiKey: saveApiKeyMock,
+    deleteApiKey: deleteApiKeyMock,
+  },
 }));
 
 type Message = Record<string, unknown>;
@@ -21,6 +38,18 @@ describe('MeetingRecorderSettings', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     subscriber = null;
+    getApiKeyStatusMock.mockResolvedValue({
+      huggingface: {
+        has_key: true,
+        masked: 'hf-...1234',
+      },
+    });
+    saveApiKeyMock.mockResolvedValue({
+      status: 'saved',
+      provider: 'huggingface',
+      masked: 'hf-...9999',
+    });
+    deleteApiKeyMock.mockResolvedValue(undefined);
     subscribeMock.mockImplementation((handler: (data: Message) => void) => {
       subscriber = handler;
       return unsubscribeMock;
@@ -34,6 +63,12 @@ describe('MeetingRecorderSettings', () => {
     expect(sendMock).toHaveBeenCalledWith({ type: 'meeting_get_settings' });
     expect(screen.getByText('Detecting...')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Base | Balanced (recommended)')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(getApiKeyStatusMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Configured')).toBeInTheDocument();
+      expect(screen.getByText('hf-...1234')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/pyannote\/speaker-diarization-3.1/)).toBeInTheDocument();
   });
 
   test('applies websocket updates for compute info and settings', async () => {
@@ -89,6 +124,27 @@ describe('MeetingRecorderSettings', () => {
         settings: { keep_audio: 'true' },
       });
       expect(screen.getByText('Saving...')).toBeInTheDocument();
+    });
+  });
+
+  test('saves and removes the Hugging Face token through the encrypted key API', async () => {
+    render(<MeetingRecorderSettings />);
+
+    const tokenInput = screen.getByLabelText('Personal access token');
+    fireEvent.change(tokenInput, { target: { value: 'hf_test_token' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save token' }));
+
+    await waitFor(() => {
+      expect(saveApiKeyMock).toHaveBeenCalledWith('huggingface', 'hf_test_token');
+      expect(screen.getByText('Hugging Face token saved.')).toBeInTheDocument();
+      expect(screen.getByText('hf-...9999')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove token' }));
+
+    await waitFor(() => {
+      expect(deleteApiKeyMock).toHaveBeenCalledWith('huggingface');
+      expect(screen.getByText('Hugging Face token removed.')).toBeInTheDocument();
     });
   });
 });

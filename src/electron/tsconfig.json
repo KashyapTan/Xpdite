@@ -4,6 +4,8 @@
         "target": "esnext",
         "module": "nodenext",
         "outDir": "../../dist-electron",
-        "skipLibCheck": true
+        "skipLibCheck": true,
+        "incremental": true,
+        "tsBuildInfoFile": "../../dist-electron/.tsbuildinfo"
     }
 }
