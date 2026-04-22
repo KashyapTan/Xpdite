@@ -23,6 +23,13 @@ from ...core.thread_pool import run_in_thread
 from ...infrastructure.database import db
 from ...llm.core.router import route_chat
 from ..artifacts import artifact_service
+from ..media.file_extractor import (
+    ARCHIVE_EXTENSIONS,
+    EXTRACTION_EXTENSIONS,
+    IMAGE_EXTENSIONS,
+    LEGACY_UNSUPPORTED,
+    FileExtractor,
+)
 from ..media.screenshots import ScreenshotHandler
 
 logger = logging.getLogger(__name__)
@@ -89,10 +96,83 @@ def _truncate_attachment_tool_result(result: str) -> str:
 
 
 async def _run_read_file_for_attachment(path: str) -> str | dict[str, Any]:
-    """Execute filesystem read_file with the same defaults as tool calls."""
-    from mcp_servers.servers.filesystem.server import read_file
+    """Read a user-selected attachment using read_file-style payloads."""
+    clean_path = os.path.abspath(os.path.realpath(path))
+    extractor = _get_attachment_file_extractor()
 
-    return await run_in_thread(read_file, path, 0, _ATTACHMENT_READ_FILE_MAX_CHARS)
+    try:
+        if os.path.isdir(clean_path):
+            return (
+                f"Error: '{path}' is a directory, not a file. "
+                "Use list_directory to see its contents."
+            )
+
+        ext = Path(clean_path).suffix.lower()
+        file_size = os.path.getsize(clean_path)
+
+        if ext in IMAGE_EXTENSIONS:
+            result = await run_in_thread(extractor._load_image_file, clean_path)
+            if result.data:
+                return result.to_dict()
+            return f"Error: Failed to load image '{path}'"
+
+        if ext in LEGACY_UNSUPPORTED:
+            return (
+                f"Error: Legacy format '{ext}' is not supported. "
+                "Please resave as .docx or .pptx for Word/PowerPoint documents."
+            )
+
+        if ext in EXTRACTION_EXTENSIONS:
+            extraction_result = await run_in_thread(
+                extractor._extract_document, clean_path, ext
+            )
+            paginated = extractor.paginate_extraction(
+                extraction_result,
+                offset=0,
+                max_chars=_ATTACHMENT_READ_FILE_MAX_CHARS,
+            )
+            return paginated.to_dict()
+
+        if ext in ARCHIVE_EXTENSIONS:
+            extraction_result = await run_in_thread(extractor._extract_zip, clean_path)
+            paginated = extractor.paginate_extraction(
+                extraction_result,
+                offset=0,
+                max_chars=_ATTACHMENT_READ_FILE_MAX_CHARS,
+            )
+            return paginated.to_dict()
+
+        def _read_text_content() -> str:
+            with open(clean_path, "r", encoding="utf-8", errors="replace") as handle:
+                content = handle.read()
+            if extractor.is_text_native(clean_path):
+                return content
+            return f"[Warning: Unknown file format, attempting text read]\n\n{content}"
+
+        text_result = await run_in_thread(_read_text_content)
+        file_format = ext.lstrip(".") if ext else "txt"
+        paginated = extractor.paginate_text(
+            text=text_result,
+            file_size_bytes=file_size,
+            file_format=file_format,
+            offset=0,
+            max_chars=_ATTACHMENT_READ_FILE_MAX_CHARS,
+        )
+        return paginated.to_dict()
+    except FileNotFoundError:
+        return (
+            f"Error: The file '{path}' was not found. "
+            "Please check the path using list_directory."
+        )
+    except PermissionError as exc:
+        return f"Error: {str(exc)}"
+    except IsADirectoryError:
+        return (
+            f"Error: '{path}' is a directory, not a file. "
+            "Use list_directory to see its contents."
+        )
+    except Exception as exc:
+        return f"Error: An unexpected error occurred reading '{path}': {str(exc)}"
 
 
 def _format_attachment_tool_path(path: str) -> str:
@@ -114,6 +194,11 @@ def _get_thumbnail_creator():
         logger.warning("Screenshot thumbnail support unavailable: %s", exc)
         return None
     return create_thumbnail
+
+
+@lru_cache(maxsize=1)
+def _get_attachment_file_extractor() -> FileExtractor:
+    return FileExtractor()
 
 
 class ConversationService:
