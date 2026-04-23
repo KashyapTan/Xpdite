@@ -75,11 +75,11 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 1. Install the latest published build for your platform:
    Windows x64:
    ```bash
-   curl.exe -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.ps1 | powershell.exe -NoProfile -ExecutionPolicy Bypass -Command -
+   irm https://kashyaptan.com/Xpdite/install.ps1 | iex
    ```
    macOS Apple Silicon:
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.sh | bash
+   curl -fsSL https://kashyaptan.com/Xpdite/install.sh | bash
    ```
    Manual downloads remain available on [Releases](https://github.com/KashyapTan/xpdite/releases).
 2. Launch Xpdite and wait for startup checks to finish.
