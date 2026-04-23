@@ -81,6 +81,7 @@ vi.mock('./utils.js', () => ({
 
 describe('pythonApi', () => {
   const originalFetch = global.fetch;
+  const originalPlatform = process.platform;
   const originalResourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
   let latestChild: FakeChildProcess | null = null;
 
@@ -136,6 +137,10 @@ describe('pythonApi', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    Object.defineProperty(process, 'platform', {
+      value: originalPlatform,
+      configurable: true,
+    });
     Object.defineProperty(process, 'resourcesPath', {
       value: originalResourcesPath,
       configurable: true,
@@ -329,11 +334,16 @@ describe('pythonApi', () => {
     );
   });
 
-  test.runIf(process.platform !== 'win32')('uses a versioned bundled child python when generic symlinks are missing', async () => {
+  test('uses a versioned bundled child python when generic symlinks are missing', async () => {
     const child = new FakeChildProcess();
     latestChild = child;
     spawnMock.mockReturnValue(child);
     isDevMock.mockReturnValue(false);
+
+    Object.defineProperty(process, 'platform', {
+      value: 'darwin',
+      configurable: true,
+    });
 
     const packagedResourcesPath = '/tmp/resources';
     Object.defineProperty(process, 'resourcesPath', {

@@ -55,6 +55,7 @@ describe('SettingsSkills', () => {
     mockedApi.skillsApi.delete.mockResolvedValue(undefined);
     vi.spyOn(window, 'alert').mockImplementation(() => undefined);
     vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
@@ -83,6 +84,7 @@ describe('SettingsSkills', () => {
     fireEvent.click(toggle);
 
     await waitFor(() => {
+      expect(console.error).toHaveBeenCalledWith('Failed to toggle skill', expect.any(Error));
       expect(window.alert).toHaveBeenCalledWith('Toggle failed');
     });
   });

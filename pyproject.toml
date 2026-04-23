@@ -67,3 +67,4 @@ dev = [
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+cache_dir = "codex-temp/pytest-cache"

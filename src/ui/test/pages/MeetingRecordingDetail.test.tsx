@@ -1,5 +1,5 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import MeetingRecordingDetail from '../../pages/MeetingRecordingDetail';
 
@@ -16,6 +16,12 @@ type WsMessage = {
 };
 
 let wsHandler: ((msg: WsMessage) => void) | null = null;
+
+async function dispatchWsMessage(message: WsMessage) {
+  await act(async () => {
+    wsHandler?.(message);
+  });
+}
 
 vi.mock('../../components/TitleBar', () => ({
   default: () => <div data-testid="title-bar">title</div>,
@@ -88,7 +94,7 @@ describe('MeetingRecordingDetail', () => {
     expect(getEnabledModelsMock).toHaveBeenCalled();
     expect(wsHandler).not.toBeNull();
 
-    wsHandler?.({ type: 'meeting_recording_loaded', content: baseRecording });
+    await dispatchWsMessage({ type: 'meeting_recording_loaded', content: baseRecording });
 
     expect(await screen.findByText('Team Sync')).toBeInTheDocument();
     expect(screen.getByText('Transcript')).toBeInTheDocument();
@@ -97,7 +103,7 @@ describe('MeetingRecordingDetail', () => {
   test('sends summarize request with selected model', async () => {
     render(<MeetingRecordingDetail />);
 
-    wsHandler?.({ type: 'meeting_recording_loaded', content: baseRecording });
+    await dispatchWsMessage({ type: 'meeting_recording_loaded', content: baseRecording });
 
     const modelSelect = await screen.findByRole('combobox');
     fireEvent.change(modelSelect, { target: { value: 'anthropic/claude-3-7-sonnet' } });
@@ -119,7 +125,7 @@ describe('MeetingRecordingDetail', () => {
 
     expect(screen.getByText('Analyzing transcript...')).toBeInTheDocument();
 
-    wsHandler?.({
+    await dispatchWsMessage({
       type: 'meeting_analysis_complete',
       content: {
         recording_id: 'rec-1',
@@ -142,11 +148,11 @@ describe('MeetingRecordingDetail', () => {
 
   test('handles analysis error and allows retry', async () => {
     render(<MeetingRecordingDetail />);
-    wsHandler?.({ type: 'meeting_recording_loaded', content: baseRecording });
+    await dispatchWsMessage({ type: 'meeting_recording_loaded', content: baseRecording });
 
     fireEvent.click(await screen.findByRole('button', { name: 'Summarize Recording' }));
 
-    wsHandler?.({
+    await dispatchWsMessage({
       type: 'meeting_analysis_error',
       content: {
         recording_id: 'rec-1',
@@ -168,7 +174,7 @@ describe('MeetingRecordingDetail', () => {
   test('sends action execute payload and shows action result status', async () => {
     render(<MeetingRecordingDetail />);
 
-    wsHandler?.({
+    await dispatchWsMessage({
       type: 'meeting_recording_loaded',
       content: {
         ...baseRecording,
@@ -203,7 +209,7 @@ describe('MeetingRecordingDetail', () => {
       },
     });
 
-    wsHandler?.({
+    await dispatchWsMessage({
       type: 'meeting_action_result',
       content: {
         recording_id: 'rec-1',
