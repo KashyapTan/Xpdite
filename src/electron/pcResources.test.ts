@@ -2,7 +2,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import process from 'node:process';
 import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, test } from 'vitest';
@@ -10,16 +9,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest';
 import { bundlePythonResources } from './pcResources.js';
 
 describe('bundlePythonResources', () => {
-  const originalCwd = process.cwd();
   let workspaceDir: string;
 
   beforeEach(() => {
     workspaceDir = fs.mkdtempSync(path.join(tmpdir(), 'xpdite-pc-resources-'));
-    process.chdir(workspaceDir);
   });
 
   afterEach(() => {
-    process.chdir(originalCwd);
     fs.rmSync(workspaceDir, { recursive: true, force: true });
   });
 
@@ -38,7 +34,7 @@ describe('bundlePythonResources', () => {
       'utf8',
     );
 
-    bundlePythonResources();
+    bundlePythonResources(workspaceDir);
 
     const bundledPythonDir = path.join(workspaceDir, 'dist-electron', 'resources', 'python');
     expect(fs.readFileSync(path.join(bundledPythonDir, 'source', 'services', 'app.py'), 'utf8')).toBe('print("hello")');
@@ -53,7 +49,7 @@ describe('bundlePythonResources', () => {
   });
 
   test('still creates the resource directories when source and virtualenv assets are absent', () => {
-    bundlePythonResources();
+    bundlePythonResources(workspaceDir);
 
     expect(fs.existsSync(path.join(workspaceDir, 'dist-electron', 'resources'))).toBe(true);
     expect(fs.existsSync(path.join(workspaceDir, 'dist-electron', 'resources', 'python'))).toBe(true);

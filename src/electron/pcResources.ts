@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 
-export function bundlePythonResources(): void {
-    const resourcesDir = path.join(process.cwd(), 'dist-electron', 'resources');
+export function bundlePythonResources(projectRoot: string = process.cwd()): void {
+    const resourcesDir = path.join(projectRoot, 'dist-electron', 'resources');
     const pythonDir = path.join(resourcesDir, 'python');
     
     if (!fs.existsSync(resourcesDir)) {
@@ -16,7 +16,7 @@ export function bundlePythonResources(): void {
     console.log('Bundling Python resources...');
     
     // Copy Python source code
-    const sourceDir = path.join(process.cwd(), 'source');
+    const sourceDir = path.join(projectRoot, 'source');
     const targetSourceDir = path.join(pythonDir, 'source');
     
     if (fs.existsSync(sourceDir)) {
@@ -25,7 +25,7 @@ export function bundlePythonResources(): void {
     }
     
     // Copy Python executable and dependencies from virtual environment
-    const venvDir = path.join(process.cwd(), '.venv');
+    const venvDir = path.join(projectRoot, '.venv');
     if (fs.existsSync(venvDir)) {
         const venvScriptsDir = path.join(venvDir, 'Scripts');
         const venvLibDir = path.join(venvDir, 'Lib');
