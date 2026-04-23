@@ -110,7 +110,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13 --managed-python
+        run: uv sync --group dev --python 3.13
 
       - name: Run lint
         run: bun run lint
@@ -156,7 +156,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13 --managed-python
+        run: uv sync --group dev --python 3.13
 
       - name: Build Windows release
         env:
@@ -203,7 +203,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13 --managed-python
+        run: uv sync --group dev --python 3.13
 
       - name: Build macOS release
         env:
