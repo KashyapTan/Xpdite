@@ -27,6 +27,8 @@
 An AI assistant and agent harness that is truly **yours**. It runs your desktop using any model provider, is completely open-source, 100% customizable, and built for everyone.
 Use it as a desktop copilot, then continue the same experience from mobile channels through WhatsApp, Telegram, or Discord.
 
+---
+
 ## Why Xpdite
 
 - **Agent harness, not just chat** -- Supports multi-step execution with approval-aware actions and structured task flows.
@@ -36,6 +38,8 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 - **Remote continuity** -- Mobile Channel Bridge keeps conversations accessible from messaging apps.
 - **Extensible by design** -- Built for customization, integrations, and long-term evolution.
 
+---
+
 ## Core Features
 
 - **Comprehensive execution timeline UI** -- Beautiful in-chat thinking and tool-call rendering that shows model steps, live tool progress, terminal output, and completion states in a single readable flow.
@@ -44,6 +48,8 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 - **Broad file intelligence** -- Reads and extracts content from code files, PDFs, Office documents, ODF/RTF formats, ZIP listings, and image files so context loading stays frictionless.
 - **Advanced custom tool ecosystem** -- Includes high-capability web search, YouTube video watcher flows, an approval-aware terminal/bash runtime, and many more MCP/inline tools.
 - **Mobile + desktop continuity** -- Start on desktop and continue from WhatsApp, Telegram, or Discord with paired session routing.
+
+---
 
 ### Architecture Diagram
 
@@ -67,6 +73,8 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 | (TypeScript svc)   |     WhatsApp adapters    | (remote chat)      |
 +--------------------+                          +--------------------+
 ```
+
+---
 
 ## Getting Started
 
@@ -108,6 +116,8 @@ uv run python -m pytest tests/ -v
 bun run build
 ```
 
+---
+
 ## Documentation
 
 | Document | Description |
@@ -135,13 +145,19 @@ bun run build
 | [Troubleshooting](./docs/troubleshooting.md) | Common issues and fixes |
 | [Contributing](./docs/contributing.md) | How to contribute |
 
+---
+
 ## Contributing
 
 Contributions are welcome. Read [docs/contributing.md](./docs/contributing.md) before opening a PR.
 
+---
+
 ## License
 
 [MIT](./LICENSE)
+
+---
 
 ## Sponsor
 
