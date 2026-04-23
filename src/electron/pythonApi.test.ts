@@ -10,6 +10,7 @@ const appGetPathMock = vi.fn().mockReturnValue('C:/Users/tester/AppData/Roaming/
 const execMock = vi.fn();
 const existsSyncMock = vi.fn();
 const isDevMock = vi.fn();
+const readdirSyncMock = vi.fn();
 const spawnMock = vi.fn();
 
 const expectedVenvPythonPath = () => (
@@ -48,8 +49,10 @@ vi.mock('electron', () => ({
 vi.mock('fs', () => ({
   default: {
     existsSync: existsSyncMock,
+    readdirSync: readdirSyncMock,
   },
   existsSync: existsSyncMock,
+  readdirSync: readdirSyncMock,
 }));
 
 vi.mock('child_process', () => ({
@@ -87,6 +90,7 @@ describe('pythonApi', () => {
     global.fetch = vi.fn();
     latestChild = null;
     isDevMock.mockReturnValue(true);
+    readdirSyncMock.mockReturnValue([]);
     existsSyncMock.mockImplementation((value: string) => (
       value.includes(expectedVenvPythonPath())
     ));
@@ -292,8 +296,8 @@ describe('pythonApi', () => {
     const runtimeRoot = path.join(packagedResourcesPath, 'python-runtime');
     const runtimeEnvFile = path.join(packagedResourcesPath, 'runtime-config', 'google-oauth.env');
     const childPythonPath = process.platform === 'win32'
-      ? path.join(runtimeRoot, '.venv', 'Scripts', 'python.exe')
-      : path.join(runtimeRoot, '.venv', 'bin', 'python');
+      ? path.join(runtimeRoot, 'python', 'python.exe')
+      : path.join(runtimeRoot, 'python', 'bin', 'python3');
 
     existsSyncMock.mockImplementation((value: string) => (
       value === bundledServerPath
@@ -320,6 +324,55 @@ describe('pythonApi', () => {
           XPDITE_RUNTIME_ROOT: runtimeRoot,
           XPDITE_RUNTIME_ENV_FILE: runtimeEnvFile,
           XPDITE_CHILD_PYTHON_EXECUTABLE: childPythonPath,
+        }),
+      }),
+    );
+  });
+
+  test.runIf(process.platform !== 'win32')('uses a versioned bundled child python when generic symlinks are missing', async () => {
+    const child = new FakeChildProcess();
+    latestChild = child;
+    spawnMock.mockReturnValue(child);
+    isDevMock.mockReturnValue(false);
+
+    const packagedResourcesPath = '/tmp/resources';
+    Object.defineProperty(process, 'resourcesPath', {
+      value: packagedResourcesPath,
+      configurable: true,
+    });
+
+    const bundledServerPath = path.join(packagedResourcesPath, 'python-server', 'xpdite-server');
+    const runtimeRoot = path.join(packagedResourcesPath, 'python-runtime');
+    const runtimeEnvFile = path.join(packagedResourcesPath, 'runtime-config', 'google-oauth.env');
+    const versionedPythonBin = path.join(runtimeRoot, 'python', 'bin');
+    const versionedChildPythonPath = path.join(versionedPythonBin, 'python3.13');
+
+    readdirSyncMock.mockImplementation((value: string) => (
+      value === versionedPythonBin ? ['python3.13'] : []
+    ));
+    existsSyncMock.mockImplementation((value: string) => (
+      value === bundledServerPath
+      || value === runtimeRoot
+      || value === runtimeEnvFile
+      || value === versionedPythonBin
+      || value === versionedChildPythonPath
+    ));
+
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve('ok'),
+    } as Response);
+
+    const { startPythonServer } = await import('./pythonApi.js');
+
+    await expect(startPythonServer()).resolves.toBeUndefined();
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      bundledServerPath,
+      [],
+      expect.objectContaining({
+        env: expect.objectContaining({
+          XPDITE_CHILD_PYTHON_EXECUTABLE: versionedChildPythonPath,
         }),
       }),
     );

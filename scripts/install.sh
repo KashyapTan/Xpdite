@@ -370,7 +370,7 @@ main() {
           asset_pattern='^Xpdite-.*-mac-arm64\.dmg$'
           ;;
         x86_64)
-          fail "Current beta releases only publish Apple Silicon macOS builds."
+          fail "Current releases only publish Apple Silicon macOS builds."
           ;;
         *)
           fail "Unsupported macOS architecture: $ARCH_NAME"
@@ -410,6 +410,7 @@ main() {
   fi
 
   need_cmd hdiutil
+  need_cmd ditto
   tmpdir="$(mktemp -d)"
   asset_path="${tmpdir}/${selected_asset_name}"
   checksum_path="${tmpdir}/SHA256SUMS.txt"
@@ -417,15 +418,19 @@ main() {
   mkdir -p "$mount_dir"
 
   cleanup() {
-    if [[ -n "$mount_dir" && -d "$mount_dir" ]]; then
-      hdiutil detach "$mount_dir" -quiet >/dev/null 2>&1 || true
+    local cleanup_mount_dir="${1:-}"
+    local cleanup_tmpdir="${2:-}"
+    local keep_download="${3:-0}"
+
+    if [[ -n "$cleanup_mount_dir" && -d "$cleanup_mount_dir" ]]; then
+      hdiutil detach "$cleanup_mount_dir" -quiet >/dev/null 2>&1 || true
     fi
 
-    if [[ "$KEEP_DOWNLOAD" != "1" && -n "$tmpdir" && -d "$tmpdir" ]]; then
-      rm -rf "$tmpdir"
+    if [[ "$keep_download" != "1" && -n "$cleanup_tmpdir" && -d "$cleanup_tmpdir" ]]; then
+      rm -rf "$cleanup_tmpdir"
     fi
   }
-  trap cleanup EXIT
+  trap "cleanup '$mount_dir' '$tmpdir' '$KEEP_DOWNLOAD'" EXIT
 
   log "Downloading installer"
   download_file "$selected_asset_url" "$asset_path"
@@ -448,16 +453,22 @@ main() {
 
   if mkdir -p "$INSTALL_DIR" 2>/dev/null; then
     rm -rf "$installed_app"
-    cp -R "$source_app" "$installed_app"
+    ditto "$source_app" "$installed_app"
+    if command -v xattr >/dev/null 2>&1; then
+      xattr -dr com.apple.quarantine "$installed_app" >/dev/null 2>&1 || true
+    fi
   else
     need_cmd sudo
     sudo mkdir -p "$INSTALL_DIR"
     sudo rm -rf "$installed_app"
-    sudo cp -R "$source_app" "$installed_app"
+    sudo ditto "$source_app" "$installed_app"
+    if command -v xattr >/dev/null 2>&1; then
+      sudo xattr -dr com.apple.quarantine "$installed_app" >/dev/null 2>&1 || true
+    fi
   fi
 
   log "Installed Xpdite to ${installed_app}"
-  warn "Xpdite is not code-signed yet, so macOS may still show a first-launch security prompt."
+  warn "Xpdite is not notarized yet, so direct macOS downloads may still show a security prompt."
 }
 
 main "$@"

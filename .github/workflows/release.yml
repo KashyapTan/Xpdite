@@ -1,4 +1,4 @@
-name: Beta Release
+name: Release
 
 on:
   push:
@@ -7,15 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Beta version without the leading v"
+        description: "Release version without the leading v"
         required: true
         type: string
       release_name:
-        description: "Optional prerelease title"
+        description: "Optional release title"
         required: false
         type: string
       release_notes:
-        description: "Optional prerelease notes"
+        description: "Optional release notes"
         required: false
         type: string
 
@@ -25,6 +25,7 @@ permissions:
 env:
   GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
   GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+  UV_PYTHON_PREFERENCE: managed
 
 jobs:
   resolve-release:
@@ -63,7 +64,7 @@ jobs:
           fi
 
           if [[ -z "$name" ]]; then
-            name="Xpdite Beta ${tag}"
+            name="Xpdite ${tag}"
           fi
 
           notes_delimiter="XPDITE_RELEASE_NOTES_$(date +%s)"
@@ -99,19 +100,17 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install managed Python
+        run: uv python install 3.13
+
       - name: Install Python dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python 3.13 --managed-python
 
       - name: Run lint
         run: bun run lint
@@ -147,21 +146,19 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Python dependencies
-        run: uv sync --group dev
+      - name: Install managed Python
+        run: uv python install 3.13
 
-      - name: Build Windows prerelease
+      - name: Install Python dependencies
+        run: uv sync --group dev --python 3.13 --managed-python
+
+      - name: Build Windows release
         env:
           XPDITE_BUILD_VERSION: ${{ needs.resolve-release.outputs.version }}
         run: bun run dist:win
@@ -169,7 +166,7 @@ jobs:
       - name: Upload Windows installer
         uses: actions/upload-artifact@v7
         with:
-          name: xpdite-beta-win
+          name: xpdite-release-win
           path: dist/*.exe
           if-no-files-found: error
           compression-level: 0
@@ -196,30 +193,28 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
 
-      - name: Install Python dependencies
-        run: uv sync --group dev
+      - name: Install managed Python
+        run: uv python install 3.13
 
-      - name: Build macOS prerelease
+      - name: Install Python dependencies
+        run: uv sync --group dev --python 3.13 --managed-python
+
+      - name: Build macOS release
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: "false"
           XPDITE_BUILD_VERSION: ${{ needs.resolve-release.outputs.version }}
+          XPDITE_MAC_IDENTITY: "-"
         run: bun run dist:mac
 
       - name: Upload macOS disk image
         uses: actions/upload-artifact@v7
         with:
-          name: xpdite-beta-mac
+          name: xpdite-release-mac
           path: dist/*.dmg
           if-no-files-found: error
           compression-level: 0
@@ -236,13 +231,13 @@ jobs:
       - name: Download Windows artifact
         uses: actions/download-artifact@v5
         with:
-          name: xpdite-beta-win
+          name: xpdite-release-win
           path: release-assets/windows
 
       - name: Download macOS artifact
         uses: actions/download-artifact@v5
         with:
-          name: xpdite-beta-mac
+          name: xpdite-release-mac
           path: release-assets/macos
 
       - name: Create release checksums
@@ -255,14 +250,15 @@ jobs:
             printf '%s  %s\n' "$checksum" "${file##*/}" >> release-assets/SHA256SUMS.txt
           done
 
-      - name: Publish prerelease with manual notes
+      - name: Publish release with manual notes
         if: ${{ needs.resolve-release.outputs.has_manual_notes == 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-release.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ needs.resolve-release.outputs.name }}
-          prerelease: true
+          make_latest: true
+          prerelease: false
           body: ${{ needs.resolve-release.outputs.notes }}
           files: |
             release-assets/windows/*.exe
@@ -270,14 +266,15 @@ jobs:
             release-assets/SHA256SUMS.txt
           fail_on_unmatched_files: true
 
-      - name: Publish prerelease with generated notes
+      - name: Publish release with generated notes
         if: ${{ needs.resolve-release.outputs.has_manual_notes != 'true' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.resolve-release.outputs.tag }}
           target_commitish: ${{ github.sha }}
           name: ${{ needs.resolve-release.outputs.name }}
-          prerelease: true
+          make_latest: true
+          prerelease: false
           generate_release_notes: true
           files: |
             release-assets/windows/*.exe

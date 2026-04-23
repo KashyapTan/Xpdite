@@ -4,6 +4,7 @@ const [, , requestedPlatform, requestedArch] = process.argv;
 const platform = requestedPlatform?.trim();
 const arch = requestedArch?.trim() || 'x64';
 const buildVersion = process.env.XPDITE_BUILD_VERSION?.trim();
+const macIdentity = process.env.XPDITE_MAC_IDENTITY?.trim();
 
 if (!platform || !['win', 'mac', 'linux'].includes(platform)) {
   throw new Error('Usage: node scripts/run-electron-dist.mjs <win|mac|linux> [arch]');
@@ -38,6 +39,10 @@ const electronBuilderArgs = [`--${platform}`, `--${arch}`, '--publish', 'never']
 
 if (buildVersion) {
   electronBuilderArgs.push(`-c.extraMetadata.version=${buildVersion}`);
+}
+
+if (platform === 'mac' && macIdentity) {
+  electronBuilderArgs.push(`-c.mac.identity=${macIdentity}`);
 }
 
 run(bunCommand, ['run', 'build']);

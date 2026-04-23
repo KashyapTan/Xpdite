@@ -112,6 +112,12 @@ def _resolve_child_python_site_packages() -> Optional[Path]:
         lib_dir = venv_root / "lib"
         if lib_dir.exists():
             candidates.extend(sorted(lib_dir.glob("python*/site-packages")))
+    else:
+        runtime_root = executable.parent
+        candidates.append(runtime_root / "Lib" / "site-packages")
+        lib_dir = runtime_root / "lib"
+        if lib_dir.exists():
+            candidates.extend(sorted(lib_dir.glob("python*/site-packages")))
 
     for candidate in candidates:
         if candidate.exists():

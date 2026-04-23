@@ -13,6 +13,8 @@ jobs:
   verify:
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      UV_PYTHON_PREFERENCE: managed
 
     steps:
       - name: Check out repository
@@ -26,19 +28,17 @@ jobs:
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
 
       - name: Install JavaScript dependencies
         run: bun install --frozen-lockfile
 
+      - name: Install managed Python
+        run: uv python install 3.13
+
       - name: Install Python dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --python 3.13 --managed-python
 
       - name: Run lint
         run: bun run lint

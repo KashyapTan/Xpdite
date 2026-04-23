@@ -399,12 +399,18 @@ function findRuntimeRoot(): string {
 function findBundledChildPythonExecutable(runtimeRoot: string): string {
     const candidates = process.platform === 'win32'
         ? [
+            path.join(runtimeRoot, 'python', 'python.exe'),
+            path.join(runtimeRoot, 'python', 'python3.exe'),
             path.join(runtimeRoot, '.venv', 'Scripts', 'python.exe'),
             path.join(runtimeRoot, 'python.exe'),
           ]
         : [
+            path.join(runtimeRoot, 'python', 'bin', 'python3'),
+            path.join(runtimeRoot, 'python', 'bin', 'python'),
             path.join(runtimeRoot, '.venv', 'bin', 'python'),
             path.join(runtimeRoot, '.venv', 'bin', 'python3'),
+            path.join(runtimeRoot, 'python', 'python3'),
+            path.join(runtimeRoot, 'python', 'python'),
             path.join(runtimeRoot, 'bin', 'python3'),
             path.join(runtimeRoot, 'bin', 'python'),
           ];
@@ -412,6 +418,26 @@ function findBundledChildPythonExecutable(runtimeRoot: string): string {
     for (const candidate of candidates) {
         if (fs.existsSync(candidate)) {
             return candidate;
+        }
+    }
+
+    if (process.platform !== 'win32') {
+        const versionedPythonBin = path.join(runtimeRoot, 'python', 'bin');
+        if (fs.existsSync(versionedPythonBin)) {
+            try {
+                const dynamicCandidates = fs.readdirSync(versionedPythonBin)
+                    .filter((entry) => /^python(?:\d+(?:\.\d+)*)?$/.test(entry))
+                    .sort((left, right) => right.localeCompare(left));
+
+                for (const entry of dynamicCandidates) {
+                    const candidate = path.join(versionedPythonBin, entry);
+                    if (fs.existsSync(candidate)) {
+                        return candidate;
+                    }
+                }
+            } catch (error) {
+                console.warn(`Unable to inspect bundled child Python binaries: ${error instanceof Error ? error.message : 'Unknown error'}`);
+            }
         }
     }
 
