@@ -40,6 +40,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --group dev
 
+      - name: Run lint
+        run: bun run lint
+
       - name: Run frontend tests
         run: bun run test:frontend
 

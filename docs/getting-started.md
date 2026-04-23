@@ -12,6 +12,7 @@ This guide covers initial setup for both end users and contributors.
 ### Prerequisites
 
 1.  **OS**: Windows 10/11 or macOS (11.0+)
+    - Current beta installers are published for Windows x64 and Apple Silicon macOS only.
 2.  **System Dependencies (macOS only)**:
     - Install [Homebrew](https://brew.sh)
     - Install PortAudio for audio features:
@@ -31,7 +32,21 @@ This guide covers initial setup for both end users and contributors.
 
 ### Install
 
-Download the latest installer from the [Releases](https://github.com/KashyapTan/xpdite/releases) page.
+Install the latest published build from the terminal:
+
+Windows x64:
+
+```powershell
+curl.exe -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.ps1 | powershell.exe -NoProfile -ExecutionPolicy Bypass -Command -
+```
+
+macOS Apple Silicon:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.sh | bash
+```
+
+Manual downloads remain available on the [Releases](https://github.com/KashyapTan/xpdite/releases) page.
 
 If SmartScreen warns because the app is not code-signed yet, choose **More info** and **Run anyway**.
 
@@ -39,7 +54,7 @@ Safety checks before bypassing SmartScreen:
 
 - Download only from the official GitHub releases page.
 - Verify repository owner and release tag before running installer.
-- If checksums are published for a release, verify file integrity before install.
+- For manual downloads, verify file integrity against the published `SHA256SUMS.txt` asset before install.
 
 ### First Run
 
@@ -157,6 +172,7 @@ The beta workflow expects repository secrets named:
 - `GOOGLE_CLIENT_SECRET`
 
 Manual dispatch requires a beta version string and can optionally include a custom release name and release notes.
+Each beta release now also publishes `SHA256SUMS.txt` so manual downloads and install scripts can verify asset integrity.
 
 ## Repository Layout
 
