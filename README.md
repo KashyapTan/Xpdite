@@ -74,7 +74,7 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 
 1. Install the latest published build for your platform:
    Windows x64:
-   ```powershell
+   ```bash
    curl.exe -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.ps1 | powershell.exe -NoProfile -ExecutionPolicy Bypass -Command -
    ```
    macOS Apple Silicon:
