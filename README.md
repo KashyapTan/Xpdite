@@ -53,7 +53,7 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 
 ## Demo
 
-See Xpdite in action:
+Xpdite in action:
 
 
 https://github.com/user-attachments/assets/412d2da8-ccba-4825-a47d-f1c6fca3d81f
