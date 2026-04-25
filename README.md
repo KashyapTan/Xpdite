@@ -55,11 +55,9 @@ Use it as a desktop copilot, then continue the same experience from mobile chann
 
 See Xpdite in action:
 
-<video src="./demos/read_website_n_fullscreen_mode_demo.mp4" controls>
-  Your browser does not support the video tag.
-  You can download the demo from
-  <a href="./demos/read_website_n_fullscreen_mode_demo.mp4">demos/read_website_n_fullscreen_mode_demo.mp4</a>.
-</video>
+
+https://github.com/user-attachments/assets/412d2da8-ccba-4825-a47d-f1c6fca3d81f
+
 
 ---
 
