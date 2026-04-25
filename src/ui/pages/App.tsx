@@ -47,6 +47,7 @@ import type {
   ConversationResumedContent,
   ConversationTurnPayload,
   ArtifactContentPayload,
+  ToolCall,
   ToolCallContent,
   SubAgentStreamContent,
   TokenUsageContent,
@@ -57,12 +58,15 @@ import type {
   TerminalOutput,
   TerminalCommandComplete,
   YouTubeTranscriptionApprovalRequest,
+  ChatErrorAction,
+  ChatErrorSource,
 } from '../types';
 import type { LocalTurnPatch } from '../utils/conversationMessageTransforms';
 import { formatModelLabel, getModelProviderKey, getProviderLabel } from '../utils/modelDisplay';
 import { ProviderLogo } from '../components/icons/ProviderLogos';
 import { hasProviderLogo } from '../utils/providerLogos';
 import { applyToolCallChange } from '../utils/toolCallState';
+import { createChatErrorDescriptor } from '../utils/chatErrors';
 
 // Assets
 import '../CSS/pages/App.css';
@@ -689,6 +693,7 @@ function App() {
       canSubmit: true,
       status: 'Ready to chat.',
       error: '',
+      errorMessage: null,
     },
     screenshots: {
       screenshots: [],
@@ -858,6 +863,61 @@ function App() {
     };
   }, []);
 
+  const scrollToBottom = useCallback(() => {
+    responseAreaRef.current?.scrollTo({
+      top: responseAreaRef.current.scrollHeight,
+      behavior: 'auto',
+    });
+  }, []);
+
+  const buildChatError = useCallback((
+    rawError: string,
+    {
+      source,
+      action = 'unknown',
+      model,
+    }: {
+      source: ChatErrorSource;
+      action?: ChatErrorAction;
+      model?: string;
+    },
+  ) => createChatErrorDescriptor({
+    rawError,
+    source,
+    action,
+    model: model ?? (generatingModelRef.current || selectedModel),
+  }), [selectedModel]);
+
+  const showActiveChatError = useCallback((
+    rawError: string,
+    {
+      source,
+      action = 'unknown',
+      model,
+    }: {
+      source: ChatErrorSource;
+      action?: ChatErrorAction;
+      model?: string;
+    },
+    options?: {
+      resetStreaming?: boolean;
+      preserveCurrentQuery?: boolean;
+    },
+  ) => {
+    const descriptor = buildChatError(rawError, { source, action, model });
+    if (options?.resetStreaming) {
+      chatState.clearStreamingState(descriptor.status, {
+        preserveCurrentQuery: options.preserveCurrentQuery ?? false,
+      });
+    } else {
+      chatState.setStatus(descriptor.status);
+      chatState.setCanSubmit(true);
+    }
+    chatState.setErrorMessage(descriptor.message, descriptor.rawError);
+    setTimeout(scrollToBottom, 50);
+    return descriptor;
+  }, [buildChatError, chatState, scrollToBottom]);
+
   const applyToBackgroundTab = useCallback(async (tabId: string, data: WebSocketMessage) => {
     const snap = getTabSnapshot(tabId) ?? freshSnapshot();
     const chat = { ...snap.chat };
@@ -870,6 +930,7 @@ function App() {
           startStreamPerfCycle(chat.currentQuery, snap.generatingModel || selectedModel);
         }
         chat.error = '';
+        chat.errorMessage = null;
         chat.status = 'Thinking...';
         chat.isThinking = true;
         chat.canSubmit = false;
@@ -958,6 +1019,15 @@ function App() {
         if (tabId === activeTabIdRef.current) {
           finishStreamPerfCycle('background-response-complete');
         }
+        if (chat.error || chat.errorMessage) {
+          chat.response = '';
+          chat.thinking = '';
+          chat.isThinking = false;
+          chat.toolCalls = [];
+          chat.contentBlocks = [];
+          chat.canSubmit = true;
+          break;
+        }
         if (pendingTurnAction) {
           chat.isThinking = false;
           chat.status = 'Saving updated turn...';
@@ -995,6 +1065,8 @@ function App() {
         chat.toolCalls = [];
         chat.contentBlocks = [];
         chat.canSubmit = true;
+        chat.error = '';
+        chat.errorMessage = null;
         chat.status = 'Ready for follow-up question.';
         break;
       }
@@ -1011,6 +1083,7 @@ function App() {
         chat.canSubmit = true;
         chat.status = 'Context cleared.';
         chat.error = '';
+        chat.errorMessage = null;
         chat.query = '';
         break;
 
@@ -1026,6 +1099,8 @@ function App() {
         const latestPendingTurnAction = pendingTurnActionsRef.current.get(tabId);
 
         latestChat.conversationId = sd.conversation_id;
+        latestChat.error = '';
+        latestChat.errorMessage = null;
         if (latestPendingTurnAction && !sd.turn) {
           latestChat.response = '';
           latestChat.thinking = '';
@@ -1104,17 +1179,50 @@ function App() {
         latestChat.contentBlocks = [];
         latestChat.canSubmit = true;
         latestChat.status = 'Conversation loaded. Ask a follow-up question.';
+        latestChat.error = '';
+        latestChat.errorMessage = null;
         pendingTurnActionsRef.current.delete(tabId);
         setTabSnapshot(tabId, { ...latestSnap, chat: latestChat });
         return;
+      }
+
+      case 'queue_full': {
+        const descriptor = buildChatError('Tab queue is full (5 items).', {
+          source: 'queue',
+          action: pendingTurnAction?.type ?? 'submit',
+          model: snap.generatingModel || selectedModel,
+        });
+        chat.response = '';
+        chat.thinking = '';
+        chat.isThinking = false;
+        chat.toolCalls = [];
+        chat.contentBlocks = [];
+        chat.error = descriptor.rawError;
+        chat.errorMessage = descriptor.message;
+        chat.status = descriptor.status;
+        chat.canSubmit = true;
+        break;
       }
 
       case 'error':
         if (tabId === activeTabIdRef.current) {
           finishStreamPerfCycle('background-error');
         }
-        chat.error = String(data.content);
-        chat.status = 'An error occurred.';
+        {
+          const descriptor = buildChatError(String(data.content), {
+            source: 'backend',
+            action: pendingTurnAction?.type ?? 'submit',
+            model: snap.generatingModel || selectedModel,
+          });
+          chat.response = '';
+          chat.thinking = '';
+          chat.isThinking = false;
+          chat.toolCalls = [];
+          chat.contentBlocks = [];
+          chat.error = descriptor.rawError;
+          chat.errorMessage = descriptor.message;
+          chat.status = descriptor.status;
+        }
         chat.canSubmit = true;
         if (pendingTurnAction) {
           chat.response = '';
@@ -1360,6 +1468,7 @@ function App() {
 
     setTabSnapshot(tabId, { ...snap, chat });
   }, [
+    buildChatError,
     finishStreamPerfCycle,
     freshSnapshot,
     getTabSnapshot,
@@ -1422,7 +1531,7 @@ function App() {
       case 'ready':
         chatState.setStatus(String(data.content) || 'Ready to chat.');
         chatState.setCanSubmit(true);
-        chatState.setError('');
+        chatState.clearError();
 
         if (pendingCreatedTabIdRef.current) {
           wsSend({ type: 'tab_created', tab_id: pendingCreatedTabIdRef.current });
@@ -1451,13 +1560,13 @@ function App() {
 
       case 'screenshot_ready':
         chatState.setStatus('Screenshot captured!');
-        chatState.setError('');
+        chatState.clearError();
         setIsHidden(false);
         return true;
 
       case 'screenshot_cancelled':
         chatState.setStatus(String(data.content) || 'Screenshot cancelled.');
-        chatState.setError('');
+        chatState.clearError();
         setIsHidden(false);
         return true;
 
@@ -1519,10 +1628,6 @@ function App() {
 
       case 'ollama_queue_status':
         // TODO: display Ollama serialization status in UI
-        return true;
-
-      case 'queue_full':
-        chatState.setError('Queue is full. Please wait for current queries to finish.');
         return true;
 
       // ── Meeting messages are handled directly by their respective
@@ -1800,6 +1905,9 @@ function App() {
 
       case 'response_complete':
         finishStreamPerfCycle('response-complete');
+        if (chatState.error || chatState.errorMessage) {
+          break;
+        }
         if (activePendingTurnAction) {
           chatState.setIsThinking(false);
           chatState.setStatus('Saving updated turn...');
@@ -1908,15 +2016,28 @@ function App() {
         break;
       }
 
+      case 'queue_full':
+        showActiveChatError('Tab queue is full (5 items).', {
+          source: 'queue',
+          action: activePendingTurnAction?.type ?? 'submit',
+        }, {
+          resetStreaming: true,
+          preserveCurrentQuery: true,
+        });
+        break;
+
       case 'error':
         finishStreamPerfCycle('error');
         if (activePendingTurnAction) {
           pendingTurnActionsRef.current.delete(activeTabIdRef.current);
-          chatState.clearStreamingState('An error occurred.');
         }
-        chatState.setError(String(data.content));
-        chatState.setStatus('An error occurred.');
-        chatState.setCanSubmit(true);
+        showActiveChatError(String(data.content), {
+          source: 'backend',
+          action: activePendingTurnAction?.type ?? 'submit',
+        }, {
+          resetStreaming: true,
+          preserveCurrentQuery: true,
+        });
         break;
 
       // ── Terminal messages ──────────────────────────────
@@ -2037,6 +2158,7 @@ function App() {
     screenshotState,
     selectedModel,
     setIsHidden,
+    showActiveChatError,
     startStreamPerfCycle,
     tokenState,
     updateTabTitle,
@@ -2056,13 +2178,41 @@ function App() {
     if (messageTabId === activeTabIdRef.current) {
       void handleActiveTabMessage(data).catch((error) => {
         console.warn('[ws] Active tab message handling failed', error);
+        const message = error instanceof Error
+          ? `Chat UI failed while processing "${data.type}": ${error.message}`
+          : `Chat UI failed while processing "${data.type}".`;
+        showActiveChatError(message, {
+          source: 'client',
+          action: 'unknown',
+        });
       });
     } else {
       void applyToBackgroundTab(messageTabId, data).catch((error) => {
         console.warn('[ws] Background tab message handling failed', error);
+        const snapshot = getTabSnapshot(messageTabId) ?? freshSnapshot();
+        const descriptor = buildChatError(
+          error instanceof Error
+            ? `Chat UI failed while processing "${data.type}" in a background tab: ${error.message}`
+            : `Chat UI failed while processing "${data.type}" in a background tab.`,
+          {
+            source: 'client',
+            action: 'unknown',
+            model: snapshot.generatingModel || selectedModel,
+          },
+        );
+        setTabSnapshot(messageTabId, {
+          ...snapshot,
+          chat: {
+            ...snapshot.chat,
+            error: descriptor.rawError,
+            errorMessage: descriptor.message,
+            status: descriptor.status,
+            canSubmit: true,
+          },
+        });
       });
     }
-  }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab]);
+  }, [handleGlobalMessage, handleActiveTabMessage, applyToBackgroundTab, buildChatError, freshSnapshot, getTabSnapshot, selectedModel, setTabSnapshot, showActiveChatError]);
 
   // Keep WS handler in a ref so the subscription callback always calls
   // the latest version without needing to re-subscribe.
@@ -2077,7 +2227,7 @@ function App() {
       if (data.type === '__ws_connected') {
         // Connection (re-)established — run onopen logic
         chatState.setStatus('Connected to server');
-        chatState.setError('');
+        chatState.clearError();
         for (const tab of tabsRef.current) {
           wsSend({ type: 'tab_created', tab_id: tab.id });
         }
@@ -2086,7 +2236,13 @@ function App() {
         return;
       }
       if (data.type === '__ws_disconnected') {
-        chatState.setStatus('Disconnected. Retrying...');
+        showActiveChatError('Lost connection to the local backend.', {
+          source: 'connection',
+          action: 'connection',
+        }, {
+          resetStreaming: true,
+          preserveCurrentQuery: true,
+        });
         return;
       }
       // Route all real messages through the existing handler
@@ -2158,13 +2314,6 @@ function App() {
   // ============================================
   // Event Handlers
   // ============================================
-  const scrollToBottom = useCallback(() => {
-    responseAreaRef.current?.scrollTo({
-      top: responseAreaRef.current.scrollHeight,
-      behavior: 'auto',
-    });
-  }, []);
-
   const updateScrollBottomVisibility = useCallback(() => {
     if (responseAreaRef.current) {
       const { scrollTop, scrollHeight, clientHeight } = responseAreaRef.current;
@@ -2232,7 +2381,13 @@ function App() {
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!isConnected) return;
+    if (!isConnected) {
+      showActiveChatError('Cannot send a message while the backend is disconnected.', {
+        source: 'connection',
+        action: 'submit',
+      });
+      return;
+    }
 
     const queryText = chatState.query.trim();
     if (!queryText) return;
@@ -2313,7 +2468,27 @@ function App() {
   };
 
   const handleRetryMessage = useCallback((message: ChatMessage) => {
-    if (!isConnected || !message.messageId || !chatState.canSubmit) {
+    if (!isConnected) {
+      showActiveChatError('Cannot retry a message while the backend is disconnected.', {
+        source: 'connection',
+        action: 'retry',
+      });
+      return;
+    }
+
+    if (!message.messageId) {
+      showActiveChatError('Retry/edit actions require a target message.', {
+        source: 'backend',
+        action: 'retry',
+      });
+      return;
+    }
+
+    if (!chatState.canSubmit) {
+      showActiveChatError('Already streaming. Please wait.', {
+        source: 'backend',
+        action: 'retry',
+      });
       return;
     }
 
@@ -2328,10 +2503,30 @@ function App() {
       message_id: message.messageId,
       model: selectedModel,
     });
-  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
+  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, showActiveChatError, wsSend]);
 
   const handleEditMessage = useCallback((message: ChatMessage, content: string) => {
-    if (!isConnected || !message.messageId || !chatState.canSubmit) {
+    if (!isConnected) {
+      showActiveChatError('Cannot save an edit while the backend is disconnected.', {
+        source: 'connection',
+        action: 'edit',
+      });
+      return;
+    }
+
+    if (!message.messageId) {
+      showActiveChatError('Retry/edit actions require a target message.', {
+        source: 'backend',
+        action: 'edit',
+      });
+      return;
+    }
+
+    if (!chatState.canSubmit) {
+      showActiveChatError('Already streaming. Please wait.', {
+        source: 'backend',
+        action: 'edit',
+      });
       return;
     }
 
@@ -2348,7 +2543,7 @@ function App() {
       content,
       model: selectedModel,
     });
-  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, wsSend]);
+  }, [chatState.canSubmit, isConnected, scrollToBottom, selectedModel, showActiveChatError, wsSend]);
 
   const setChatHistory = chatState.setChatHistory;
 
@@ -2399,12 +2594,20 @@ function App() {
 
   const handleSetActiveResponse = useCallback(async (message: ChatMessage, responseIndex: number) => {
     if (!message.messageId || !message.responseVersions) {
+      showActiveChatError('Missing or invalid active response selection.', {
+        source: 'backend',
+        action: 'response_variant',
+      });
       return;
     }
 
     const { applyResponseVariant } = await loadConversationMessageTransforms();
     const nextMessage = applyResponseVariant(message, responseIndex);
     if (!nextMessage) {
+      showActiveChatError('Requested response variant does not exist.', {
+        source: 'backend',
+        action: 'response_variant',
+      });
       return;
     }
 
@@ -2421,7 +2624,7 @@ function App() {
       message_id: message.messageId,
       response_index: responseIndex,
     });
-  }, [setChatHistory, wsSend]);
+  }, [setChatHistory, showActiveChatError, wsSend]);
 
   const handleStopStreaming = () => {
     wsSend({ type: 'stop_streaming' });
@@ -2621,6 +2824,7 @@ function App() {
         generatingModel={generatingModelRef.current || selectedModel}
         canSubmit={chatState.canSubmit}
         error={chatState.error}
+        errorMessage={chatState.errorMessage}
         showScrollBottom={showScrollBottom}
         onRetryMessage={handleRetryMessage}
         onEditMessage={handleEditMessage}

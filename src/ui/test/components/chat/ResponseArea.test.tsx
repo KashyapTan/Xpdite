@@ -42,6 +42,12 @@ vi.mock('../../../components/chat/DeferredInlineContentBlocks', () => ({
   ),
 }));
 
+vi.mock('../../../components/chat/ChatMessage', () => ({
+  ChatMessage: ({ message }: { message: ChatMessage }) => (
+    <div data-testid="error-chat-message">{message.content}</div>
+  ),
+}));
+
 vi.mock('../../../utils/renderableContentBlocks', () => ({
   buildRenderableContentBlocks: buildRenderableContentBlocksMock,
 }));
@@ -57,6 +63,7 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof ResponseArea>>
     generatingModel: 'gpt-5',
     canSubmit: true,
     error: '',
+    errorMessage: null,
     showScrollBottom: false,
     onRetryMessage: vi.fn(),
     onEditMessage: vi.fn(),
@@ -93,7 +100,7 @@ describe('ResponseArea', () => {
     expect(await screen.findByTestId('chat-message')).toHaveTextContent('no id');
   });
 
-  test('renders error and hides chat history when error is present', () => {
+  test('renders error through the assistant message component and keeps history visible', async () => {
     render(
       <ResponseArea
         {...makeProps({
@@ -103,9 +110,8 @@ describe('ResponseArea', () => {
       />,
     );
 
-    expect(screen.getByText('Error:')).toBeInTheDocument();
-    expect(screen.getByText('Something failed')).toBeInTheDocument();
-    expect(screen.queryByTestId('chat-message')).not.toBeInTheDocument();
+    expect(await screen.findByTestId('chat-message')).toHaveTextContent('hello');
+    expect(screen.getByTestId('error-chat-message')).toHaveTextContent('Something failed');
   });
 
   test('renders chat history messages when no error', async () => {
@@ -137,6 +143,45 @@ describe('ResponseArea', () => {
     );
 
     expect(screen.getByText('What is happening?')).toBeInTheDocument();
+  });
+
+  test('keeps the current query visible when an error response is present', () => {
+    render(
+      <ResponseArea
+        {...makeProps({
+          currentQuery: 'Why did that fail?',
+          canSubmit: true,
+          errorMessage: {
+            role: 'assistant',
+            content: '**Request failed**',
+            variant: 'error',
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getByText('Why did that fail?')).toBeInTheDocument();
+    expect(screen.getByTestId('error-chat-message')).toHaveTextContent('Request failed');
+  });
+
+  test('does not render the current query twice when the failed turn is already in history', () => {
+    render(
+      <ResponseArea
+        {...makeProps({
+          chatHistory: [{ role: 'user', content: 'Why did that fail?', messageId: 'user-1' }],
+          currentQuery: 'Why did that fail?',
+          canSubmit: true,
+          errorMessage: {
+            role: 'assistant',
+            content: '**Request failed**',
+            variant: 'error',
+          },
+        })}
+      />,
+    );
+
+    expect(screen.getAllByText('Why did that fail?')).toHaveLength(1);
+    expect(screen.getByTestId('error-chat-message')).toHaveTextContent('Request failed');
   });
 
   test('renders inline content blocks and assistant header when blocks exist', async () => {

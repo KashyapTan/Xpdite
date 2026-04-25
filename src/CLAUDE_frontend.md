@@ -151,6 +151,9 @@ This is intentional: mutating React state inside a streaming callback causes sta
 ### Content blocks — interleaved rendering
 The `contentBlocks: ContentBlock[]` array interleaves `{ type: 'text' }`, `{ type: 'tool_call' }`, `{ type: 'terminal_command' }`, `{ type: 'thinking' }`, `{ type: 'youtube_transcription_approval' }`, and `{ type: 'artifact' }` entries to render tool calls, artifacts, and approval UI inline between text segments. Do not use a flat `response` string for display when tool calls or artifacts are present — use `contentBlocks`.
 
+### Chat errors render as assistant messages
+`useChatState` carries both a raw `error` string and an `errorMessage` `ChatMessage`. The renderer should prefer `errorMessage` and show chat failures through the assistant message UI (with the error tag), not through a standalone banner block. This keeps queue/backend/connection failures visually consistent with normal assistant responses and works for both active and background-tab snapshots.
+
 ### Shared inline icons
 Reuse `src/ui/components/icons/AppIcons.tsx` for UI iconography instead of pasted Unicode glyphs or ad-hoc SVG duplication. If a non-React DOM builder needs the same icon (for example `QueryInput.tsx` chip rendering), reuse `src/ui/components/icons/iconPaths.ts` so the SVG path data stays centralized.
 

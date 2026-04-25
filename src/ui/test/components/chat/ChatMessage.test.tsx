@@ -118,6 +118,22 @@ describe('ChatMessage', () => {
       expect(screen.getByText('Hello! I can help you.')).toBeInTheDocument();
     });
 
+    test('renders an error tag and hides retry controls for assistant error messages', () => {
+      const message: ChatMessageType = {
+        role: 'assistant',
+        content: '**Request processing failed**',
+        timestamp: Date.now(),
+        model: 'gpt-4',
+        variant: 'error',
+      };
+
+      const { container } = render(<ChatMessage message={message} {...defaultProps} />);
+
+      expect(screen.getByText('Error')).toBeInTheDocument();
+      expect(screen.queryByTitle('Retry message')).not.toBeInTheDocument();
+      expect(container.querySelector('.response-error')).toBeInTheDocument();
+    });
+
     test('renders assistant message with correct CSS class', () => {
       const message: ChatMessageType = {
         role: 'assistant',

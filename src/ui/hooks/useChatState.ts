@@ -14,6 +14,7 @@ import type {
   ChatStateSnapshot,
 } from '../types';
 import { applyToolCallChange } from '../utils/toolCallState';
+import { createChatErrorMessage } from '../utils/chatErrors';
 
 interface UseChatStateReturn {
   // State
@@ -30,6 +31,7 @@ interface UseChatStateReturn {
   canSubmit: boolean;
   status: string;
   error: string;
+  errorMessage: ChatMessage | null;
   
   // Refs for WebSocket callbacks
   currentQueryRef: React.RefObject<string>;
@@ -44,6 +46,8 @@ interface UseChatStateReturn {
   setCanSubmit: (canSubmit: boolean) => void;
   setStatus: (status: string) => void;
   setError: (error: string) => void;
+  setErrorMessage: (message: ChatMessage | null, rawError?: string) => void;
+  clearError: () => void;
   setThinkingCollapsed: (collapsed: boolean) => void;
   setIsThinking: (isThinking: boolean) => void;
   appendThinking: (chunk: string) => void;
@@ -64,7 +68,12 @@ interface UseChatStateReturn {
   ) => void;
   startQuery: (query: string) => void;
   completeResponse: (attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => void;
-  clearStreamingState: (status?: string) => void;
+  clearStreamingState: (
+    status?: string,
+    options?: {
+      preserveCurrentQuery?: boolean;
+    },
+  ) => void;
   resetForNewChat: () => void;
   loadConversation: (id: string, messages: ChatMessage[]) => void;
   setConversationId: (id: string | null) => void;
@@ -85,6 +94,7 @@ export function useChatState(): UseChatStateReturn {
   const [contentBlocks, setContentBlocks] = useState<ContentBlock[]>([]);
   const [status, setStatus] = useState('Connecting to server...');
   const [error, setError] = useState('');
+  const [errorMessage, setErrorMessageState] = useState<ChatMessage | null>(null);
   const [canSubmit, setCanSubmit] = useState(false);
   
   // Chat State
@@ -98,6 +108,28 @@ export function useChatState(): UseChatStateReturn {
   const thinkingRef = useRef('');
   const toolCallsRef = useRef<ToolCall[]>([]);
   const contentBlocksRef = useRef<ContentBlock[]>([]);
+
+  const clearError = useCallback(() => {
+    setError('');
+    setErrorMessageState(null);
+  }, []);
+
+  const setErrorMessage = useCallback((message: ChatMessage | null, rawError?: string) => {
+    setError(rawError ?? message?.errorContext?.rawMessage ?? '');
+    setErrorMessageState(message);
+  }, []);
+
+  const setRawError = useCallback((nextError: string) => {
+    setError(nextError);
+    setErrorMessageState(
+      nextError
+        ? createChatErrorMessage({
+            rawError: nextError,
+            source: 'backend',
+          })
+        : null,
+    );
+  }, []);
 
   const appendThinking = useCallback((chunk: string) => {
     setThinking(prev => prev + chunk);
@@ -332,7 +364,7 @@ export function useChatState(): UseChatStateReturn {
   const startQuery = useCallback((queryText: string) => {
     setCurrentQuery(queryText);
     currentQueryRef.current = queryText;
-    setError('');
+    clearError();
     setStatus('Thinking...');
     setIsThinking(true);
     setCanSubmit(false);
@@ -341,25 +373,36 @@ export function useChatState(): UseChatStateReturn {
     toolCallsRef.current = [];
     setContentBlocks([]);
     contentBlocksRef.current = [];
-  }, []);
+  }, [clearError]);
 
-  const clearStreamingState = useCallback((nextStatus: string = 'Ready for follow-up question.') => {
+  const clearStreamingState = useCallback((
+    nextStatus: string = 'Ready for follow-up question.',
+    options?: {
+      preserveCurrentQuery?: boolean;
+    },
+  ) => {
+    const preserveCurrentQuery = options?.preserveCurrentQuery ?? false;
     setResponse('');
     setThinking('');
-    setCurrentQuery('');
+    if (!preserveCurrentQuery) {
+      setCurrentQuery('');
+    }
     setIsThinking(false);
     setToolCalls([]);
     setContentBlocks([]);
 
-    currentQueryRef.current = '';
+    if (!preserveCurrentQuery) {
+      currentQueryRef.current = '';
+    }
     responseRef.current = '';
     thinkingRef.current = '';
     toolCallsRef.current = [];
     contentBlocksRef.current = [];
 
+    clearError();
     setStatus(nextStatus);
     setCanSubmit(true);
-  }, []);
+  }, [clearError]);
 
   const completeResponse = useCallback((attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => {
     const completedQuery = currentQueryRef.current;
@@ -418,7 +461,7 @@ export function useChatState(): UseChatStateReturn {
     setThinkingCollapsed(true);
     setToolCalls([]);
     setContentBlocks([]);
-    setError('');
+    clearError();
     setQuery('');
     setCurrentQuery('');
     setChatHistory([]);
@@ -431,7 +474,7 @@ export function useChatState(): UseChatStateReturn {
     thinkingRef.current = '';
     toolCallsRef.current = [];
     contentBlocksRef.current = [];
-  }, []);
+  }, [clearError]);
 
   const loadConversation = useCallback((id: string, messages: ChatMessage[]) => {
     setConversationId(id);
@@ -444,10 +487,11 @@ export function useChatState(): UseChatStateReturn {
     currentQueryRef.current = '';
     responseRef.current = '';
     thinkingRef.current = '';
-    
+
+    clearError();
     setStatus('Conversation loaded. Ask a follow-up question.');
     setCanSubmit(true);
-  }, []);
+  }, [clearError]);
 
   // ── Snapshot / restore for tab switching ─────────────────────
 
@@ -466,8 +510,9 @@ export function useChatState(): UseChatStateReturn {
       canSubmit,
       status,
       error,
+      errorMessage,
     };
-  }, [chatHistory, isThinking, thinkingCollapsed, conversationId, query, canSubmit, status, error]);
+  }, [chatHistory, isThinking, thinkingCollapsed, conversationId, query, canSubmit, status, error, errorMessage]);
 
   const restoreSnapshot = useCallback((s: ChatStateSnapshot) => {
     setChatHistory(s.chatHistory);
@@ -488,6 +533,7 @@ export function useChatState(): UseChatStateReturn {
     setCanSubmit(s.canSubmit);
     setStatus(s.status);
     setError(s.error);
+    setErrorMessageState(s.errorMessage ?? null);
   }, []);
 
   return {
@@ -505,6 +551,7 @@ export function useChatState(): UseChatStateReturn {
     canSubmit,
     status,
     error,
+    errorMessage,
     
     // Refs
     currentQueryRef,
@@ -518,7 +565,9 @@ export function useChatState(): UseChatStateReturn {
     setChatHistory,
     setCanSubmit,
     setStatus,
-    setError,
+    setError: setRawError,
+    setErrorMessage,
+    clearError,
     setThinkingCollapsed,
     setIsThinking,
     appendThinking,

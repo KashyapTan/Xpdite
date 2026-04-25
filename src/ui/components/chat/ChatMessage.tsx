@@ -119,6 +119,7 @@ function ChatMessageComponent({
   const formattedTimestamp = formatMessageTimestamp(message.timestamp);
   const canPersistActions = !!message.messageId;
   const canSaveEdit = draftContent.trim().length > 0 && draftContent.trim() !== message.content.trim();
+  const isErrorMessage = message.variant === 'error';
   const renderableBlocks = buildRenderableContentBlocks(message);
   const canControlThoughtTimeline = !!renderableBlocks
     && renderableBlocks.some((block) => block.type === 'thinking')
@@ -237,9 +238,18 @@ function ChatMessageComponent({
   return (
     <div className={message.role === 'user' ? 'chat-user' : 'chat-assistant'}>
       <div className="message-stack">
-        <div className={message.role === 'user' ? 'query' : 'response'}>
+        <div
+          className={
+            message.role === 'user'
+              ? 'query'
+              : `response${isErrorMessage ? ' response-error' : ''}`
+          }
+        >
           {message.role === 'assistant' && (
-            <div className="assistant-header">Xpdite • {message.model || selectedModel}</div>
+            <div className="assistant-header">
+              <span>Xpdite • {message.model || selectedModel}</span>
+              {isErrorMessage && <span className="assistant-message-tag assistant-message-tag-error">Error</span>}
+            </div>
           )}
           <div className="message-content">
             {message.role === 'user' ? renderUserContent() : renderAssistantContent()}
@@ -269,15 +279,17 @@ function ChatMessageComponent({
                 >
                   <CopyIcon />
                 </ActionButton>
-                <ActionButton
-                  title="Retry message"
-                  onClick={() => onRetryMessage(message)}
-                  disabled={actionsDisabled || !canPersistActions}
-                >
-                  <RetryIcon />
-                </ActionButton>
+                {!isErrorMessage && (
+                  <ActionButton
+                    title="Retry message"
+                    onClick={() => onRetryMessage(message)}
+                    disabled={actionsDisabled || !canPersistActions}
+                  >
+                    <RetryIcon />
+                  </ActionButton>
+                )}
                 <span className="message-timestamp">{formattedTimestamp}</span>
-                {!!message.responseVersions && message.responseVersions.length > 1 && (
+                {!isErrorMessage && !!message.responseVersions && message.responseVersions.length > 1 && (
                   <div className="message-response-nav">
                     <ActionButton
                       title="Previous response"

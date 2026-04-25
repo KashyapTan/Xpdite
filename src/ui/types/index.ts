@@ -122,6 +122,26 @@ export interface ResponseVariant {
   contentBlocks?: ContentBlock[];
 }
 
+export type ChatErrorSource =
+  | 'backend'
+  | 'queue'
+  | 'connection'
+  | 'client';
+
+export type ChatErrorAction =
+  | 'submit'
+  | 'retry'
+  | 'edit'
+  | 'response_variant'
+  | 'connection'
+  | 'unknown';
+
+export interface ChatErrorContext {
+  source: ChatErrorSource;
+  action: ChatErrorAction;
+  rawMessage: string;
+}
+
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
@@ -138,6 +158,8 @@ export interface ChatMessage {
   responseVersions?: ResponseVariant[];
   /** Origin info if message came from a mobile platform (Telegram, Discord, WhatsApp) */
   mobileOrigin?: MobileOrigin;
+  variant?: 'default' | 'error';
+  errorContext?: ChatErrorContext;
 }
 
 // ============================================
@@ -533,6 +555,7 @@ export interface ChatStateSnapshot {
   canSubmit: boolean;
   status: string;
   error: string;
+  errorMessage?: ChatMessage | null;
 }
 
 export interface ScreenshotSnapshot {

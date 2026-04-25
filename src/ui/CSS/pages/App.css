@@ -831,6 +831,16 @@ textarea,
   border-left: none;
 }
 
+.chat-assistant .response.response-error {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--color-red-soft) 72%, transparent) 0%,
+    color-mix(in srgb, var(--color-surface) 92%, var(--color-red-soft) 8%) 100%
+  );
+  margin-left: 0;
+  padding: 12px 10px 12px 12px;
+}
+
 .assistant-header {
   color: var(--color-text);
   font-size: 1rem;
@@ -839,6 +849,25 @@ textarea,
   display: flex;
   align-items: center;
   gap: 0.5rem;
+}
+
+.assistant-message-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 20px;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.assistant-message-tag-error {
+  color: var(--color-red);
+  background: var(--color-red-soft);
+  border: 1px solid color-mix(in srgb, var(--color-red) 55%, transparent);
 }
 
 /* Current query styling */

@@ -30,6 +30,7 @@ describe('useChatState', () => {
       expect(result.current.canSubmit).toBe(false);
       expect(result.current.status).toBe('Connecting to server...');
       expect(result.current.error).toBe('');
+      expect(result.current.errorMessage).toBeNull();
     });
 
     test('should initialize refs with empty values', () => {
@@ -990,6 +991,29 @@ describe('useChatState', () => {
       expect(result.current.toolCallsRef.current).toEqual([]);
       expect(result.current.contentBlocksRef.current).toEqual([]);
     });
+
+    test('should preserve the current query when requested', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.startQuery('Why did this fail?');
+        result.current.appendResponse('Partial output');
+        result.current.appendThinking('Working...');
+      });
+
+      act(() => {
+        result.current.clearStreamingState('Request failed.', {
+          preserveCurrentQuery: true,
+        });
+      });
+
+      expect(result.current.currentQuery).toBe('Why did this fail?');
+      expect(result.current.currentQueryRef.current).toBe('Why did this fail?');
+      expect(result.current.response).toBe('');
+      expect(result.current.thinking).toBe('');
+      expect(result.current.canSubmit).toBe(true);
+      expect(result.current.status).toBe('Request failed.');
+    });
   });
 
   describe('resetForNewChat', () => {
@@ -1266,6 +1290,23 @@ describe('useChatState', () => {
       });
 
       expect(result.current.error).toBe('Something went wrong');
+      expect(result.current.errorMessage?.variant).toBe('error');
+      expect(result.current.errorMessage?.content).toContain('Something went wrong');
+    });
+
+    test('clearError should reset both raw and rendered error state', () => {
+      const { result } = renderHook(() => useChatState());
+
+      act(() => {
+        result.current.setError('Something went wrong');
+      });
+
+      act(() => {
+        result.current.clearError();
+      });
+
+      expect(result.current.error).toBe('');
+      expect(result.current.errorMessage).toBeNull();
     });
 
     test('setThinkingCollapsed should update thinking collapsed state', () => {

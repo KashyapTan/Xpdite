@@ -68,6 +68,7 @@ const chatStateMock = {
   contentBlocks: [] as unknown[],
   canSubmit: true,
   error: '',
+  errorMessage: null as unknown,
   query: 'hello from test',
   responseRef: { current: '' },
   thinkingRef: { current: '' },
@@ -93,6 +94,8 @@ const chatStateMock = {
   setStatus: vi.fn(),
   setCanSubmit: vi.fn(),
   setError: vi.fn(),
+  setErrorMessage: vi.fn(),
+  clearError: vi.fn(),
   setQuery: vi.fn(),
   startQuery: vi.fn(),
   setChatHistory: vi.fn(),
@@ -284,10 +287,21 @@ describe('App websocket-driven behavior', () => {
     chatStateMock.chatHistory = [];
     chatStateMock.query = 'hello from test';
     chatStateMock.canSubmit = true;
+    chatStateMock.error = '';
+    chatStateMock.errorMessage = null;
+    chatStateMock.currentQuery = '';
     chatStateMock.currentQueryRef.current = '';
     chatStateMock.contentBlocksRef.current = [];
     chatStateMock.responseRef.current = '';
     chatStateMock.thinkingRef.current = '';
+    chatStateMock.setErrorMessage.mockImplementation((message: unknown, rawError?: string) => {
+      chatStateMock.errorMessage = message;
+      chatStateMock.error = rawError ?? '';
+    });
+    chatStateMock.clearError.mockImplementation(() => {
+      chatStateMock.error = '';
+      chatStateMock.errorMessage = null;
+    });
     screenshotStateMock.captureMode = 'precision';
     screenshotStateMock.meetingRecordingMode = false;
   });
@@ -397,7 +411,7 @@ describe('App websocket-driven behavior', () => {
     emitWebSocketEvent({ type: '__ws_connected' });
 
     expect(chatStateMock.setStatus).toHaveBeenCalledWith('Connected to server');
-    expect(chatStateMock.setError).toHaveBeenCalledWith('');
+    expect(chatStateMock.clearError).toHaveBeenCalled();
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'tab_created', tab_id: 'tab-1' }));
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'tab_created', tab_id: 'tab-2' }));
     expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'tab_activated', tab_id: 'tab-1' }));
@@ -408,7 +422,7 @@ describe('App websocket-driven behavior', () => {
     render(<App />);
     setIsHiddenMock.mockClear();
     chatStateMock.setStatus.mockClear();
-    chatStateMock.setError.mockClear();
+    chatStateMock.clearError.mockClear();
 
     emitWebSocketEvent({ type: 'screenshot_start', content: 'Screenshot capture starting' });
     emitWebSocketEvent({ type: 'screenshot_cancelled', content: 'Screenshot cancelled.' });
@@ -416,7 +430,7 @@ describe('App websocket-driven behavior', () => {
     expect(setIsHiddenMock).toHaveBeenNthCalledWith(1, true);
     expect(setIsHiddenMock).toHaveBeenNthCalledWith(2, false);
     expect(chatStateMock.setStatus).toHaveBeenCalledWith('Screenshot cancelled.');
-    expect(chatStateMock.setError).toHaveBeenCalledWith('');
+    expect(chatStateMock.clearError).toHaveBeenCalled();
   });
 
   test('syncs runtime tab create and close events to the backend', async () => {
@@ -673,6 +687,33 @@ describe('App websocket-driven behavior', () => {
         }),
       );
     });
+  });
+
+  test('preserves active chat errors when a late response_complete arrives', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(api.getEnabledModels).toHaveBeenCalled();
+    });
+
+    chatStateMock.clearStreamingState.mockClear();
+    chatStateMock.completeResponse.mockClear();
+
+    emitWebSocketEvent({
+      type: 'error',
+      tab_id: 'tab-1',
+      content: 'LLM service temporarily unavailable. See server logs for details.',
+    });
+
+    expect(chatStateMock.clearStreamingState).toHaveBeenCalledWith(
+      expect.any(String),
+      { preserveCurrentQuery: true },
+    );
+    expect(chatStateMock.setErrorMessage).toHaveBeenCalled();
+
+    emitWebSocketEvent({ type: 'response_complete', tab_id: 'tab-1' });
+
+    expect(chatStateMock.completeResponse).not.toHaveBeenCalled();
   });
 
   test('ignores malformed websocket payloads without crashing handlers', () => {

@@ -5,6 +5,7 @@
  */
 import React, { Suspense, useEffect, useMemo } from 'react';
 import { LoadingDots } from './LoadingDots';
+import { ChatMessage as ChatMessageView } from './ChatMessage';
 import {
   DeferredChatHistory,
   DeferredInlineContentBlocks,
@@ -12,6 +13,7 @@ import {
 } from './deferredChatRenderers';
 import type { ArtifactBlockData, ChatMessage as ChatMessageType, ContentBlock } from '../../types';
 import { buildRenderableContentBlocks } from '../../utils/renderableContentBlocks';
+import { createChatErrorMessage } from '../../utils/chatErrors';
 
 function LiveContentFallback({
   generatingModel,
@@ -38,6 +40,7 @@ interface ResponseAreaProps {
   generatingModel: string;
   canSubmit: boolean;
   error: string;
+  errorMessage?: ChatMessageType | null;
   showScrollBottom: boolean;
   onRetryMessage: (message: ChatMessageType) => void;
   onEditMessage: (message: ChatMessageType, content: string) => void;
@@ -72,6 +75,7 @@ function ResponseAreaComponent({
   generatingModel,
   canSubmit,
   error,
+  errorMessage,
   showScrollBottom,
   onRetryMessage,
   onEditMessage,
@@ -102,11 +106,34 @@ function ResponseAreaComponent({
     });
   }, [contentBlocks, thinking]);
   const hasContentBlocks = !!liveBlocks && liveBlocks.length > 0;
+  const activeErrorMessage = useMemo(() => {
+    if (errorMessage) {
+      return errorMessage;
+    }
+    if (!error) {
+      return null;
+    }
+    return createChatErrorMessage({
+      rawError: error,
+      source: 'backend',
+      model: generatingModel,
+    });
+  }, [error, errorMessage, generatingModel]);
   const isSingleThinkingTimeline = !!liveBlocks
     && liveBlocks.length === 1
     && liveBlocks[0].type === 'thinking';
-  const shouldRenderHistory = !error && chatHistory.length > 0;
-  const shouldRenderLiveContent = !error && hasContentBlocks;
+  const latestHistoryMessage = chatHistory.length > 0
+    ? chatHistory[chatHistory.length - 1]
+    : null;
+  const hasCommittedCurrentQuery = !!activeErrorMessage
+    && !!currentQuery
+    && latestHistoryMessage?.role === 'user'
+    && latestHistoryMessage.content.trim() === currentQuery.trim();
+  const shouldRenderHistory = chatHistory.length > 0;
+  const shouldRenderLiveContent = hasContentBlocks;
+  const shouldRenderCurrentQuery = !!currentQuery
+    && !hasCommittedCurrentQuery
+    && (!canSubmit || hasContentBlocks || !!activeErrorMessage);
   const responseAreaStyle = {
     marginTop: hasTabBar ? 0 : `${topInset}px`,
     marginBottom: `${bottomInset}px`,
@@ -137,12 +164,6 @@ function ResponseAreaComponent({
   return (
     <>
       <div className="response-area" ref={responseAreaRef} onScroll={onScroll} style={responseAreaStyle}>
-        {error && (
-          <div className="error">
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
         {/* Chat history */}
         {shouldRenderHistory && (
           <Suspense fallback={null}>
@@ -161,14 +182,14 @@ function ResponseAreaComponent({
         )}
 
         {/* Current query being processed */}
-        {!error && currentQuery && !canSubmit && (
+        {shouldRenderCurrentQuery && (
           <div className="query">
             <p>{currentQuery}</p>
           </div>
         )}
 
         {/* Loading animation while waiting for first content */}
-        <LoadingDots isVisible={!error && !canSubmit && !thinking && !hasContentBlocks} />
+        <LoadingDots isVisible={!canSubmit && !thinking && !hasContentBlocks} />
 
         {/* Live inline content blocks (text interleaved with tool calls) */}
         {shouldRenderLiveContent && (
@@ -199,6 +220,17 @@ function ResponseAreaComponent({
               />
             </div>
           </Suspense>
+        )}
+
+        {activeErrorMessage && (
+          <ChatMessageView
+            message={activeErrorMessage}
+            selectedModel={generatingModel}
+            actionsDisabled
+            onRetryMessage={() => {}}
+            onEditMessage={() => {}}
+            onSetActiveResponse={() => {}}
+          />
         )}
       </div>
 
