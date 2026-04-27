@@ -7,17 +7,15 @@
 <h3 align="center">Xpdite - Your AI Assistant and Agent Harness</h3>
 
 <p align="center">
-  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/KashyapTan/xpdite"></a>
-  <a href="https://github.com/KashyapTan/xpdite/releases"><img alt="Release" src="https://img.shields.io/github/v/release/KashyapTan/xpdite?include_prereleases"></a>
-  <a href="https://github.com/KashyapTan/xpdite/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KashyapTan/xpdite?style=social"></a>
+  <a href="./LICENSE"><img alt="License" src="https://img.shields.io/github/license/KashyapTan/xpdite?style=for-the-badge&label=License"></a>
+  <a href="https://github.com/KashyapTan/xpdite/releases"><img alt="Release" src="https://img.shields.io/github/v/release/KashyapTan/xpdite?include_prereleases&style=for-the-badge&label=Release"></a>
+  <a href="https://github.com/KashyapTan/xpdite/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/KashyapTan/xpdite?style=for-the-badge&label=Stars"></a>
 </p>
 
 <p align="center">
-  <a href="./docs/getting-started.md"><strong>Get Started</strong></a>
-  |
-  <a href="./docs/README.md"><strong>Documentation</strong></a>
-  |
-  <a href="./docs/contributing.md"><strong>Contributing</strong></a>
+  <a href="./docs/getting-started.md"><img alt="Get Started" src="https://img.shields.io/badge/Get%20Started-0f172a?style=for-the-badge&logo=bookstack&logoColor=white"></a>
+  <a href="./docs/README.md"><img alt="Documentation" src="https://img.shields.io/badge/Documentation-1d4ed8?style=for-the-badge&logo=gitbook&logoColor=white"></a>
+  <a href="./docs/contributing.md"><img alt="Contributing" src="https://img.shields.io/badge/Contributing-0f766e?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
 ---
@@ -58,35 +56,17 @@ Xpdite in action:
 
 https://github.com/user-attachments/assets/412d2da8-ccba-4825-a47d-f1c6fca3d81f
 
-
----
-
-### Architecture Diagram
-
-```text
-+--------------------+          IPC           +----------------------+
-| Electron Host      | <--------------------> | React UI (Renderer)  |
-| window + lifecycle |                        | chat + settings      |
-+---------+----------+                        +----------+-----------+
-          |                                              |
-          | starts/monitors                              | WebSocket + REST
-          v                                              v
-+--------------------+   stdio + inline tools   +--------------------+
-| Python Backend     | <-----------------------> | MCP Integrations   |
-| FastAPI + services |                           | tools + connectors |
-+---------+----------+                           +--------------------+
-          |
-          | /internal/mobile/*
-          v
-+--------------------+ <-----------------------> +--------------------+
-| Channel Bridge     |     Telegram/Discord/    | Mobile Platforms   |
-| (TypeScript svc)   |     WhatsApp adapters    | (remote chat)      |
-+--------------------+                          +--------------------+
-```
-
 ---
 
 ## Getting Started
+
+### Connecting a provider
+
+1. Choose how you want to run models:
+   - **Local with Ollama (recommended)**: Download and install Ollama from [ollama.com/download](https://ollama.com/download).
+   - **Cloud providers**: Bring your own API key (Anthropic, OpenAI, Gemini, or OpenRouter).
+2. If you install Ollama, open Xpdite and go to **Settings -> Models** to pull models directly from the UI.
+3. Browse available local models at [ollama.com/search](https://ollama.com/search).
 
 ### End users
 
@@ -99,7 +79,7 @@ https://github.com/user-attachments/assets/412d2da8-ccba-4825-a47d-f1c6fca3d81f
    ```bash
    curl -fsSL https://kashyaptan.com/Xpdite/install.sh | bash
    ```
-   Manual downloads remain available on [Releases](https://github.com/KashyapTan/xpdite/releases).
+   Manual downloads remain available on [Releases](https://github.com/KashyapTan/xpdite/releases) (recommended for windows).
 2. Launch Xpdite and wait for startup checks to finish.
 3. Press `Alt + .` to capture a screenshot and ask your question.
 
@@ -124,6 +104,31 @@ bun run lint
 bun run test:frontend
 uv run python -m pytest tests/ -v
 bun run build
+```
+
+---
+
+### Architecture Diagram
+
+```text
++--------------------+          IPC           +----------------------+
+| Electron Host      | <--------------------> | React UI (Renderer)  |
+| window + lifecycle |                        | chat + settings      |
++---------+----------+                        +----------+-----------+
+          |                                              |
+          | starts/monitors                              | WebSocket + REST
+          v                                              v
++--------------------+   stdio + inline tools   +--------------------+
+| Python Backend     | <-----------------------> | MCP Integrations   |
+| FastAPI + services |                           | tools + connectors |
++---------+----------+                           +--------------------+
+          |
+          | /internal/mobile/*
+          v
++--------------------+ <-----------------------> +--------------------+
+| Channel Bridge     |     Telegram/Discord/    | Mobile Platforms   |
+| (TypeScript svc)   |     WhatsApp adapters    | (remote chat)      |
++--------------------+                          +--------------------+
 ```
 
 ---

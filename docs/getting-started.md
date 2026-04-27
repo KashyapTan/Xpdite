@@ -7,6 +7,15 @@ This guide covers initial setup for both end users and contributors.
 - **Use Xpdite**: follow [End User Setup](#end-user-setup).
 - **Develop Xpdite**: follow [Developer Setup](#developer-setup).
 
+## Connecting a Provider
+
+1. Choose how you want to run models:
+   - **Local with Ollama (recommended)**: download and install from [ollama.com/download](https://ollama.com/download).
+   - **Cloud providers**: bring your own API key (Anthropic, OpenAI, Gemini, or OpenRouter).
+2. After installing Ollama, open Xpdite and go to **Settings -> Models**.
+3. Pull models directly from the UI in the Models tab.
+4. Find models at [ollama.com/search](https://ollama.com/search).
+
 ## End User Setup
 
 ### Prerequisites
@@ -19,12 +28,9 @@ This guide covers initial setup for both end users and contributors.
       ```bash
       brew install portaudio
       ```
-3.  **Ollama** (optional, required for local models)
-    - Install from [ollama.com](https://ollama.ai/)
-    - Pull a default model:
-      ```bash
-      ollama pull qwen3-vl:8b-instruct
-      ```
+3.  **Ollama** (optional, required for local models or ollama cloud models)
+    - Install from [ollama.com/download](https://ollama.com/download)
+    - Pull models from **Settings -> Models** inside Xpdite
 4.  **Cloud API keys** (optional)
     - Anthropic, OpenAI, Gemini, or OpenRouter
 5.  **Google account** (optional)
@@ -37,16 +43,16 @@ Install the latest published build from the terminal:
 Windows x64:
 
 ```powershell
-curl.exe -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.ps1 | powershell.exe -NoProfile -ExecutionPolicy Bypass -Command -
+irm https://kashyaptan.com/Xpdite/install.ps1 | iex
 ```
 
 macOS Apple Silicon:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KashyapTan/Xpdite/main/scripts/install.sh | bash
+curl -fsSL https://kashyaptan.com/Xpdite/install.sh | bash
 ```
 
-Manual downloads remain available on the [Releases](https://github.com/KashyapTan/xpdite/releases) page.
+Manual downloads remain available on the [Releases](https://github.com/KashyapTan/xpdite/releases) page (recommended for windows).
 
 If SmartScreen warns because the app is not code-signed yet, choose **More info** and **Run anyway**.
 
