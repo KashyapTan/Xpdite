@@ -160,10 +160,7 @@ GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "").strip()
 GOOGLE_SCOPES = [
     "https://www.googleapis.com/auth/gmail.modify",
-    "https://www.googleapis.com/auth/gmail.send",
-    "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar",
-    "https://www.googleapis.com/auth/calendar.events",
 ]
 GOOGLE_OAUTH_REDIRECT_HOST = "127.0.0.1"
 GOOGLE_OAUTH_REDIRECT_URI = f"http://{GOOGLE_OAUTH_REDIRECT_HOST}"
