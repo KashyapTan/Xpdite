@@ -65,7 +65,7 @@ import type { LocalTurnPatch } from '../utils/conversationMessageTransforms';
 import { formatModelLabel, getModelProviderKey, getProviderLabel } from '../utils/modelDisplay';
 import { ProviderLogo } from '../components/icons/ProviderLogos';
 import { hasProviderLogo } from '../utils/providerLogos';
-import { applyToolCallChange } from '../utils/toolCallState';
+import { applyToolCallChange, hasToolCallMatch } from '../utils/toolCallState';
 import { createChatErrorDescriptor } from '../utils/chatErrors';
 
 // Assets
@@ -480,6 +480,48 @@ function parseWsPayloadWithGuard<T>(
     return null;
   }
   return payload;
+}
+
+type SubAgentStreamPayload = SubAgentStreamContent & { accumulated?: string };
+
+function buildSubAgentStreamToolCall(stream: SubAgentStreamPayload): ToolCall | null {
+  const safeAgentId = typeof stream.agent_id === 'string' && stream.agent_id ? stream.agent_id : undefined;
+  if (!safeAgentId) {
+    return null;
+  }
+
+  const safeAgentName = typeof stream.agent_name === 'string' && stream.agent_name
+    ? stream.agent_name
+    : 'Sub-agent';
+  const safeModelTier = typeof stream.model_tier === 'string' ? stream.model_tier : '';
+  const safeDescription = safeModelTier
+    ? `${safeAgentName} (${safeModelTier})`
+    : safeAgentName;
+  const safeTranscript = Array.isArray(stream.transcript) ? stream.transcript : undefined;
+  const safeAccumulated = typeof stream.accumulated === 'string' ? stream.accumulated : undefined;
+  const safeContent = typeof stream.content === 'string' ? stream.content : undefined;
+
+  let streamResult = 'Sub-agent is working...';
+  if (safeTranscript && safeTranscript.length > 0) {
+    streamResult = JSON.stringify(safeTranscript);
+  } else if (safeAccumulated && safeAccumulated.trim().length > 0) {
+    streamResult = safeAccumulated;
+  } else if (safeContent && safeContent.trim().length > 0) {
+    streamResult = safeContent;
+  }
+
+  const isFinal = stream.stream_type === 'final';
+  return {
+    name: 'spawn_agent',
+    args: { agent_name: safeAgentName, model_tier: safeModelTier },
+    server: 'sub_agent',
+    status: isFinal ? 'complete' : 'calling',
+    agentId: safeAgentId,
+    description: safeDescription,
+    ...(isFinal
+      ? { result: streamResult, partialResult: streamResult }
+      : { partialResult: streamResult }),
+  };
 }
 
 
@@ -1311,6 +1353,31 @@ function App() {
         break;
       }
 
+      case 'sub_agent_stream': {
+        const stream = parseWsPayload<SubAgentStreamContent & { accumulated?: string }>(
+          data,
+          'background:sub_agent_stream',
+        );
+        if (!stream) {
+          return;
+        }
+
+        const toolCallPatch = buildSubAgentStreamToolCall(stream);
+        if (!toolCallPatch) {
+          return;
+        }
+
+        const nextState = applyToolCallChange(
+          chat.toolCalls,
+          chat.contentBlocks,
+          toolCallPatch,
+          true,
+        );
+        chat.toolCalls = nextState.toolCalls;
+        chat.contentBlocks = nextState.contentBlocks;
+        break;
+      }
+
       case 'terminal_output': {
         const to = parseWsPayload<TerminalOutput>(data, 'background:terminal_output');
         if (!to) {
@@ -1765,63 +1832,31 @@ function App() {
           break;
         }
 
-        const safeAgentId = typeof stream.agent_id === 'string' && stream.agent_id ? stream.agent_id : undefined;
-        if (!safeAgentId) {
+        const toolCallPatch = buildSubAgentStreamToolCall(stream);
+        if (!toolCallPatch) {
           break;
         }
 
-        const safeAgentName = typeof stream.agent_name === 'string' && stream.agent_name
-          ? stream.agent_name
-          : 'Sub-agent';
-        const safeModelTier = typeof stream.model_tier === 'string' ? stream.model_tier : '';
-        const safeDescription = safeModelTier
-          ? `${safeAgentName} (${safeModelTier})`
-          : safeAgentName;
-        const safeTranscript = Array.isArray(stream.transcript) ? stream.transcript : undefined;
-        const safeAccumulated = typeof stream.accumulated === 'string' ? stream.accumulated : undefined;
-        const safeContent = typeof stream.content === 'string' ? stream.content : undefined;
-
-        let partialResult = 'Sub-agent is working...';
-        if (safeTranscript && safeTranscript.length > 0) {
-          partialResult = JSON.stringify(safeTranscript);
-        } else if (safeAccumulated && safeAccumulated.trim().length > 0) {
-          partialResult = safeAccumulated;
-        } else if (safeContent && safeContent.trim().length > 0) {
-          partialResult = safeContent;
-        }
-
-        const isKnownToolCall = chatState.toolCallsRef.current.some(
-          (toolCall) => toolCall.agentId === safeAgentId,
-        );
-        if (!isKnownToolCall) {
+        if (!hasToolCallMatch(chatState.toolCallsRef.current, toolCallPatch)) {
           chatState.addToolCall({
-            name: 'spawn_agent',
-            args: { agent_name: safeAgentName, model_tier: safeModelTier },
-            server: 'sub_agent',
+            ...toolCallPatch,
             status: 'calling',
-            agentId: safeAgentId,
-            description: safeDescription,
+            result: undefined,
           });
         }
 
         switch (stream.stream_type) {
           case 'thinking':
           case 'thinking_complete':
-          case 'final':
           case 'instruction':
           case 'tool_call':
           case 'tool_result':
           case 'tool_error':
           case 'tool_blocked':
-            chatState.updateToolCall({
-              name: 'spawn_agent',
-              args: { agent_name: safeAgentName, model_tier: safeModelTier },
-              server: 'sub_agent',
-              status: 'calling',
-              agentId: safeAgentId,
-              description: safeDescription,
-              partialResult,
-            });
+            chatState.updateToolCall(toolCallPatch);
+            break;
+          case 'final':
+            chatState.updateToolCall(toolCallPatch);
             break;
           default:
             break;

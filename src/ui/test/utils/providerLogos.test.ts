@@ -6,6 +6,7 @@ describe('providerLogos', () => {
   test('returns true for supported logo providers', () => {
     expect(hasProviderLogo('anthropic')).toBe(true);
     expect(hasProviderLogo('openai')).toBe(true);
+    expect(hasProviderLogo('openai-codex')).toBe(true);
     expect(hasProviderLogo('gemini')).toBe(true);
     expect(hasProviderLogo('openrouter')).toBe(true);
     expect(hasProviderLogo('ollama')).toBe(true);

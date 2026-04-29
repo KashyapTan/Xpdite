@@ -506,6 +506,7 @@ declare global {
     electronAPI?: {
       focusWindow: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
+      openExternalUrl?: (url: string) => Promise<{ success: boolean; error?: string }>;
       getServerPort: () => Promise<number>;
       getServerToken?: () => Promise<string>;
       getBootState: () => Promise<ElectronBootState>;

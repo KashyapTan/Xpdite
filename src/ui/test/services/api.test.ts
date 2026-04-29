@@ -544,6 +544,82 @@ describe('api singleton - HTTP endpoints', () => {
     });
   });
 
+  describe('OpenAI Codex subscription auth', () => {
+    const mockStatus = {
+      available: true,
+      connected: false,
+      account_type: null,
+      email: null,
+      plan_type: null,
+      requires_openai_auth: true,
+      auth_in_progress: true,
+      login_method: 'chatgpt',
+      login_id: 'login-1',
+      auth_url: 'https://chatgpt.com/auth',
+      verification_url: null,
+      user_code: null,
+      auth_mode: null,
+      last_error: null,
+      binary_path: 'codex.exe',
+    };
+
+    test('fetches ChatGPT subscription status', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockStatus),
+      });
+
+      const result = await api.getOpenAICodexStatus();
+
+      expect(result).toEqual(mockStatus);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/openai/codex/status');
+    });
+
+    test('starts browser login', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockStatus),
+      });
+
+      const result = await api.connectOpenAICodexBrowser();
+
+      expect(result).toEqual(mockStatus);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/openai/codex/connect/browser', {
+        method: 'POST',
+      });
+    });
+
+    test('starts device-code login', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ...mockStatus, login_method: 'chatgptDeviceCode' }),
+      });
+
+      await api.connectOpenAICodexDevice();
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/openai/codex/connect/device', {
+        method: 'POST',
+      });
+    });
+
+    test('cancels login and disconnects subscription auth', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockStatus),
+      });
+
+      await api.cancelOpenAICodexLogin();
+      await api.disconnectOpenAICodex();
+
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/openai/codex/cancel', {
+        method: 'POST',
+      });
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/openai/codex/disconnect', {
+        method: 'POST',
+      });
+    });
+  });
+
   describe('getProviderModels', () => {
     test('returns normalized models for anthropic', async () => {
       const rawModels = [
@@ -600,6 +676,29 @@ describe('api singleton - HTTP endpoints', () => {
 
       await api.getProviderModels('openrouter', true);
       expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/models/openrouter?refresh=true');
+    });
+
+    test('fetches ChatGPT subscription models from the Codex endpoint', async () => {
+      const rawModels = [
+        { id: 'openai-codex/gpt-5.4', display_name: 'GPT-5.4' },
+      ];
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(rawModels),
+      });
+
+      const result = await api.getProviderModels('openai-codex');
+
+      expect(result).toEqual([
+        {
+          id: 'openai-codex/gpt-5.4',
+          provider: 'openai-codex',
+          display_name: 'GPT-5.4',
+          context_length: undefined,
+          provider_group: undefined,
+        },
+      ]);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/models/openai-codex');
     });
 
     test('throws error with detail on failure', async () => {

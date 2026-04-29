@@ -29,6 +29,13 @@ export default defineConfig({
     port: 5123,
     strictPort: true,
     preTransformRequests: false,
+    watch: {
+      ignored: [
+        '**/user_data/**',
+        '**/codex-temp/**',
+        '**/.tmp*/**',
+      ],
+    },
     warmup: {
       clientFiles: [
         './index.html',

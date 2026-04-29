@@ -34,6 +34,21 @@ function hasMeaningfulArgs(args: Record<string, unknown>): boolean {
   return Object.keys(args).length > 0;
 }
 
+function isAnonymousPendingSubAgentMatch(existing: ToolCall, incoming: ToolCall): boolean {
+  return (
+    isSubAgentToolCall(existing)
+    && isSubAgentToolCall(incoming)
+    && !!incoming.agentId
+    && !existing.agentId
+    && existing.status !== 'complete'
+  );
+}
+
+function singleAnonymousPendingSubAgentMatch(toolCalls: ToolCall[], incoming: ToolCall): ToolCall | null {
+  const matches = toolCalls.filter((toolCall) => isAnonymousPendingSubAgentMatch(toolCall, incoming));
+  return matches.length === 1 ? matches[0] : null;
+}
+
 export function toolCallsMatch(existing: ToolCall, incoming: ToolCall): boolean {
   if (existing.agentId && incoming.agentId) {
     return existing.agentId === incoming.agentId;
@@ -59,6 +74,11 @@ export function toolCallsMatch(existing: ToolCall, incoming: ToolCall): boolean 
     && existing.name === incoming.name
     && JSON.stringify(existing.args) === JSON.stringify(incoming.args)
   );
+}
+
+export function hasToolCallMatch(toolCalls: ToolCall[], incoming: ToolCall): boolean {
+  const anonymousMatch = singleAnonymousPendingSubAgentMatch(toolCalls, incoming);
+  return toolCalls.some((toolCall) => toolCallsMatch(toolCall, incoming) || toolCall === anonymousMatch);
 }
 
 export function mergeToolCalls(existing: ToolCall, incoming: ToolCall): ToolCall {
@@ -100,9 +120,10 @@ export function applyToolCallChange(
 ): { toolCalls: ToolCall[]; contentBlocks: ContentBlock[] } {
   let canonicalToolCall = incoming;
   let foundMatch = false;
+  const anonymousToolCallMatch = singleAnonymousPendingSubAgentMatch(toolCalls, incoming);
 
   const nextToolCalls = toolCalls.reduce<ToolCall[]>((acc, existingToolCall) => {
-    if (!toolCallsMatch(existingToolCall, incoming)) {
+    if (!toolCallsMatch(existingToolCall, incoming) && existingToolCall !== anonymousToolCallMatch) {
       acc.push(existingToolCall);
       return acc;
     }
@@ -121,8 +142,17 @@ export function applyToolCallChange(
   }
 
   let contentBlockMatched = false;
+  const anonymousContentBlockMatches = contentBlocks.filter(
+    (block) => block.type === 'tool_call' && isAnonymousPendingSubAgentMatch(block.toolCall, incoming),
+  );
+  const anonymousContentBlockMatch = anonymousContentBlockMatches.length === 1
+    ? anonymousContentBlockMatches[0]?.toolCall
+    : null;
   const nextContentBlocks = contentBlocks.reduce<ContentBlock[]>((acc, block) => {
-    if (block.type !== 'tool_call' || !toolCallsMatch(block.toolCall, incoming)) {
+    if (
+      block.type !== 'tool_call'
+      || (!toolCallsMatch(block.toolCall, incoming) && block.toolCall !== anonymousContentBlockMatch)
+    ) {
       acc.push(block);
       return acc;
     }

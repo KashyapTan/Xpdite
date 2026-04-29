@@ -25,7 +25,7 @@ def parse_provider(model_name: str) -> Tuple[str, str]:
     """
     if "/" in model_name:
         provider, _, model = model_name.partition("/")
-        if provider in ("anthropic", "openai", "gemini", "openrouter"):
+        if provider in ("anthropic", "openai", "openai-codex", "gemini", "openrouter"):
             return provider, model
     return "ollama", model_name
 
@@ -34,7 +34,7 @@ def is_local_ollama_model(model_name: str) -> bool:
     """Whether a model resolves to a local Ollama runtime.
 
     Rules:
-    - Non-Ollama providers (anthropic/openai/gemini/openrouter) return False.
+    - Non-Ollama providers (anthropic/openai/openai-codex/gemini/openrouter) return False.
     - Ollama models tagged as cloud (``:cloud`` or ``-cloud``) return False.
     - All other Ollama models are treated as local and return True.
     """
@@ -97,7 +97,6 @@ async def route_chat(
     # embedding models used by the tool retriever.
     retrieval_query = tool_retrieval_query or user_query
 
-    # Retrieve relevant MCP tools for this query
     retrieved_tools: list = []
     if mcp_manager.has_tools():
         from ...mcp_integration.core.handlers import retrieve_relevant_tools
@@ -182,8 +181,26 @@ async def route_chat(
     from .key_manager import key_manager
     from ..providers.cloud_provider import stream_cloud_chat
 
-    api_key = key_manager.get_api_key(provider)
-    if not api_key:
+    if provider == "openai-codex":
+        from ...services.integrations.openai_codex import openai_codex
+
+        codex_status = await run_in_thread(openai_codex.get_status)
+        if not codex_status.get("connected"):
+            from ...core.connection import broadcast_message
+
+            message = "Connect ChatGPT in Settings > OpenAI before using subscription models."
+            await broadcast_message("error", message)
+            return (
+                f"Error: {message}",
+                {"prompt_eval_count": 0, "eval_count": 0},
+                [],
+                None,
+            )
+        api_key = ""
+    else:
+        api_key = key_manager.get_api_key(provider)
+
+    if provider != "openai-codex" and not api_key:
         from ...core.connection import broadcast_message
 
         await broadcast_message(

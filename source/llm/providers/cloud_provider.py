@@ -29,6 +29,11 @@ from ..core.artifacts import (
     emit_artifact_stream_events,
     serialize_blocks_for_model_content,
 )
+from ..core.stream_recovery import (
+    MID_STREAM_RETRY_LIMIT,
+    get_mid_stream_generated_suffix,
+)
+from ..core.provider_errors import build_provider_error_message
 from ...mcp_integration.core.tool_args import normalize_tool_args, sanitize_tool_args
 from ...mcp_integration.core.tool_output import format_tool_output
 
@@ -473,6 +478,19 @@ def _get_max_tokens(
         return None
 
 
+def _litellm_provider_for(provider: str) -> str:
+    """Map Xpdite provider names to LiteLLM provider names."""
+    if provider == "openai-codex":
+        return "chatgpt"
+    return provider
+
+
+def _provider_log_label(provider: str) -> str:
+    if provider == "openai-codex":
+        return "ChatGPT subscription"
+    return provider.capitalize()
+
+
 # ---------------------------------------------------------------------------
 # Unified LiteLLM streaming implementation
 # ---------------------------------------------------------------------------
@@ -504,6 +522,12 @@ async def _stream_litellm(
     """
     from ...mcp_integration.core.manager import mcp_manager
 
+    litellm_provider = _litellm_provider_for(provider)
+    if provider == "openai-codex":
+        from ...services.integrations.openai_codex import openai_codex
+
+        openai_codex.configure_litellm_environment()
+
     # Build unified message list
     messages = _build_messages(chat_history, user_query, image_paths, system_prompt)
 
@@ -514,7 +538,7 @@ async def _stream_litellm(
     interleaved_blocks: List[Dict[str, Any]] = []
 
     # LiteLLM model string: "provider/model-name"
-    litellm_model = f"{provider}/{model}"
+    litellm_model = f"{litellm_provider}/{model}"
 
     # Query model info once and derive all model-specific params from it.
     # This avoids redundant get_model_info() calls per round.
@@ -530,7 +554,7 @@ async def _stream_litellm(
     # For unknown Anthropic models not in the registry, use a safe fallback
     # since Anthropic's API mandates the max_tokens parameter.
     max_tokens = _get_max_tokens(litellm_model, model_info)
-    if max_tokens is None and provider == "anthropic":
+    if max_tokens is None and litellm_provider == "anthropic":
         max_tokens = 16384
         logger.debug(
             "Anthropic model not in registry; using fallback max_tokens=%d", max_tokens
@@ -573,6 +597,7 @@ async def _stream_litellm(
             artifact_parser = ArtifactStreamParser()
             round_prompt_tokens = 0
             round_completion_tokens = 0
+            round_raw_text_chunks: list[str] = []
 
             def _store_thinking_block() -> None:
                 nonlocal thinking_complete_sent
@@ -604,9 +629,10 @@ async def _stream_litellm(
                 "messages": messages,
                 "stream": True,
                 "stream_options": {"include_usage": True},
-                "api_key": api_key,
                 "timeout": 300.0,
             }
+            if api_key:
+                create_kwargs["api_key"] = api_key
 
             if max_tokens is not None and max_tokens > 0:
                 create_kwargs["max_tokens"] = max_tokens
@@ -627,84 +653,138 @@ async def _stream_litellm(
                 len(messages),
             )
 
-            # Stream the response
-            response = cast(
-                AsyncIterator[Any], await litellm.acompletion(**create_kwargs)
-            )
-
             # Accumulate tool call deltas during streaming
             pending_tool_calls: Dict[int, Dict[str, str]] = {}
             finish_reason = None
+            stream_retry_count = 0
 
-            async for chunk in response:
-                if is_current_request_cancelled():
+            while True:
+                try:
+                    response = cast(
+                        AsyncIterator[Any], await litellm.acompletion(**create_kwargs)
+                    )
+
+                    async for chunk in response:
+                        if is_current_request_cancelled():
+                            break
+
+                        # Capture usage from ANY chunk that carries it.
+                        # LiteLLM normalises provider-native usage into the
+                        # OpenAI `usage` shape, but the chunk it lands on varies:
+                        #   OpenAI  → separate usage-only chunk (choices=[])
+                        #   Anthropic/Gemini → may be on the final content chunk
+                        # Using assignment (last value wins) avoids double-counting
+                        # if both a content chunk and a usage-only chunk carry data.
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
+                            completion = getattr(chunk.usage, "completion_tokens", 0) or 0
+                            if prompt or completion:
+                                round_prompt_tokens = prompt
+                                round_completion_tokens = completion
+
+                        if not chunk.choices:
+                            continue
+
+                        choice = chunk.choices[0]
+                        delta = choice.delta
+                        finish_reason = choice.finish_reason or finish_reason
+
+                        # Handle reasoning/thinking content
+                        # LiteLLM normalizes this across providers into delta.reasoning_content
+                        reasoning = getattr(delta, "reasoning_content", None)
+                        if reasoning:
+                            thinking_tokens.append(reasoning)
+                            await broadcast_message("thinking_chunk", reasoning)
+
+                        # Handle regular text content
+                        if delta.content:
+                            round_raw_text_chunks.append(delta.content)
+                            events = artifact_parser.feed(delta.content)
+                            if events and thinking_tokens and not thinking_complete_sent:
+                                await broadcast_message("thinking_complete", "")
+                                _store_thinking_block()
+                            cleaned_text = apply_artifact_stream_events(
+                                events,
+                                current_round_blocks,
+                            )
+                            await emit_artifact_stream_events(
+                                events,
+                                interleaved_blocks,
+                                broadcaster=broadcast_message,
+                            )
+                            if cleaned_text:
+                                all_accumulated.append(cleaned_text)
+
+                        # Accumulate tool call deltas
+                        if delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in pending_tool_calls:
+                                    pending_tool_calls[idx] = {
+                                        "id": "",
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                                if tc_delta.id:
+                                    pending_tool_calls[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        pending_tool_calls[idx]["name"] = tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        pending_tool_calls[idx]["arguments"] += (
+                                            tc_delta.function.arguments
+                                        )
                     break
-
-                # Capture usage from ANY chunk that carries it.
-                # LiteLLM normalises provider-native usage into the
-                # OpenAI `usage` shape, but the chunk it lands on varies:
-                #   OpenAI  → separate usage-only chunk (choices=[])
-                #   Anthropic/Gemini → may be on the final content chunk
-                # Using assignment (last value wins) avoids double-counting
-                # if both a content chunk and a usage-only chunk carry data.
-                if hasattr(chunk, "usage") and chunk.usage:
-                    prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
-                    completion = getattr(chunk.usage, "completion_tokens", 0) or 0
-                    if prompt or completion:
-                        round_prompt_tokens = prompt
-                        round_completion_tokens = completion
-
-                if not chunk.choices:
-                    continue
-
-                choice = chunk.choices[0]
-                delta = choice.delta
-                finish_reason = choice.finish_reason or finish_reason
-
-                # Handle reasoning/thinking content
-                # LiteLLM normalizes this across providers into delta.reasoning_content
-                reasoning = getattr(delta, "reasoning_content", None)
-                if reasoning:
-                    thinking_tokens.append(reasoning)
-                    await broadcast_message("thinking_chunk", reasoning)
-
-                # Handle regular text content
-                if delta.content:
-                    events = artifact_parser.feed(delta.content)
-                    if events and thinking_tokens and not thinking_complete_sent:
-                        await broadcast_message("thinking_complete", "")
-                        _store_thinking_block()
-                    cleaned_text = apply_artifact_stream_events(
-                        events,
-                        current_round_blocks,
+                except litellm.exceptions.MidStreamFallbackError as e:
+                    recovered_suffix = get_mid_stream_generated_suffix(
+                        "".join(round_raw_text_chunks),
+                        getattr(e, "generated_content", "") or "",
                     )
-                    await emit_artifact_stream_events(
-                        events,
-                        interleaved_blocks,
-                        broadcaster=broadcast_message,
-                    )
-                    if cleaned_text:
-                        all_accumulated.append(cleaned_text)
+                    if recovered_suffix:
+                        round_raw_text_chunks.append(recovered_suffix)
+                        events = artifact_parser.feed(recovered_suffix)
+                        if events and thinking_tokens and not thinking_complete_sent:
+                            await broadcast_message("thinking_complete", "")
+                            _store_thinking_block()
+                        cleaned_text = apply_artifact_stream_events(
+                            events,
+                            current_round_blocks,
+                        )
+                        await emit_artifact_stream_events(
+                            events,
+                            interleaved_blocks,
+                            broadcaster=broadcast_message,
+                        )
+                        if cleaned_text:
+                            all_accumulated.append(cleaned_text)
+                        logger.warning(
+                            "%s mid-stream fallback recovered %d trailing chars for %s/%s (%s)",
+                            _provider_log_label(provider),
+                            len(recovered_suffix),
+                            provider,
+                            model,
+                            type(e.original_exception).__name__
+                            if e.original_exception is not None
+                            else type(e).__name__,
+                        )
+                        break
 
-                # Accumulate tool call deltas
-                if delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in pending_tool_calls:
-                            pending_tool_calls[idx] = {
-                                "id": "",
-                                "name": "",
-                                "arguments": "",
-                            }
-                        if tc_delta.id:
-                            pending_tool_calls[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                pending_tool_calls[idx]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                pending_tool_calls[idx]["arguments"] += (
-                                    tc_delta.function.arguments
-                                )
+                    if e.is_pre_first_chunk and stream_retry_count < MID_STREAM_RETRY_LIMIT:
+                        stream_retry_count += 1
+                        logger.warning(
+                            "%s stream failed before first chunk for %s/%s; retrying round %d/%d (%s)",
+                            _provider_log_label(provider),
+                            provider,
+                            model,
+                            stream_retry_count,
+                            MID_STREAM_RETRY_LIMIT,
+                            type(e.original_exception).__name__
+                            if e.original_exception is not None
+                            else type(e).__name__,
+                        )
+                        continue
+
+                    raise
 
             # Add this round's usage to running totals (summed across rounds)
             total_token_stats["prompt_eval_count"] += round_prompt_tokens
@@ -886,7 +966,7 @@ async def _stream_litellm(
                     tool_result = await _execute_and_broadcast_tool(
                         fn_name,
                         fn_args,
-                        provider.capitalize(),
+                        _provider_log_label(provider),
                         tool_calls_list,
                         interleaved_blocks,
                         precomputed_result=spawn_results.get(idx),
@@ -950,7 +1030,9 @@ async def _stream_litellm(
 
         if tool_calls_list:
             logger.info(
-                "%s tool loop complete after %d round(s)", provider.capitalize(), rounds
+                "%s tool loop complete after %d round(s)",
+                _provider_log_label(provider),
+                rounds,
             )
 
         return (
@@ -961,13 +1043,12 @@ async def _stream_litellm(
         )
 
     except Exception as e:
-        # Keep detailed error in server logs only — exception messages
-        # from LiteLLM / provider SDKs may contain API keys.
-        error_msg = "LLM service temporarily unavailable. See server logs for details."
+        error_msg = build_provider_error_message(provider, e)
         logger.error(
-            "%s streaming error (%s)",
-            provider.capitalize(),
+            "%s streaming error (%s): %s",
+            _provider_log_label(provider),
             type(e).__name__,
+            error_msg,
         )
         await broadcast_message("error", error_msg)
         # Return accumulated data so partial responses are preserved

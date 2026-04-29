@@ -9,14 +9,41 @@ vi.mock('../../../services/api', () => ({
     getApiKeyStatus: vi.fn(),
     saveApiKey: vi.fn(),
     deleteApiKey: vi.fn(),
+    getOpenAICodexStatus: vi.fn(),
+    connectOpenAICodexBrowser: vi.fn(),
+    connectOpenAICodexDevice: vi.fn(),
+    cancelOpenAICodexLogin: vi.fn(),
+    disconnectOpenAICodex: vi.fn(),
   },
 }));
 
 const mockedApi = vi.mocked(api);
+const disconnectedCodexStatus = {
+  available: true,
+  connected: false,
+  account_type: null,
+  email: null,
+  plan_type: null,
+  requires_openai_auth: true,
+  auth_in_progress: false,
+  login_method: null,
+  login_id: null,
+  auth_url: null,
+  verification_url: null,
+  user_code: null,
+  auth_mode: null,
+  last_error: null,
+  binary_path: 'codex.exe',
+};
 
 describe('SettingsApiKey', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedApi.getOpenAICodexStatus.mockResolvedValue(disconnectedCodexStatus);
+    Object.defineProperty(window, 'electronAPI', {
+      value: undefined,
+      configurable: true,
+    });
   });
 
   test('renders input state when provider has no key', async () => {
@@ -88,6 +115,32 @@ describe('SettingsApiKey', () => {
       expect(mockedApi.deleteApiKey).toHaveBeenCalledWith('gemini');
       expect(screen.getByPlaceholderText('Enter Gemini API key')).toBeInTheDocument();
       expect(screen.getByText('API key removed')).toBeInTheDocument();
+    });
+  });
+
+  test('starts ChatGPT subscription browser sign-in from the OpenAI tab', async () => {
+    const openExternalUrl = vi.fn().mockResolvedValue({ success: true });
+    Object.defineProperty(window, 'electronAPI', {
+      value: { openExternalUrl },
+      configurable: true,
+    });
+    mockedApi.getApiKeyStatus.mockResolvedValue({
+      openai: { has_key: false, masked: null },
+    });
+    mockedApi.connectOpenAICodexBrowser.mockResolvedValue({
+      ...disconnectedCodexStatus,
+      auth_in_progress: true,
+      auth_url: 'https://chatgpt.com/auth/openai/codex',
+    });
+
+    render(<SettingsApiKey provider="openai" />);
+
+    await screen.findByText('ChatGPT Subscription');
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => {
+      expect(mockedApi.connectOpenAICodexBrowser).toHaveBeenCalled();
+      expect(openExternalUrl).toHaveBeenCalledWith('https://chatgpt.com/auth/openai/codex');
     });
   });
 });

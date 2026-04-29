@@ -12,9 +12,19 @@ import types
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
 from source.infrastructure.config import MAX_TOOL_RESULT_LENGTH
 from source.services.hooks_runtime.runtime import HookDispatchResult
+
+
+class DummyProviderError(Exception):
+    """Minimal provider-style exception for testing safe error extraction."""
+
+    def __init__(self, message: str, **attrs):
+        super().__init__(message)
+        for key, value in attrs.items():
+            setattr(self, key, value)
 
 
 # ---------------------------------------------------------------------------
@@ -77,6 +87,13 @@ async def _make_async_iter(chunks):
     """Convert a list of chunks into an async iterator."""
     for chunk in chunks:
         yield chunk
+
+
+async def _make_async_iter_then_raise(chunks, exc):
+    """Yield chunks, then raise an exception mid-stream."""
+    for chunk in chunks:
+        yield chunk
+    raise exc
 
 
 class TestBuildMessages:
@@ -880,7 +897,7 @@ class TestStreamLitellm:
         assert len(error_calls) == 1
         assert (
             error_calls[0].args[1]
-            == "LLM service temporarily unavailable. See server logs for details."
+            == "OpenAI API request failed: API down"
         )
 
     @pytest.mark.asyncio
@@ -968,6 +985,36 @@ class TestStreamLitellm:
         call_kwargs = mock_acomp.call_args.kwargs
         assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert call_kwargs["api_key"] == "or-secret-key"
+
+    @pytest.mark.asyncio
+    async def test_openai_codex_routes_to_litellm_chatgpt_without_api_key(
+        self, _mock_broadcast, _mock_cancelled
+    ):
+        """ChatGPT subscription models use LiteLLM's chatgpt provider and env auth."""
+        chunks = [_text_chunk("ok", finish_reason="stop")]
+        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        mock_codex = MagicMock()
+
+        with (
+            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.services.integrations.openai_codex.openai_codex", mock_codex),
+        ):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, _, _, _ = await stream_cloud_chat(
+                provider="openai-codex",
+                model="gpt-5.4",
+                api_key="",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+            )
+
+        assert text == "ok"
+        call_kwargs = mock_acomp.call_args.kwargs
+        assert call_kwargs["model"] == "chatgpt/gpt-5.4"
+        assert "api_key" not in call_kwargs
+        mock_codex.configure_litellm_environment.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_reasoning_params_forwarded(self, _mock_broadcast, _mock_cancelled):
@@ -1486,6 +1533,138 @@ class TestStreamLitellm:
         # Partial text and tool calls from round 1 should be preserved
         assert "Partial text" in text
         assert len(tool_calls) >= 1
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_fallback_recovers_generated_suffix(
+        self,
+        _mock_broadcast,
+        _mock_cancelled,
+    ):
+        """MidStreamFallbackError should recover provider-generated trailing text."""
+        exc = litellm.exceptions.MidStreamFallbackError(
+            message="stream interrupted",
+            model="gemini/gemini-2.5-flash",
+            llm_provider="gemini",
+            generated_content="Hello world!",
+            is_pre_first_chunk=False,
+        )
+        chunks = [_text_chunk("Hello ")]
+
+        mock_acomp = AsyncMock(
+            return_value=_make_async_iter_then_raise(chunks, exc)
+        )
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, _ = await stream_cloud_chat(
+                provider="gemini",
+                model="gemini-2.5-flash",
+                api_key="key",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+            )
+
+        assert text == "Hello world!"
+        assert stats == {"prompt_eval_count": 0, "eval_count": 0}
+        assert tool_calls == []
+        assert not any(
+            call.args[0] == "error" for call in _mock_broadcast.await_args_list
+        )
+        assert any(
+            call.args[0] == "response_chunk" and call.args[1] == "world!"
+            for call in _mock_broadcast.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_mid_stream_fallback_pre_first_chunk_retries_once(
+        self,
+        _mock_broadcast,
+        _mock_cancelled,
+    ):
+        """Pre-first-chunk MidStreamFallbackError should retry the round once."""
+        exc = litellm.exceptions.MidStreamFallbackError(
+            message="stream interrupted",
+            model="openai/gpt-4o",
+            llm_provider="openai",
+            generated_content="",
+            is_pre_first_chunk=True,
+        )
+        chunks = [
+            _text_chunk("Recovered"),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+
+        mock_acomp = AsyncMock()
+        mock_acomp.side_effect = [
+            _make_async_iter_then_raise([], exc),
+            _make_async_iter(chunks),
+        ]
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, _, _, _ = await stream_cloud_chat(
+                provider="openai",
+                model="gpt-4o",
+                api_key="sk-test",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+            )
+
+        assert text == "Recovered"
+        assert mock_acomp.await_count == 2
+        assert not any(
+            call.args[0] == "error" for call in _mock_broadcast.await_args_list
+        )
+
+    @pytest.mark.asyncio
+    async def test_gemini_billing_error_broadcasts_upstream_cause(
+        self,
+        _mock_broadcast,
+        _mock_cancelled,
+    ):
+        body = {
+            "error": {
+                "code": 429,
+                "message": (
+                    "Your prepayment credits are depleted. Please go to AI Studio at "
+                    "https://ai.studio/projects to manage your project and billing."
+                ),
+                "status": "RESOURCE_EXHAUSTED",
+            }
+        }
+        exc = DummyProviderError(
+            "litellm.RateLimitError: Vertex_ai_betaException - 429 RESOURCE_EXHAUSTED",
+            status_code=429,
+            body=body,
+        )
+
+        mock_acomp = AsyncMock(side_effect=exc)
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="gemini",
+                model="gemini-3-flash-preview",
+                api_key="key",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+            )
+
+        assert text == ""
+        assert tool_calls == []
+        error_calls = [
+            c for c in _mock_broadcast.call_args_list if c.args[0] == "error"
+        ]
+        assert len(error_calls) == 1
+        assert (
+            error_calls[0].args[1]
+            == "Gemini API request failed: Google AI Studio prepay credits are "
+            "depleted for this billing account. This is a billing error, not an RPM "
+            "quota error. Add credits or enable auto-reload in AI Studio Billing."
+        )
 
     @pytest.mark.asyncio
     async def test_fallback_tool_call_id(

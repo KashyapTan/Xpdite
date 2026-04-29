@@ -1,6 +1,7 @@
 const PROVIDER_LABEL_OVERRIDES: Record<string, string> = {
   anthropic: 'Anthropic',
   openai: 'OpenAI',
+  'openai-codex': 'ChatGPT Subscription',
   gemini: 'Gemini',
   ollama: 'Ollama',
   openrouter: 'OpenRouter',

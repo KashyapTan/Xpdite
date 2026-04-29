@@ -53,6 +53,16 @@ def _invalidate_model_cache(provider: str) -> None:
     _MODEL_CACHE.pop(provider, None)
 
 
+def _remove_enabled_models_for_provider(provider: str) -> None:
+    """Remove enabled-model entries that belong to one provider prefix."""
+    from ..infrastructure.database import db
+
+    enabled = db.get_enabled_models()
+    filtered = [model for model in enabled if not model.startswith(f"{provider}/")]
+    if len(filtered) != len(enabled):
+        db.set_enabled_models(filtered)
+
+
 def _extract_openrouter_error(response: requests.Response) -> str:
     """Best-effort extraction of OpenRouter error details."""
     try:
@@ -786,13 +796,7 @@ async def delete_api_key(provider: str):
     key_manager.delete_api_key(provider)
 
     # Also remove any cloud models from the enabled list that belong to this provider
-    from ..infrastructure.database import db
-
-    enabled = db.get_enabled_models()
-    filtered = [m for m in enabled if not m.startswith(f"{provider}/")]
-    if len(filtered) != len(enabled):
-        db.set_enabled_models(filtered)
-
+    _remove_enabled_models_for_provider(provider)
     _invalidate_model_cache(provider)
 
     return {"status": "deleted", "provider": provider}
@@ -836,6 +840,82 @@ GEMINI_FALLBACK = [
     {"name": "gemini-1.5-pro", "description": "Gemini 1.5 Pro — balanced"},
     {"name": "gemini-1.5-flash", "description": "Gemini 1.5 Flash — fast"},
 ]
+
+
+# ============================================
+# OpenAI Codex / ChatGPT OAuth Connection
+# ============================================
+
+
+def _normalize_openai_codex_http_error(exc: Exception) -> HTTPException:
+    detail = str(exc).strip() or f"OpenAI Codex request failed ({type(exc).__name__})"
+    status_code = 503 if isinstance(exc, FileNotFoundError) else 400
+    return HTTPException(status_code=status_code, detail=detail[:300])
+
+
+@router.get("/openai/codex/status")
+async def get_openai_codex_status():
+    """Get ChatGPT subscription auth status without starting chat runtime."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    return await _run_in_thread(openai_codex.get_status)
+
+
+@router.post("/openai/codex/connect/browser")
+async def connect_openai_codex_browser():
+    """Start browser-based ChatGPT sign-in through the Codex auth helper."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    try:
+        result = await _run_in_thread(openai_codex.start_browser_login)
+    except Exception as exc:
+        raise _normalize_openai_codex_http_error(exc) from exc
+
+    _invalidate_model_cache("openai-codex")
+    return result
+
+
+@router.post("/openai/codex/connect/device")
+async def connect_openai_codex_device():
+    """Start device-code ChatGPT sign-in through the Codex auth helper."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    try:
+        result = await _run_in_thread(openai_codex.start_device_login)
+    except Exception as exc:
+        raise _normalize_openai_codex_http_error(exc) from exc
+
+    _invalidate_model_cache("openai-codex")
+    return result
+
+
+@router.post("/openai/codex/cancel")
+async def cancel_openai_codex_login():
+    """Cancel an in-flight ChatGPT sign-in attempt."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    try:
+        result = await _run_in_thread(openai_codex.cancel_login)
+    except Exception as exc:
+        raise _normalize_openai_codex_http_error(exc) from exc
+
+    _invalidate_model_cache("openai-codex")
+    return result
+
+
+@router.post("/openai/codex/disconnect")
+async def disconnect_openai_codex():
+    """Clear ChatGPT subscription auth and enabled subscription models."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    try:
+        result = await _run_in_thread(openai_codex.disconnect)
+    except Exception as exc:
+        raise _normalize_openai_codex_http_error(exc) from exc
+
+    _remove_enabled_models_for_provider("openai-codex")
+    _invalidate_model_cache("openai-codex")
+    return result
 
 
 # ============================================
@@ -1200,6 +1280,57 @@ async def get_openrouter_models(refresh: bool = False) -> List[dict]:
         return models
 
     return await _get_cached_or_fetch_models("openrouter", refresh, _fetch)
+
+
+@router.get("/models/openai-codex")
+async def get_openai_codex_models(refresh: bool = False) -> List[dict]:
+    """Get LiteLLM ChatGPT subscription models for the authenticated account."""
+    from ..services.integrations.openai_codex import openai_codex
+
+    async def _fetch() -> List[dict]:
+        def _load_models() -> List[dict]:
+            status = openai_codex.get_status()
+            if not status.get("connected"):
+                return []
+
+            raw_models = openai_codex.list_models()
+            normalized: list[dict] = []
+            for raw_model in raw_models:
+                model_id = str(raw_model.get("model") or raw_model.get("id") or "").strip()
+                if not model_id:
+                    continue
+                display_name = str(
+                    raw_model.get("displayName")
+                    or raw_model.get("description")
+                    or model_id
+                ).strip()
+                context_length_raw = raw_model.get("contextWindow")
+                context_length = (
+                    context_length_raw if isinstance(context_length_raw, int) else None
+                )
+                normalized.append(
+                    _to_cloud_model(
+                        model_id=f"openai-codex/{model_id}",
+                        provider="openai-codex",
+                        display_name=display_name,
+                        context_length=context_length,
+                    )
+                )
+
+            normalized.sort(
+                key=lambda item: (
+                    0 if str(item["id"]).endswith("/gpt-5.4") else 1,
+                    str(item["id"]),
+                )
+            )
+            return normalized
+
+        try:
+            return await _run_in_thread(_load_models)
+        except Exception as exc:
+            raise _normalize_openai_codex_http_error(exc) from exc
+
+    return await _get_cached_or_fetch_models("openai-codex", refresh, _fetch)
 
 
 # ============================================

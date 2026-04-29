@@ -5,13 +5,20 @@
     height: 100%;
     display: flex;
     flex-direction: column;
+    gap: 26px;
     padding: 20px;
     box-sizing: border-box;
     overflow-y: auto;
 }
 
+.settings-apikey-panel {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
 .settings-apikey-header {
-    margin-bottom: 30px;
+    margin-bottom: 18px;
 }
 
 .settings-apikey-header h2 {
@@ -94,6 +101,29 @@
     cursor: default;
 }
 
+.settings-apikey-secondary-btn {
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+    color: var(--color-text);
+    font-size: 0.8rem;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+}
+
+.settings-apikey-secondary-btn:hover:not(:disabled) {
+    border-color: var(--color-border-strong);
+}
+
+.settings-apikey-secondary-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
 /* ====== Stored Key Display ====== */
 
 .settings-apikey-stored {
@@ -141,6 +171,59 @@
 .settings-apikey-delete-btn:hover {
     background: var(--color-red-soft);
     border-color: var(--color-red);
+}
+
+/* ====== ChatGPT Subscription ====== */
+
+.settings-codex-panel {
+    padding-top: 22px;
+    border-top: 1px solid var(--color-surface-strong);
+}
+
+.settings-codex-connect {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+}
+
+.settings-codex-state {
+    min-width: 0;
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+}
+
+.settings-codex-actions,
+.settings-codex-device-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.settings-codex-device {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    border: 1px solid var(--color-surface-strong);
+    background: var(--color-surface);
+}
+
+.settings-codex-code {
+    font-family: var(--font-family-mono);
+    font-size: 1rem;
+    color: var(--color-text);
+    letter-spacing: 0.08em;
 }
 
 /* ====== Feedback Messages ====== */

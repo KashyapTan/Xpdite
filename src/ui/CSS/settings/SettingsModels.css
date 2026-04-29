@@ -32,6 +32,7 @@
 .settings-models-anthropic-header,
 .settings-models-gemini-header,
 .settings-models-openai-header,
+.settings-models-openai-codex-header,
 .settings-models-openrouter-header {
     width: 100%;
     height: 30px;
@@ -52,6 +53,7 @@
 .settings-models-anthropic-content,
 .settings-models-gemini-content,
 .settings-models-openai-content,
+.settings-models-openai-codex-content,
 .settings-models-openrouter-content {
     width: calc(100% - 10px);
     height: fit-content;
@@ -74,6 +76,7 @@
 .settings-models-anthropic-model,
 .settings-models-gemini-model,
 .settings-models-openai-model,
+.settings-models-openai-codex-model,
 .settings-models-openrouter-model {
     min-height: 36px;
     padding: 4px 8px;
@@ -128,6 +131,7 @@
 .settings-models-anthropic-model:last-child,
 .settings-models-gemini-model:last-child,
 .settings-models-openai-model:last-child,
+.settings-models-openai-codex-model:last-child,
 .settings-models-openrouter-model:last-child {
     margin-bottom: 0px;
 }
@@ -136,6 +140,7 @@
 .settings-models-anthropic-model:hover,
 .settings-models-gemini-model:hover,
 .settings-models-openai-model:hover,
+.settings-models-openai-codex-model:hover,
 .settings-models-openrouter-model:hover {
     cursor: pointer;
     transition: background-color 0.2s ease-in-out;
@@ -146,6 +151,7 @@
 .settings-models-anthropic-model:first-child:hover,
 .settings-models-gemini-model:first-child:hover,
 .settings-models-openai-model:first-child:hover,
+.settings-models-openai-codex-model:first-child:hover,
 .settings-models-openrouter-model:first-child:hover {
     border-top-left-radius: 8px;
     border-top-right-radius: 8px;
@@ -155,6 +161,7 @@
 .settings-models-anthropic-model:last-child:hover,
 .settings-models-gemini-model:last-child:hover,
 .settings-models-openai-model:last-child:hover,
+.settings-models-openai-codex-model:last-child:hover,
 .settings-models-openrouter-model:last-child:hover {
     border-bottom-left-radius: 8px;
     border-bottom-right-radius: 8px;

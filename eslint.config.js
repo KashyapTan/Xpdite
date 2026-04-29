@@ -17,6 +17,8 @@ export default tseslint.config(
     'node_modules',
     'coverage',
     'codex-temp',
+    'user_data',
+    '.tmp*',
     'archive',
     'claude-code-reference-implementations',
   ] },

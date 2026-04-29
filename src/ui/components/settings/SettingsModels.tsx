@@ -4,21 +4,23 @@ import {
   type ProviderModel,
   type OllamaModel,
   type OllamaRegistryModelInfo,
+  type OpenAICodexStatus,
 } from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
 import { RotateCcwIcon } from '../icons/AppIcons';
 import '../../CSS/settings/SettingsModels.css';
 
-type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
+type CloudProvider = 'anthropic' | 'openai' | 'openai-codex' | 'gemini' | 'openrouter';
 type ProviderKey = CloudProvider | 'ollama';
 
-const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'openai', 'gemini', 'openrouter'];
+const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'openai', 'openai-codex', 'gemini', 'openrouter'];
 const KNOWN_CLOUD_PROVIDERS = new Set<CloudProvider>(CLOUD_PROVIDERS);
 
 const EMPTY_CLOUD_MODELS: Record<CloudProvider, ProviderModel[]> = {
   anthropic: [],
   openai: [],
+  'openai-codex': [],
   gemini: [],
   openrouter: [],
 };
@@ -27,6 +29,7 @@ const EMPTY_PROVIDER_ERRORS: Record<ProviderKey, string> = {
   ollama: '',
   anthropic: '',
   openai: '',
+  'openai-codex': '',
   gemini: '',
   openrouter: '',
 };
@@ -35,13 +38,35 @@ const EMPTY_REFRESHING_STATE: Record<ProviderKey, boolean> = {
   ollama: false,
   anthropic: false,
   openai: false,
+  'openai-codex': false,
   gemini: false,
   openrouter: false,
+};
+
+const EMPTY_CODEX_STATUS: OpenAICodexStatus = {
+  available: false,
+  connected: false,
+  account_type: null,
+  email: null,
+  plan_type: null,
+  requires_openai_auth: true,
+  auth_in_progress: false,
+  login_method: null,
+  login_id: null,
+  auth_url: null,
+  verification_url: null,
+  user_code: null,
+  auth_mode: null,
+  last_error: null,
+  binary_path: null,
 };
 
 function toEnabledModelId(provider: CloudProvider, modelId: string): string {
   if (provider === 'openrouter' && !modelId.startsWith('openrouter/')) {
     return `openrouter/${modelId}`;
+  }
+  if (provider === 'openai-codex' && !modelId.startsWith('openai-codex/')) {
+    return `openai-codex/${modelId}`;
   }
   return modelId;
 }
@@ -126,6 +151,7 @@ const SettingsModels: React.FC = () => {
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
   const [cloudModels, setCloudModels] = useState<Record<CloudProvider, ProviderModel[]>>(EMPTY_CLOUD_MODELS);
   const [keyStatus, setKeyStatus] = useState<Record<string, { has_key: boolean; masked: string | null }>>({});
+  const [codexStatus, setCodexStatus] = useState<OpenAICodexStatus>(EMPTY_CODEX_STATUS);
   const [enabledModels, setEnabledModels] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -180,18 +206,30 @@ const SettingsModels: React.FC = () => {
       setLoading(true);
       setError('');
       try {
-        const [enabled, keys] = await Promise.all([
+        const [enabled, keys, codex] = await Promise.all([
           api.getEnabledModels(),
           api.getApiKeyStatus(),
+          api.getOpenAICodexStatus().catch(() => EMPTY_CODEX_STATUS),
         ]);
 
         setEnabledModels(enabled);
         setKeyStatus(keys);
+        setCodexStatus(codex);
 
         await loadOllamaModels(false);
 
         await Promise.all(
           CLOUD_PROVIDERS.map(async (provider) => {
+            if (provider === 'openai-codex') {
+              if (codex.connected) {
+                await loadCloudProviderModels(provider, false);
+              } else {
+                setCloudModels((prev) => ({ ...prev, [provider]: [] }));
+                setProviderError(provider, codex.last_error ?? '');
+              }
+              return;
+            }
+
             if (keys[provider]?.has_key) {
               await loadCloudProviderModels(provider, false);
               return;
@@ -219,11 +257,21 @@ const SettingsModels: React.FC = () => {
         return;
       }
 
+      if (provider === 'openai-codex') {
+        const status = await api.getOpenAICodexStatus();
+        setCodexStatus(status);
+        if (!status.connected) {
+          setCloudModels((prev) => ({ ...prev, [provider]: [] }));
+          setProviderError(provider, status.last_error ?? '');
+          return;
+        }
+      }
+
       await loadCloudProviderModels(provider, true);
     } finally {
       setRefreshingProviders((prev) => ({ ...prev, [provider]: false }));
     }
-  }, [loadCloudProviderModels, loadOllamaModels]);
+  }, [loadCloudProviderModels, loadOllamaModels, setProviderError]);
 
   const toggleModel = useCallback(
     async (modelName: string) => {
@@ -502,7 +550,7 @@ const SettingsModels: React.FC = () => {
   ) => {
     const enabledModelId = toEnabledModelId(provider, model.id);
     const isEnabled = enabledModels.includes(enabledModelId);
-    const modelLabel = provider === 'openrouter'
+    const modelLabel = provider === 'openrouter' || provider === 'openai-codex'
       ? model.display_name || formatModelLabel(model.id)
       : formatModelLabel(model.id);
     const metaParts: string[] = [];
@@ -543,32 +591,37 @@ const SettingsModels: React.FC = () => {
     classPrefix: string,
   ) => {
     const models = cloudModels[provider];
-    const hasKey = keyStatus[provider]?.has_key;
+    const hasConnection = provider === 'openai-codex'
+      ? codexStatus.connected
+      : keyStatus[provider]?.has_key;
     const providerError = providerErrors[provider];
+    const missingConnectionLabel = provider === 'openai-codex'
+      ? 'Connect ChatGPT in the OpenAI tab to browse subscription models.'
+      : `No API key configured. Add one in the ${getProviderLabel(provider)} tab.`;
 
     return (
       <>
         {renderSectionHeader(provider, getProviderLabel(provider), classPrefix)}
         <div className={`settings-models-${classPrefix}-content`}>
-          {!hasKey && (
+          {!hasConnection && (
             <div className={`settings-models-${classPrefix}-model settings-models-placeholder`}>
-              No API key configured. Add one in the {getProviderLabel(provider)} tab.
+              {missingConnectionLabel}
             </div>
           )}
 
-          {hasKey && providerError && (
+          {hasConnection && providerError && (
             <div className={`settings-models-${classPrefix}-model settings-models-error`}>
               {providerError}
             </div>
           )}
 
-          {hasKey && !providerError && models.length === 0 && !loading && (
+          {hasConnection && !providerError && models.length === 0 && !loading && (
             <div className={`settings-models-${classPrefix}-model settings-models-placeholder`}>
               No models available.
             </div>
           )}
 
-          {hasKey && !providerError && models.map((model) => renderCloudModelRow(provider, model, classPrefix))}
+          {hasConnection && !providerError && models.map((model) => renderCloudModelRow(provider, model, classPrefix))}
         </div>
       </>
     );
@@ -749,6 +802,7 @@ const SettingsModels: React.FC = () => {
 
         {renderCloudModels('anthropic', 'anthropic')}
         {renderCloudModels('openai', 'openai')}
+        {renderCloudModels('openai-codex', 'openai-codex')}
         {renderCloudModels('gemini', 'gemini')}
         {renderOpenRouterModels()}
       </div>

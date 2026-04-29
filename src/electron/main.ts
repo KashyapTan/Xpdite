@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
@@ -79,6 +79,22 @@ function isTrustedPerfLogSender(event: IpcMainInvokeEvent): boolean {
 
 function isTrustedIpcSender(event: IpcMainInvokeEvent): boolean {
     return isTrustedPerfLogSender(event);
+}
+
+function normalizeExternalUrl(input: unknown): string | null {
+    if (typeof input !== 'string') {
+        return null;
+    }
+
+    try {
+        const url = new URL(input);
+        if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+            return null;
+        }
+        return url.toString();
+    } catch {
+        return null;
+    }
 }
 
 function shouldDropPerfLog(senderId: number, safeMessage: string): boolean {
@@ -537,6 +553,20 @@ app.on('ready', async () => {
 
         if (!mainWindow) return;
         mainWindow.focus();
+    });
+
+    ipcMain.handle('open-external-url', async (event, url: string) => {
+        if (!isTrustedIpcSender(event)) {
+            return { success: false, error: 'Untrusted sender' };
+        }
+
+        const safeUrl = normalizeExternalUrl(url);
+        if (!safeUrl) {
+            return { success: false, error: 'Invalid external URL' };
+        }
+
+        await shell.openExternal(safeUrl);
+        return { success: true };
     });
 
     ipcMain.handle('get-server-port', (event) => {

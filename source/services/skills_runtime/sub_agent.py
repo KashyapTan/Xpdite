@@ -21,6 +21,11 @@ from typing import Any, Dict, List, Optional
 
 import litellm
 
+from ...llm.core.stream_recovery import (
+    MID_STREAM_RETRY_LIMIT,
+    get_mid_stream_generated_suffix,
+)
+from ...llm.core.provider_errors import build_provider_error_message
 from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE, USER_DATA_DIR
 from ...core.connection import broadcast_message
 from ...core.request_context import get_current_model, is_current_request_cancelled
@@ -172,15 +177,35 @@ def _uses_ollama_client(model_name: str) -> bool:
     """Whether the model should be called via the Ollama AsyncClient.
 
     Models with a known cloud provider prefix (``anthropic/``, ``openai/``,
-    ``gemini/``, ``openrouter/``) go through LiteLLM.  Everything else — including cloud-
+    ``openai-codex/``, ``gemini/``, ``openrouter/``) go through LiteLLM.  Everything else — including cloud-
     hosted Ollama models like ``qwen3.5:397b-cloud`` — goes through the
     Ollama client.
     """
     if "/" in model_name:
         provider = model_name.split("/")[0]
-        if provider in ("anthropic", "openai", "gemini", "openrouter"):
+        if provider in ("anthropic", "openai", "openai-codex", "gemini", "openrouter"):
             return False
     return True
+
+
+def _prepare_cloud_sub_agent_provider(provider: str) -> tuple[str, str | None]:
+    """Return the LiteLLM provider name and API key for a cloud sub-agent."""
+    from ...llm.core.key_manager import key_manager
+
+    if provider == "openai-codex":
+        from ...services.integrations.openai_codex import openai_codex
+
+        status = openai_codex.get_status()
+        if not status.get("connected"):
+            raise RuntimeError(
+                "Connect ChatGPT in Settings > OpenAI before using subscription sub-agents."
+            )
+        return "chatgpt", None
+
+    api_key = key_manager.get_api_key(provider)
+    if not api_key:
+        raise RuntimeError(f"No API key for {provider}")
+    return provider, api_key
 
 
 def _is_local_ollama(model_name: str) -> bool:
@@ -252,19 +277,23 @@ async def _run_cloud_sub_agent(
     Returns {"response": str, "token_stats": dict, "error": str | None}.
     """
     from ...llm.core.router import parse_provider
-    from ...llm.core.key_manager import key_manager
     from ...mcp_integration.core.manager import mcp_manager
 
     provider, model = parse_provider(model_name)
-    api_key = key_manager.get_api_key(provider)
-    if not api_key:
+    try:
+        litellm_provider, api_key = await run_in_thread(
+            _prepare_cloud_sub_agent_provider,
+            provider,
+        )
+    except RuntimeError as exc:
+        error_text = str(exc)
         return {
-            "response": f"Error: No API key for {provider}",
+            "response": f"Error: {error_text}",
             "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
-            "error": f"No API key for {provider}",
+            "error": error_text,
         }
 
-    litellm_model = f"{provider}/{model}"
+    litellm_model = f"{litellm_provider}/{model}"
     messages: List[Dict[str, Any]] = [
         {"role": "system", "content": _SUB_AGENT_SYSTEM_PROMPT},
         {"role": "user", "content": instruction},
@@ -324,9 +353,10 @@ async def _run_cloud_sub_agent(
             "model": litellm_model,
             "messages": messages,
             "stream": True,  # Enable streaming
-            "api_key": api_key,
             "timeout": _SUB_AGENT_TIMEOUT,
         }
+        if api_key:
+            create_kwargs["api_key"] = api_key
         if max_tokens and max_tokens > 0:
             create_kwargs["max_tokens"] = max_tokens
         if allow_tools:
@@ -338,6 +368,7 @@ async def _run_cloud_sub_agent(
             tool_calls_accum: Dict[int, Dict[str, Any]] = {}
             finish_reason = None
             round_text_step_index: int | None = None
+            stream_retry_count = 0
 
             def _append_stream_text(chunk_text: str) -> None:
                 """Append streamed text and keep transcript text block in sync."""
@@ -352,81 +383,129 @@ async def _run_cloud_sub_agent(
                 existing = str(transcript_steps[round_text_step_index].get("content", ""))
                 transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
 
-            async for chunk in await litellm.acompletion(**create_kwargs):
-                if is_current_request_cancelled():
+            while True:
+                try:
+                    async for chunk in await litellm.acompletion(**create_kwargs):
+                        if is_current_request_cancelled():
+                            break
+
+                        # Extract usage from final chunk if available
+                        if hasattr(chunk, "usage") and chunk.usage:
+                            total_tokens["prompt_tokens"] += getattr(chunk.usage, "prompt_tokens", 0) or 0
+                            total_tokens["completion_tokens"] += getattr(chunk.usage, "completion_tokens", 0) or 0
+
+                        if not chunk.choices:
+                            continue
+
+                        delta = chunk.choices[0].delta
+                        finish_reason = chunk.choices[0].finish_reason
+
+                        # Stream reasoning/thinking content if provider exposes it
+                        reasoning_content = getattr(delta, "reasoning_content", None) if delta else None
+                        if reasoning_content:
+                            if isinstance(reasoning_content, str):
+                                thinking_text = reasoning_content
+                            else:
+                                try:
+                                    thinking_text = json.dumps(reasoning_content, ensure_ascii=False)
+                                except TypeError:
+                                    thinking_text = str(reasoning_content)
+                            _append_stream_text(thinking_text)
+                            if agent_id:
+                                await broadcast_message(
+                                    "sub_agent_stream",
+                                    json.dumps({
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": thinking_text,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }),
+                                )
+
+                        # Stream text content
+                        if delta and delta.content:
+                            _append_stream_text(delta.content)
+                            if agent_id:
+                                await broadcast_message(
+                                    "sub_agent_stream",
+                                    json.dumps({
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": delta.content,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }),
+                                )
+
+                        # Accumulate tool calls from deltas
+                        if delta and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_accum:
+                                    tool_calls_accum[idx] = {
+                                        "id": tc_delta.id or "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                if tc_delta.id:
+                                    tool_calls_accum[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        tool_calls_accum[idx]["function"]["name"] = tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        tool_calls_accum[idx]["function"]["arguments"] += tc_delta.function.arguments
                     break
-
-                # Extract usage from final chunk if available
-                if hasattr(chunk, "usage") and chunk.usage:
-                    total_tokens["prompt_tokens"] += getattr(chunk.usage, "prompt_tokens", 0) or 0
-                    total_tokens["completion_tokens"] += getattr(chunk.usage, "completion_tokens", 0) or 0
-
-                if not chunk.choices:
-                    continue
-
-                delta = chunk.choices[0].delta
-                finish_reason = chunk.choices[0].finish_reason
-
-                # Stream reasoning/thinking content if provider exposes it
-                reasoning_content = getattr(delta, "reasoning_content", None) if delta else None
-                if reasoning_content:
-                    if isinstance(reasoning_content, str):
-                        thinking_text = reasoning_content
-                    else:
-                        try:
-                            thinking_text = json.dumps(reasoning_content, ensure_ascii=False)
-                        except TypeError:
-                            thinking_text = str(reasoning_content)
-                    _append_stream_text(thinking_text)
-                    if agent_id:
-                        await broadcast_message(
-                            "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "thinking",
-                                "content": thinking_text,
-                                "accumulated": "".join(round_text_chunks),
-                                "transcript": transcript_steps,
-                            }),
+                except litellm.exceptions.MidStreamFallbackError as e:
+                    recovered_suffix = get_mid_stream_generated_suffix(
+                        "".join(round_text_chunks),
+                        getattr(e, "generated_content", "") or "",
+                    )
+                    if recovered_suffix:
+                        _append_stream_text(recovered_suffix)
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "thinking",
+                                    "content": recovered_suffix,
+                                    "accumulated": "".join(round_text_chunks),
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                        logger.warning(
+                            "Sub-agent mid-stream fallback recovered %d trailing chars for %s/%s (%s)",
+                            len(recovered_suffix),
+                            provider,
+                            model,
+                            type(e.original_exception).__name__
+                            if e.original_exception is not None
+                            else type(e).__name__,
                         )
+                        break
 
-                # Stream text content
-                if delta and delta.content:
-                    _append_stream_text(delta.content)
-                    # Broadcast streaming text
-                    if agent_id:
-                        await broadcast_message(
-                            "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "thinking",
-                                "content": delta.content,
-                                "accumulated": "".join(round_text_chunks),
-                                "transcript": transcript_steps,
-                            }),
+                    if e.is_pre_first_chunk and stream_retry_count < MID_STREAM_RETRY_LIMIT:
+                        stream_retry_count += 1
+                        logger.warning(
+                            "Sub-agent stream failed before first chunk for %s/%s; retrying round %d/%d (%s)",
+                            provider,
+                            model,
+                            stream_retry_count,
+                            MID_STREAM_RETRY_LIMIT,
+                            type(e.original_exception).__name__
+                            if e.original_exception is not None
+                            else type(e).__name__,
                         )
+                        continue
 
-                # Accumulate tool calls from deltas
-                if delta and delta.tool_calls:
-                    for tc_delta in delta.tool_calls:
-                        idx = tc_delta.index
-                        if idx not in tool_calls_accum:
-                            tool_calls_accum[idx] = {
-                                "id": tc_delta.id or "",
-                                "type": "function",
-                                "function": {"name": "", "arguments": ""},
-                            }
-                        if tc_delta.id:
-                            tool_calls_accum[idx]["id"] = tc_delta.id
-                        if tc_delta.function:
-                            if tc_delta.function.name:
-                                tool_calls_accum[idx]["function"]["name"] = tc_delta.function.name
-                            if tc_delta.function.arguments:
-                                tool_calls_accum[idx]["function"]["arguments"] += tc_delta.function.arguments
+                    raise
 
             # After streaming, add collected text to accumulated
             round_text = "".join(round_text_chunks)
@@ -557,11 +636,16 @@ async def _run_cloud_sub_agent(
                 break
 
         except Exception as e:
-            logger.error("Sub-agent LiteLLM streaming failed: %s", e, exc_info=True)
+            error_msg = build_provider_error_message(provider, e)
+            logger.error(
+                "Sub-agent LiteLLM streaming failed (%s): %s",
+                type(e).__name__,
+                error_msg,
+            )
             return {
-                "response": f"Sub-agent error: {type(e).__name__}",
+                "response": "".join(accumulated_text),
                 "token_stats": total_tokens,
-                "error": type(e).__name__,
+                "error": error_msg,
             }
 
     # Broadcast final complete state

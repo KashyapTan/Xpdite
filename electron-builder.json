@@ -34,6 +34,13 @@
             "filter": [
                 "**/*"
             ]
+        },
+        {
+            "from": "dist-codex-runtime",
+            "to": "codex-runtime",
+            "filter": [
+                "**/*"
+            ]
         }
     ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",

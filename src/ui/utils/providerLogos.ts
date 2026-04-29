@@ -1,6 +1,7 @@
 const MODEL_PROVIDERS_WITH_LOGOS = [
   'anthropic',
   'openai',
+  'openai-codex',
   'gemini',
   'openrouter',
   'ollama',

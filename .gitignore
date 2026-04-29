@@ -15,6 +15,7 @@ dist-python
 dist-channel-bridge
 dist-python-runtime
 dist-runtime-config
+dist-codex-runtime
 build-temp
 *.local
 

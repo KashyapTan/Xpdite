@@ -117,6 +117,100 @@ class TestHttpApiHelpers:
         second_fetcher.assert_awaited_once()
 
 
+class TestOpenAICodexApiEndpoints:
+    @pytest.mark.anyio
+    async def test_get_openai_codex_status_delegates_to_service(self):
+        service = MagicMock()
+        service.get_status.return_value = {
+            "available": True,
+            "connected": True,
+            "email": "user@example.com",
+        }
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.integrations.openai_codex.openai_codex", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.get_openai_codex_status()
+
+        assert result["connected"] is True
+        service.get_status.assert_called_once_with()
+
+    @pytest.mark.anyio
+    async def test_openai_codex_browser_connect_invalidates_model_cache(self):
+        service = MagicMock()
+        service.start_browser_login.return_value = {
+            "available": True,
+            "connected": False,
+            "auth_in_progress": True,
+            "auth_url": "https://auth.example.test/start",
+        }
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.integrations.openai_codex.openai_codex", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api, "_MODEL_CACHE", {"openai-codex": (1.0, [])}),
+        ):
+            result = await http_api.connect_openai_codex_browser()
+
+        assert result["auth_in_progress"] is True
+        assert "openai-codex" not in http_api._MODEL_CACHE
+        service.start_browser_login.assert_called_once_with()
+
+    @pytest.mark.anyio
+    async def test_get_openai_codex_models_normalizes_app_server_models(self):
+        service = MagicMock()
+        service.get_status.return_value = {"connected": True}
+        service.list_models.return_value = [
+            {
+                "model": "gpt-5.4",
+                "displayName": "GPT-5.4",
+                "contextWindow": 400000,
+            },
+            {"id": "gpt-5.3-codex", "description": "GPT-5.3 Codex"},
+        ]
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.integrations.openai_codex.openai_codex", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+        ):
+            result = await http_api.get_openai_codex_models(refresh=True)
+
+        assert result[0]["id"] == "openai-codex/gpt-5.4"
+        assert result[0]["provider"] == "openai-codex"
+        assert result[0]["display_name"] == "GPT-5.4"
+        assert result[0]["context_length"] == 400000
+        assert result[1]["id"] == "openai-codex/gpt-5.3-codex"
+
+    @pytest.mark.anyio
+    async def test_get_openai_codex_models_returns_empty_when_disconnected(self):
+        service = MagicMock()
+        service.get_status.return_value = {"connected": False}
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch("source.services.integrations.openai_codex.openai_codex", service),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+            patch.object(http_api, "_MODEL_CACHE", {}),
+        ):
+            result = await http_api.get_openai_codex_models(refresh=True)
+
+        assert result == []
+        service.list_models.assert_not_called()
+
+
 class TestArtifactApiEndpoints:
     @pytest.mark.anyio
     async def test_require_artifact_access_rejects_non_loopback_clients(self):

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import litellm
 import pytest
-
 
 # We need to import after conftest stubs the circular import
 from source.services.skills_runtime.sub_agent import (
@@ -21,6 +21,15 @@ from source.services.skills_runtime.sub_agent import (
     execute_sub_agent,
     execute_sub_agents_parallel,
 )
+
+
+class DummyProviderError(Exception):
+    """Minimal provider-style exception for testing safe error extraction."""
+
+    def __init__(self, message: str, **attrs):
+        super().__init__(message)
+        for key, value in attrs.items():
+            setattr(self, key, value)
 
 
 # ---------------------------------------------------------------------------
@@ -40,6 +49,9 @@ class TestUsesOllamaClient:
 
     def test_openai_model(self):
         assert _uses_ollama_client("openai/gpt-4o") is False
+
+    def test_chatgpt_subscription_model(self):
+        assert _uses_ollama_client("openai-codex/gpt-5.4") is False
 
     def test_gemini_model(self):
         assert _uses_ollama_client("gemini/gemini-2.5-flash") is False
@@ -386,6 +398,18 @@ def _make_streaming_chunks(content: str, tool_calls=None, prompt_tokens=0, compl
     return generator()
 
 
+def _make_streaming_chunks_then_raise(
+    chunks,
+    exc: Exception,
+):
+    async def generator():
+        for chunk in chunks:
+            yield chunk
+        raise exc
+
+    return generator()
+
+
 def _make_ollama_stream(
     *,
     content: str = "",
@@ -604,9 +628,113 @@ class TestRunCloudSubAgent:
         )
 
         assert result == {
-            "response": "Sub-agent error: RuntimeError",
+            "response": "",
             "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
-            "error": "RuntimeError",
+            "error": "OpenAI API request failed: stream exploded",
+        }
+
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    async def test_cloud_sub_agent_routes_chatgpt_subscription_through_litellm(
+        self, mock_acompletion, _mock_model_info, _mock_cancelled
+    ):
+        mock_acompletion.return_value = _make_streaming_chunks("done")
+
+        with patch(
+            "source.services.integrations.openai_codex.openai_codex.get_status",
+            return_value={"connected": True},
+        ) as mock_status:
+            result = await _run_cloud_sub_agent(
+                model_name="openai-codex/gpt-5.4",
+                instruction="Summarize",
+                tools=None,
+            )
+
+        assert result == {
+            "response": "done",
+            "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
+            "error": None,
+        }
+        mock_status.assert_called_once()
+        create_kwargs = mock_acompletion.call_args.kwargs
+        assert create_kwargs["model"] == "chatgpt/gpt-5.4"
+        assert "api_key" not in create_kwargs
+
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.core.key_manager.key_manager.get_api_key", return_value="sk-test")
+    async def test_cloud_sub_agent_recovers_mid_stream_fallback(
+        self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
+    ):
+        exc = litellm.exceptions.MidStreamFallbackError(
+            message="stream interrupted",
+            model="openai/gpt-4o",
+            llm_provider="openai",
+            generated_content="Hello world",
+            is_pre_first_chunk=False,
+        )
+        partial = [
+            SimpleNamespace(
+                choices=[SimpleNamespace(
+                    delta=SimpleNamespace(content="Hello ", tool_calls=None),
+                    finish_reason=None,
+                )],
+                usage=None,
+            )
+        ]
+        mock_acompletion.return_value = _make_streaming_chunks_then_raise(partial, exc)
+
+        result = await _run_cloud_sub_agent(
+            model_name="openai/gpt-4o",
+            instruction="Say hi",
+            tools=None,
+        )
+
+        assert result == {
+            "response": "Hello world",
+            "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
+            "error": None,
+        }
+
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.llm.core.key_manager.key_manager.get_api_key", return_value="sk-test")
+    async def test_cloud_sub_agent_surfaces_provider_billing_error(
+        self, _mock_key, mock_acompletion, _mock_model_info, _mock_cancelled
+    ):
+        body = {
+            "error": {
+                "code": 429,
+                "message": (
+                    "Your prepayment credits are depleted. Please go to AI Studio at "
+                    "https://ai.studio/projects to manage your project and billing."
+                ),
+                "status": "RESOURCE_EXHAUSTED",
+            }
+        }
+        mock_acompletion.side_effect = DummyProviderError(
+            "litellm.RateLimitError: Vertex_ai_betaException - 429 RESOURCE_EXHAUSTED",
+            status_code=429,
+            body=body,
+        )
+
+        result = await _run_cloud_sub_agent(
+            model_name="gemini/gemini-3-flash-preview",
+            instruction="Say hi",
+            tools=None,
+        )
+
+        assert result == {
+            "response": "",
+            "token_stats": {"prompt_tokens": 0, "completion_tokens": 0},
+            "error": (
+                "Gemini API request failed: Google AI Studio prepay credits are "
+                "depleted for this billing account. This is a billing error, not an RPM "
+                "quota error. Add credits or enable auto-reload in AI Studio Billing."
+            ),
         }
 
 

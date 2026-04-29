@@ -36,6 +36,7 @@ describe('modelDisplay utilities', () => {
   describe('getProviderLabel', () => {
     test('uses overrides for known providers', () => {
       expect(getProviderLabel('openai')).toBe('OpenAI');
+      expect(getProviderLabel('openai-codex')).toBe('ChatGPT Subscription');
       expect(getProviderLabel('xai')).toBe('xAI');
     });
 

@@ -76,6 +76,41 @@ describe('toolCallState', () => {
     });
   });
 
+  test('collapses a single anonymous pending sub-agent row when stream adds an agentId', () => {
+    const genericToolCall: ToolCall = {
+      name: 'spawn_agent',
+      args: {
+        instruction: 'Research TurboTax',
+      },
+      server: 'sub_agent',
+      status: 'calling',
+    };
+
+    const nextState = applyToolCallChange(
+      [genericToolCall],
+      [{ type: 'tool_call', toolCall: genericToolCall }],
+      {
+        name: 'spawn_agent',
+        args: {
+          agent_name: 'Sub-agent',
+          model_tier: '',
+        },
+        server: 'sub_agent',
+        status: 'complete',
+        agentId: 'agent-1',
+        result: 'Finished report',
+        partialResult: 'Finished report',
+      },
+      true,
+    );
+
+    expect(nextState.toolCalls).toHaveLength(1);
+    expect(nextState.contentBlocks).toHaveLength(1);
+    expect(nextState.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(nextState.toolCalls[0]?.status).toBe('complete');
+    expect(nextState.toolCalls[0]?.result).toBe('Finished report');
+  });
+
   test('updates the canonical sub-agent row when the generic completion payload arrives', () => {
     const runtimeToolCall: ToolCall = {
       name: 'spawn_agent',

@@ -23,6 +23,7 @@ vi.mock('../../../services/api', () => ({
     getEnabledModels: vi.fn(),
     setEnabledModels: vi.fn(),
     getApiKeyStatus: vi.fn(),
+    getOpenAICodexStatus: vi.fn(),
     getProviderModels: vi.fn(),
   },
 }))
@@ -34,6 +35,7 @@ vi.mock('../../../utils/modelDisplay', () => ({
     const labels: Record<string, string> = {
       anthropic: 'Anthropic',
       openai: 'OpenAI',
+      'openai-codex': 'ChatGPT Subscription',
       gemini: 'Gemini',
       openrouter: 'OpenRouter',
       ollama: 'Ollama',
@@ -62,6 +64,10 @@ const mockOpenAIModels = [
   { id: 'gpt-4o-mini', provider: 'openai', display_name: 'GPT-4o Mini' },
 ]
 
+const mockOpenAICodexModels = [
+  { id: 'openai-codex/gpt-5.4', provider: 'openai-codex', display_name: 'GPT-5.4' },
+]
+
 const mockGeminiModels = [
   { id: 'gemini-2.0-flash', provider: 'gemini', display_name: 'Gemini 2.0 Flash' },
 ]
@@ -83,6 +89,24 @@ const mockKeyStatusNoKeys = {
   openai: { has_key: false, masked: null },
   gemini: { has_key: false, masked: null },
   openrouter: { has_key: false, masked: null },
+}
+
+const mockCodexDisconnected = {
+  available: true,
+  connected: false,
+  account_type: null,
+  email: null,
+  plan_type: null,
+  requires_openai_auth: true,
+  auth_in_progress: false,
+  login_method: null,
+  login_id: null,
+  auth_url: null,
+  verification_url: null,
+  user_code: null,
+  auth_mode: null,
+  last_error: null,
+  binary_path: 'codex.exe',
 }
 
 describe('SettingsModels', () => {
@@ -112,6 +136,7 @@ describe('SettingsModels', () => {
         is_installed: false,
       },
     })
+    mockedApi.getOpenAICodexStatus.mockResolvedValue(mockCodexDisconnected)
   })
 
   afterEach(() => {
@@ -331,6 +356,41 @@ describe('SettingsModels', () => {
       await waitFor(() => {
         expect(screen.getByText('OpenAI')).toBeInTheDocument()
         expect(screen.getByText('Gpt 4o')).toBeInTheDocument()
+      })
+    })
+
+    test('should render ChatGPT subscription models when connected', async () => {
+      mockedApi.getEnabledModels.mockResolvedValue([])
+      mockedApi.getApiKeyStatus.mockResolvedValue(mockKeyStatusNoKeys)
+      mockedApi.getOpenAICodexStatus.mockResolvedValue({
+        ...mockCodexDisconnected,
+        connected: true,
+        email: 'user@example.com',
+        plan_type: 'plus',
+      })
+      mockedApi.getOllamaModels.mockResolvedValue({ models: [] })
+      mockedApi.getProviderModels.mockImplementation(async (provider) => {
+        if (provider === 'openai-codex') return mockOpenAICodexModels
+        return []
+      })
+
+      render(<SettingsModels />)
+
+      await waitFor(() => {
+        expect(screen.getByText('ChatGPT Subscription')).toBeInTheDocument()
+        expect(screen.getByText('GPT-5.4')).toBeInTheDocument()
+      })
+    })
+
+    test('should show ChatGPT connect placeholder when subscription is disconnected', async () => {
+      mockedApi.getEnabledModels.mockResolvedValue([])
+      mockedApi.getApiKeyStatus.mockResolvedValue(mockKeyStatusNoKeys)
+      mockedApi.getOllamaModels.mockResolvedValue({ models: [] })
+
+      render(<SettingsModels />)
+
+      await waitFor(() => {
+        expect(screen.getByText(/Connect ChatGPT in the OpenAI tab/)).toBeInTheDocument()
       })
     })
 

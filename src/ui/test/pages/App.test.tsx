@@ -291,6 +291,7 @@ describe('App websocket-driven behavior', () => {
     chatStateMock.errorMessage = null;
     chatStateMock.currentQuery = '';
     chatStateMock.currentQueryRef.current = '';
+    chatStateMock.toolCallsRef.current = [];
     chatStateMock.contentBlocksRef.current = [];
     chatStateMock.responseRef.current = '';
     chatStateMock.thinkingRef.current = '';
@@ -962,6 +963,51 @@ describe('App websocket-driven behavior', () => {
     setTabSnapshotMock.mockClear();
 
     emitWebSocketEvent({
+      type: 'sub_agent_stream',
+      tab_id: 'tab-2',
+      content: {
+        agent_id: 'agent-1',
+        agent_name: 'TurboTax Researcher',
+        model_tier: 'smart',
+        stream_type: 'final',
+        content: 'Finished report',
+        transcript: [
+          { type: 'instruction', content: 'Research TurboTax' },
+          { type: 'text', content: 'Finished report' },
+        ],
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    nextSnapshot = latestCall?.[1] as {
+      chat: {
+        toolCalls: Array<{
+          agentId?: string;
+          status?: string;
+          result?: string;
+          partialResult?: string;
+        }>;
+        contentBlocks: Array<{
+          type: string;
+          toolCall?: { agentId?: string; status?: string; result?: string; partialResult?: string };
+        }>;
+      };
+    };
+
+    expect(nextSnapshot.chat.toolCalls).toHaveLength(1);
+    expect(nextSnapshot.chat.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.toolCalls[0]?.status).toBe('complete');
+    expect(nextSnapshot.chat.toolCalls[0]?.result).toContain('Finished report');
+    expect(nextSnapshot.chat.toolCalls[0]?.partialResult).toContain('Finished report');
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.status).toBe('complete');
+
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
       type: 'tool_call',
       tab_id: 'tab-2',
       content: {
@@ -1004,6 +1050,54 @@ describe('App websocket-driven behavior', () => {
     expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.agentId).toBe('agent-1');
     expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.status).toBe('complete');
     expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.result).toBe('Finished report');
+  });
+
+  test('marks active sub-agent stream final events complete independently', () => {
+    chatStateMock.toolCallsRef.current = [
+      {
+        name: 'spawn_agent',
+        args: {
+          instruction: 'Research TurboTax',
+          agent_name: 'TurboTax Researcher',
+          model_tier: 'smart',
+        },
+        server: 'sub_agent',
+        status: 'calling',
+        agentId: 'agent-1',
+      },
+    ];
+
+    render(<App />);
+    chatStateMock.addToolCall.mockClear();
+    chatStateMock.updateToolCall.mockClear();
+
+    emitWebSocketEvent({
+      type: 'sub_agent_stream',
+      tab_id: 'tab-1',
+      content: {
+        agent_id: 'agent-1',
+        agent_name: 'TurboTax Researcher',
+        model_tier: 'smart',
+        stream_type: 'final',
+        content: 'Finished report',
+        transcript: [
+          { type: 'instruction', content: 'Research TurboTax' },
+          { type: 'text', content: 'Finished report' },
+        ],
+      },
+    });
+
+    expect(chatStateMock.addToolCall).not.toHaveBeenCalled();
+    expect(chatStateMock.updateToolCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'spawn_agent',
+        server: 'sub_agent',
+        status: 'complete',
+        agentId: 'agent-1',
+        result: expect.stringContaining('Finished report'),
+        partialResult: expect.stringContaining('Finished report'),
+      }),
+    );
   });
 
   test('handles youtube approval message and approval action callback', async () => {

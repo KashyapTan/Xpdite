@@ -66,7 +66,7 @@ async function baseUrl(): Promise<string> {
   return getHttpBaseUrl();
 }
 
-export type CloudProvider = 'anthropic' | 'openai' | 'gemini' | 'openrouter';
+export type CloudProvider = 'anthropic' | 'openai' | 'openai-codex' | 'gemini' | 'openrouter';
 
 export interface ProviderModel {
   id: string;
@@ -74,6 +74,24 @@ export interface ProviderModel {
   display_name: string;
   provider_group?: string;
   context_length?: number;
+}
+
+export interface OpenAICodexStatus {
+  available: boolean;
+  connected: boolean;
+  account_type: string | null;
+  email: string | null;
+  plan_type: string | null;
+  requires_openai_auth: boolean;
+  auth_in_progress: boolean;
+  login_method: string | null;
+  login_id: string | null;
+  auth_url: string | null;
+  verification_url: string | null;
+  user_code: string | null;
+  auth_mode: string | null;
+  last_error: string | null;
+  binary_path?: string | null;
 }
 
 export interface OllamaModel {
@@ -733,6 +751,68 @@ export const api = {
     } catch {
       console.error(`Failed to delete API key for ${provider}`);
     }
+  },
+
+  // ============================================
+  // OpenAI Codex / ChatGPT Subscription
+  // ============================================
+
+  async getOpenAICodexStatus(): Promise<OpenAICodexStatus> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/openai/codex/status`);
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch ChatGPT subscription status');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async connectOpenAICodexBrowser(): Promise<OpenAICodexStatus> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/openai/codex/connect/browser`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to start ChatGPT sign-in');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async connectOpenAICodexDevice(): Promise<OpenAICodexStatus> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/openai/codex/connect/device`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to start device-code sign-in');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async cancelOpenAICodexLogin(): Promise<OpenAICodexStatus> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/openai/codex/cancel`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to cancel ChatGPT sign-in');
+      throw new Error(detail);
+    }
+    return response.json();
+  },
+
+  async disconnectOpenAICodex(): Promise<OpenAICodexStatus> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/openai/codex/disconnect`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to disconnect ChatGPT subscription');
+      throw new Error(detail);
+    }
+    return response.json();
   },
 
   // ============================================
