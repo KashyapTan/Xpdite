@@ -91,6 +91,7 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("mcp").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
+_OPTIONAL_MCP_RECONNECT_DELAY_SECONDS = 15
 
 
 def _emit_boot_marker(phase: str, message: str, progress: int) -> None:
@@ -144,10 +145,23 @@ async def _start_optional_services() -> None:
         except Exception as e:
             logger.warning("Failed to start scheduler service (non-fatal): %s", e)
 
+    async def _start_optional_mcp_servers() -> None:
+        try:
+            # Marketplace/plugin reconnects can clone/index user-installed MCP
+            # bundles. Keep that work out of the renderer/backend boot window.
+            await asyncio.sleep(_OPTIONAL_MCP_RECONNECT_DELAY_SECONDS)
+
+            from .mcp_integration.core.manager import connect_optional_mcp_servers
+
+            await connect_optional_mcp_servers()
+        except Exception as e:
+            logger.warning("Failed to start optional MCP servers (non-fatal): %s", e)
+
     await asyncio.gather(
         _start_google_servers(),
         _start_scheduler_service(),
     )
+    await _start_optional_mcp_servers()
 
 
 def start_server():

@@ -47,6 +47,9 @@ def test_configure_litellm_environment_converts_codex_auth(tmp_path, monkeypatch
 
     assert token_dir == tmp_path / "litellm-chatgpt"
     assert token_dir == service.get_chatgpt_token_dir()
+    assert os.environ["CHATGPT_TOKEN_DIR"] == str(token_dir)
+    assert os.environ["CHATGPT_AUTH_FILE"] == "auth.json"
+    assert os.environ["CHATGPT_DEFAULT_INSTRUCTIONS"]
     assert service.get_litellm_auth_file().exists()
     litellm_auth = json.loads(service.get_litellm_auth_file().read_text())
     assert litellm_auth["access_token"] == access_token

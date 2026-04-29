@@ -422,6 +422,180 @@ async def _execute_and_broadcast_tool(
     return result_str
 
 
+def _tool_result_message(
+    tc_info: Dict[str, Any],
+    tool_result: str | Dict[str, Any],
+    result_format: str,
+) -> Dict[str, Any]:
+    """Build a provider input item for a completed tool call."""
+    if isinstance(tool_result, dict) and tool_result.get("type") == "image":
+        if result_format == "responses":
+            output = (
+                f"Image: {tool_result.get('width', '?')}x{tool_result.get('height', '?')}, "
+                f"{tool_result.get('file_size_bytes', 0):,} bytes"
+            )
+            return {
+                "type": "function_call_output",
+                "call_id": tc_info.get("call_id") or tc_info["id"],
+                "output": output,
+            }
+
+        image_content = [
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{tool_result.get('media_type', 'image/png')};base64,{tool_result.get('data', '')}"
+                },
+            },
+            {
+                "type": "text",
+                "text": f"Image: {tool_result.get('width', '?')}x{tool_result.get('height', '?')}, {tool_result.get('file_size_bytes', 0):,} bytes",
+            },
+        ]
+        return {
+            "role": "tool",
+            "tool_call_id": tc_info["id"],
+            "content": image_content,
+        }
+
+    result_str = tool_result if isinstance(tool_result, str) else str(tool_result)
+    if result_format == "responses":
+        return {
+            "type": "function_call_output",
+            "call_id": tc_info.get("call_id") or tc_info["id"],
+            "output": result_str,
+        }
+
+    return {
+        "role": "tool",
+        "tool_call_id": tc_info["id"],
+        "content": result_str,
+    }
+
+
+async def _execute_assistant_tool_calls(
+    assistant_tool_calls: List[Dict[str, Any]],
+    *,
+    provider: str,
+    model: str,
+    allowed_tool_names: Optional[Set[str]],
+    tool_calls_list: List[Dict[str, Any]],
+    interleaved_blocks: List[Dict[str, Any]],
+    result_format: str,
+) -> tuple[List[Dict[str, Any]], bool]:
+    """Execute model-requested tools and return messages/items for the next round."""
+    tool_result_messages: List[Dict[str, Any]] = []
+    cancelled_during_tool_loop = False
+
+    spawn_agent_indices: List[int] = []
+    spawn_agent_calls: List[Dict[str, Any]] = []
+    parsed_args_by_index: Dict[int, Dict[str, Any]] = {}
+
+    for idx, tc_info in enumerate(assistant_tool_calls):
+        fn_name = tc_info["function"]["name"]
+        raw_args = tc_info["function"]["arguments"]
+        fn_args, arg_error = normalize_tool_args(raw_args)
+        if arg_error:
+            logger.warning(
+                "Skipping spawn_agent pre-batch for malformed args on %s: %s",
+                fn_name,
+                arg_error,
+            )
+            continue
+        parsed_args_by_index[idx] = fn_args
+
+        from ...mcp_integration.core.manager import mcp_manager as _mm
+
+        try:
+            server_name = _mm.get_tool_server_name(fn_name) or "unknown"
+        except Exception:
+            server_name = "unknown"
+
+        if fn_name == "spawn_agent" and server_name == "sub_agent":
+            spawn_agent_indices.append(idx)
+            spawn_agent_calls.append(_build_spawn_agent_request(fn_args))
+
+    spawn_results: Dict[int, str] = {}
+    if spawn_agent_calls and not is_current_request_cancelled():
+        from ...services.skills_runtime.sub_agent import execute_sub_agents_parallel
+
+        results = await execute_sub_agents_parallel(spawn_agent_calls)
+        for i, result_str in enumerate(results):
+            spawn_results[spawn_agent_indices[i]] = result_str
+
+    for idx, tc_info in enumerate(assistant_tool_calls):
+        fn_name = tc_info["function"]["name"]
+        raw_args = tc_info["function"]["arguments"]
+
+        fn_args = parsed_args_by_index.get(idx)
+        if fn_args is None:
+            fn_args, arg_error = normalize_tool_args(raw_args)
+        else:
+            arg_error = None
+        if arg_error:
+            error_result = (
+                f"System error: invalid arguments for tool '{fn_name}': {arg_error}"
+            )
+            logger.warning(
+                "Malformed tool call args for %s (%d chars)",
+                fn_name,
+                len(raw_args or ""),
+            )
+            tool_result_messages.append(
+                _tool_result_message(tc_info, error_result, result_format)
+            )
+            _append_tool_result(
+                fn_name,
+                {},
+                error_result,
+                "unknown",
+                tool_calls_list,
+                interleaved_blocks,
+            )
+            continue
+
+        if allowed_tool_names is not None and fn_name not in allowed_tool_names:
+            error_result = (
+                f"System error: tool '{fn_name}' is not available for this request."
+            )
+            logger.warning(
+                "Rejected unauthorized tool call from %s/%s: %s",
+                provider,
+                model,
+                fn_name,
+            )
+            tool_result_messages.append(
+                _tool_result_message(tc_info, error_result, result_format)
+            )
+            _append_tool_result(
+                fn_name,
+                fn_args,
+                error_result,
+                "unknown",
+                tool_calls_list,
+                interleaved_blocks,
+            )
+            continue
+
+        if is_current_request_cancelled():
+            cancelled_during_tool_loop = True
+            break
+
+        tool_result = await _execute_and_broadcast_tool(
+            fn_name,
+            fn_args,
+            _provider_log_label(provider),
+            tool_calls_list,
+            interleaved_blocks,
+            precomputed_result=spawn_results.get(idx),
+        )
+        tool_result_messages.append(
+            _tool_result_message(tc_info, tool_result, result_format)
+        )
+
+    return tool_result_messages, cancelled_during_tool_loop
+
+
 # ---------------------------------------------------------------------------
 # Provider-specific parameter helpers
 # ---------------------------------------------------------------------------
@@ -491,6 +665,418 @@ def _provider_log_label(provider: str) -> str:
     return provider.capitalize()
 
 
+def _object_field(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _event_type_value(event: Any) -> Optional[str]:
+    event_type = _object_field(event, "type")
+    if event_type is None:
+        return None
+    return str(getattr(event_type, "value", event_type))
+
+
+def _responses_message_content(content: Any) -> Any:
+    """Convert OpenAI chat content blocks to Responses API message content."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return "" if content is None else str(content)
+
+    parts: List[Dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+
+        part_type = part.get("type")
+        if part_type == "text":
+            parts.append({"type": "input_text", "text": str(part.get("text") or "")})
+        elif part_type == "image_url":
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url")
+            if image_url:
+                parts.append(
+                    {
+                        "type": "input_image",
+                        "image_url": str(image_url),
+                        "detail": "auto",
+                    }
+                )
+
+    return parts or ""
+
+
+def _build_responses_input(
+    messages: List[Dict[str, Any]],
+) -> tuple[List[Dict[str, Any]], str]:
+    """Build stateless Responses API input items from chat-format messages."""
+    responses_input: List[Dict[str, Any]] = []
+    instructions: List[str] = []
+
+    for message in messages:
+        role = str(message.get("role") or "")
+        content = message.get("content")
+
+        if role == "system":
+            if content:
+                instructions.append(str(content))
+            continue
+
+        if role not in {"user", "assistant"}:
+            continue
+
+        responses_input.append(
+            {
+                "role": role,
+                "content": _responses_message_content(content),
+            }
+        )
+
+    return responses_input, "\n\n".join(instructions)
+
+
+def _responses_tools_from_chat_tools(
+    tools: Optional[List[Dict[str, Any]]],
+) -> Optional[List[Dict[str, Any]]]:
+    """Convert Chat Completions function tools to Responses API function tools."""
+    if not tools:
+        return None
+
+    responses_tools: List[Dict[str, Any]] = []
+    for tool in tools:
+        function = tool.get("function") or {}
+        name = function.get("name")
+        if not name:
+            continue
+        responses_tools.append(
+            {
+                "type": "function",
+                "name": name,
+                "description": function.get("description") or "",
+                "parameters": function.get("parameters")
+                or {"type": "object", "properties": {}},
+            }
+        )
+
+    return responses_tools or None
+
+
+def _merge_response_function_item(
+    pending_tool_calls: Dict[int, Dict[str, str]],
+    output_index: int,
+    item: Any,
+) -> None:
+    if _object_field(item, "type") != "function_call":
+        return
+
+    state = pending_tool_calls.setdefault(
+        output_index,
+        {"id": "", "call_id": "", "name": "", "arguments": ""},
+    )
+    for target_key, source_key in (
+        ("id", "id"),
+        ("call_id", "call_id"),
+        ("name", "name"),
+        ("arguments", "arguments"),
+    ):
+        value = _object_field(item, source_key)
+        if value:
+            state[target_key] = str(value)
+
+
+def _response_function_calls_to_chat_tool_calls(
+    pending_tool_calls: Dict[int, Dict[str, str]],
+    round_number: int,
+) -> List[Dict[str, Any]]:
+    assistant_tool_calls: List[Dict[str, Any]] = []
+    for idx in sorted(pending_tool_calls.keys()):
+        tc = pending_tool_calls[idx]
+        if not tc.get("name"):
+            logger.warning("Skipping Responses API tool call with missing function name")
+            continue
+
+        call_id = tc.get("call_id") or tc.get("id") or f"call_{round_number}_{idx}"
+        tool_id = tc.get("id") or call_id
+        assistant_tool_calls.append(
+            {
+                "id": tool_id,
+                "call_id": call_id,
+                "type": "function",
+                "function": {
+                    "name": tc["name"],
+                    "arguments": tc.get("arguments") or "{}",
+                },
+            }
+        )
+    return assistant_tool_calls
+
+
+def _responses_function_call_items(
+    assistant_tool_calls: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for tc_info in assistant_tool_calls:
+        item = {
+            "type": "function_call",
+            "call_id": tc_info.get("call_id") or tc_info["id"],
+            "name": tc_info["function"]["name"],
+            "arguments": tc_info["function"]["arguments"],
+        }
+        if tc_info.get("id"):
+            item["id"] = tc_info["id"]
+        items.append(item)
+    return items
+
+
+async def _stream_chatgpt_subscription_responses(
+    provider: str,
+    model: str,
+    user_query: str,
+    image_paths: List[str],
+    chat_history: List[Dict[str, Any]],
+    allowed_tool_names: Optional[Set[str]] = None,
+    system_prompt: str = "",
+) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
+    """Stream ChatGPT subscription models through LiteLLM's Responses API."""
+    from ...mcp_integration.core.manager import mcp_manager
+    from ...services.integrations.openai_codex import openai_codex
+
+    openai_codex.configure_litellm_environment()
+
+    messages = _build_messages(chat_history, user_query, image_paths, system_prompt)
+    responses_input, instructions = _build_responses_input(messages)
+    litellm_model = f"{_litellm_provider_for(provider)}/{model}"
+    responses_tools: Optional[List[Dict[str, Any]]] = None
+
+    tool_calls_list: List[Dict[str, Any]] = []
+    all_accumulated: list[str] = []
+    total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    interleaved_blocks: List[Dict[str, Any]] = []
+
+    if allowed_tool_names:
+        try:
+            all_tools = mcp_manager.get_tools()
+        except Exception as e:
+            logger.warning(
+                "Failed to resolve tool definitions for %s/%s (%s); continuing without tools",
+                provider,
+                model,
+                type(e).__name__,
+            )
+            all_tools = []
+
+        if all_tools:
+            selected_tools = [
+                tool
+                for tool in all_tools
+                if tool["function"]["name"] in allowed_tool_names
+            ]
+            responses_tools = _responses_tools_from_chat_tools(selected_tools)
+
+    try:
+        model_info = litellm.get_model_info(litellm_model)
+    except Exception:
+        logger.debug("Model %s not in litellm registry", litellm_model)
+        model_info = {}
+
+    reasoning_params = _get_reasoning_params(litellm_model, model_info)
+
+    try:
+        if is_current_request_cancelled():
+            return "", total_token_stats, tool_calls_list, None
+
+        rounds = 0
+        has_more = True
+        while has_more:
+            current_round_blocks: List[Dict[str, Any]] = []
+            artifact_parser = ArtifactStreamParser()
+            round_prompt_tokens = 0
+            round_completion_tokens = 0
+
+            if is_current_request_cancelled():
+                break
+
+            rounds += 1
+            if rounds > MAX_MCP_TOOL_ROUNDS + 1:
+                logger.warning(
+                    "Exceeded max rounds (%d + 1 summarisation), forcing stop",
+                    MAX_MCP_TOOL_ROUNDS,
+                )
+                break
+
+            allow_tools = responses_tools is not None and rounds <= MAX_MCP_TOOL_ROUNDS
+            create_kwargs: Dict[str, Any] = {
+                "model": litellm_model,
+                "input": responses_input,
+                "stream": True,
+                "timeout": 300.0,
+                "store": False,
+            }
+            if instructions:
+                create_kwargs["instructions"] = instructions
+            if reasoning_params:
+                create_kwargs["reasoning"] = {
+                    "effort": reasoning_params["reasoning_effort"]
+                }
+            if allow_tools:
+                create_kwargs["tools"] = responses_tools
+                create_kwargs["tool_choice"] = "auto"
+                create_kwargs["parallel_tool_calls"] = True
+
+            logger.debug(
+                "LiteLLM aresponses: model=%s, round=%d/%d, reasoning=%s, tools=%d, input_items=%d",
+                litellm_model,
+                rounds,
+                MAX_MCP_TOOL_ROUNDS,
+                "enabled" if reasoning_params else "disabled",
+                len(responses_tools) if allow_tools and responses_tools else 0,
+                len(responses_input),
+            )
+
+            pending_tool_calls: Dict[int, Dict[str, str]] = {}
+            response = cast(
+                AsyncIterator[Any], await litellm.aresponses(**create_kwargs)
+            )
+
+            async for event in response:
+                if is_current_request_cancelled():
+                    break
+
+                event_type = _event_type_value(event)
+                if event_type == "response.output_text.delta":
+                    delta = str(_object_field(event, "delta") or "")
+                    if delta:
+                        events = artifact_parser.feed(delta)
+                        cleaned_text = apply_artifact_stream_events(
+                            events,
+                            current_round_blocks,
+                        )
+                        await emit_artifact_stream_events(
+                            events,
+                            interleaved_blocks,
+                            broadcaster=broadcast_message,
+                        )
+                        if cleaned_text:
+                            all_accumulated.append(cleaned_text)
+                elif event_type == "response.output_item.added":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    _merge_response_function_item(
+                        pending_tool_calls,
+                        output_index,
+                        _object_field(event, "item"),
+                    )
+                elif event_type == "response.function_call_arguments.delta":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    state = pending_tool_calls.setdefault(
+                        output_index,
+                        {"id": "", "call_id": "", "name": "", "arguments": ""},
+                    )
+                    state["arguments"] += str(_object_field(event, "delta") or "")
+                elif event_type == "response.function_call_arguments.done":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    state = pending_tool_calls.setdefault(
+                        output_index,
+                        {"id": "", "call_id": "", "name": "", "arguments": ""},
+                    )
+                    arguments = _object_field(event, "arguments")
+                    if arguments is not None:
+                        state["arguments"] = str(arguments)
+                elif event_type == "response.output_item.done":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    _merge_response_function_item(
+                        pending_tool_calls,
+                        output_index,
+                        _object_field(event, "item"),
+                    )
+                elif event_type == "response.completed":
+                    response_obj = _object_field(event, "response")
+                    usage = _object_field(response_obj, "usage")
+                    prompt = _object_field(usage, "input_tokens", 0) or 0
+                    completion = _object_field(usage, "output_tokens", 0) or 0
+                    if prompt or completion:
+                        round_prompt_tokens = int(prompt)
+                        round_completion_tokens = int(completion)
+
+            total_token_stats["prompt_eval_count"] += round_prompt_tokens
+            total_token_stats["eval_count"] += round_completion_tokens
+
+            final_events = artifact_parser.finalize()
+            if final_events:
+                cleaned_text = apply_artifact_stream_events(
+                    final_events,
+                    current_round_blocks,
+                )
+                await emit_artifact_stream_events(
+                    final_events,
+                    interleaved_blocks,
+                    broadcaster=broadcast_message,
+                )
+                if cleaned_text:
+                    all_accumulated.append(cleaned_text)
+
+            assistant_tool_calls = _response_function_calls_to_chat_tool_calls(
+                pending_tool_calls,
+                rounds,
+            )
+            if assistant_tool_calls:
+                tool_result_messages, cancelled_during_tool_loop = (
+                    await _execute_assistant_tool_calls(
+                        assistant_tool_calls,
+                        provider=provider,
+                        model=model,
+                        allowed_tool_names=allowed_tool_names,
+                        tool_calls_list=tool_calls_list,
+                        interleaved_blocks=interleaved_blocks,
+                        result_format="responses",
+                    )
+                )
+                if not cancelled_during_tool_loop:
+                    responses_input.extend(
+                        _responses_function_call_items(assistant_tool_calls)
+                    )
+                    responses_input.extend(tool_result_messages)
+
+                if is_current_request_cancelled():
+                    has_more = False
+            else:
+                has_more = False
+
+        await broadcast_message("response_complete", "")
+        await broadcast_message("token_usage", json.dumps(total_token_stats))
+
+        if tool_calls_list:
+            logger.info(
+                "%s tool loop complete after %d round(s)",
+                _provider_log_label(provider),
+                rounds,
+            )
+
+        return (
+            "".join(all_accumulated),
+            total_token_stats,
+            tool_calls_list,
+            interleaved_blocks or None,
+        )
+    except Exception as e:
+        error_msg = build_provider_error_message(provider, e)
+        logger.error(
+            "%s streaming error (%s): %s",
+            _provider_log_label(provider),
+            type(e).__name__,
+            error_msg,
+        )
+        await broadcast_message("error", error_msg)
+        return (
+            "".join(all_accumulated),
+            total_token_stats,
+            tool_calls_list,
+            interleaved_blocks or None,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Unified LiteLLM streaming implementation
 # ---------------------------------------------------------------------------
@@ -520,13 +1106,20 @@ async def _stream_litellm(
     Returns:
         (response_text, token_stats, tool_calls_list, interleaved_blocks | None)
     """
+    if provider == "openai-codex":
+        return await _stream_chatgpt_subscription_responses(
+            provider,
+            model,
+            user_query,
+            image_paths,
+            chat_history,
+            allowed_tool_names,
+            system_prompt,
+        )
+
     from ...mcp_integration.core.manager import mcp_manager
 
     litellm_provider = _litellm_provider_for(provider)
-    if provider == "openai-codex":
-        from ...services.integrations.openai_codex import openai_codex
-
-        openai_codex.configure_litellm_environment()
 
     # Build unified message list
     messages = _build_messages(chat_history, user_query, image_paths, system_prompt)
@@ -851,167 +1444,17 @@ async def _stream_litellm(
                     serialize_blocks_for_model_content(current_round_blocks) or None
                 )
 
-                # Execute each tool and append results
-                tool_result_messages: List[Dict[str, Any]] = []
-                cancelled_during_tool_loop = False
-
-                # ── Collect spawn_agent calls for parallel execution ──
-                spawn_agent_indices: List[int] = []
-                spawn_agent_calls: List[Dict[str, Any]] = []
-                parsed_args_by_index: Dict[int, Dict[str, Any]] = {}
-
-                for idx, tc_info in enumerate(assistant_tool_calls):
-                    fn_name = tc_info["function"]["name"]
-                    raw_args = tc_info["function"]["arguments"]
-                    fn_args, arg_error = normalize_tool_args(raw_args)
-                    if arg_error:
-                        logger.warning(
-                            "Skipping spawn_agent pre-batch for malformed args on %s: %s",
-                            fn_name,
-                            arg_error,
-                        )
-                        continue
-                    parsed_args_by_index[idx] = fn_args
-
-                    from ...mcp_integration.core.manager import mcp_manager as _mm
-
-                    try:
-                        sn = _mm.get_tool_server_name(fn_name) or "unknown"
-                    except Exception:
-                        sn = "unknown"
-
-                    if fn_name == "spawn_agent" and sn == "sub_agent":
-                        spawn_agent_indices.append(idx)
-                        spawn_agent_calls.append(_build_spawn_agent_request(fn_args))
-
-                # Run all spawn_agent calls in parallel (if any)
-                spawn_results: Dict[int, str] = {}
-                if spawn_agent_calls and not is_current_request_cancelled():
-                    from ...services.skills_runtime.sub_agent import execute_sub_agents_parallel
-
-                    results = await execute_sub_agents_parallel(spawn_agent_calls)
-                    for i, result_str in enumerate(results):
-                        spawn_results[spawn_agent_indices[i]] = result_str
-
-                # Now iterate all tool calls — spawn_agents already have results
-                for idx, tc_info in enumerate(assistant_tool_calls):
-                    fn_name = tc_info["function"]["name"]
-                    raw_args = tc_info["function"]["arguments"]
-
-                    fn_args = parsed_args_by_index.get(idx)
-                    if fn_args is None:
-                        fn_args, arg_error = normalize_tool_args(raw_args)
-                    else:
-                        arg_error = None
-                    if arg_error:
-                        error_result = (
-                            f"System error: invalid arguments for tool "
-                            f"'{fn_name}': {arg_error}"
-                        )
-                        logger.warning(
-                            "Malformed tool call args for %s (%d chars)",
-                            fn_name,
-                            len(raw_args or ""),
-                        )
-                        tool_result_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_info["id"],
-                                "content": error_result,
-                            }
-                        )
-                        _append_tool_result(
-                            fn_name,
-                            {},
-                            error_result,
-                            "unknown",
-                            tool_calls_list,
-                            interleaved_blocks,
-                        )
-                        continue
-
-                    if (
-                        allowed_tool_names is not None
-                        and fn_name not in allowed_tool_names
-                    ):
-                        error_result = f"System error: tool '{fn_name}' is not available for this request."
-                        logger.warning(
-                            "Rejected unauthorized tool call from %s/%s: %s",
-                            provider,
-                            model,
-                            fn_name,
-                        )
-                        tool_result_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_info["id"],
-                                "content": error_result,
-                            }
-                        )
-                        _append_tool_result(
-                            fn_name,
-                            fn_args,
-                            error_result,
-                            "unknown",
-                            tool_calls_list,
-                            interleaved_blocks,
-                        )
-                        continue
-
-                    if is_current_request_cancelled():
-                        has_more = False
-                        cancelled_during_tool_loop = True
-                        break
-
-                    tool_result = await _execute_and_broadcast_tool(
-                        fn_name,
-                        fn_args,
-                        _provider_log_label(provider),
-                        tool_calls_list,
-                        interleaved_blocks,
-                        precomputed_result=spawn_results.get(idx),
+                tool_result_messages, cancelled_during_tool_loop = (
+                    await _execute_assistant_tool_calls(
+                        assistant_tool_calls,
+                        provider=provider,
+                        model=model,
+                        allowed_tool_names=allowed_tool_names,
+                        tool_calls_list=tool_calls_list,
+                        interleaved_blocks=interleaved_blocks,
+                        result_format="chat",
                     )
-
-                    # Append tool result in OpenAI format (LiteLLM translates)
-                    # Handle image results specially - construct image content block
-                    if (
-                        isinstance(tool_result, dict)
-                        and tool_result.get("type") == "image"
-                    ):
-                        # Build multipart content with image and text description
-                        image_content = [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{tool_result.get('media_type', 'image/png')};base64,{tool_result.get('data', '')}"
-                                },
-                            },
-                            {
-                                "type": "text",
-                                "text": f"Image: {tool_result.get('width', '?')}x{tool_result.get('height', '?')}, {tool_result.get('file_size_bytes', 0):,} bytes",
-                            },
-                        ]
-                        tool_result_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_info["id"],
-                                "content": image_content,
-                            }
-                        )
-                    else:
-                        # Normal string result
-                        result_str = (
-                            tool_result
-                            if isinstance(tool_result, str)
-                            else str(tool_result)
-                        )
-                        tool_result_messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tc_info["id"],
-                                "content": result_str,
-                            }
-                        )
+                )
 
                 if not cancelled_during_tool_loop:
                     messages.append(assistant_msg)

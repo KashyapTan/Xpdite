@@ -274,6 +274,16 @@ class McpToolManager:
             description = tool.get("description", "")
             parameters = tool.get("parameters", {"type": "object", "properties": {}})
 
+            if name in self._tool_registry:
+                self._ollama_tools = [
+                    item
+                    for item in self._ollama_tools
+                    if item.get("function", {}).get("name") != name
+                ]
+                self._raw_tools = [
+                    item for item in self._raw_tools if item.get("name") != name
+                ]
+
             self._tool_registry[name] = {
                 "session": None,  # no subprocess — intercepted at handler layer
                 "server_name": server_name,
@@ -631,6 +641,49 @@ class McpToolManager:
 mcp_manager = McpToolManager()
 
 
+def register_builtin_inline_tools(*, skip_embed: bool = True) -> None:
+    """Register built-in inline tools that do not require subprocess startup."""
+    from mcp_servers.servers.terminal.inline_tools import TERMINAL_INLINE_TOOLS
+    from mcp_servers.servers.sub_agent.inline_tools import SUB_AGENT_INLINE_TOOLS
+    from mcp_servers.servers.video_watcher.inline_tools import (
+        VIDEO_WATCHER_INLINE_TOOLS,
+    )
+    from mcp_servers.servers.skills.inline_tools import SKILLS_INLINE_TOOLS
+    from mcp_servers.servers.memory.inline_tools import MEMORY_INLINE_TOOLS
+    from mcp_servers.servers.scheduler.inline_tools import SCHEDULER_INLINE_TOOLS
+
+    mcp_manager.register_inline_tools(
+        "terminal",
+        TERMINAL_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+    mcp_manager.register_inline_tools(
+        "sub_agent",
+        SUB_AGENT_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+    mcp_manager.register_inline_tools(
+        "video_watcher",
+        VIDEO_WATCHER_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+    mcp_manager.register_inline_tools(
+        "skills",
+        SKILLS_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+    mcp_manager.register_inline_tools(
+        "memory",
+        MEMORY_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+    mcp_manager.register_inline_tools(
+        "scheduler",
+        SCHEDULER_INLINE_TOOLS,
+        skip_embed=skip_embed,
+    )
+
+
 async def init_mcp_servers():
     """
     Connect to all enabled MCP servers.
@@ -713,81 +766,10 @@ async def init_mcp_servers():
 
     await asyncio.gather(*server_tasks)
 
-    # ── Terminal tools (inline — no subprocess) ─────────────────────
-    # Terminal tools are intercepted at the handler layer and executed
-    # directly by terminal_executor.py.  We register their schemas here
-    # so they appear in the tool list sent to LLMs, but no MCP server
-    # subprocess is spawned.
-    from mcp_servers.servers.terminal.inline_tools import TERMINAL_INLINE_TOOLS
-
-    mcp_manager.register_inline_tools(
-        "terminal",
-        TERMINAL_INLINE_TOOLS,
-        skip_embed=True,
-    )
-
-    # ── Sub-Agent tool (inline — no subprocess) ─────────────────────
-    # The spawn_agent tool is intercepted at the handler layer and
-    # executed by source/services/skills_runtime/sub_agent.py.  Registration makes
-    # it visible to LLMs; actual execution never hits an MCP session.
-    from mcp_servers.servers.sub_agent.inline_tools import SUB_AGENT_INLINE_TOOLS
-
-    mcp_manager.register_inline_tools(
-        "sub_agent",
-        SUB_AGENT_INLINE_TOOLS,
-        skip_embed=True,
-    )
-
-    # ── Video watcher tool (inline — no subprocess) ────────────────
-    # The watch_youtube_video tool is intercepted at the handler layer and
-    # executed by source/services/media/video_watcher.py. Registration makes it
-    # visible to LLMs; execution never reaches an MCP subprocess session.
-    from mcp_servers.servers.video_watcher.inline_tools import (
-        VIDEO_WATCHER_INLINE_TOOLS,
-    )
-
-    mcp_manager.register_inline_tools(
-        "video_watcher",
-        VIDEO_WATCHER_INLINE_TOOLS,
-        skip_embed=True,
-    )
-
-    # ── Skills tools (inline — no subprocess) ─────────────────────
-    # list_skills and use_skill allow LLMs to discover and load skill
-    # content on-demand rather than always injecting into system prompt.
-    # These are embedded for retrieval so they surface when the query
-    # might benefit from skill guidance.
-    from mcp_servers.servers.skills.inline_tools import SKILLS_INLINE_TOOLS
-
-    mcp_manager.register_inline_tools(
-        "skills",
-        SKILLS_INLINE_TOOLS,
-        skip_embed=True,  # Batch startup embedding into the final refresh pass
-    )
-
-    # - Memory tools (inline - no subprocess) ----------------------
-    # memlist, memread, and memcommit expose filesystem-backed long-term
-    # memory. These are embedded for retrieval so they surface naturally
-    # during memory-relevant conversations, similar to skills.
-    from mcp_servers.servers.memory.inline_tools import MEMORY_INLINE_TOOLS
-
-    mcp_manager.register_inline_tools(
-        "memory",
-        MEMORY_INLINE_TOOLS,
-        skip_embed=True,  # Batch startup embedding into the final refresh pass
-    )
-
-    # ── Scheduler tools (inline — no subprocess) ─────────────────
-    # Scheduler tools allow LLMs to create and manage scheduled jobs
-    # that execute AI requests at specified times. These are intercepted
-    # at the handler layer and executed by scheduler_executor.py.
-    from mcp_servers.servers.scheduler.inline_tools import SCHEDULER_INLINE_TOOLS
-
-    mcp_manager.register_inline_tools(
-        "scheduler",
-        SCHEDULER_INLINE_TOOLS,
-        skip_embed=True,  # No semantic retrieval needed for scheduling
-    )
+    # ── Inline tools (no subprocess) ────────────────────────────────
+    # These are intercepted by in-process executors and should be available
+    # before optional marketplace/plugin MCP reconnects run.
+    register_builtin_inline_tools(skip_embed=True)
 
     # ── Add more servers here as you implement them ────────────────
     # Example:
@@ -797,9 +779,19 @@ async def init_mcp_servers():
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "my_server" / "server.py")],
     # )
 
+    # Final startup pass for the active core tool set. Cache entries for
+    # inactive tools are intentionally retained so later reconnects can reuse
+    # them when descriptions are unchanged.
+    mcp_manager.refresh_tool_embeddings()
+    mcp_manager._initialized = True
+    logger.info("Ready — %d total tool(s) available", len(mcp_manager._ollama_tools))
+
+
+async def connect_optional_mcp_servers():
+    """Reconnect user-enabled external and marketplace MCP servers after boot."""
     # ── External connectors (Figma, GitHub, etc.) ──────────────────
     # These are user-enabled external MCP servers that persist across
-    # restarts. They're connected here if previously enabled.
+    # restarts. They can be slow, so keep them off the boot-critical path.
     from ...services.integrations.external_connectors import init_external_connectors
 
     try:
@@ -815,9 +807,8 @@ async def init_mcp_servers():
     except Exception as e:
         logger.warning("Marketplace MCP reconnect failed (non-fatal): %s", e)
 
-    # Final startup pass for the active tool set. Cache entries for inactive
-    # tools are intentionally retained so later reconnects can reuse them when
-    # descriptions are unchanged.
     mcp_manager.refresh_tool_embeddings()
-    mcp_manager._initialized = True
-    logger.info("Ready — %d total tool(s) available", len(mcp_manager._ollama_tools))
+    logger.info(
+        "Optional MCP reconnect complete — %d total tool(s) available",
+        len(mcp_manager._ollama_tools),
+    )

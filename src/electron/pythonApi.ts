@@ -471,7 +471,7 @@ function getPythonServerArgs(): string[] {
     }
 }
 
-async function killProcessesOnPorts(ports: number[]): Promise<void> {
+async function killProcessesOnPorts(ports: number[], includeKnownBackends = false): Promise<void> {
     const { exec } = await import('child_process');
     const { promisify } = await import('util');
     const execAsync = promisify(exec);
@@ -502,7 +502,9 @@ async function killProcessesOnPorts(ports: number[]): Promise<void> {
         console.warn(`Unable to inspect listening ports: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
 
-    await collectKnownBackendPids(execAsync, pidsToKill);
+    if (includeKnownBackends) {
+        await collectKnownBackendPids(execAsync, pidsToKill);
+    }
 
     if (pidsToKill.size === 0) {
         console.log('No existing backend processes found on configured ports.');
@@ -773,7 +775,7 @@ export async function stopPythonServer(): Promise<void> {
     
     // Also kill any remaining Python processes on the known ports
     try {
-        await killProcessesOnPorts(SERVER_PORT_RANGE);
+        await killProcessesOnPorts(SERVER_PORT_RANGE, true);
     } catch (error) {
         console.error('Error killing processes on ports:', error);
     }

@@ -96,6 +96,52 @@ async def _make_async_iter_then_raise(chunks, exc):
     raise exc
 
 
+def _responses_text_delta(delta: str):
+    return SimpleNamespace(type="response.output_text.delta", delta=delta)
+
+
+def _responses_function_event(
+    event_type: str,
+    output_index: int = 0,
+    *,
+    item=None,
+    delta=None,
+    arguments=None,
+):
+    return SimpleNamespace(
+        type=event_type,
+        output_index=output_index,
+        item=item,
+        delta=delta,
+        arguments=arguments,
+    )
+
+
+def _responses_function_item(
+    *,
+    name="read_file",
+    call_id="call_1",
+    item_id="fc_1",
+    arguments='{"path":"a.py"}',
+):
+    return SimpleNamespace(
+        type="function_call",
+        name=name,
+        call_id=call_id,
+        id=item_id,
+        arguments=arguments,
+    )
+
+
+def _responses_completed(prompt_tokens: int = 0, completion_tokens: int = 0):
+    usage = SimpleNamespace(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+    )
+    response = SimpleNamespace(usage=usage)
+    return SimpleNamespace(type="response.completed", response=response)
+
+
 class TestBuildMessages:
     """Unit tests for the unified message builder."""
 
@@ -502,6 +548,13 @@ def _patch_acompletion(*streams):
     mock = AsyncMock()
     mock.side_effect = [_make_async_iter(s) for s in streams]
     return patch("source.llm.providers.cloud_provider.litellm.acompletion", mock)
+
+
+def _patch_aresponses(*streams):
+    """Return a patch context manager that yields each Responses API stream."""
+    mock = AsyncMock()
+    mock.side_effect = [_make_async_iter(s) for s in streams]
+    return patch("source.llm.providers.cloud_provider.litellm.aresponses", mock)
 
 
 class TestStreamLitellm:
@@ -990,13 +1043,13 @@ class TestStreamLitellm:
     async def test_openai_codex_routes_to_litellm_chatgpt_without_api_key(
         self, _mock_broadcast, _mock_cancelled
     ):
-        """ChatGPT subscription models use LiteLLM's chatgpt provider and env auth."""
-        chunks = [_text_chunk("ok", finish_reason="stop")]
-        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        """ChatGPT subscription models use LiteLLM Responses API and env auth."""
+        chunks = [_responses_text_delta("ok"), _responses_completed()]
+        mock_aresp = AsyncMock(return_value=_make_async_iter(chunks))
         mock_codex = MagicMock()
 
         with (
-            patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp),
+            patch("source.llm.providers.cloud_provider.litellm.aresponses", mock_aresp),
             patch("source.services.integrations.openai_codex.openai_codex", mock_codex),
         ):
             from source.llm.providers.cloud_provider import stream_cloud_chat
@@ -1011,10 +1064,169 @@ class TestStreamLitellm:
             )
 
         assert text == "ok"
-        call_kwargs = mock_acomp.call_args.kwargs
+        call_kwargs = mock_aresp.call_args.kwargs
         assert call_kwargs["model"] == "chatgpt/gpt-5.4"
+        assert call_kwargs["input"] == [{"role": "user", "content": "hi"}]
         assert "api_key" not in call_kwargs
         mock_codex.configure_litellm_environment.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    async def test_openai_codex_responses_tool_calls_execute_mcp_tools(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp
+    ):
+        """ChatGPT subscription tool calls should run through Xpdite's MCP loop."""
+        tool_item = _responses_function_item(arguments='{"path":"a.py"}')
+        tool_stream = [
+            _responses_function_event(
+                "response.output_item.added",
+                item=tool_item,
+            ),
+            _responses_function_event(
+                "response.function_call_arguments.delta",
+                delta='{"path":"a.py"}',
+            ),
+            _responses_function_event(
+                "response.function_call_arguments.done",
+                arguments='{"path":"a.py"}',
+            ),
+            _responses_function_event(
+                "response.output_item.done",
+                item=tool_item,
+            ),
+            _responses_completed(prompt_tokens=20, completion_tokens=5),
+        ]
+        final_stream = [
+            _responses_text_delta("Read it"),
+            _responses_completed(prompt_tokens=10, completion_tokens=4),
+        ]
+        mock_aresp = AsyncMock()
+        mock_aresp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(final_stream),
+        ]
+        mock_codex = MagicMock()
+
+        with (
+            patch("source.llm.providers.cloud_provider.litellm.aresponses", mock_aresp),
+            patch("source.services.integrations.openai_codex.openai_codex", mock_codex),
+        ):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, stats, tool_calls, blocks = await stream_cloud_chat(
+                provider="openai-codex",
+                model="gpt-5.4",
+                api_key="",
+                user_query="read a file",
+                image_paths=[],
+                chat_history=[],
+                allowed_tool_names={"read_file"},
+            )
+
+        assert text == "Read it"
+        assert stats == {"prompt_eval_count": 30, "eval_count": 9}
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "read_file"
+        assert blocks is not None
+        assert any(block["type"] == "tool_call" for block in blocks)
+        _mock_mcp.call_tool.assert_awaited_once_with("read_file", {"path": "a.py"})
+
+        second_call_input = mock_aresp.call_args_list[1].kwargs["input"]
+        assert any(item.get("type") == "function_call" for item in second_call_input)
+        assert any(
+            item.get("type") == "function_call_output" for item in second_call_input
+        )
+
+    @pytest.mark.asyncio
+    async def test_openai_codex_responses_spawn_agent_tool_calls(
+        self,
+        _mock_broadcast,
+        _mock_cancelled,
+        _mock_mcp,
+        monkeypatch,
+    ):
+        """ChatGPT subscription models can launch Xpdite sub-agents."""
+        arguments = (
+            '{"instruction":"summarize","model_tier":"fast","agent_name":"Worker"}'
+        )
+        tool_item = _responses_function_item(
+            name="spawn_agent",
+            arguments=arguments,
+        )
+        tool_stream = [
+            _responses_function_event(
+                "response.output_item.added",
+                item=tool_item,
+            ),
+            _responses_function_event(
+                "response.function_call_arguments.done",
+                arguments=arguments,
+            ),
+            _responses_function_event(
+                "response.output_item.done",
+                item=tool_item,
+            ),
+            _responses_completed(),
+        ]
+        final_stream = [
+            _responses_text_delta("Delegated"),
+            _responses_completed(),
+        ]
+
+        _mock_mcp.get_tools.return_value = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "spawn_agent",
+                    "description": "Spawn a sub-agent",
+                    "parameters": {},
+                },
+            }
+        ]
+        _mock_mcp.get_tool_server_name.return_value = "sub_agent"
+
+        sub_agent_module = types.ModuleType("source.services.skills_runtime.sub_agent")
+        sub_agent_module.execute_sub_agents_parallel = AsyncMock(
+            return_value=["parallel-result"]
+        )
+        monkeypatch.setitem(
+            sys.modules, "source.services.skills_runtime.sub_agent", sub_agent_module
+        )
+
+        mock_aresp = AsyncMock()
+        mock_aresp.side_effect = [
+            _make_async_iter(tool_stream),
+            _make_async_iter(final_stream),
+        ]
+        mock_codex = MagicMock()
+
+        with (
+            patch("source.llm.providers.cloud_provider.litellm.aresponses", mock_aresp),
+            patch("source.services.integrations.openai_codex.openai_codex", mock_codex),
+        ):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            text, _, tool_calls, _ = await stream_cloud_chat(
+                provider="openai-codex",
+                model="gpt-5.4",
+                api_key="",
+                user_query="delegate this",
+                image_paths=[],
+                chat_history=[],
+                allowed_tool_names={"spawn_agent"},
+            )
+
+        assert text == "Delegated"
+        assert len(tool_calls) == 1
+        assert tool_calls[0]["name"] == "spawn_agent"
+        assert tool_calls[0]["result"] == "parallel-result"
+        first_call_kwargs = mock_aresp.call_args_list[0].kwargs
+        assert first_call_kwargs["tool_choice"] == "auto"
+        assert any(
+            tool.get("name") == "spawn_agent"
+            for tool in first_call_kwargs.get("tools", [])
+        )
+        sub_agent_module.execute_sub_agents_parallel.assert_awaited_once()
+        _mock_mcp.call_tool.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reasoning_params_forwarded(self, _mock_broadcast, _mock_cancelled):

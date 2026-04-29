@@ -15,7 +15,7 @@ SUB_AGENT_INLINE_TOOLS: list[dict[str, Any]] = [
             "properties": {
                 "instruction": {
                     "type": "string",
-                    "description": "Fully self-contained task description. Must include all context the sub-agent needs.",
+                    "description": "Fully self-contained task description for the sub-agent to execute now. Must include all context the sub-agent needs.",
                 },
                 "model_tier": {
                     "type": "string",

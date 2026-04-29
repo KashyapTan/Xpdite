@@ -410,6 +410,57 @@ def _make_streaming_chunks_then_raise(
     return generator()
 
 
+def _responses_text_delta(delta: str):
+    return SimpleNamespace(type="response.output_text.delta", delta=delta)
+
+
+def _responses_function_event(
+    event_type: str,
+    output_index: int = 0,
+    *,
+    item=None,
+    delta=None,
+    arguments=None,
+):
+    return SimpleNamespace(
+        type=event_type,
+        output_index=output_index,
+        item=item,
+        delta=delta,
+        arguments=arguments,
+    )
+
+
+def _responses_function_item(
+    *,
+    name="read_file",
+    call_id="call_1",
+    item_id="fc_1",
+    arguments='{"path":"/tmp/demo.txt"}',
+):
+    return SimpleNamespace(
+        type="function_call",
+        name=name,
+        call_id=call_id,
+        id=item_id,
+        arguments=arguments,
+    )
+
+
+def _responses_completed(prompt_tokens: int = 0, completion_tokens: int = 0):
+    usage = SimpleNamespace(
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+    )
+    response = SimpleNamespace(usage=usage)
+    return SimpleNamespace(type="response.completed", response=response)
+
+
+async def _make_responses_stream(events):
+    for event in events:
+        yield event
+
+
 def _make_ollama_stream(
     *,
     content: str = "",
@@ -635,11 +686,13 @@ class TestRunCloudSubAgent:
 
     @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
-    @patch("source.services.skills_runtime.sub_agent.litellm.acompletion", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent.litellm.aresponses", new_callable=AsyncMock)
     async def test_cloud_sub_agent_routes_chatgpt_subscription_through_litellm(
-        self, mock_acompletion, _mock_model_info, _mock_cancelled
+        self, mock_aresponses, _mock_model_info, _mock_cancelled
     ):
-        mock_acompletion.return_value = _make_streaming_chunks("done")
+        mock_aresponses.return_value = _make_responses_stream(
+            [_responses_text_delta("done"), _responses_completed()]
+        )
 
         with patch(
             "source.services.integrations.openai_codex.openai_codex.get_status",
@@ -657,9 +710,70 @@ class TestRunCloudSubAgent:
             "error": None,
         }
         mock_status.assert_called_once()
-        create_kwargs = mock_acompletion.call_args.kwargs
+        create_kwargs = mock_aresponses.call_args.kwargs
         assert create_kwargs["model"] == "chatgpt/gpt-5.4"
+        assert create_kwargs["input"] == [{"role": "user", "content": "Summarize"}]
+        assert create_kwargs["instructions"]
         assert "api_key" not in create_kwargs
+
+    @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
+    @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
+    @patch("source.services.skills_runtime.sub_agent.litellm.aresponses", new_callable=AsyncMock)
+    async def test_chatgpt_subscription_sub_agent_executes_tools(
+        self, mock_aresponses, _mock_model_info, _mock_cancelled
+    ):
+        tool_item = _responses_function_item(arguments='{"path":"/tmp/demo.txt"}')
+        mock_aresponses.side_effect = [
+            _make_responses_stream(
+                [
+                    _responses_function_event("response.output_item.added", item=tool_item),
+                    _responses_function_event(
+                        "response.function_call_arguments.done",
+                        arguments='{"path":"/tmp/demo.txt"}',
+                    ),
+                    _responses_function_event("response.output_item.done", item=tool_item),
+                    _responses_completed(prompt_tokens=2, completion_tokens=3),
+                ]
+            ),
+            _make_responses_stream(
+                [
+                    _responses_text_delta("Final answer"),
+                    _responses_completed(prompt_tokens=4, completion_tokens=5),
+                ]
+            ),
+        ]
+
+        fake_manager = MagicMock()
+        fake_manager.get_tools.return_value = [
+            {"type": "function", "function": {"name": "read_file", "description": "", "parameters": {}}}
+        ]
+        fake_manager.call_tool = AsyncMock(return_value="tool output")
+
+        with (
+            patch("source.mcp_integration.core.manager.mcp_manager", fake_manager),
+            patch(
+                "source.services.integrations.openai_codex.openai_codex.get_status",
+                return_value={"connected": True},
+            ),
+        ):
+            result = await _run_cloud_sub_agent(
+                model_name="openai-codex/gpt-5.4",
+                instruction="Read the file",
+                tools=[{"function": {"name": "read_file"}}],
+            )
+
+        assert result == {
+            "response": "Final answer",
+            "token_stats": {"prompt_tokens": 6, "completion_tokens": 8},
+            "error": None,
+        }
+        fake_manager.call_tool.assert_awaited_once_with(
+            "read_file",
+            {"path": "/tmp/demo.txt"},
+        )
+        second_input = mock_aresponses.call_args_list[1].kwargs["input"]
+        assert any(item.get("type") == "function_call" for item in second_input)
+        assert any(item.get("type") == "function_call_output" for item in second_input)
 
     @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})

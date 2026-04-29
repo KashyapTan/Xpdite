@@ -259,6 +259,10 @@ class OpenAICodexService:
         token_dir = self.get_chatgpt_token_dir()
         os.environ["CHATGPT_TOKEN_DIR"] = str(token_dir)
         os.environ["CHATGPT_AUTH_FILE"] = _LITELLM_AUTH_FILENAME
+        if not os.environ.get("CHATGPT_DEFAULT_INSTRUCTIONS", "").strip():
+            os.environ["CHATGPT_DEFAULT_INSTRUCTIONS"] = (
+                "Use the application-provided instructions and tool results."
+            )
         return token_dir
 
     def _codex_binary_candidates(

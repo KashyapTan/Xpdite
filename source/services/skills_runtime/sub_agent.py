@@ -263,6 +263,321 @@ def _get_sub_agent_tools(instruction: str) -> Optional[List[Dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 
 
+async def _run_chatgpt_subscription_sub_agent(
+    *,
+    litellm_model: str,
+    instruction: str,
+    openai_tools: Optional[List[Dict[str, Any]]],
+    agent_id: str,
+    agent_name: str,
+    model_tier: str,
+) -> Dict[str, Any]:
+    """Execute a ChatGPT subscription sub-agent with Responses API tool events."""
+    from ...llm.providers.cloud_provider import (
+        _event_type_value,
+        _merge_response_function_item,
+        _object_field,
+        _response_function_calls_to_chat_tool_calls,
+        _responses_function_call_items,
+        _responses_tools_from_chat_tools,
+        _tool_result_message,
+    )
+    from ...mcp_integration.core.manager import mcp_manager
+
+    responses_input: List[Dict[str, Any]] = [
+        {"role": "user", "content": instruction},
+    ]
+    responses_tools = _responses_tools_from_chat_tools(openai_tools)
+
+    total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
+    accumulated_text: list[str] = []
+    transcript_steps: list[dict[str, Any]] = [
+        {"type": "instruction", "content": instruction}
+    ]
+
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "instruction",
+                "content": instruction,
+                "transcript": transcript_steps,
+            }),
+        )
+
+    rounds = 0
+    try:
+        while True:
+            if is_current_request_cancelled():
+                break
+
+            rounds += 1
+            if rounds > MAX_MCP_TOOL_ROUNDS + 1:
+                break
+
+            allow_tools = responses_tools is not None and rounds <= MAX_MCP_TOOL_ROUNDS
+            create_kwargs: Dict[str, Any] = {
+                "model": litellm_model,
+                "input": responses_input,
+                "instructions": _SUB_AGENT_SYSTEM_PROMPT,
+                "stream": True,
+                "timeout": _SUB_AGENT_TIMEOUT,
+                "store": False,
+            }
+            if allow_tools:
+                create_kwargs["tools"] = responses_tools
+                create_kwargs["tool_choice"] = "auto"
+                create_kwargs["parallel_tool_calls"] = True
+
+            round_text_chunks: list[str] = []
+            round_text_step_index: int | None = None
+            pending_tool_calls: Dict[int, Dict[str, str]] = {}
+
+            def _append_stream_text(chunk_text: str) -> None:
+                nonlocal round_text_step_index
+                if not chunk_text:
+                    return
+                round_text_chunks.append(chunk_text)
+                if round_text_step_index is None:
+                    transcript_steps.append({"type": "text", "content": chunk_text})
+                    round_text_step_index = len(transcript_steps) - 1
+                    return
+                existing = str(
+                    transcript_steps[round_text_step_index].get("content", "")
+                )
+                transcript_steps[round_text_step_index]["content"] = (
+                    f"{existing}{chunk_text}"
+                )
+
+            async for event in await litellm.aresponses(**create_kwargs):
+                if is_current_request_cancelled():
+                    break
+
+                event_type = _event_type_value(event)
+                if event_type == "response.output_text.delta":
+                    delta = str(_object_field(event, "delta") or "")
+                    if delta:
+                        _append_stream_text(delta)
+                        if agent_id:
+                            await broadcast_message(
+                                "sub_agent_stream",
+                                json.dumps({
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "thinking",
+                                    "content": delta,
+                                    "accumulated": "".join(round_text_chunks),
+                                    "transcript": transcript_steps,
+                                }),
+                            )
+                elif event_type == "response.output_item.added":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    _merge_response_function_item(
+                        pending_tool_calls,
+                        output_index,
+                        _object_field(event, "item"),
+                    )
+                elif event_type == "response.function_call_arguments.delta":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    state = pending_tool_calls.setdefault(
+                        output_index,
+                        {"id": "", "call_id": "", "name": "", "arguments": ""},
+                    )
+                    state["arguments"] += str(_object_field(event, "delta") or "")
+                elif event_type == "response.function_call_arguments.done":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    state = pending_tool_calls.setdefault(
+                        output_index,
+                        {"id": "", "call_id": "", "name": "", "arguments": ""},
+                    )
+                    arguments = _object_field(event, "arguments")
+                    if arguments is not None:
+                        state["arguments"] = str(arguments)
+                elif event_type == "response.output_item.done":
+                    output_index = int(_object_field(event, "output_index", 0) or 0)
+                    _merge_response_function_item(
+                        pending_tool_calls,
+                        output_index,
+                        _object_field(event, "item"),
+                    )
+                elif event_type == "response.completed":
+                    response_obj = _object_field(event, "response")
+                    usage = _object_field(response_obj, "usage")
+                    total_tokens["prompt_tokens"] += (
+                        int(_object_field(usage, "input_tokens", 0) or 0)
+                    )
+                    total_tokens["completion_tokens"] += (
+                        int(_object_field(usage, "output_tokens", 0) or 0)
+                    )
+
+            round_text = "".join(round_text_chunks)
+            if round_text:
+                accumulated_text.append(round_text)
+                if agent_id:
+                    await broadcast_message(
+                        "sub_agent_stream",
+                        json.dumps({
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "model_tier": model_tier,
+                            "stream_type": "thinking_complete",
+                            "content": round_text,
+                            "transcript": transcript_steps,
+                        }),
+                    )
+
+            assistant_tool_calls = _response_function_calls_to_chat_tool_calls(
+                pending_tool_calls,
+                rounds,
+            )
+            if not assistant_tool_calls:
+                break
+
+            responses_input.extend(_responses_function_call_items(assistant_tool_calls))
+
+            for tc_info in assistant_tool_calls:
+                fn_name = tc_info["function"]["name"]
+                fn_args, arg_error = normalize_tool_args(
+                    tc_info["function"]["arguments"]
+                )
+
+                if arg_error:
+                    result_str = (
+                        f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                    )
+                    transcript_steps.append({
+                        "type": "tool_call",
+                        "name": fn_name,
+                        "args": {},
+                        "status": "error",
+                        "result": result_str,
+                    })
+                    responses_input.append(
+                        _tool_result_message(tc_info, result_str, "responses")
+                    )
+                    continue
+
+                if fn_name in _EXCLUDED_TOOLS:
+                    result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
+                    transcript_steps.append({
+                        "type": "tool_call",
+                        "name": fn_name,
+                        "args": fn_args,
+                        "status": "blocked",
+                        "result": result_str,
+                    })
+                    responses_input.append(
+                        _tool_result_message(tc_info, result_str, "responses")
+                    )
+                    continue
+
+                if is_current_request_cancelled():
+                    break
+
+                step_index = len(transcript_steps)
+                transcript_steps.append({
+                    "type": "tool_call",
+                    "name": fn_name,
+                    "args": fn_args,
+                    "status": "calling",
+                })
+                if agent_id:
+                    await broadcast_message(
+                        "sub_agent_stream",
+                        json.dumps({
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "model_tier": model_tier,
+                            "stream_type": "tool_call",
+                            "tool_name": fn_name,
+                            "tool_args": fn_args,
+                            "transcript": transcript_steps,
+                        }),
+                    )
+
+                try:
+                    result = await mcp_manager.call_tool(fn_name, fn_args)
+                    result_str = str(result)
+                    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
+                        result_str = _truncate_safely(
+                            result_str,
+                            MAX_TOOL_RESULT_LENGTH,
+                        )
+                except Exception as e:
+                    logger.warning("ChatGPT sub-agent tool %s failed: %s", fn_name, e)
+                    result_str = f"Tool execution error: {type(e).__name__}"
+
+                result_preview = (
+                    result_str[:_TRANSCRIPT_RESULT_PREVIEW]
+                    if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW
+                    else result_str
+                )
+                transcript_steps[step_index] = {
+                    "type": "tool_call",
+                    "name": fn_name,
+                    "args": fn_args,
+                    "status": "complete",
+                    "result": result_preview,
+                }
+                responses_input.append(
+                    _tool_result_message(tc_info, result_str, "responses")
+                )
+
+                if agent_id:
+                    await broadcast_message(
+                        "sub_agent_stream",
+                        json.dumps({
+                            "agent_id": agent_id,
+                            "agent_name": agent_name,
+                            "model_tier": model_tier,
+                            "stream_type": "tool_result",
+                            "tool_name": fn_name,
+                            "tool_result": result_preview,
+                            "transcript": transcript_steps,
+                        }),
+                    )
+
+            if is_current_request_cancelled():
+                break
+    except Exception as e:
+        error_msg = build_provider_error_message("openai-codex", e)
+        logger.error(
+            "ChatGPT subscription sub-agent streaming failed (%s): %s",
+            type(e).__name__,
+            error_msg,
+        )
+        return {
+            "response": "".join(accumulated_text),
+            "token_stats": total_tokens,
+            "error": error_msg,
+        }
+
+    final_response = "".join(accumulated_text)
+    if agent_id:
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps({
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "model_tier": model_tier,
+                "stream_type": "final",
+                "content": final_response,
+                "transcript": transcript_steps,
+                "token_stats": total_tokens,
+            }),
+        )
+
+    return {
+        "response": final_response,
+        "token_stats": total_tokens,
+        "error": None,
+    }
+
+
 async def _run_cloud_sub_agent(
     model_name: str,
     instruction: str,
@@ -337,6 +652,16 @@ async def _run_cloud_sub_agent(
     max_tokens = model_info.get("max_output_tokens")
     if max_tokens is None and provider == "anthropic":
         max_tokens = 16384
+
+    if provider == "openai-codex":
+        return await _run_chatgpt_subscription_sub_agent(
+            litellm_model=litellm_model,
+            instruction=instruction,
+            openai_tools=openai_tools,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model_tier=model_tier,
+        )
 
     rounds = 0
     while True:

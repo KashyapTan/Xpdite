@@ -90,6 +90,12 @@ class TestBuildSystemPrompt:
         assert "Do NOT use `run_command`" in prompt
         assert "searching inside archives" in prompt
 
+    def test_sub_agent_tool_call_instruction_is_present(self):
+        prompt = build_system_prompt()
+        assert "When the `spawn_agent` tool is available" in prompt
+        assert "Do not say" in prompt
+        assert "without calling the tool" in prompt
+
     def test_custom_template(self):
         template = (
             "You are a test assistant. Today is {{current_datetime}}. "

@@ -48,6 +48,9 @@ do yet (for example, searching inside archives), and explain the reason first.
 
 <sub_agents>
 Spawn sub-agents in parallel for read-only gathering (files, URLs, research) to keep the main context clean. Do NOT use sub-agents when the reasoning chain itself is needed in main context.
+When the `spawn_agent` tool is available, launching a sub-agent means emitting
+one or more `spawn_agent` tool calls in the current assistant turn. Do not say
+you will launch sub-agents and then stop without calling the tool.
 
 **Scoping:** Each sub-agent should have a focused, coherent purpose. Avoid bundling unrelated tasks into one agent, and avoid redundant overlap between agents doing the same work from the same angle.
 
