@@ -90,7 +90,7 @@ describe('TokenUsagePopup', () => {
     test('displays header with token summary', () => {
       render(<TokenUsagePopup {...defaultProps} show={true} />);
 
-      expect(screen.getByText('50.0K / 100K tokens • 50%')).toBeInTheDocument();
+      expect(screen.getByText('50,000 / 100,000 tokens • 50%')).toBeInTheDocument();
     });
   });
 
@@ -139,7 +139,7 @@ describe('TokenUsagePopup', () => {
         <TokenUsagePopup {...defaultProps} tokenUsage={tokenUsage} show={true} />
       );
 
-      expect(screen.getByText('25.0K / 100K tokens • 25%')).toBeInTheDocument();
+      expect(screen.getByText('25,000 / 100,000 tokens • 25%')).toBeInTheDocument();
     });
 
     test('handles zero total tokens gracefully', () => {
@@ -154,9 +154,28 @@ describe('TokenUsagePopup', () => {
         <TokenUsagePopup {...defaultProps} tokenUsage={zeroUsage} show={true} />
       );
 
-      expect(screen.getByText('0.0K / 100K tokens • 0%')).toBeInTheDocument();
+      expect(screen.getByText('0 / 100,000 tokens • 0%')).toBeInTheDocument();
       // Input and output percentages should show 0% when total is 0
       expect(screen.getAllByText('0 (0%)').length).toBeGreaterThanOrEqual(1);
+    });
+
+    test('handles unknown model context limit gracefully', () => {
+      const unknownLimitUsage: TokenUsage = {
+        total: 12345,
+        input: 10000,
+        output: 2345,
+        limit: 0,
+      };
+
+      render(
+        <TokenUsagePopup {...defaultProps} tokenUsage={unknownLimitUsage} show={true} />
+      );
+
+      expect(screen.getByText('12,345 / Unknown limit')).toBeInTheDocument();
+      expect(screen.getByText('12,345')).toBeInTheDocument();
+
+      const progressFill = document.querySelector('.token-progress-bar-fill');
+      expect(progressFill).toHaveStyle({ width: '0%' });
     });
 
     test('rounds percentages to nearest integer', () => {
@@ -172,7 +191,7 @@ describe('TokenUsagePopup', () => {
       );
 
       // 33.333% should round to 33%
-      expect(screen.getByText('33.3K / 100K tokens • 33%')).toBeInTheDocument();
+      expect(screen.getByText('33,333 / 100,000 tokens • 33%')).toBeInTheDocument();
     });
   });
 
@@ -250,7 +269,7 @@ describe('TokenUsagePopup', () => {
         <TokenUsagePopup {...defaultProps} tokenUsage={smallLimit} show={true} />
       );
 
-      expect(screen.getByText('2.0K / 4K tokens • 50%')).toBeInTheDocument();
+      expect(screen.getByText('2,000 / 4,000 tokens • 50%')).toBeInTheDocument();
     });
 
     test('handles large token limits', () => {
@@ -265,7 +284,7 @@ describe('TokenUsagePopup', () => {
         <TokenUsagePopup {...defaultProps} tokenUsage={largeLimit} show={true} />
       );
 
-      expect(screen.getByText('500.0K / 1000K tokens • 50%')).toBeInTheDocument();
+      expect(screen.getByText('500,000 / 1,000,000 tokens • 50%')).toBeInTheDocument();
     });
   });
 

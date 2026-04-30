@@ -44,6 +44,7 @@ Example response:
 
 - `GET /api/models/ollama`
 - `GET /api/models/ollama/info/{model_name}`
+- `GET /api/models/context-window/{model_name}`
 - `GET /api/models/enabled`
 - `PUT /api/models/enabled`
 - `GET /api/models/anthropic`
@@ -53,6 +54,18 @@ Example response:
 - `GET /api/keys`
 - `PUT /api/keys/{provider}`
 - `DELETE /api/keys/{provider}`
+
+`GET /api/models/context-window/{model_name}` resolves the effective context window used by the chat UI for a selected model. Cloud providers use LiteLLM model metadata; local Ollama models use local model metadata plus the configured `num_ctx` value; cloud-tagged Ollama models use the hosted model metadata without the local `num_ctx` cap.
+
+Example response:
+
+```json
+{
+  "model": "openai/gpt-5",
+  "context_window": 400000,
+  "source": "litellm_model_info"
+}
+```
 
 ### Artifacts
 

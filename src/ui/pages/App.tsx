@@ -532,6 +532,7 @@ function App() {
   const chatState = useChatState();
   const screenshotState = useScreenshots();
   const tokenState = useTokenUsage();
+  const { setTokenUsage } = tokenState;
 
   // ============================================
   // Local UI State
@@ -743,7 +744,7 @@ function App() {
       meetingRecordingMode: false,
     },
     tokens: {
-      tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 },
+      tokenUsage: { total: 0, input: 0, output: 0, limit: 0 },
     },
     terminal: {
       terminalSessionActive: false,
@@ -1566,6 +1567,38 @@ function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, location.pathname]); // re-fetch when backend connects or user returns from Settings
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchContextWindow = async () => {
+      if (!selectedModel) {
+        setTokenUsage({ limit: 0 });
+        return;
+      }
+
+      try {
+        const { api } = await import('../services/api');
+        const contextWindow = await api.getModelContextWindow(selectedModel);
+        if (cancelled) {
+          return;
+        }
+        setTokenUsage({
+          limit: contextWindow.context_window ?? 0,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.warn('[models] Failed to fetch model context window', error);
+          setTokenUsage({ limit: 0 });
+        }
+      }
+    };
+
+    void fetchContextWindow();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTabId, selectedModel, setTokenUsage]);
 
   // ============================================
   // WebSocket Message Handler (tab-aware)

@@ -621,6 +621,23 @@ async def get_ollama_model_info(model_name: str) -> Any:
         }
 
 
+@router.get("/models/context-window/{model_name:path}")
+async def get_model_context_window(model_name: str) -> dict[str, Any]:
+    """Resolve the effective context window for the selected chat model."""
+    from ..llm.core.model_context import resolve_model_context_window
+
+    model_ref = (model_name or "").strip()
+    if not model_ref:
+        raise HTTPException(status_code=400, detail="Model name is required")
+
+    context = await resolve_model_context_window(model_ref)
+    return {
+        "model": context.model,
+        "context_window": context.context_window,
+        "source": context.source,
+    }
+
+
 # ============================================
 # Enabled Models API (persisted in DB)
 # ============================================

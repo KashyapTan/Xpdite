@@ -19,6 +19,7 @@ from ...infrastructure.config import OLLAMA_CTX_SIZE
 from ...core.connection import broadcast_message
 from ...core.request_context import get_current_request, is_current_request_cancelled
 from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
+from ..core.router import is_local_ollama_model
 from ...mcp_integration.core.handlers import handle_mcp_tool_calls
 from ...mcp_integration.core.manager import mcp_manager
 from ...mcp_integration.core.tool_args import normalize_tool_args
@@ -184,8 +185,9 @@ async def stream_ollama_chat(
             "model": model_name,
             "messages": messages,
             "stream": True,
-            "options": {"num_ctx": OLLAMA_CTX_SIZE},
         }
+        if is_local_ollama_model(model_name):
+            chat_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
 
         stream = await client.chat(**chat_kwargs)
 
@@ -353,8 +355,9 @@ async def stream_ollama_chat(
                     "model": model_name,
                     "messages": messages,
                     "stream": False,
-                    "options": {"num_ctx": OLLAMA_CTX_SIZE},
                 }
+                if is_local_ollama_model(model_name):
+                    fallback_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
                 fallback = await client.chat(**fallback_kwargs)
 
                 content_str = ""
@@ -381,6 +384,33 @@ async def stream_ollama_chat(
                     await broadcast_message("thinking_complete", "")
                     interleaved_blocks.append(
                         {"type": "thinking", "content": fallback_thinking}
+                    )
+
+                fallback_token_stats = {
+                    "prompt_eval_count": 0,
+                    "eval_count": 0,
+                }
+                if isinstance(fallback, dict):
+                    fallback_token_stats["prompt_eval_count"] = (
+                        fallback.get("prompt_eval_count", 0) or 0
+                    )
+                    fallback_token_stats["eval_count"] = (
+                        fallback.get("eval_count", 0) or 0
+                    )
+                else:
+                    fallback_token_stats["prompt_eval_count"] = (
+                        getattr(fallback, "prompt_eval_count", 0) or 0
+                    )
+                    fallback_token_stats["eval_count"] = (
+                        getattr(fallback, "eval_count", 0) or 0
+                    )
+                if (
+                    fallback_token_stats["prompt_eval_count"]
+                    or fallback_token_stats["eval_count"]
+                ):
+                    collected_token_stats = fallback_token_stats
+                    await broadcast_message(
+                        "token_usage", json.dumps(fallback_token_stats)
                     )
 
                 if content_str:

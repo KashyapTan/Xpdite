@@ -23,9 +23,12 @@ export function TokenUsagePopup({
   onClick,
   contextWindowIcon,
 }: TokenUsagePopupProps) {
-  const percentage = Math.round((tokenUsage.total / tokenUsage.limit) * 100);
+  const hasLimit = tokenUsage.limit > 0;
+  const percentage = hasLimit ? Math.round((tokenUsage.total / tokenUsage.limit) * 100) : 0;
   const inputPercentage = Math.round((tokenUsage.input / tokenUsage.total || 0) * 100);
   const outputPercentage = Math.round((tokenUsage.output / tokenUsage.total || 0) * 100);
+  const totalLabel = tokenUsage.total.toLocaleString();
+  const limitLabel = hasLimit ? `${tokenUsage.limit.toLocaleString()} tokens` : 'Unknown limit';
 
   return (
     <div
@@ -46,7 +49,8 @@ export function TokenUsagePopup({
           <div className="token-popup-header">
             <span className="token-popup-title">Context Window</span>
             <span className="token-popup-subtitle">
-              {(tokenUsage.total / 1000).toFixed(1)}K / {tokenUsage.limit / 1000}K tokens • {percentage}%
+              {totalLabel} / {limitLabel}
+              {hasLimit ? ` • ${percentage}%` : ''}
             </span>
           </div>
 
@@ -61,7 +65,8 @@ export function TokenUsagePopup({
             <div className="token-usage-row">
               <span className="token-usage-label">Total Tokens</span>
               <span className="token-usage-value">
-                {tokenUsage.total.toLocaleString()} ({percentage}%)
+                {totalLabel}
+                {hasLimit ? ` (${percentage}%)` : ''}
               </span>
             </div>
             <div className="token-usage-row">

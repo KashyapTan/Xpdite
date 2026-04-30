@@ -994,8 +994,10 @@ class TestExecuteSubAgent:
         result = await execute_sub_agent("What is the answer?", "fast", "TestAgent")
         assert result == "The answer is 42."
         # Live transcript updates are streamed separately; execute_sub_agent no longer
-        # emits redundant outer tool_call lifecycle broadcasts here.
-        assert mock_broadcast.call_count == 0
+        # emits redundant outer tool_call lifecycle broadcasts here. It does still
+        # report usage so the parent chat token meter includes sub-agent work.
+        mock_broadcast.assert_awaited_once()
+        assert mock_broadcast.await_args.args[0] == "token_usage"
 
     @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.skills_runtime.sub_agent._get_sub_agent_tools", return_value=None)

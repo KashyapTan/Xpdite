@@ -15,9 +15,17 @@ import logging
 from typing import Any, Dict, List, Optional
 
 from ollama import AsyncClient as OllamaAsyncClient
-from ...infrastructure.config import DEFAULT_MODEL, MAX_TOOL_RESULT_LENGTH
+from ...infrastructure.config import (
+    DEFAULT_MODEL,
+    MAX_TOOL_RESULT_LENGTH,
+    OLLAMA_CTX_SIZE,
+)
 from ...core.connection import broadcast_message
-from ...core.request_context import is_current_request_cancelled, get_current_model
+from ...core.request_context import (
+    get_current_model,
+    get_current_request,
+    is_current_request_cancelled,
+)
 from ...llm.core.artifacts import (
     ArtifactStreamParser,
     apply_artifact_stream_events,
@@ -57,6 +65,41 @@ def _get_request_model() -> str:
         DEFAULT_MODEL,
     )
     return DEFAULT_MODEL
+
+
+def _ollama_options_for_request_model() -> Dict[str, int] | None:
+    """Return context options only for local Ollama models."""
+    from ...llm.core.router import is_local_ollama_model
+
+    if is_local_ollama_model(_get_request_model()):
+        return {"num_ctx": OLLAMA_CTX_SIZE}
+    return None
+
+
+def _extract_token_stats(response: Any) -> Dict[str, int]:
+    """Extract Ollama usage counters from dict or SDK response objects."""
+    if isinstance(response, dict):
+        return {
+            "prompt_eval_count": int(response.get("prompt_eval_count", 0) or 0),
+            "eval_count": int(response.get("eval_count", 0) or 0),
+        }
+    return {
+        "prompt_eval_count": int(getattr(response, "prompt_eval_count", 0) or 0),
+        "eval_count": int(getattr(response, "eval_count", 0) or 0),
+    }
+
+
+async def _record_auxiliary_token_usage(token_stats: Dict[str, int]) -> None:
+    """Broadcast and persist request-scoped usage outside the main return path."""
+    input_tokens = token_stats.get("prompt_eval_count", 0)
+    output_tokens = token_stats.get("eval_count", 0)
+    if not input_tokens and not output_tokens:
+        return
+
+    ctx = get_current_request()
+    if ctx is not None:
+        ctx.add_extra_token_usage(input_tokens, output_tokens)
+    await broadcast_message("token_usage", json.dumps(token_stats))
 
 
 # ---------------------------------------------------------------------------
@@ -279,18 +322,23 @@ async def handle_mcp_tool_calls(
     # think=False works around Ollama bug #10976 (think+tools=empty output)
     # Images are included so the model can analyze image content
     try:
-        response = await async_client.chat(
-            model=_get_request_model(),
-            messages=messages,
-            tools=filtered_tools,
-            think=False,
-        )
+        detection_kwargs: Dict[str, Any] = {
+            "model": _get_request_model(),
+            "messages": messages,
+            "tools": filtered_tools,
+            "think": False,
+        }
+        ollama_options = _ollama_options_for_request_model()
+        if ollama_options is not None:
+            detection_kwargs["options"] = ollama_options
+        response = await async_client.chat(**detection_kwargs)
     except Exception as e:
         logger.error("Error in tool detection call: %s", e)
         return messages, tool_calls_made, None
 
     # No tool calls detected — fall through to normal streaming (with thinking)
     if not response.message.tool_calls:
+        await _record_auxiliary_token_usage(_extract_token_stats(response))
         return messages, tool_calls_made, None
 
     # ── Phase 2: Streaming tool loop ──────────────────────────────
@@ -298,7 +346,7 @@ async def handle_mcp_tool_calls(
     from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS
 
     all_accumulated_text: list[str] = []
-    total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    total_token_stats: Dict[str, int] = _extract_token_stats(response)
     rounds = 0
     is_first_round = True
 
@@ -759,13 +807,17 @@ async def _stream_tool_follow_up(
         thinking_complete_sent = False
         artifact_parser = ArtifactStreamParser()
 
-        stream = await async_client.chat(
-            model=_get_request_model(),
-            messages=messages,
-            tools=tools,
-            stream=True,
-            think=think_enabled,
-        )
+        follow_up_kwargs: Dict[str, Any] = {
+            "model": _get_request_model(),
+            "messages": messages,
+            "tools": tools,
+            "stream": True,
+            "think": think_enabled,
+        }
+        ollama_options = _ollama_options_for_request_model()
+        if ollama_options is not None:
+            follow_up_kwargs["options"] = ollama_options
+        stream = await async_client.chat(**follow_up_kwargs)
 
         async for chunk in stream:
             if is_current_request_cancelled():

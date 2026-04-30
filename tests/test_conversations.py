@@ -412,6 +412,48 @@ class TestConversationBranching:
         assert messages[1]["response_variants"][0]["content"] == "Fresh answer"
 
     @pytest.mark.anyio
+    async def test_submit_query_persists_request_context_extra_token_usage(
+        self, db_manager, monkeypatch
+    ):
+        cid = db_manager.start_new_conversation("Extra tokens")
+        tab_state = TabState(tab_id="default")
+        tab_state.conversation_id = cid
+        tab_state.chat_history = []
+
+        async def fake_route_chat(*_args, **_kwargs):
+            from source.core.request_context import get_current_request
+
+            ctx = get_current_request()
+            assert ctx is not None
+            ctx.add_extra_token_usage(7, 11)
+            return (
+                "Fresh answer",
+                {"prompt_eval_count": 2, "eval_count": 4},
+                [],
+                [{"type": "text", "content": "Fresh answer"}],
+            )
+
+        monkeypatch.setattr("source.services.chat.conversations.db", db_manager)
+        monkeypatch.setattr(
+            "source.services.chat.conversations.route_chat",
+            fake_route_chat,
+        )
+        monkeypatch.setattr(
+            "source.services.chat.conversations.broadcast_message", AsyncMock()
+        )
+
+        conversation_id = await ConversationService.submit_query(
+            user_query="Fresh question",
+            llm_query="Fresh question",
+            tab_state=tab_state,
+            model="model-a",
+        )
+
+        assert conversation_id == cid
+        usage = db_manager.get_token_usage(cid)
+        assert usage == {"input": 9, "output": 15, "total": 24}
+
+    @pytest.mark.anyio
     async def test_retry_message_creates_response_variant_and_truncates_later_turns(
         self, db_manager, monkeypatch
     ):

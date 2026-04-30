@@ -136,9 +136,9 @@ const screenshotStateMock = {
 };
 
 const tokenStateMock = {
-  tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 },
+  tokenUsage: { total: 0, input: 0, output: 0, limit: 0 },
   showTokenPopup: false,
-  getSnapshot: vi.fn(() => ({ tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } })),
+  getSnapshot: vi.fn(() => ({ tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } })),
   restoreSnapshot: vi.fn(),
   resetTokens: vi.fn(),
   setTokenUsage: vi.fn(),
@@ -195,6 +195,11 @@ vi.mock('../../contexts/WebSocketContext', () => ({
 vi.mock('../../services/api', () => ({
   api: {
     getEnabledModels: vi.fn().mockResolvedValue(['openai/gpt-4o']),
+    getModelContextWindow: vi.fn().mockResolvedValue({
+      model: 'openai/gpt-4o',
+      context_window: 128000,
+      source: 'test',
+    }),
   },
 }));
 
@@ -591,7 +596,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });
@@ -830,7 +835,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });
@@ -907,7 +912,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 128000 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });

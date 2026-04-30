@@ -168,6 +168,46 @@ async def test_stream_uses_explicit_model_name_without_global_fallback():
     assert text == "hello"
     assert stats == {"prompt_eval_count": 2, "eval_count": 1}
     assert client.chat.await_args_list[0].kwargs["model"] == "explicit-model"
+    assert client.chat.await_args_list[0].kwargs["options"] == {"num_ctx": 32768}
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_local_num_ctx_for_ollama_cloud_model():
+    async def _stream():
+        yield SimpleNamespace(
+            message=SimpleNamespace(content="cloud hello"),
+            done=True,
+            prompt_eval_count=2,
+            eval_count=1,
+        )
+
+    client = AsyncMock()
+    client.chat = AsyncMock(return_value=_stream())
+    client._client = SimpleNamespace(aclose=AsyncMock())
+
+    with (
+        patch(
+            "source.llm.providers.ollama_provider.OllamaAsyncClient",
+            return_value=client,
+        ),
+        patch("source.llm.providers.ollama_provider.mcp_manager.has_tools", return_value=False),
+        patch("source.llm.providers.ollama_provider.broadcast_message", new_callable=AsyncMock),
+        patch("source.llm.providers.ollama_provider.get_current_request", return_value=None),
+        patch("source.llm.providers.ollama_provider.is_current_request_cancelled", return_value=False),
+    ):
+        from source.llm.providers.ollama_provider import stream_ollama_chat
+
+        text, stats, _, _ = await stream_ollama_chat(
+            "qwen3-coder-next:cloud",
+            "hello",
+            [],
+            [],
+            "",
+        )
+
+    assert text == "cloud hello"
+    assert stats == {"prompt_eval_count": 2, "eval_count": 1}
+    assert "options" not in client.chat.await_args_list[0].kwargs
 
 
 @pytest.mark.asyncio

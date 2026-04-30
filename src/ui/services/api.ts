@@ -76,6 +76,12 @@ export interface ProviderModel {
   context_length?: number;
 }
 
+export interface ModelContextWindowResponse {
+  model: string;
+  context_window: number | null;
+  source: string;
+}
+
 export interface OpenAICodexStatus {
   available: boolean;
   connected: boolean;
@@ -846,6 +852,27 @@ export const api = {
       .filter((model): model is ProviderModel => model !== null);
 
     return normalized;
+  },
+
+  /**
+   * Resolve the effective context window for a selected chat model.
+   */
+  async getModelContextWindow(modelName: string): Promise<ModelContextWindowResponse> {
+    const base = await baseUrl();
+    const response = await fetch(
+      `${base}/api/models/context-window/${encodeURIComponent(modelName)}`,
+    );
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to fetch model context window');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return {
+      model: typeof payload?.model === 'string' ? payload.model : modelName,
+      context_window:
+        typeof payload?.context_window === 'number' ? payload.context_window : null,
+      source: typeof payload?.source === 'string' ? payload.source : 'unknown',
+    };
   },
 
   // ============================================

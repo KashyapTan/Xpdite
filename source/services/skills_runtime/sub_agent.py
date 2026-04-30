@@ -28,7 +28,11 @@ from ...llm.core.stream_recovery import (
 from ...llm.core.provider_errors import build_provider_error_message
 from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE, USER_DATA_DIR
 from ...core.connection import broadcast_message
-from ...core.request_context import get_current_model, is_current_request_cancelled
+from ...core.request_context import (
+    get_current_model,
+    get_current_request,
+    is_current_request_cancelled,
+)
 from ...core.thread_pool import run_in_thread
 from ...infrastructure.database import db
 from ...mcp_integration.core.tool_args import normalize_tool_args
@@ -140,6 +144,28 @@ def _log_sub_agent_call(
             f.write(entry)
     except Exception as e:
         logger.debug("Failed to write sub-agent log: %s", e)
+
+
+async def _record_sub_agent_token_usage(token_stats: dict) -> None:
+    """Expose sub-agent LLM usage to the parent chat request and UI."""
+    input_tokens = int(token_stats.get("prompt_tokens", 0) or 0)
+    output_tokens = int(token_stats.get("completion_tokens", 0) or 0)
+    if not input_tokens and not output_tokens:
+        return
+
+    ctx = get_current_request()
+    if ctx is not None:
+        ctx.add_extra_token_usage(input_tokens, output_tokens)
+
+    await broadcast_message(
+        "token_usage",
+        json.dumps(
+            {
+                "prompt_eval_count": input_tokens,
+                "eval_count": output_tokens,
+            }
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -678,6 +704,7 @@ async def _run_cloud_sub_agent(
             "model": litellm_model,
             "messages": messages,
             "stream": True,  # Enable streaming
+            "stream_options": {"include_usage": True},
             "timeout": _SUB_AGENT_TIMEOUT,
         }
         if api_key:
@@ -694,6 +721,8 @@ async def _run_cloud_sub_agent(
             finish_reason = None
             round_text_step_index: int | None = None
             stream_retry_count = 0
+            round_prompt_tokens = 0
+            round_completion_tokens = 0
 
             def _append_stream_text(chunk_text: str) -> None:
                 """Append streamed text and keep transcript text block in sync."""
@@ -716,8 +745,13 @@ async def _run_cloud_sub_agent(
 
                         # Extract usage from final chunk if available
                         if hasattr(chunk, "usage") and chunk.usage:
-                            total_tokens["prompt_tokens"] += getattr(chunk.usage, "prompt_tokens", 0) or 0
-                            total_tokens["completion_tokens"] += getattr(chunk.usage, "completion_tokens", 0) or 0
+                            prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
+                            completion = (
+                                getattr(chunk.usage, "completion_tokens", 0) or 0
+                            )
+                            if prompt or completion:
+                                round_prompt_tokens = int(prompt)
+                                round_completion_tokens = int(completion)
 
                         if not chunk.choices:
                             continue
@@ -833,6 +867,9 @@ async def _run_cloud_sub_agent(
                     raise
 
             # After streaming, add collected text to accumulated
+            total_tokens["prompt_tokens"] += round_prompt_tokens
+            total_tokens["completion_tokens"] += round_completion_tokens
+
             round_text = "".join(round_text_chunks)
             if round_text:
                 accumulated_text.append(round_text)
@@ -1061,8 +1098,9 @@ async def _run_ollama_sub_agent(
             "model": model_name,
             "messages": messages,
             "stream": True,  # Enable streaming
-            "options": {"num_ctx": OLLAMA_CTX_SIZE},
         }
+        if _is_local_ollama(model_name):
+            chat_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
         if allow_tools:
             chat_kwargs["tools"] = tools
             chat_kwargs["think"] = False  # Ollama bug #10976 workaround
@@ -1431,6 +1469,8 @@ async def execute_sub_agent(
     response_text = result.get("response", "")
     token_stats = result.get("token_stats", {})
     error = result.get("error")
+
+    await _record_sub_agent_token_usage(token_stats)
 
     # Log to debug file for inspection (offloaded to thread to avoid blocking)
     try:

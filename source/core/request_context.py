@@ -88,6 +88,8 @@ class RequestContext:
         # RequestContext is always created inside async handlers, so this is safe.
         self._done_event = asyncio.Event()
         self.forced_skills: list = []  # List[Skill] at runtime
+        self.extra_input_tokens = 0
+        self.extra_output_tokens = 0
 
     # ── Read-only state ────────────────────────────────────────────
 
@@ -129,3 +131,21 @@ class RequestContext:
                 pass
             return
         self._cancel_callbacks.append(callback)
+
+    def add_extra_token_usage(self, input_tokens: int, output_tokens: int) -> None:
+        """Accumulate token usage produced outside the main provider return path.
+
+        Sub-agents and hidden Ollama tool-detection calls are real LLM calls, but
+        they do not naturally flow through ``route_chat``'s returned
+        ``token_stats``.  Tracking them on the request context lets the
+        conversation persist the same totals that the UI receives.
+        """
+        self.extra_input_tokens += max(0, int(input_tokens or 0))
+        self.extra_output_tokens += max(0, int(output_tokens or 0))
+
+    def get_extra_token_usage(self) -> dict[str, int]:
+        """Return request-scoped auxiliary token usage."""
+        return {
+            "prompt_eval_count": self.extra_input_tokens,
+            "eval_count": self.extra_output_tokens,
+        }

@@ -43,16 +43,24 @@ def is_local_ollama_model(model_name: str) -> bool:
     if provider != "ollama":
         return False
 
+    if is_ollama_cloud_model(normalized):
+        return False
+
+    return True
+
+
+def is_ollama_cloud_model(model_name: str) -> bool:
+    """Whether a model is a cloud-hosted model accessed through Ollama."""
+    normalized = model_name.strip()
     if normalized.lower().startswith("ollama/"):
         normalized = normalized.partition("/")[2]
 
     lower_name = normalized.lower()
     if lower_name.endswith(":cloud"):
-        return False
+        return True
     if lower_name.endswith("-cloud"):
-        return False
-
-    return True
+        return True
+    return False
 
 
 async def route_chat(

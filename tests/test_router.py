@@ -3,7 +3,11 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from source.llm.core.router import is_local_ollama_model, parse_provider
+from source.llm.core.router import (
+    is_local_ollama_model,
+    is_ollama_cloud_model,
+    parse_provider,
+)
 import source.mcp_integration.core.manager as mcp_manager_module
 
 
@@ -83,6 +87,20 @@ class TestIsLocalOllamaModel:
 
     def test_whitespace_around_provider_model_is_not_local_ollama(self):
         assert is_local_ollama_model("  openai/gpt-4o  ") is False
+
+
+class TestIsOllamaCloudModel:
+    def test_colon_cloud_tag_is_cloud(self):
+        assert is_ollama_cloud_model("qwen3-coder-next:cloud") is True
+
+    def test_dash_cloud_tag_is_cloud(self):
+        assert is_ollama_cloud_model("qwen3.5:397b-cloud") is True
+
+    def test_explicit_ollama_prefix_is_cloud(self):
+        assert is_ollama_cloud_model("ollama/qwen3-coder-next:cloud") is True
+
+    def test_local_model_is_not_cloud(self):
+        assert is_ollama_cloud_model("qwen3-vl:8b-instruct") is False
 
 
 # ------------------------------------------------------------------

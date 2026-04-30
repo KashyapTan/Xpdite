@@ -858,8 +858,13 @@ class ConversationService:
                 finally:
                     hooks_runtime.set_stop_hook_active(tab_state, False)
 
-            input_tokens = token_stats.get("prompt_eval_count", 0)
-            output_tokens = token_stats.get("eval_count", 0)
+            extra_token_usage = ctx.get_extra_token_usage()
+            input_tokens = token_stats.get("prompt_eval_count", 0) + extra_token_usage[
+                "prompt_eval_count"
+            ]
+            output_tokens = token_stats.get("eval_count", 0) + extra_token_usage[
+                "eval_count"
+            ]
             if input_tokens or output_tokens:
                 try:
                     db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)

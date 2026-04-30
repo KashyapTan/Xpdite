@@ -6,7 +6,7 @@
 import { useState, useCallback } from 'react';
 import type { TokenUsage, TokenUsageSnapshot } from '../types';
 
-const DEFAULT_LIMIT = 128000;
+const UNKNOWN_LIMIT = 0;
 
 interface UseTokenUsageReturn {
   tokenUsage: TokenUsage;
@@ -24,7 +24,7 @@ export function useTokenUsage(): UseTokenUsageReturn {
     total: 0,
     input: 0,
     output: 0,
-    limit: DEFAULT_LIMIT,
+    limit: UNKNOWN_LIMIT,
   });
   const [showTokenPopup, setShowTokenPopup] = useState(false);
 
@@ -38,12 +38,12 @@ export function useTokenUsage(): UseTokenUsageReturn {
   }, []);
 
   const resetTokens = useCallback(() => {
-    setTokenUsageState({
+    setTokenUsageState(prev => ({
       total: 0,
       input: 0,
       output: 0,
-      limit: DEFAULT_LIMIT,
-    });
+      limit: prev.limit,
+    }));
   }, []);
 
   const setTokenUsage = useCallback((usage: Partial<TokenUsage>) => {

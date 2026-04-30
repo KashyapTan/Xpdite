@@ -15,15 +15,15 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
-        limit: 128000,
+        limit: 0,
       });
       expect(result.current.showTokenPopup).toBe(false);
     });
 
-    test('should initialize with default limit of 128000', () => {
+    test('should initialize with unknown limit until model context is resolved', () => {
       const { result } = renderHook(() => useTokenUsage());
 
-      expect(result.current.tokenUsage.limit).toBe(128000);
+      expect(result.current.tokenUsage.limit).toBe(0);
     });
   });
 
@@ -60,10 +60,14 @@ describe('useTokenUsage', () => {
       const { result } = renderHook(() => useTokenUsage());
 
       act(() => {
+        result.current.setTokenUsage({ limit: 200000 });
+      });
+
+      act(() => {
         result.current.addTokens(1000, 500);
       });
 
-      expect(result.current.tokenUsage.limit).toBe(128000);
+      expect(result.current.tokenUsage.limit).toBe(200000);
     });
 
     test('should handle zero token additions', () => {
@@ -113,11 +117,11 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
-        limit: 128000,
+        limit: 0,
       });
     });
 
-    test('should reset to default limit', () => {
+    test('should preserve resolved limit on reset', () => {
       const { result } = renderHook(() => useTokenUsage());
 
       // Change limit
@@ -127,12 +131,12 @@ describe('useTokenUsage', () => {
 
       expect(result.current.tokenUsage.limit).toBe(200000);
 
-      // Reset should restore default limit
+      // Reset should keep the resolved model limit
       act(() => {
         result.current.resetTokens();
       });
 
-      expect(result.current.tokenUsage.limit).toBe(128000);
+      expect(result.current.tokenUsage.limit).toBe(200000);
     });
 
     test('should be idempotent when called multiple times', () => {
@@ -338,6 +342,7 @@ describe('useTokenUsage', () => {
       const { result } = renderHook(() => useTokenUsage());
 
       act(() => {
+        result.current.setTokenUsage({ limit: 128000 });
         result.current.addTokens(64000, 0); // 50% of 128000
       });
 
@@ -349,6 +354,7 @@ describe('useTokenUsage', () => {
       const { result } = renderHook(() => useTokenUsage());
 
       act(() => {
+        result.current.setTokenUsage({ limit: 128000 });
         result.current.addTokens(100000, 50000); // 150000 total, exceeds 128000
       });
 
@@ -404,7 +410,7 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
-        limit: 128000,
+        limit: 0,
       });
     });
   });

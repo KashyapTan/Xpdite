@@ -36,6 +36,7 @@ source/
 │   │   ├── __init__.py
 │   │   ├── router.py                     # parse_provider() + route_chat()
 │   │   ├── key_manager.py                # Encrypted API key storage/retrieval
+│   │   ├── model_context.py              # Dynamic context-window resolution for UI/token display
 │   │   ├── prompt.py                     # build_system_prompt()
 │   │   └── types.py                      # ChatResult + provider-neutral types
 │   └── providers/
@@ -350,6 +351,7 @@ All endpoints are in `source/api/http.py` unless noted.
 | `GET` | `/api/health` | Health check |
 | `GET` | `/api/models/ollama` | Installed Ollama models |
 | `GET` | `/api/models/ollama/info/{model_name:path}` | Ollama registry metadata for a model |
+| `GET` | `/api/models/context-window/{model_name:path}` | Effective chat context window for a selected model |
 | `GET` | `/api/models/anthropic` | Anthropic models (requires key) |
 | `GET` | `/api/models/openai` | OpenAI models (requires key) |
 | `GET` | `/api/models/openai-codex` | ChatGPT subscription models (requires Codex sign-in) |
@@ -460,7 +462,7 @@ Key constants from `infrastructure/config.py` (also re-exported by `source/infra
 | Constant | Value | Notes |
 |---|---|---|
 | `DEFAULT_MODEL` | `"qwen3-vl:8b-instruct"` | Default Ollama model |
-| `OLLAMA_CTX_SIZE` | `32768` | Context window size passed as `num_ctx` |
+| `OLLAMA_CTX_SIZE` | env `OLLAMA_CTX_SIZE` / `OLLAMA_CONTEXT_LENGTH`, else `32768` | Context window size passed as `num_ctx` for local Ollama models |
 | `MAX_TOOL_RESULT_LENGTH` | `100_000` | Truncation limit for MCP tool result strings |
 | `TERMINAL_MAX_OUTPUT_SIZE` | `50 * 1024` (50 KB) | Max bytes stored in `terminal_events.full_output` |
 | `THREAD_POOL_SIZE` | env `XPDITE_THREAD_POOL_SIZE` or default | Override thread pool size |

@@ -130,7 +130,17 @@ MAX_MCP_TOOL_ROUNDS = 50
 # Reasoning effort for thinking models ("low", "medium", "high")
 # LiteLLM translates to native format per provider.
 REASONING_EFFORT = "high"
-OLLAMA_CTX_SIZE = 32768
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+OLLAMA_CTX_SIZE = _env_int(
+    "OLLAMA_CTX_SIZE",
+    _env_int("OLLAMA_CONTEXT_LENGTH", 32768),
+)
 
 # Tool result truncation
 MAX_TOOL_RESULT_LENGTH = 200_000
