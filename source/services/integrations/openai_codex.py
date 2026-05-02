@@ -16,6 +16,7 @@ import logging
 import os
 import platform
 import queue
+import shutil
 import subprocess
 import sys
 import threading
@@ -286,6 +287,19 @@ class OpenAICodexService:
             Path(sys.executable).resolve().parent / ".." / bundled_rel,
         ]
 
+    def _codex_wrapper_candidates(self) -> list[Path]:
+        return [
+            PROJECT_ROOT / "node_modules" / "@openai" / "codex" / "bin" / "codex.js",
+        ]
+
+    def _node_runner_candidates(self) -> list[str]:
+        candidates: list[str | None] = [
+            os.environ.get("XPDITE_CODEX_NODE", "").strip() or None,
+            shutil.which("node"),
+            shutil.which("bun"),
+        ]
+        return [candidate for candidate in candidates if candidate]
+
     def get_codex_binary_path(self) -> Path:
         with self._lock:
             if self._binary_path and self._binary_path.exists():
@@ -315,8 +329,22 @@ class OpenAICodexService:
 
             raise FileNotFoundError(
                 "OpenAI Codex binary was not found. Reinstall dependencies or rebuild "
-                "the packaged app so the Codex auth helper is bundled."
+                "the packaged app so the Codex auth helper is bundled. "
+                "Run `bun install` to restore project dependencies; a separate "
+                "global Codex install is not required."
             )
+
+    def get_codex_launch_command(self) -> list[str]:
+        try:
+            return [str(self.get_codex_binary_path())]
+        except FileNotFoundError as native_error:
+            for wrapper_path in self._codex_wrapper_candidates():
+                resolved_wrapper = wrapper_path.resolve()
+                if not resolved_wrapper.exists():
+                    continue
+                for runner in self._node_runner_candidates():
+                    return [runner, str(resolved_wrapper)]
+            raise native_error
 
     def build_process_env(self) -> dict[str, str]:
         self.configure_litellm_environment()
@@ -548,9 +576,9 @@ class OpenAICodexService:
     def _start_process_locked(self) -> None:
         self._teardown_locked()
 
-        binary_path = self.get_codex_binary_path()
+        launch_command = self.get_codex_launch_command()
         process = subprocess.Popen(
-            [str(binary_path), "app-server", "--listen", "stdio://"],
+            [*launch_command, "app-server", "--listen", "stdio://"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

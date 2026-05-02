@@ -5,6 +5,8 @@ import json
 import os
 from unittest.mock import MagicMock
 
+import pytest
+
 import source.services.integrations.openai_codex as openai_codex_module
 from source.services.integrations.openai_codex import OpenAICodexService
 
@@ -162,6 +164,50 @@ def test_helper_process_env_strips_application_secrets(tmp_path, monkeypatch):
     assert env["CODEX_HOME"] == str(service.get_codex_home())
     assert env["CHATGPT_TOKEN_DIR"] == str(service.get_chatgpt_token_dir())
     assert env["CHATGPT_AUTH_FILE"] == "auth.json"
+
+
+def test_launch_command_falls_back_to_codex_wrapper_when_native_binary_is_missing(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("XPDITE_CHATGPT_SUBSCRIPTION_DIR", str(tmp_path / "tokens"))
+    wrapper_root = tmp_path / "project-root"
+    wrapper_path = wrapper_root / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+    wrapper_path.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    monkeypatch.setattr(openai_codex_module, "PROJECT_ROOT", wrapper_root)
+    monkeypatch.setattr(openai_codex_module, "RUNTIME_ROOT", wrapper_root)
+    monkeypatch.setattr(openai_codex_module, "USER_DATA_DIR", tmp_path / "user_data")
+    monkeypatch.setattr(
+        openai_codex_module,
+        "_platform_codex_details",
+        lambda: ("codex-darwin-arm64", "aarch64-apple-darwin", "codex"),
+    )
+    monkeypatch.setattr(openai_codex_module.shutil, "which", lambda command: "/usr/bin/node" if command == "node" else None)
+
+    service = OpenAICodexService()
+
+    assert service.get_codex_launch_command() == ["/usr/bin/node", str(wrapper_path.resolve())]
+
+
+def test_missing_codex_binary_error_explains_no_global_install_is_required(tmp_path, monkeypatch):
+    monkeypatch.setenv("XPDITE_CHATGPT_SUBSCRIPTION_DIR", str(tmp_path))
+    monkeypatch.setattr(openai_codex_module, "PROJECT_ROOT", tmp_path / "project-root")
+    monkeypatch.setattr(openai_codex_module, "RUNTIME_ROOT", tmp_path / "runtime-root")
+    monkeypatch.setattr(
+        openai_codex_module,
+        "_platform_codex_details",
+        lambda: ("codex-darwin-arm64", "aarch64-apple-darwin", "codex"),
+    )
+    service = OpenAICodexService()
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        service.get_codex_binary_path()
+
+    message = str(exc_info.value)
+    assert "Run `bun install`" in message
+    assert "global Codex install is not required" in message
 
 
 def test_unexpected_helper_exit_returns_sanitized_pending_error():

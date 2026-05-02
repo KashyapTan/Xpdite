@@ -9,6 +9,7 @@
         "@chat-adapter/state-memory": "^4.20.2",
         "@chat-adapter/telegram": "^4.20.2",
         "@chenglou/pretext": "^0.0.4",
+        "@openai/codex": "0.125.0",
         "@openai/codex-sdk": "0.125.0",
         "@types/react-router-dom": "^5.3.3",
         "@xterm/addon-fit": "^0.11.0",
