@@ -386,6 +386,11 @@ textarea,
   outline: none;
 }
 
+.model-select:disabled {
+  color: var(--color-text-dim);
+  cursor: wait;
+}
+
 .model-provider-badge {
   width: 18px;
   height: 18px;
@@ -600,6 +605,16 @@ textarea,
   content: attr(data-placeholder);
   color: var(--color-border-strong);
   pointer-events: none;
+}
+
+.query-input--disabled {
+  color: var(--color-text-dim);
+  caret-color: transparent;
+  cursor: wait;
+}
+
+.query-input--disabled[data-placeholder]:empty::before {
+  color: var(--color-text-dim);
 }
 
 .query-input [data-editor-text='true'] {

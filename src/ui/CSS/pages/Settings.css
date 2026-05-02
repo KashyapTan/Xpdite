@@ -64,6 +64,15 @@
     overflow: hidden;
     /* background-color: lightgreen; */
 }
+.settings-section-loading{
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-dim);
+    font-size: 0.85rem;
+}
 .settings-icons{
     width: 18px;
     height: 18px;

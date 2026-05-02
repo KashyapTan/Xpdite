@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -40,6 +41,72 @@ _SENTENCE_TRANSFORMER_MODEL = "all-MiniLM-L6-v2"
 _BUNDLED_SENTENCE_TRANSFORMER_SUBDIR = (
     Path("embedding-models") / _SENTENCE_TRANSFORMER_MODEL
 )
+
+
+def _tool_function_name(tool: Dict[str, Any]) -> Optional[str]:
+    name = tool.get("function", {}).get("name")
+    return str(name) if name else None
+
+
+def _simple_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", text.lower()))
+
+
+def _fallback_retrieve_tools(
+    query: str,
+    all_tools: List[Dict],
+    always_on: List[str],
+    top_k: int = 5,
+) -> List[Dict]:
+    """Cheap keyword fallback used before the embedding retriever is warm."""
+    tool_lookup = {
+        name: tool
+        for tool in all_tools
+        if (name := _tool_function_name(tool)) is not None
+    }
+    always_on_names = [name for name in always_on if name in tool_lookup]
+
+    if top_k <= 0 or not query.strip():
+        return [tool_lookup[name] for name in always_on_names]
+
+    query_tokens = _simple_tokens(query)
+    if not query_tokens:
+        return [tool_lookup[name] for name in always_on_names]
+
+    always_on_set = set(always_on_names)
+    ranked_rows: List[tuple[float, str]] = []
+    query_lower = query.lower()
+
+    for name, tool in tool_lookup.items():
+        if name in always_on_set:
+            continue
+
+        func = tool.get("function", {})
+        description = str(func.get("description") or "")
+        document_text = f"{name} {description}".lower()
+        document_tokens = _simple_tokens(document_text)
+
+        token_overlap = len(query_tokens & document_tokens)
+        if token_overlap == 0 and query_lower not in document_text:
+            continue
+
+        score = float(token_overlap)
+        if query_lower and query_lower in document_text:
+            score += 1.5
+        for token in query_tokens:
+            if token in name.lower():
+                score += 0.5
+
+        ranked_rows.append((score, name))
+
+    ranked_names = [
+        name
+        for _score, name in sorted(ranked_rows, key=lambda row: (-row[0], row[1]))[:top_k]
+    ]
+    ordered_names = ranked_names + [
+        name for name in always_on_names if name not in ranked_names
+    ]
+    return [tool_lookup[name] for name in ordered_names]
 
 
 def _ensure_sentence_transformers_available() -> bool:
@@ -711,7 +778,7 @@ class ToolRetriever:
         ]
 
         if not candidate_indices:
-            return [tool_lookup[name] for name in always_on_names]
+            return _fallback_retrieve_tools(query, all_tools, always_on, top_k)
 
         semantic_scores_by_name: Dict[str, float] = {}
         if embedding_matrix.size > 0:
@@ -752,7 +819,7 @@ class ToolRetriever:
                 }
 
         if not semantic_scores_by_name and not bm25_scores_by_name:
-            return [tool_lookup[name] for name in always_on_names]
+            return _fallback_retrieve_tools(query, all_tools, always_on, top_k)
 
         if (
             not semantic_scores_by_name
@@ -765,7 +832,7 @@ class ToolRetriever:
             logger.warning(
                 "BM25 produced no keyword matches while semantic retrieval was unavailable."
             )
-            return [tool_lookup[name] for name in always_on_names]
+            return _fallback_retrieve_tools(query, all_tools, always_on, top_k)
 
         semantic_ranks = self._build_rank_map(semantic_scores_by_name)
         bm25_ranks = self._build_rank_map(bm25_scores_by_name)
@@ -864,6 +931,8 @@ class _LazyRetriever:
     """Proxy that defers ToolRetriever() construction until first attribute access."""
 
     def retrieve_tools(self, *args, **kwargs):
+        if _retriever_instance is None:
+            return _fallback_retrieve_tools(*args, **kwargs)
         return _get_retriever().retrieve_tools(*args, **kwargs)
 
     def embed_tools(self, *args, **kwargs):

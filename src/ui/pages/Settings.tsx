@@ -1,20 +1,6 @@
-import React, { useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import TitleBar from '../components/TitleBar';
-import SettingsModels from '../components/settings/SettingsModels';
-import SettingsTools from '../components/settings/SettingsTools';
-import SettingsApiKey from '../components/settings/SettingsApiKey';
-import SettingsConnections from '../components/settings/SettingsConnections';
-import SettingsMarketplace from '../components/settings/SettingsMarketplace';
-import SettingsSystemPrompt from '../components/settings/SettingsSystemPrompt';
-import SettingsSkills from '../components/settings/SettingsSkills';
-import SettingsMemory from '../components/settings/SettingsMemory';
-import SettingsArtifacts from '../components/settings/SettingsArtifacts';
-import MeetingRecorderSettings from '../components/settings/MeetingRecorderSettings';
-import SettingsOllama from '../components/settings/SettingsOllama';
-import SettingsSubAgents from '../components/settings/SettingsSubAgents';
-import SettingsMobileChannels from '../components/settings/SettingsMobileChannels';
-import SettingsScheduledJobs from '../components/settings/SettingsScheduledJobs';
 import {
   ArtifactsTabIcon,
   ConnectionsTabIcon,
@@ -28,13 +14,29 @@ import {
   ToolsTabIcon,
 } from '../components/icons/AppIcons';
 import '../CSS/pages/Settings.css';
-import modelsIcon from '../assets/models.svg';
-import connectionsIcon from '../assets/mcp.svg';
-import ollamaIcon from '../assets/ollama.svg';
-import anthropicIcon from '../assets/anthropic.svg';
-import geminiIcon from '../assets/gemini.svg';
-import openaiIcon from '../assets/openai.svg';
-import openrouterIcon from '../assets/openrouter.svg';
+
+const modelsIcon = new URL('../assets/models.svg', import.meta.url).href;
+const connectionsIcon = new URL('../assets/mcp.svg', import.meta.url).href;
+const ollamaIcon = new URL('../assets/ollama.svg', import.meta.url).href;
+const anthropicIcon = new URL('../assets/anthropic.svg', import.meta.url).href;
+const geminiIcon = new URL('../assets/gemini.svg', import.meta.url).href;
+const openaiIcon = new URL('../assets/openai.svg', import.meta.url).href;
+const openrouterIcon = new URL('../assets/openrouter.svg', import.meta.url).href;
+
+const SettingsModels = lazy(() => import('../components/settings/SettingsModels'));
+const SettingsTools = lazy(() => import('../components/settings/SettingsTools'));
+const SettingsApiKey = lazy(() => import('../components/settings/SettingsApiKey'));
+const SettingsConnections = lazy(() => import('../components/settings/SettingsConnections'));
+const SettingsMarketplace = lazy(() => import('../components/settings/SettingsMarketplace'));
+const SettingsSystemPrompt = lazy(() => import('../components/settings/SettingsSystemPrompt'));
+const SettingsSkills = lazy(() => import('../components/settings/SettingsSkills'));
+const SettingsMemory = lazy(() => import('../components/settings/SettingsMemory'));
+const SettingsArtifacts = lazy(() => import('../components/settings/SettingsArtifacts'));
+const MeetingRecorderSettings = lazy(() => import('../components/settings/MeetingRecorderSettings'));
+const SettingsOllama = lazy(() => import('../components/settings/SettingsOllama'));
+const SettingsSubAgents = lazy(() => import('../components/settings/SettingsSubAgents'));
+const SettingsMobileChannels = lazy(() => import('../components/settings/SettingsMobileChannels'));
+const SettingsScheduledJobs = lazy(() => import('../components/settings/SettingsScheduledJobs'));
 
 /**
  * Every tab the Settings page supports.
@@ -52,6 +54,7 @@ type SettingsTab = {
 
 const Settings: React.FC = () => {
   const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
+  const [canRenderPanel, setCanRenderPanel] = useState(false);
 
   // Define all tabs
   const tabs: SettingsTab[] = [
@@ -180,7 +183,19 @@ const Settings: React.FC = () => {
   const [activeTab, setActiveTab] = useState('models');
 
   // Find the currently active tab object
-  const activeContent = tabs.find((t) => t.id === activeTab)?.component ?? null;
+  const activeContent = canRenderPanel
+    ? tabs.find((t) => t.id === activeTab)?.component ?? null
+    : null;
+
+  useEffect(() => {
+    const animationFrameId = window.requestAnimationFrame(() => {
+      setCanRenderPanel(true);
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
 
   return (
     <>
@@ -202,7 +217,9 @@ const Settings: React.FC = () => {
 
         {/* ====== CONTENT AREA ====== */}
         <div className="settings-content">
-          {activeContent}
+          <Suspense fallback={<div className="settings-section-loading">Loading...</div>}>
+            {activeContent ?? <div className="settings-section-loading">Loading...</div>}
+          </Suspense>
         </div>
       </div>
     </>

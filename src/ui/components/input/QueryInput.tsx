@@ -47,6 +47,7 @@ interface QueryInputProps {
   query: string;
   placeholder: string;
   canSubmit: boolean;
+  isBackendReady?: boolean;
   enabledModels: string[];
   onAttachedFilesChange?: (files: QueryInputAttachedFile[]) => void;
   onQueryChange: (value: string) => void;
@@ -644,6 +645,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       query,
       placeholder,
       canSubmit,
+      isBackendReady = true,
       enabledModels,
       onAttachedFilesChange,
       onQueryChange,
@@ -674,6 +676,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     const editorRef = useRef<HTMLDivElement>(null);
     const internalUpdateRef = useRef(false);
     const renderedSegmentsRef = useRef<QuerySegment[]>([]);
+    const isComposerDisabled = !isBackendReady;
 
     const setEditorRefs = useCallback(
       (node: HTMLDivElement | null) => {
@@ -875,9 +878,9 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
     // Check if model menu should take priority over slash command menu
     // Model menu takes priority when /model is detected
-    const showModelMenu = filteredModels.length > 0;
-    const showFileMenu = activeFileTrigger !== null && !showModelMenu;
-    const showSlashMenu = filteredSkills.length > 0 && !showModelMenu && !showFileMenu;
+    const showModelMenu = isBackendReady && filteredModels.length > 0;
+    const showFileMenu = isBackendReady && activeFileTrigger !== null && !showModelMenu;
+    const showSlashMenu = isBackendReady && filteredSkills.length > 0 && !showModelMenu && !showFileMenu;
     const menuActive = showSlashMenu || showModelMenu || showFileMenu;
     const hasChipSegments = useMemo(
       () => segments.some((segment) => segment.type === 'chip' || segment.type === 'file_chip'),
@@ -1056,6 +1059,10 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
     const handleSelectCommand = useCallback(
       (skill: Skill) => {
+        if (isComposerDisabled) {
+          return;
+        }
+
         if (!skill.slash_command || !activeTrigger) {
           return;
         }
@@ -1078,7 +1085,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           editorRef.current?.focus();
         });
       },
-      [activeTrigger, serializedQuery, updateQueryValue],
+      [activeTrigger, isComposerDisabled, serializedQuery, updateQueryValue],
     );
 
     /**
@@ -1087,6 +1094,10 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
      */
     const handleSelectModel = useCallback(
       (model: string) => {
+        if (isComposerDisabled) {
+          return;
+        }
+
         if (!activeModelTrigger) {
           return;
         }
@@ -1107,11 +1118,15 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           editorRef.current?.focus();
         });
       },
-      [activeModelTrigger, serializedQuery, onSelectModel, updateQueryValue],
+      [activeModelTrigger, isComposerDisabled, serializedQuery, onSelectModel, updateQueryValue],
     );
 
     const handleRemoveCommand = useCallback(
       (index: number) => {
+        if (isComposerDisabled) {
+          return;
+        }
+
         const commandSegment = segments[index];
         if (!commandSegment || (commandSegment.type !== 'chip' && commandSegment.type !== 'file_chip')) {
           return;
@@ -1144,10 +1159,14 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
           editorRef.current?.focus();
         });
       },
-      [segments, updateQueryValue],
+      [isComposerDisabled, segments, updateQueryValue],
     );
 
     const handleEditorInput = useCallback(() => {
+      if (isComposerDisabled) {
+        return;
+      }
+
       const editor = editorRef.current;
       if (!editor) {
         return;
@@ -1157,9 +1176,13 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       const nextOffset = getSelectionOffset(editor);
       const trackSelection = hasChipSegments || nextValue.includes('/') || nextValue.includes('@');
       updateQueryValue(nextValue, nextOffset, trackSelection);
-    }, [hasChipSegments, updateQueryValue]);
+    }, [hasChipSegments, isComposerDisabled, updateQueryValue]);
 
     const handleSelectFile = useCallback((entry: FileEntry) => {
+      if (isComposerDisabled) {
+        return;
+      }
+
       if (!activeFileTrigger || entry.is_directory) {
         return;
       }
@@ -1183,7 +1206,7 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
       requestAnimationFrame(() => {
         editorRef.current?.focus();
       });
-    }, [activeFileTrigger, segments, serializedQuery, updateQueryValue]);
+    }, [activeFileTrigger, isComposerDisabled, segments, serializedQuery, updateQueryValue]);
 
     const handleFileEntriesChange = useCallback(
       (entries: FileEntry[]) => {
@@ -1225,6 +1248,10 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
 
     const handleSubmit = (e: FormEvent) => {
       e.preventDefault();
+      if (isComposerDisabled) {
+        return;
+      }
+
       if (!query.trim()) {
         return;
       }
@@ -1233,6 +1260,11 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
     };
 
     const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+      if (isComposerDisabled) {
+        e.preventDefault();
+        return;
+      }
+
       // Model menu takes priority over slash command menu
       if (showModelMenu) {
         // Defensive guard against race conditions where filteredModels could empty
@@ -1410,11 +1442,12 @@ export const QueryInput = forwardRef<HTMLDivElement, QueryInputProps>(
         <form ref={formRef} onSubmit={handleSubmit} className="query-input-form">
           <div
             ref={setEditorRefs}
-            className="query-input"
-            contentEditable
+            className={`query-input${isComposerDisabled ? ' query-input--disabled' : ''}`}
+            contentEditable={!isComposerDisabled}
             suppressContentEditableWarning
             role="textbox"
             aria-label="Query input"
+            aria-disabled={isComposerDisabled}
             spellCheck={false}
             data-placeholder={placeholder}
             onInput={handleEditorInput}

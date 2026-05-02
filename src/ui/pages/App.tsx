@@ -11,7 +11,7 @@
  * - Type definitions from src/ui/types/
  * - API abstraction via src/ui/services/api.ts
  */
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { Suspense, lazy, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import type { FormEvent } from 'react';
 import { useOutletContext, useLocation, useNavigate } from 'react-router-dom';
 
@@ -26,7 +26,6 @@ import { useWebSocket } from '../contexts/WebSocketContext';
 import TitleBar from '../components/TitleBar';
 import TabBar from '../components/TabBar';
 import { BoltIcon } from '../components/icons/AppIcons';
-import { ResponseArea } from '../components/chat/ResponseArea.tsx';
 import { QueryInput } from '../components/input/QueryInput';
 import type { QueryInputAttachedFile } from '../components/input/QueryInput';
 import { QueueDropdown } from '../components/input/QueueDropdown';
@@ -75,6 +74,12 @@ import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import contextWindowInsightsIcon from '../assets/context-window-icon.svg';
 import scrollDownIcon from '../assets/scroll-down-icon.svg';
+
+const ResponseArea = lazy(() =>
+  import('../components/chat/ResponseArea.tsx').then((module) => ({
+    default: module.ResponseArea,
+  })),
+);
 
 type PendingTurnAction = {
   type: 'retry' | 'edit';
@@ -564,6 +569,7 @@ function App() {
   const attachedFilesRef = useRef<QueryInputAttachedFile[]>([]);
   const streamPerfStatsRef = useRef<StreamPerfStats | null>(null);
   const streamPerfEnabledRef = useRef(false);
+  const hasConnectedOnceRef = useRef(false);
 
   useEffect(() => {
     streamPerfEnabledRef.current = isStreamPerfDebugEnabled();
@@ -1552,6 +1558,10 @@ function App() {
   // This avoids a blank model picker when the first HTTP request races backend boot.
   // ============================================
   useEffect(() => {
+    if (!isConnected) {
+      return;
+    }
+
     const fetchEnabledModels = async () => {
       const { api } = await import('../services/api');
       const models = await api.getEnabledModels();
@@ -1572,7 +1582,7 @@ function App() {
     let cancelled = false;
 
     const fetchContextWindow = async () => {
-      if (!selectedModel) {
+      if (!isConnected || !selectedModel) {
         setTokenUsage({ limit: 0 });
         return;
       }
@@ -1598,7 +1608,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [activeTabId, selectedModel, setTokenUsage]);
+  }, [activeTabId, isConnected, selectedModel, setTokenUsage]);
 
   // ============================================
   // WebSocket Message Handler (tab-aware)
@@ -2294,6 +2304,7 @@ function App() {
     return wsSubscribe((data) => {
       if (data.type === '__ws_connected') {
         // Connection (re-)established — run onopen logic
+        hasConnectedOnceRef.current = true;
         chatState.setStatus('Connected to server');
         chatState.clearError();
         for (const tab of tabsRef.current) {
@@ -2304,6 +2315,12 @@ function App() {
         return;
       }
       if (data.type === '__ws_disconnected') {
+        if (!hasConnectedOnceRef.current) {
+          chatState.setStatus('Starting local backend...');
+          chatState.clearError();
+          return;
+        }
+
         showActiveChatError('Lost connection to the local backend.', {
           source: 'connection',
           action: 'connection',
@@ -2758,6 +2775,10 @@ function App() {
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
     const hotkeyText = isMac ? "Control+." : "Alt+.";
 
+    if (!isConnected) {
+      return "Starting local backend...";
+    }
+
     if (chatState.chatHistory.length > 0) {
       return screenshotState.screenshots.length > 0
         ? "Ask a follow-up about the screenshot(s)..."
@@ -2865,6 +2886,11 @@ function App() {
   const responseAreaTopInset = hasTabBar ? 58 : 30;
   const responseAreaBottomInset = interactionSectionHeight + 15;
   const scrollButtonBottom = interactionSectionHeight + 10;
+  const responseAreaFallbackStyle = {
+    marginTop: hasTabBar ? 0 : `${responseAreaTopInset}px`,
+    marginBottom: `${responseAreaBottomInset}px`,
+    height: `calc(100% - ${responseAreaTopInset + responseAreaBottomInset}px)`,
+  };
 
   const selectedModelProvider = selectedModel ? getModelProviderKey(selectedModel) : '';
   const showProviderLogo = hasProviderLogo(selectedModelProvider);
@@ -2882,39 +2908,49 @@ function App() {
       <TitleBar setMini={setMini} />
       <TabBar wsSend={wsSend} />
 
-      <ResponseArea
-        chatHistory={chatState.chatHistory}
-        currentQuery={chatState.currentQuery}
-        thinking={chatState.thinking}
-        isThinking={chatState.isThinking}
-        thinkingCollapsed={chatState.thinkingCollapsed}
-        contentBlocks={chatState.contentBlocks}
-        generatingModel={generatingModelRef.current || selectedModel}
-        canSubmit={chatState.canSubmit}
-        error={chatState.error}
-        errorMessage={chatState.errorMessage}
-        showScrollBottom={showScrollBottom}
-        onRetryMessage={handleRetryMessage}
-        onEditMessage={handleEditMessage}
-        onSetActiveResponse={handleSetActiveResponse}
-        onArtifactUpdated={handleArtifactUpdated}
-        onArtifactDeleted={handleArtifactDeleted}
-        onToggleThinking={handleToggleThinking}
-        onScroll={handleScroll}
-        onScrollToBottom={scrollToBottom}
-        responseAreaRef={responseAreaRef}
-        scrollDownIcon={scrollDownIcon}
-        onTerminalApprove={handleTerminalApprove}
-        onTerminalDeny={handleTerminalDeny}
-        onTerminalApproveRemember={handleTerminalApproveRemember}
-        onTerminalKill={handleKillCommand}
-        onTerminalResize={handleTerminalResize}
-        onYouTubeApprovalResponse={handleYouTubeApprovalResponse}
-        hasTabBar={hasTabBar}
-        topInset={responseAreaTopInset}
-        bottomInset={responseAreaBottomInset}
-        scrollButtonBottom={scrollButtonBottom}
-      />
+      <Suspense
+        fallback={(
+          <div
+            className="response-area"
+            ref={responseAreaRef}
+            style={responseAreaFallbackStyle}
+          />
+        )}
+      >
+        <ResponseArea
+          chatHistory={chatState.chatHistory}
+          currentQuery={chatState.currentQuery}
+          thinking={chatState.thinking}
+          isThinking={chatState.isThinking}
+          thinkingCollapsed={chatState.thinkingCollapsed}
+          contentBlocks={chatState.contentBlocks}
+          generatingModel={generatingModelRef.current || selectedModel}
+          canSubmit={chatState.canSubmit}
+          error={chatState.error}
+          errorMessage={chatState.errorMessage}
+          showScrollBottom={showScrollBottom}
+          onRetryMessage={handleRetryMessage}
+          onEditMessage={handleEditMessage}
+          onSetActiveResponse={handleSetActiveResponse}
+          onArtifactUpdated={handleArtifactUpdated}
+          onArtifactDeleted={handleArtifactDeleted}
+          onToggleThinking={handleToggleThinking}
+          onScroll={handleScroll}
+          onScrollToBottom={scrollToBottom}
+          responseAreaRef={responseAreaRef}
+          scrollDownIcon={scrollDownIcon}
+          onTerminalApprove={handleTerminalApprove}
+          onTerminalDeny={handleTerminalDeny}
+          onTerminalApproveRemember={handleTerminalApproveRemember}
+          onTerminalKill={handleKillCommand}
+          onTerminalResize={handleTerminalResize}
+          onYouTubeApprovalResponse={handleYouTubeApprovalResponse}
+          hasTabBar={hasTabBar}
+          topInset={responseAreaTopInset}
+          bottomInset={responseAreaBottomInset}
+          scrollButtonBottom={scrollButtonBottom}
+        />
+      </Suspense>
 
       <div className="main-interaction-section" ref={mainInteractionRef}>
         {/* Session mode indicators */}
@@ -2964,6 +3000,7 @@ function App() {
             query={chatState.query}
             placeholder={getPlaceholder()}
             canSubmit={chatState.canSubmit}
+            isBackendReady={isConnected}
             enabledModels={enabledModels}
             onAttachedFilesChange={(files) => {
               attachedFilesRef.current = files;
@@ -3009,9 +3046,12 @@ function App() {
                     className="model-select"
                     value={selectedModel}
                     onChange={(e) => setSelectedModel(e.target.value)}
+                    disabled={!isConnected || enabledModels.length === 0}
                   >
                     {enabledModels.length === 0 && (
-                      <option value="" disabled>No models enabled</option>
+                      <option value="" disabled>
+                        {isConnected ? 'No models enabled' : 'Starting backend...'}
+                      </option>
                     )}
                     {enabledModels.map((model) => {
                       const modelLabel = formatModelLabel(model);

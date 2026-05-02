@@ -13,6 +13,9 @@ const DEFAULT_BOOT_STATE: BootState = {
   progress: 5,
 };
 
+const DEV_HEALTH_PORTS = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
+const DEV_HEALTH_TIMEOUT_MS = 800;
+
 interface BootContextValue {
   bootState: BootState;
   isReady: boolean;
@@ -93,29 +96,63 @@ export const BootProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     const activeControllers = new Set<AbortController>();
 
+    const probeHealth = async (port: number): Promise<boolean> => {
+      const controller = new AbortController();
+      activeControllers.add(controller);
+      const tid = setTimeout(() => controller.abort(), DEV_HEALTH_TIMEOUT_MS);
+      try {
+        const res = await fetch(`http://localhost:${port}/api/health`, {
+          signal: controller.signal,
+        });
+        return res.ok;
+      } catch {
+        return false;
+      } finally {
+        clearTimeout(tid);
+        activeControllers.delete(controller);
+      }
+    };
+
+    const findHealthyDevBackend = async (): Promise<boolean> => {
+      let resolved = false;
+      let pending = DEV_HEALTH_PORTS.length;
+
+      return new Promise((resolve) => {
+        DEV_HEALTH_PORTS.forEach((port) => {
+          void probeHealth(port).then((healthy) => {
+            if (cancelled) {
+              if (!resolved) {
+                resolved = true;
+                resolve(false);
+              }
+              return;
+            }
+            if (resolved) return;
+            if (healthy) {
+              resolved = true;
+              activeControllers.forEach((controller) => controller.abort());
+              resolve(true);
+              return;
+            }
+
+            pending -= 1;
+            if (pending === 0) {
+              resolved = true;
+              resolve(false);
+            }
+          });
+        });
+      });
+    };
+
     const pollHealth = async () => {
       if (cancelled || hasReceivedReady.current) return;
 
-      // In dev mode, try ports 8000-8009
-      const ports = [8000, 8001, 8002, 8003, 8004, 8005, 8006, 8007, 8008, 8009];
-      for (const port of ports) {
-        const controller = new AbortController();
-        activeControllers.add(controller);
-        const tid = setTimeout(() => controller.abort(), 1000);
-        try {
-          const res = await fetch(`http://localhost:${port}/api/health`, {
-            signal: controller.signal,
-          });
-          if (res.ok) {
-            handleBootState({ phase: 'ready', message: 'Ready', progress: 100 });
-            return;
-          }
-        } catch {
-          // continue to next port
-        } finally {
-          clearTimeout(tid);
-          activeControllers.delete(controller);
+      if (await findHealthyDevBackend()) {
+        if (!cancelled) {
+          handleBootState({ phase: 'ready', message: 'Ready', progress: 100 });
         }
+        return;
       }
 
       // Update progress display while waiting

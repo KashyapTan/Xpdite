@@ -48,6 +48,7 @@ import asyncio
 import logging
 import json
 import sys as _sys
+from contextlib import suppress
 
 import uvicorn
 
@@ -67,7 +68,12 @@ from .core.lifecycle import register_signal_handlers
 from .bootstrap.app_factory import app
 
 # Import MCP initialization
-from .mcp_integration.core.manager import init_mcp_servers
+from .mcp_integration.core.manager import (
+    connect_core_mcp_servers,
+    connect_deferred_mcp_servers,
+    init_mcp_servers,
+    refresh_tool_embeddings_later,
+)
 
 # Import screenshot service hooks
 from .services.media.screenshots import (
@@ -145,6 +151,20 @@ async def _start_optional_services() -> None:
         except Exception as e:
             logger.warning("Failed to start scheduler service (non-fatal): %s", e)
 
+    async def _start_core_mcp_servers() -> None:
+        try:
+            await asyncio.sleep(0.25)
+            await connect_core_mcp_servers()
+        except Exception as e:
+            logger.warning("Failed to start core MCP servers (non-fatal): %s", e)
+
+    async def _start_deferred_mcp_servers() -> None:
+        try:
+            await asyncio.sleep(3)
+            await connect_deferred_mcp_servers()
+        except Exception as e:
+            logger.warning("Failed to start deferred MCP servers (non-fatal): %s", e)
+
     async def _start_optional_mcp_servers() -> None:
         try:
             # Marketplace/plugin reconnects can clone/index user-installed MCP
@@ -158,10 +178,15 @@ async def _start_optional_services() -> None:
             logger.warning("Failed to start optional MCP servers (non-fatal): %s", e)
 
     await asyncio.gather(
+        _start_core_mcp_servers(),
         _start_google_servers(),
         _start_scheduler_service(),
     )
-    await _start_optional_mcp_servers()
+    await asyncio.gather(
+        _start_deferred_mcp_servers(),
+        refresh_tool_embeddings_later(),
+        _start_optional_mcp_servers(),
+    )
 
 
 def start_server():
@@ -187,8 +212,9 @@ def start_server():
     app_state.server_loop_holder["loop"] = loop
     app_state.server_loop_holder["port"] = port
 
-    # Initialize MCP servers
-    _emit_boot_marker("initializing_mcp", "Connecting tool servers", 45)
+    # Register boot-critical inline tool schemas. Subprocess MCP servers and
+    # embeddings continue in the background after HTTP is reachable.
+    _emit_boot_marker("initializing_mcp", "Loading core tool schemas", 45)
     try:
         loop.run_until_complete(init_mcp_servers())
     except Exception as e:
@@ -200,8 +226,15 @@ def start_server():
         app, host=SERVER_BIND_HOST, port=port, log_level="warning", loop="asyncio"
     )
     server = uvicorn.Server(config)
-    loop.create_task(_start_optional_services(), name="xpdite-optional-startup")
-    loop.run_until_complete(server.serve())
+    optional_startup_task = loop.create_task(
+        _start_optional_services(), name="xpdite-optional-startup"
+    )
+    try:
+        loop.run_until_complete(server.serve())
+    finally:
+        optional_startup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            loop.run_until_complete(optional_startup_task)
 
 
 def bootstrap_backend_server():

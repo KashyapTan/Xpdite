@@ -3,9 +3,8 @@
  * 
  * Container for chat history and current streaming response.
  */
-import React, { Suspense, useEffect, useMemo } from 'react';
+import React, { Suspense, lazy, useEffect, useMemo } from 'react';
 import { LoadingDots } from './LoadingDots';
-import { ChatMessage as ChatMessageView } from './ChatMessage';
 import {
   DeferredChatHistory,
   DeferredInlineContentBlocks,
@@ -14,6 +13,12 @@ import {
 import type { ArtifactBlockData, ChatMessage as ChatMessageType, ContentBlock } from '../../types';
 import { buildRenderableContentBlocks } from '../../utils/renderableContentBlocks';
 import { createChatErrorMessage } from '../../utils/chatErrors';
+
+const ErrorChatMessage = lazy(() =>
+  import('./ChatMessage').then((module) => ({
+    default: module.ChatMessage,
+  })),
+);
 
 function LiveContentFallback({
   generatingModel,
@@ -223,14 +228,16 @@ function ResponseAreaComponent({
         )}
 
         {activeErrorMessage && (
-          <ChatMessageView
-            message={activeErrorMessage}
-            selectedModel={generatingModel}
-            actionsDisabled
-            onRetryMessage={() => {}}
-            onEditMessage={() => {}}
-            onSetActiveResponse={() => {}}
-          />
+          <Suspense fallback={null}>
+            <ErrorChatMessage
+              message={activeErrorMessage}
+              selectedModel={generatingModel}
+              actionsDisabled
+              onRetryMessage={() => {}}
+              onEditMessage={() => {}}
+              onSetActiveResponse={() => {}}
+            />
+          </Suspense>
         )}
       </div>
 

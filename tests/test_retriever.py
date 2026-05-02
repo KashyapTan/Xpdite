@@ -970,11 +970,15 @@ class TestRetrieverAdditionalCoverage:
         monkeypatch.setattr(retriever_module, "ToolRetriever", FakeRetriever)
         proxy = retriever_module._LazyRetriever()
 
-        assert proxy.retrieve_tools("query", [], []) == (
-            "retrieve",
-            ("query", [], []),
-            {},
-        )
+        assert _tool_names(
+            proxy.retrieve_tools(
+                "send email",
+                _make_tools({"gmail_send": "Send email messages"}),
+                [],
+            )
+        ) == ["gmail_send"]
+        assert constructions == []
+
         assert proxy.embed_tools([]) == ("embed", ([],), {})
         assert proxy.marker == "ready"
         assert constructions == ["init"]

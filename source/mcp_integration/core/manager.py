@@ -684,9 +684,112 @@ def register_builtin_inline_tools(*, skip_embed: bool = True) -> None:
     )
 
 
+def _core_mcp_server_specs() -> list[tuple[str, str, list[str], float]]:
+    python_launcher = _resolve_python_launcher()
+    return [
+        (
+            "filesystem",
+            python_launcher,
+            [
+                str(
+                    RUNTIME_ROOT
+                    / "mcp_servers"
+                    / "servers"
+                    / "filesystem"
+                    / "server.py"
+                )
+            ],
+            30.0,
+        ),
+        (
+            "glob",
+            python_launcher,
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "glob" / "server.py")],
+            30.0,
+        ),
+        (
+            "grep",
+            python_launcher,
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "grep" / "server.py")],
+            30.0,
+        ),
+        (
+            "websearch",
+            python_launcher,
+            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
+            30.0,
+        ),
+    ]
+
+
+def _windows_mcp_server_spec() -> tuple[str, str, list[str], float]:
+    return ("windows_mcp", "uvx", ["windows-mcp"], 60.0)
+
+
+async def _connect_with_timeout(
+    name: str,
+    cmd: str,
+    args: list[str],
+    *,
+    timeout_s: float,
+) -> None:
+    """Connect a single MCP server with a timeout and startup-safe logging."""
+    if mcp_manager.is_server_connected(name):
+        return
+
+    try:
+        await asyncio.wait_for(
+            mcp_manager.connect_server(name, cmd, args, skip_embed=True),
+            timeout=timeout_s,
+        )
+    except asyncio.TimeoutError:
+        logger.warning("MCP server '%s' timed out after %.0fs", name, timeout_s)
+    except Exception as e:
+        logger.warning("MCP server '%s' connection failed: %s", name, e)
+
+
+async def connect_core_mcp_servers(*, include_windows: bool = False) -> None:
+    """Connect local subprocess MCP servers outside the HTTP startup path."""
+    server_specs = _core_mcp_server_specs()
+    if include_windows and sys.platform == "win32":
+        server_specs.append(_windows_mcp_server_spec())
+
+    await asyncio.gather(
+        *[
+            _connect_with_timeout(name, cmd, args, timeout_s=timeout_s)
+            for name, cmd, args, timeout_s in server_specs
+        ]
+    )
+    logger.info("Core MCP servers connected — %d total tool(s) available", len(mcp_manager._ollama_tools))
+
+
+async def connect_deferred_mcp_servers() -> None:
+    """Connect slower platform-specific MCP servers after core tools are available."""
+    if sys.platform != "win32":
+        return
+
+    name, cmd, args, timeout_s = _windows_mcp_server_spec()
+    await _connect_with_timeout(name, cmd, args, timeout_s=timeout_s)
+    logger.info("Deferred MCP servers connected — %d total tool(s) available", len(mcp_manager._ollama_tools))
+
+
+async def refresh_tool_embeddings_later(delay_s: float = 10.0) -> None:
+    """Build the semantic tool index after startup-critical work is complete."""
+    try:
+        if delay_s > 0:
+            await asyncio.sleep(delay_s)
+
+        from ...core.thread_pool import run_in_thread
+
+        await run_in_thread(mcp_manager.refresh_tool_embeddings)
+        logger.info("Tool embeddings refreshed in background")
+    except Exception as e:
+        logger.warning("Tool embedding refresh failed (non-fatal): %s", e)
+
+
 async def init_mcp_servers():
     """
-    Connect to all enabled MCP servers.
+    Register boot-critical in-process tools.
 
     ╔══════════════════════════════════════════════════════════════════╗
     ║  HOW TO ADD YOUR OWN MCP TOOL SERVER:                           ║
@@ -708,64 +811,6 @@ async def init_mcp_servers():
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "demo" / "server.py")],
     # )
 
-    # ── Subprocess servers (connected in parallel) ──────────────────
-    async def _connect_with_timeout(
-        name: str, cmd: str, args: list, timeout_s: float = 30.0
-    ):
-        """Connect a single MCP server with a timeout."""
-        try:
-            await asyncio.wait_for(
-                mcp_manager.connect_server(name, cmd, args, skip_embed=True),
-                timeout=timeout_s,
-            )
-        except asyncio.TimeoutError:
-            logger.warning("MCP server '%s' timed out after %.0fs", name, timeout_s)
-        except Exception as e:
-            logger.warning("MCP server '%s' connection failed: %s", name, e)
-
-    server_tasks = [
-        _connect_with_timeout(
-            "filesystem",
-            _resolve_python_launcher(),
-            [
-                str(
-                    RUNTIME_ROOT
-                    / "mcp_servers"
-                    / "servers"
-                    / "filesystem"
-                    / "server.py"
-                )
-            ],
-        ),
-        _connect_with_timeout(
-            "glob",
-            _resolve_python_launcher(),
-            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "glob" / "server.py")],
-        ),
-        _connect_with_timeout(
-            "grep",
-            _resolve_python_launcher(),
-            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "grep" / "server.py")],
-        ),
-        _connect_with_timeout(
-            "websearch",
-            _resolve_python_launcher(),
-            [str(RUNTIME_ROOT / "mcp_servers" / "servers" / "websearch" / "server.py")],
-        ),
-    ]
-
-    if sys.platform == "win32":
-        server_tasks.append(
-            _connect_with_timeout(
-                "windows_mcp",
-                "uvx",
-                ["windows-mcp"],
-                timeout_s=60.0,
-            )
-        )
-
-    await asyncio.gather(*server_tasks)
-
     # ── Inline tools (no subprocess) ────────────────────────────────
     # These are intercepted by in-process executors and should be available
     # before optional marketplace/plugin MCP reconnects run.
@@ -779,12 +824,8 @@ async def init_mcp_servers():
     #     [str(PROJECT_ROOT / "mcp_servers" / "servers" / "my_server" / "server.py")],
     # )
 
-    # Final startup pass for the active core tool set. Cache entries for
-    # inactive tools are intentionally retained so later reconnects can reuse
-    # them when descriptions are unchanged.
-    mcp_manager.refresh_tool_embeddings()
     mcp_manager._initialized = True
-    logger.info("Ready — %d total tool(s) available", len(mcp_manager._ollama_tools))
+    logger.info("Inline MCP tools ready — %d total tool(s) available", len(mcp_manager._ollama_tools))
 
 
 async def connect_optional_mcp_servers():

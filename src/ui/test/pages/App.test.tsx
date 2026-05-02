@@ -23,6 +23,13 @@ type ResponseAreaProps = {
   onYouTubeApprovalResponse: (requestId: string, approved: boolean) => void;
 };
 
+type QueryInputMockProps = {
+  placeholder: string;
+  isBackendReady?: boolean;
+  onSubmit: (e: React.FormEvent) => void;
+  onStopStreaming: () => void;
+};
+
 const navigateMock = vi.fn();
 const wsSendMock = vi.fn();
 const wsSubscribeMock = vi.fn();
@@ -40,6 +47,7 @@ const registerOnTabClosedMock = vi.fn(() => () => {});
 
 let wsSubscriber: ((event: WebSocketEvent) => void) | null = null;
 let latestResponseAreaProps: ResponseAreaProps | null = null;
+let latestQueryInputProps: QueryInputMockProps | null = null;
 let locationStateMock: unknown = null;
 let afterSwitchHandler: ((newTabId: string) => void) | null = null;
 
@@ -230,14 +238,17 @@ vi.mock('../../components/chat/ResponseArea.tsx', () => ({
 }));
 
 vi.mock('../../components/input/QueryInput', () => ({
-  QueryInput: ({ onSubmit, onStopStreaming }: { onSubmit: (e: React.FormEvent) => void; onStopStreaming: () => void }) => (
-    <div>
-      <button type="button" onClick={() => onSubmit({ preventDefault: () => {} } as React.FormEvent)}>
-        submit-query
-      </button>
-      <button type="button" onClick={onStopStreaming}>stop-streaming</button>
-    </div>
-  ),
+  QueryInput: (props: QueryInputMockProps) => {
+    latestQueryInputProps = props;
+    return (
+      <div>
+        <button type="button" onClick={() => props.onSubmit({ preventDefault: () => {} } as React.FormEvent)}>
+          submit-query
+        </button>
+        <button type="button" onClick={props.onStopStreaming}>stop-streaming</button>
+      </div>
+    );
+  },
 }));
 
 vi.mock('../../components/input/ModeSelector', () => ({
@@ -259,6 +270,7 @@ describe('App websocket-driven behavior', () => {
     vi.useRealTimers();
     vi.clearAllMocks();
     latestResponseAreaProps = null;
+    latestQueryInputProps = null;
     wsSubscriber = null;
     afterSwitchHandler = null;
     wsSubscribeMock.mockImplementation((handler: (event: WebSocketEvent) => void) => {
@@ -345,20 +357,17 @@ describe('App websocket-driven behavior', () => {
   test('retries loading enabled models after the websocket connects', async () => {
     isConnectedMock = false;
     vi.mocked(api.getEnabledModels)
-      .mockRejectedValueOnce(new Error('backend warming up'))
       .mockResolvedValueOnce(['anthropic/claude-3-7-sonnet']);
 
     const { rerender } = render(<App />);
 
-    await waitFor(() => {
-      expect(api.getEnabledModels).toHaveBeenCalledTimes(1);
-    });
+    expect(api.getEnabledModels).not.toHaveBeenCalled();
 
     isConnectedMock = true;
     rerender(<App />);
 
     await waitFor(() => {
-      expect(api.getEnabledModels).toHaveBeenCalledTimes(2);
+      expect(api.getEnabledModels).toHaveBeenCalledTimes(1);
     });
 
     fireEvent.click(screen.getByText('submit-query'));
@@ -693,6 +702,19 @@ describe('App websocket-driven behavior', () => {
         }),
       );
     });
+  });
+
+  test('marks the composer as starting while the backend is disconnected', () => {
+    isConnectedMock = false;
+
+    render(<App />);
+
+    expect(latestQueryInputProps).toEqual(
+      expect.objectContaining({
+        isBackendReady: false,
+        placeholder: 'Starting local backend...',
+      }),
+    );
   });
 
   test('preserves active chat errors when a late response_complete arrives', async () => {

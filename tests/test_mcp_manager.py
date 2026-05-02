@@ -99,7 +99,7 @@ def reset_mcp_manager_state():
 
 class TestInitMcpServers:
     @pytest.mark.asyncio
-    async def test_final_startup_refresh_does_not_prune_cached_tools(
+    async def test_startup_registers_inline_tools_without_subprocess_or_embedding_refresh(
         self, reset_mcp_manager_state
     ):
         manager = reset_mcp_manager_state
@@ -123,15 +123,31 @@ class TestInitMcpServers:
         ):
             await manager_module.init_mcp_servers()
 
-        # 4 built-in servers on non-Windows, plus windows_mcp on Windows.
-        expected_server_count = 5 if sys.platform == "win32" else 4
-        assert connect_server.await_count == expected_server_count
+        connect_server.assert_not_awaited()
         # 6 inline tool registrations: terminal, sub_agent, video_watcher,
         # skills, memory, scheduler
         assert register_inline_tools.call_count == 6
-        assert embed_tools.call_count >= 1
-        assert embed_tools.call_args_list[-1].args == ([],)
+        embed_tools.assert_not_called()
         assert manager._initialized is True
+
+    @pytest.mark.asyncio
+    async def test_connect_core_mcp_servers_connects_local_subprocess_servers(
+        self, reset_mcp_manager_state
+    ):
+        manager = reset_mcp_manager_state
+
+        with patch.object(
+            manager, "connect_server", new_callable=AsyncMock
+        ) as connect_server:
+            await manager_module.connect_core_mcp_servers()
+
+        assert connect_server.await_count == 4
+        assert [call.args[0] for call in connect_server.await_args_list] == [
+            "filesystem",
+            "glob",
+            "grep",
+            "websearch",
+        ]
 
 
 class TestConnectGoogleServers:
@@ -859,7 +875,7 @@ class TestManagerAdditionalCoverage:
         assert "keep" not in manager._connections
 
     @pytest.mark.asyncio
-    async def test_init_mcp_servers_handles_connector_and_marketplace_failures(
+    async def test_init_mcp_servers_registers_inline_tools_from_imported_modules(
         self, reset_mcp_manager_state
     ):
         manager = reset_mcp_manager_state
@@ -878,21 +894,11 @@ class TestManagerAdditionalCoverage:
         scheduler_mod.SCHEDULER_INLINE_TOOLS = []
 
         with (
-            patch.object(manager, "connect_server", new_callable=AsyncMock),
+            patch.object(
+                manager, "connect_server", new_callable=AsyncMock
+            ) as connect_server,
             patch.object(manager, "register_inline_tools") as register_inline_tools,
             patch.object(manager, "refresh_tool_embeddings") as refresh_tool_embeddings,
-            patch(
-                "source.services.integrations.external_connectors.init_external_connectors",
-                new=AsyncMock(side_effect=RuntimeError("external boom")),
-            ),
-            patch(
-                "source.services.marketplace.service.get_marketplace_service",
-                return_value=SimpleNamespace(
-                    reconnect_enabled_mcp_installs_async=AsyncMock(
-                        side_effect=RuntimeError("marketplace boom")
-                    )
-                ),
-            ),
             patch.dict(
                 sys.modules,
                 {
@@ -908,8 +914,9 @@ class TestManagerAdditionalCoverage:
         ):
             await manager_module.init_mcp_servers()
 
+        connect_server.assert_not_awaited()
         assert register_inline_tools.call_count == 6
-        refresh_tool_embeddings.assert_called_once_with()
+        refresh_tool_embeddings.assert_not_called()
         assert manager._initialized is True
 
     @pytest.mark.asyncio

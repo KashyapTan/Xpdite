@@ -11,9 +11,20 @@ import os
 import logging
 import pyaudio
 import wave
-from faster_whisper import WhisperModel
 
 logger = logging.getLogger(__name__)
+WhisperModel = None
+
+
+def _get_whisper_model_class():
+    global WhisperModel
+
+    if WhisperModel is None:
+        from faster_whisper import WhisperModel as _WhisperModel
+
+        WhisperModel = _WhisperModel
+
+    return WhisperModel
 
 
 class TranscriptionService:
@@ -40,7 +51,8 @@ class TranscriptionService:
             # Run on CPU by default for broad compatibility, or CUDA if available
             # We'll use "int8" quantization for speed
             try:
-                self.model = WhisperModel(
+                whisper_model_class = _get_whisper_model_class()
+                self.model = whisper_model_class(
                     self.model_size, device="auto", compute_type="int8"
                 )
                 logger.info("Whisper model loaded successfully.")

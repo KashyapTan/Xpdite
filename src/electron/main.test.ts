@@ -8,7 +8,6 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 const appHandlers = new Map<string, (...args: unknown[]) => unknown>();
 const ipcHandlers = new Map<string, (...args: unknown[]) => unknown>();
 
-const createBootShellDataUrlMock = vi.fn(() => 'data:text/html,boot-shell');
 const getChannelBridgePortMock = vi.fn(() => 9010);
 const getChannelBridgeStatusMock = vi.fn(async () => ({
   platforms: [{ platform: 'telegram', status: 'connected' }],
@@ -52,6 +51,8 @@ class MockBrowserWindow extends EventEmitter {
   setMinimumSize = vi.fn();
   setPosition = vi.fn();
   setSize = vi.fn();
+  setBackgroundColor = vi.fn();
+  show = vi.fn();
   focus = vi.fn();
 }
 
@@ -59,8 +60,8 @@ let latestWindow: MockBrowserWindow | null = null;
 
 const browserWindowCtorSpy = vi.fn();
 
-function BrowserWindowMock() {
-  browserWindowCtorSpy();
+function BrowserWindowMock(options?: unknown) {
+  browserWindowCtorSpy(options);
   latestWindow = new MockBrowserWindow();
   return latestWindow;
 }
@@ -92,10 +93,6 @@ vi.mock('electron', () => ({
       setDisplayMediaRequestHandler: setDisplayMediaRequestHandlerMock,
     },
   },
-}));
-
-vi.mock('./bootShellHtml.js', () => ({
-  createBootShellDataUrl: createBootShellDataUrlMock,
 }));
 
 vi.mock('./channelBridgeApi.js', () => ({
@@ -153,7 +150,7 @@ describe('electron main entrypoint', () => {
     });
   });
 
-  test('creates the boot window, boots the backend, and wires trusted IPC handlers', async () => {
+  test('creates the app window, loads React, boots the backend, and wires trusted IPC handlers', async () => {
     await import('./main.js');
     const readyHandler = appHandlers.get('ready');
     expect(readyHandler).toBeTypeOf('function');
@@ -162,13 +159,17 @@ describe('electron main entrypoint', () => {
     await flushPromises();
 
     expect(browserWindowCtorSpy).toHaveBeenCalledTimes(1);
+    expect(browserWindowCtorSpy).toHaveBeenCalledWith(expect.objectContaining({
+      backgroundColor: '#101014',
+      show: true,
+    }));
     expect(setDisplayMediaRequestHandlerMock).toHaveBeenCalledTimes(1);
-    expect(createBootShellDataUrlMock).toHaveBeenCalledTimes(1);
-    expect(latestWindow?.loadURL).toHaveBeenCalledWith('data:text/html,boot-shell');
     expect(latestWindow?.setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
+    expect(latestWindow?.show).toHaveBeenCalledTimes(1);
     expect(startPythonServerMock).toHaveBeenCalledTimes(1);
     expect(startChannelBridgeMock).toHaveBeenCalledWith(8123);
     expect(latestWindow?.loadFile).toHaveBeenCalledWith(path.join('C:/Program Files/Xpdite', 'dist-react', 'index.html'));
+    expect(latestWindow?.setBackgroundColor).toHaveBeenCalledWith('#00000000');
 
     const event = trustedEvent();
     expect(ipcHandlers.get('get-server-port')?.(event)).toBe(8123);
@@ -205,6 +206,30 @@ describe('electron main entrypoint', () => {
     expect(latestWindow?.setSize).toHaveBeenCalledWith(52, 52, false);
     ipcHandlers.get('focus-window')?.(event);
     expect(latestWindow?.focus).toHaveBeenCalledTimes(1);
+  });
+
+  test('loads the React shell before backend boot resolves', async () => {
+    let resolveBackend!: () => void;
+    startPythonServerMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveBackend = resolve;
+    }));
+
+    await import('./main.js');
+    const readyHandler = appHandlers.get('ready');
+    expect(readyHandler).toBeTypeOf('function');
+
+    await readyHandler?.();
+    await flushPromises();
+
+    expect(startPythonServerMock).toHaveBeenCalledTimes(1);
+    expect(latestWindow?.loadFile).toHaveBeenCalledWith(path.join('C:/Program Files/Xpdite', 'dist-react', 'index.html'));
+    expect(latestWindow?.loadURL).not.toHaveBeenCalledWith(expect.stringContaining('data:text/html'));
+    expect(startChannelBridgeMock).not.toHaveBeenCalled();
+
+    resolveBackend();
+    await flushPromises();
+
+    expect(startChannelBridgeMock).toHaveBeenCalledWith(8123);
   });
 
   test('blocks quit until process cleanup finishes, then exits', async () => {

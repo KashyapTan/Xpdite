@@ -4,14 +4,17 @@ import type { ReactNode } from 'react';
 import { CodeBlock } from '../../../components/chat/CodeBlock';
 import { copyToClipboard } from '../../../utils/clipboard';
 
-vi.mock('react-syntax-highlighter', () => ({
-  Prism: ({ children }: { children?: ReactNode }) => (
-    <pre data-testid="syntax-highlighter">{children}</pre>
+vi.mock('react-syntax-highlighter/dist/esm/prism-light', () => ({
+  default: Object.assign(
+    ({ children }: { children?: ReactNode }) => (
+      <pre data-testid="syntax-highlighter">{children}</pre>
+    ),
+    { registerLanguage: vi.fn() },
   ),
 }));
 
-vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
-  vscDarkPlus: {},
+vi.mock('react-syntax-highlighter/dist/esm/styles/prism/vsc-dark-plus', () => ({
+  default: {},
 }));
 
 vi.mock('../../../utils/clipboard', () => ({

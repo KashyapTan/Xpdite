@@ -162,6 +162,31 @@ describe('QueryInput', () => {
     expect(onQueryChange).toHaveBeenCalledWith('hello world');
   });
 
+  test('disables editing and submit while backend is starting', () => {
+    const onQueryChange = vi.fn();
+    const onSubmit = vi.fn();
+
+    render(
+      <QueryInput
+        {...props}
+        query="hello"
+        isBackendReady={false}
+        onQueryChange={onQueryChange}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const textbox = screen.getByRole('textbox', { name: 'Query input' });
+    expect(textbox).toHaveAttribute('aria-disabled', 'true');
+    expect(textbox).toHaveAttribute('contenteditable', 'false');
+
+    fireEvent.input(textbox, { target: { textContent: 'changed' } });
+    fireEvent.keyDown(textbox, { key: 'Enter' });
+
+    expect(onQueryChange).not.toHaveBeenCalled();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
   test('shows slash menu and inserts selected slash command', async () => {
     const onQueryChange = vi.fn();
 

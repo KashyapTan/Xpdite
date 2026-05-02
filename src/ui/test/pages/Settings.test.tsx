@@ -58,57 +58,57 @@ describe('Settings page', () => {
     vi.clearAllMocks();
   });
 
-  test('renders default models tab content', () => {
+  test('renders default models tab content', async () => {
     render(<Settings />);
     expect(screen.getByTestId('title-bar')).toBeInTheDocument();
-    expect(screen.getByTestId('settings-models')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-models')).toBeInTheDocument();
   });
 
-  test('switches tabs and renders associated sections', () => {
+  test('switches tabs and renders associated sections', async () => {
     render(<Settings />);
 
     fireEvent.click(screen.getByText('Connections'));
-    expect(screen.getByTestId('settings-connections')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-connections')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Marketplace'));
-    expect(screen.getByTestId('settings-marketplace')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-marketplace')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Tools'));
-    expect(screen.getByTestId('settings-tools')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-tools')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Skills'));
-    expect(screen.getByTestId('settings-skills')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-skills')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Memory'));
-    expect(screen.getByTestId('settings-memory')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-memory')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Meeting'));
-    expect(screen.getByTestId('settings-meeting')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-meeting')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Sub-Agents'));
-    expect(screen.getByTestId('settings-subagents')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-subagents')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Prompt'));
-    expect(screen.getByTestId('settings-prompt')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-prompt')).toBeInTheDocument();
   });
 
-  test('renders Ollama guidance and API key tabs', () => {
+  test('renders Ollama guidance and API key tabs', async () => {
     render(<Settings />);
 
     fireEvent.click(screen.getByText('Ollama'));
-    expect(screen.getByRole('heading', { name: 'Ollama' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Ollama' })).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Anthropic'));
-    expect(screen.getByTestId('settings-key-anthropic')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-key-anthropic')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Gemini'));
-    expect(screen.getByTestId('settings-key-gemini')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-key-gemini')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('OpenAI'));
-    expect(screen.getByTestId('settings-key-openai')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-key-openai')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('OpenRouter'));
-    expect(screen.getByTestId('settings-key-openrouter')).toBeInTheDocument();
+    expect(await screen.findByTestId('settings-key-openrouter')).toBeInTheDocument();
   });
 });
 

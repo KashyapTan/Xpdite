@@ -10,7 +10,6 @@ import {
     getChannelBridgeStatus,
     onBridgeMessage 
 } from './channelBridgeApi.js';
-import { createBootShellDataUrl } from './bootShellHtml.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,37 +20,7 @@ let normalBounds = { ...DEFAULT_WINDOW_BOUNDS, x: 100, y: 100 };
 const DEV_RENDERER_URL = 'http://127.0.0.1:5123';
 const bootProfileEnabled = process.env.XPDITE_BOOT_PROFILE === '1';
 const bootProfileStartedAt = Date.now();
-const DEV_RENDERER_SHELL_PROBE_URLS = [
-    `${DEV_RENDERER_URL}/@vite/client`,
-    `${DEV_RENDERER_URL}/src/ui/main.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/Layout.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/boot/BootScreen.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/MobilePlatformBadge.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/contexts/BootContext.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/contexts/TabContext.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/contexts/WebSocketContext.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/hooks/useChatState.ts`,
-    `${DEV_RENDERER_URL}/src/ui/hooks/useScreenshots.ts`,
-    `${DEV_RENDERER_URL}/src/ui/hooks/useTokenUsage.ts`,
-    `${DEV_RENDERER_URL}/src/ui/services/portDiscovery.ts`,
-    `${DEV_RENDERER_URL}/src/ui/utils/modelDisplay.ts`,
-    `${DEV_RENDERER_URL}/src/ui/utils/providerLogos.ts`,
-    `${DEV_RENDERER_URL}/src/ui/utils/renderableContentBlocks.ts`,
-    `${DEV_RENDERER_URL}/src/ui/pages/App.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/TitleBar.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/TabBar.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/chat/ResponseArea.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/chat/LoadingDots.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/icons/AppIcons.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/icons/ProviderLogos.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/icons/iconPaths.ts`,
-    `${DEV_RENDERER_URL}/src/ui/components/input/QueryInput.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/input/QueueDropdown.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/input/ModeSelector.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/input/TokenUsagePopup.tsx`,
-    `${DEV_RENDERER_URL}/src/ui/components/input/ScreenshotChips.tsx`,
-    DEV_RENDERER_URL,
-];
+const DEV_RENDERER_PROBE_URL = DEV_RENDERER_URL;
 const PERF_LOG_MAX_CHARS = 2000;
 const PERF_LOG_WINDOW_MS = 1500;
 const PERF_LOG_MAX_PER_WINDOW = 140;
@@ -281,7 +250,7 @@ async function bootBackend(): Promise<boolean> {
     }
 }
 
-/** Navigate from boot shell to the real React app. */
+/** Navigate to the real React app. */
 async function loadReactApp(): Promise<void> {
     if (!mainWindow) return;
 
@@ -296,32 +265,21 @@ async function loadReactApp(): Promise<void> {
     bootProfile('renderer_load_resolved', {
         url: mainWindow.webContents.getURL(),
     });
+    mainWindow.setBackgroundColor('#00000000');
 }
 
 async function waitForRendererApp(): Promise<void> {
     if (!isDev()) return;
 
-    bootProfile('renderer_wait_start', { urls: DEV_RENDERER_SHELL_PROBE_URLS });
+    bootProfile('renderer_wait_start', { url: DEV_RENDERER_PROBE_URL });
 
     for (let attempt = 0; attempt < 300; attempt++) {
         try {
-            const responses = await Promise.all(
-                DEV_RENDERER_SHELL_PROBE_URLS.map((url) =>
-                    fetch(url).catch(() => null),
-                ),
-            );
-            const allReady = responses.every((response) => response?.ok);
-            if (allReady) {
-                await Promise.all(
-                    responses.map(async (response) => {
-                        if (!response) {
-                            return;
-                        }
-                        await response.text().catch(() => '');
-                    }),
-                );
+            const response = await fetch(DEV_RENDERER_PROBE_URL).catch(() => null);
+            if (response?.ok) {
+                await response.text().catch(() => '');
                 bootProfile('renderer_wait_ready', {
-                    urls: DEV_RENDERER_SHELL_PROBE_URLS,
+                    url: DEV_RENDERER_PROBE_URL,
                     attempts: attempt + 1,
                 });
                 return;
@@ -333,7 +291,7 @@ async function waitForRendererApp(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 200));
     }
 
-    throw new Error(`Vite dev server probes were not reachable: ${DEV_RENDERER_SHELL_PROBE_URLS.join(', ')}`);
+    throw new Error(`Vite dev server was not reachable: ${DEV_RENDERER_PROBE_URL}`);
 }
 
 let bootSequenceInProgress = false;
@@ -356,20 +314,16 @@ async function startBootSequence(): Promise<void> {
             error: error instanceof Error ? error : new Error(String(error)),
         }));
 
+    const backendBootPromise = bootBackend();
+
     try {
-        const bootSuccessful = await bootBackend();
-        if (!bootSuccessful) return;
-
-        publishBootState({
-            phase: 'loading_interface',
-            message: 'Rendering chat workspace...',
-            progress: 92,
-        });
-
         const rendererAppLoaded = await rendererAppLoadPromise;
         if (!rendererAppLoaded.ok) {
             throw rendererAppLoaded.error;
         }
+
+        const bootSuccessful = await backendBootPromise;
+        if (!bootSuccessful) return;
 
         publishBootState({ phase: 'ready', message: 'Ready', progress: 100 });
     } catch (error) {
@@ -422,9 +376,11 @@ app.on('ready', async () => {
         title: 'Xpdite',
         frame: false,
         transparent: true,
+        backgroundColor: '#101014',
         resizable: true,
         movable: true,
         alwaysOnTop: true,
+        show: true,
         minimizable: false,
         maximizable: false,
         fullscreenable: false,
@@ -451,6 +407,7 @@ app.on('ready', async () => {
 
     normalBounds = mainWindow.getBounds();
     mainWindow.setAlwaysOnTop(true, 'screen-saver');
+    mainWindow.show();
 
     mainWindow.webContents.on('did-start-loading', () => {
         bootProfile('did_start_loading', {
@@ -475,11 +432,6 @@ app.on('ready', async () => {
             url: mainWindow?.webContents.getURL(),
         });
     });
-
-    // Load the boot shell HTML *instantly* as a data: URL.
-    // This renders the black-hole animation + progress bar before Vite or
-    // the production React bundle is even available.
-    mainWindow.loadURL(createBootShellDataUrl());
 
     // ── IPC handlers ───────────────────────────────────────────────
     ipcMain.handle('get-boot-state', (event) => {

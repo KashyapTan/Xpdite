@@ -1,5 +1,4 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { act } from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
 
 import BootScreen from '../../../components/boot/BootScreen';
@@ -21,49 +20,29 @@ function makeBootState(overrides: Partial<BootState> = {}): BootState {
 
 describe('BootScreen', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
     vi.clearAllMocks();
   });
 
-  test('renders phase label and progress in non-error mode', () => {
+  test('does not render during normal startup', () => {
     useBootContextMock.mockReturnValue({
       bootState: makeBootState({ phase: 'connecting_tools', progress: 44 }),
       isReady: false,
       retry: vi.fn(),
     });
 
-    render(<BootScreen />);
-    expect(screen.getByText('Connecting tools')).toBeInTheDocument();
-    expect(screen.getByText('44%')).toBeInTheDocument();
+    const { container } = render(<BootScreen />);
+    expect(container.firstChild).toBeNull();
   });
 
-  test('clamps progress between 5 and 100', () => {
+  test('does not render when ready', () => {
     useBootContextMock.mockReturnValue({
-      bootState: makeBootState({ progress: 0 }),
-      isReady: false,
-      retry: vi.fn(),
-    });
-    const { rerender } = render(<BootScreen />);
-    expect(screen.getByText('5%')).toBeInTheDocument();
-
-    useBootContextMock.mockReturnValue({
-      bootState: makeBootState({ progress: 140 }),
-      isReady: false,
-      retry: vi.fn(),
-    });
-    rerender(<BootScreen />);
-    expect(screen.getByText('100%')).toBeInTheDocument();
-  });
-
-  test('shows fallback phase label for unknown phase value', () => {
-    useBootContextMock.mockReturnValue({
-      bootState: makeBootState({ phase: 'unexpected_phase' as BootState['phase'] }),
-      isReady: false,
+      bootState: makeBootState({ phase: 'ready', progress: 100 }),
+      isReady: true,
       retry: vi.fn(),
     });
 
-    render(<BootScreen />);
-    expect(screen.getByText('Starting')).toBeInTheDocument();
+    const { container } = render(<BootScreen />);
+    expect(container.firstChild).toBeNull();
   });
 
   test('renders error details and retry button in error phase', () => {
@@ -79,30 +58,6 @@ describe('BootScreen', () => {
     expect(screen.getByText('IPC unavailable')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(retry).toHaveBeenCalledTimes(1);
-  });
-
-  test('fades out and unmounts when ready', () => {
-    useBootContextMock.mockReturnValue({
-      bootState: makeBootState({ phase: 'ready', progress: 100 }),
-      isReady: false,
-      retry: vi.fn(),
-    });
-    const { rerender, container } = render(<BootScreen />);
-    expect(container.querySelector('.boot-screen')).toBeInTheDocument();
-
-    useBootContextMock.mockReturnValue({
-      bootState: makeBootState({ phase: 'ready', progress: 100 }),
-      isReady: true,
-      retry: vi.fn(),
-    });
-    rerender(<BootScreen />);
-    expect(container.querySelector('.boot-screen--fading')).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(251);
-    });
-    rerender(<BootScreen />);
-    expect(container.firstChild).toBeNull();
   });
 });
 

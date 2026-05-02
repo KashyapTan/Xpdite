@@ -111,7 +111,7 @@ describe('ResponseArea', () => {
     );
 
     expect(await screen.findByTestId('chat-message')).toHaveTextContent('hello');
-    expect(screen.getByTestId('error-chat-message')).toHaveTextContent('Something failed');
+    expect(await screen.findByTestId('error-chat-message')).toHaveTextContent('Something failed');
   });
 
   test('renders chat history messages when no error', async () => {

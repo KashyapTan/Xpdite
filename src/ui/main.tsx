@@ -20,6 +20,49 @@ const MeetingRecorder = lazy(pageModules['./pages/MeetingRecorder.tsx'])
 const MeetingRecordingDetail = lazy(pageModules['./pages/MeetingRecordingDetail.tsx'])
 const ScheduledJobsResults = lazy(pageModules['./pages/ScheduledJobsResults.tsx'])
 
+function warmLazyPageModules() {
+  const hashPath = window.location.hash.replace(/^#/, '') || '/';
+  const warmRoute = async (load: (() => Promise<unknown>) | undefined) => {
+    if (!load) {
+      return;
+    }
+
+    try {
+      await load();
+    } catch {
+      // Warmup is opportunistic; the real route import will surface failures.
+    }
+  };
+
+  const warmModelsPanel = () => import('./components/settings/SettingsModels');
+
+  void (async () => {
+    if (hashPath.startsWith('/settings')) {
+      await warmRoute(pageModules['./pages/Settings.tsx']);
+      await warmRoute(warmModelsPanel);
+      return;
+    }
+
+    if (hashPath.startsWith('/history')) {
+      await warmRoute(pageModules['./pages/ChatHistory.tsx']);
+      return;
+    }
+
+    await warmRoute(pageModules['./pages/Settings.tsx']);
+    await warmRoute(warmModelsPanel);
+    await warmRoute(pageModules['./pages/ChatHistory.tsx']);
+  })();
+}
+
+function scheduleLazyPageWarmup() {
+  if (typeof window.requestIdleCallback === 'function') {
+    window.requestIdleCallback(warmLazyPageModules, { timeout: 2500 });
+    return;
+  }
+
+  window.setTimeout(warmLazyPageModules, 1500);
+}
+
 // eslint-disable-next-line react-refresh/only-export-components
 const LazyFallback = () => (
   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', color: 'var(--color-text-dim)', fontFamily: 'var(--font-family-ui)', fontSize: '13px' }}>
@@ -73,4 +116,6 @@ createRoot(document.getElementById('root')!).render(
     </BootProvider>
   </StrictMode>,
 )
+
+scheduleLazyPageWarmup()
 

@@ -12,10 +12,6 @@ vi.mock('../../hooks', () => ({
   useTabKeyboardShortcuts: vi.fn(),
 }));
 
-vi.mock('../../components/boot/BootScreen', () => ({
-  default: () => <div data-testid="boot-screen">boot</div>,
-}));
-
 vi.mock('react-router-dom', () => ({
   Outlet: ({
     context,
@@ -45,10 +41,9 @@ describe('Layout', () => {
     } as unknown as Window['electronAPI'];
   });
 
-  test('renders boot screen and default normal mode', () => {
+  test('renders default normal mode', () => {
     const { container } = render(<Layout />);
 
-    expect(screen.getByTestId('boot-screen')).toBeInTheDocument();
     const appWrapper = container.querySelector('.app-wrapper');
     expect(appWrapper).toHaveClass('normal-mode');
   });
