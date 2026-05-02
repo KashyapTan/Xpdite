@@ -245,6 +245,18 @@
   flex-shrink: 0;
 }
 
+.paired-device-icon.telegram {
+  color: var(--color-brand-telegram);
+}
+
+.paired-device-icon.discord {
+  color: var(--color-brand-discord);
+}
+
+.paired-device-icon.whatsapp {
+  color: var(--color-brand-whatsapp);
+}
+
 .paired-device-info {
   flex: 1;
   min-width: 0;
@@ -320,6 +332,14 @@
 .setup-modal-title {
   font-size: 1.1rem;
   font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.setup-modal-title-icon {
+  color: currentColor;
+  display: inline-flex;
 }
 
 .setup-modal-close {
@@ -494,5 +514,3 @@
   cursor: not-allowed;
   pointer-events: none;
 }
-
-
