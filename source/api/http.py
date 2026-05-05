@@ -1362,6 +1362,12 @@ class ToolsSettingsUpdate(BaseModel):
     top_k: int
 
 
+class OllamaSettingsUpdate(BaseModel):
+    """Request body for updating local Ollama runtime settings."""
+
+    local_context_size: Optional[int] = None
+
+
 @router.get("/mcp/servers")
 async def get_mcp_servers():
     """Get connected MCP servers and their tools."""
@@ -1398,6 +1404,27 @@ async def set_tools_settings(body: ToolsSettingsUpdate):
     db.set_setting("tool_retriever_top_k", str(body.top_k))
 
     return {"status": "updated", "settings": body.model_dump()}
+
+
+@router.get("/settings/ollama")
+async def get_ollama_settings():
+    """Get local Ollama runtime settings."""
+    from ..llm.core.ollama_settings import get_ollama_settings_payload
+
+    return get_ollama_settings_payload()
+
+
+@router.put("/settings/ollama")
+async def set_ollama_settings(body: OllamaSettingsUpdate):
+    """Update local Ollama runtime settings."""
+    from ..llm.core.ollama_settings import set_local_ollama_context_size
+
+    try:
+        settings = set_local_ollama_context_size(body.local_context_size)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {"status": "updated", "settings": settings}
 
 
 # ============================================

@@ -152,4 +152,70 @@ describe('toolCallState', () => {
     expect(toolCall.result).toBe('Finished report');
     expect(toolCall.partialResult).toBeUndefined();
   });
+
+  test('keeps a completed streamed sub-agent row when late parent events omit model_tier', () => {
+    const streamedToolCall: ToolCall = {
+      name: 'spawn_agent',
+      args: {
+        agent_name: 'QuickBooks Researcher',
+        model_tier: 'fast',
+      },
+      server: 'sub_agent',
+      status: 'complete',
+      agentId: 'agent-1',
+      description: 'QuickBooks Researcher (fast)',
+      result: 'Streamed report',
+      startedAt: 1_000,
+      completedAt: 4_000,
+      durationMs: 3_000,
+    };
+
+    const afterLateCalling = applyToolCallChange(
+      [streamedToolCall],
+      [{ type: 'tool_call', toolCall: streamedToolCall }],
+      {
+        name: 'spawn_agent',
+        args: {
+          instruction: 'Research QuickBooks',
+          agent_name: 'QuickBooks Researcher',
+        },
+        server: 'sub_agent',
+        status: 'calling',
+      },
+      true,
+    );
+
+    expect(afterLateCalling.toolCalls).toHaveLength(1);
+    expect(afterLateCalling.contentBlocks).toHaveLength(1);
+    expect(afterLateCalling.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(afterLateCalling.toolCalls[0]?.status).toBe('complete');
+    expect(afterLateCalling.toolCalls[0]?.durationMs).toBe(3_000);
+
+    const afterLateComplete = applyToolCallChange(
+      afterLateCalling.toolCalls,
+      afterLateCalling.contentBlocks,
+      {
+        name: 'spawn_agent',
+        args: {
+          instruction: 'Research QuickBooks',
+          agent_name: 'QuickBooks Researcher',
+        },
+        result: 'Parent result',
+        server: 'sub_agent',
+        status: 'complete',
+      },
+      true,
+    );
+
+    expect(afterLateComplete.toolCalls).toHaveLength(1);
+    expect(afterLateComplete.contentBlocks).toHaveLength(1);
+    expect(afterLateComplete.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(afterLateComplete.toolCalls[0]?.status).toBe('complete');
+    expect(afterLateComplete.toolCalls[0]?.result).toBe('Parent result');
+    expect(afterLateComplete.contentBlocks[0]?.type).toBe('tool_call');
+    if (afterLateComplete.contentBlocks[0]?.type === 'tool_call') {
+      expect(afterLateComplete.contentBlocks[0].toolCall.agentId).toBe('agent-1');
+      expect(afterLateComplete.contentBlocks[0].toolCall.result).toBe('Parent result');
+    }
+  });
 });

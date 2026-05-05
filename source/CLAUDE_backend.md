@@ -352,6 +352,8 @@ All endpoints are in `source/api/http.py` unless noted.
 | `GET` | `/api/models/ollama` | Installed Ollama models |
 | `GET` | `/api/models/ollama/info/{model_name:path}` | Ollama registry metadata for a model |
 | `GET` | `/api/models/context-window/{model_name:path}` | Effective chat context window for a selected model |
+| `GET` | `/api/settings/ollama` | Local Ollama runtime settings, including persisted local `num_ctx` |
+| `PUT` | `/api/settings/ollama` | Update or reset local Ollama `num_ctx`; cloud Ollama models ignore this setting |
 | `GET` | `/api/models/anthropic` | Anthropic models (requires key) |
 | `GET` | `/api/models/openai` | OpenAI models (requires key) |
 | `GET` | `/api/models/openai-codex` | ChatGPT subscription models (requires Codex sign-in) |
@@ -462,7 +464,7 @@ Key constants from `infrastructure/config.py` (also re-exported by `source/infra
 | Constant | Value | Notes |
 |---|---|---|
 | `DEFAULT_MODEL` | `"qwen3-vl:8b-instruct"` | Default Ollama model |
-| `OLLAMA_CTX_SIZE` | env `OLLAMA_CTX_SIZE` / `OLLAMA_CONTEXT_LENGTH`, else `32768` | Context window size passed as `num_ctx` for local Ollama models |
+| `OLLAMA_CTX_SIZE` | env `OLLAMA_CTX_SIZE` / `OLLAMA_CONTEXT_LENGTH`, else `32768` | Default local Ollama `num_ctx`; users can override it with `ollama_local_context_size` in SQLite settings |
 | `MAX_TOOL_RESULT_LENGTH` | `100_000` | Truncation limit for MCP tool result strings |
 | `TERMINAL_MAX_OUTPUT_SIZE` | `50 * 1024` (50 KB) | Max bytes stored in `terminal_events.full_output` |
 | `THREAD_POOL_SIZE` | env `XPDITE_THREAD_POOL_SIZE` or default | Override thread pool size |

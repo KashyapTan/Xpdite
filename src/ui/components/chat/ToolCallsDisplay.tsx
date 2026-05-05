@@ -10,6 +10,7 @@ import { InlineYouTubeApprovalBlock } from './InlineYouTubeApprovalBlock';
 import { SubAgentTranscript } from './SubAgentTranscript';
 import { StreamingTextBlock } from './StreamingTextBlock';
 import { getHumanReadableDescription, getServerSummaryFragment } from './toolCallUtils';
+import { formatDurationMs } from '../../utils/timing';
 import '../../CSS/chat/InlineTerminal.css';
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
@@ -60,6 +61,36 @@ function ChevronIcon({ expanded, small }: { expanded: boolean; small?: boolean }
   );
 }
 
+function useLiveNow(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!active) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [active]);
+
+  return now;
+}
+
+function getThinkingDuration(blocks: ContentBlock[]): number | undefined {
+  const durationMs = blocks.reduce((total, block) => {
+    if (block.type !== 'thinking') {
+      return total;
+    }
+    return total + (block.durationMs ?? 0);
+  }, 0);
+
+  return durationMs > 0 ? durationMs : undefined;
+}
+
+function hasOpenThinkingBlock(blocks: ContentBlock[]): boolean {
+  return blocks.some((block) => block.type === 'thinking' && !block.completedAt);
+}
+
 // ─── Summary generation ───────────────────────────────────────────────────────
 
 function getChainSummary(toolCalls: ToolCall[]): string {
@@ -101,13 +132,25 @@ function getChainSummary(toolCalls: ToolCall[]): string {
 
 // ─── Collapsible thinking-tokens item inside the chain ─────────────────────────
 
-function ChainThinkingItem({ text }: { text: string }) {
+function ChainThinkingItem({
+  text,
+  durationMs,
+  isActive = false,
+}: {
+  text: string;
+  durationMs?: number;
+  isActive?: boolean;
+}) {
   const [collapsed, setCollapsed] = useState(true);
+  const formattedDuration = formatDurationMs(durationMs);
+  const label = isActive
+    ? 'Thinking'
+    : `Thought${formattedDuration ? ` ${formattedDuration}` : ''}`;
 
   return (
     <div className="chain-item-body">
       <div className="chain-tool-header clickable" onClick={() => setCollapsed(!collapsed)}>
-        <span className="chain-thought-label">Thinking...</span>
+        <span className="chain-thought-label">{label}</span>
         <ChevronIcon expanded={!collapsed} small />
       </div>
       {!collapsed && (
@@ -141,6 +184,14 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
   const displayContent = isSubAgent
     ? preferredSubAgentContent
     : (hasResult ? toolCall.result : toolCall.partialResult);
+  const liveNow = useLiveNow(isRunning && toolCall.startedAt !== undefined);
+  const elapsedMs = toolCall.durationMs
+    ?? (
+      toolCall.startedAt !== undefined
+        ? Math.max(0, (toolCall.completedAt ?? liveNow) - toolCall.startedAt)
+        : undefined
+    );
+  const formattedDuration = formatDurationMs(elapsedMs);
 
   // Auto-scroll the result container when new partial content arrives
   useEffect(() => {
@@ -164,6 +215,11 @@ function ToolCallChainItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: b
         >
           <span className="chain-tool-badge">{badge}</span>
           <span className={`chain-tool-text ${isRunning ? 'running' : ''}`}>{text}</span>
+          {formattedDuration && (
+            <span className={`chain-tool-duration ${isRunning ? 'running' : ''}`}>
+              {formattedDuration}
+            </span>
+          )}
           {isExpandable && <ChevronIcon expanded={showResult} small />}
         </div>
         {showResult && isSubAgent && (
@@ -260,6 +316,7 @@ function ToolChainTimeline({
       b.type === 'youtube_transcription_approval',
   );
   const hasThinkingBlocks = chainBlocks.some((b) => b.type === 'thinking');
+  const isThinkingActive = isThinking || (isStreaming && hasOpenThinkingBlock(chainBlocks));
 
   const isAnyRunning = toolCalls.some(tc => tc.status === 'calling' || tc.status === 'progress');
   const isTerminalRunning = terminalBlocks.some(
@@ -268,12 +325,13 @@ function ToolChainTimeline({
   const isYouTubeApprovalPending = youtubeApprovalBlocks.some(
     (block) => block.approval.status === 'pending',
   );
-  const isChainActive = isThinking || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
+  const isChainActive = isThinkingActive || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
   const allDone = toolCalls.length > 0 && !isAnyRunning;
   const isThinkingOnlyChain = hasThinkingBlocks
     && toolCalls.length === 0
     && terminalBlocks.length === 0
     && youtubeApprovalBlocks.length === 0;
+  const thinkingDuration = getThinkingDuration(chainBlocks);
   const [internalExpanded, setInternalExpanded] = useState(isChainActive || isThinkingOnlyChain);
 
   // Auto-expand while tools are running
@@ -295,7 +353,7 @@ function ToolChainTimeline({
   // Build the flat list of timeline items (only thinking, tools, terminals, youtube_approval)
   // Text blocks are NOT included here - they are actual model output, not internal reasoning
   const timelineItems: Array<
-    | { kind: 'thinking_tokens'; text: string }
+    | { kind: 'thinking_tokens'; block: Extract<ContentBlock, { type: 'thinking' }> }
     | { kind: 'tool'; toolCall: ToolCall }
     | { kind: 'terminal'; terminal: ContentBlock & { type: 'terminal_command' } }
     | {
@@ -308,7 +366,7 @@ function ToolChainTimeline({
   for (const block of chainBlocks) {
     if (block.type === 'thinking' && block.content.trim()) {
       // Model's internal reasoning tokens — collapsible with markdown rendering
-      timelineItems.push({ kind: 'thinking_tokens', text: block.content });
+      timelineItems.push({ kind: 'thinking_tokens', block });
     } else if (block.type === 'tool_call') {
       timelineItems.push({ kind: 'tool', toolCall: block.toolCall });
     } else if (block.type === 'terminal_command') {
@@ -342,7 +400,10 @@ function ToolChainTimeline({
     }
 
     if (hasThinkingBlocks) {
-      return isThinking ? 'Thinking...' : 'Thought process';
+      const formattedDuration = formatDurationMs(thinkingDuration);
+      return isThinkingActive
+        ? 'Thinking'
+        : `Thought${formattedDuration ? ` ${formattedDuration}` : ''}`;
     }
 
     return 'Processing...';
@@ -400,7 +461,11 @@ function ToolChainTimeline({
                         </div>
                         {!isLast && <div className="chain-item-line" />}
                       </div>
-                      <ChainThinkingItem text={item.text} />
+                      <ChainThinkingItem
+                        text={item.block.content}
+                        durationMs={item.block.durationMs}
+                        isActive={isThinkingActive && !item.block.completedAt}
+                      />
                     </div>
                   );
                 }
@@ -782,7 +847,7 @@ interface CollapsibleChainGroupProps {
 function CollapsibleChainGroup({
   blocks,
   isThinking,
-  // isStreaming is accepted but not used currently - kept for API consistency
+  isStreaming,
   onArtifactUpdated,
   onArtifactDeleted,
   onTerminalApprove,
@@ -803,6 +868,7 @@ function CollapsibleChainGroup({
       b.type === 'youtube_transcription_approval',
   );
   const hasThinkingBlocks = blocks.some((b) => b.type === 'thinking');
+  const isThinkingActive = isThinking || (isStreaming && hasOpenThinkingBlock(blocks));
 
   const isAnyRunning = toolCalls.some((tc) => tc.status === 'calling' || tc.status === 'progress');
   const isTerminalRunning = terminalBlocks.some(
@@ -811,12 +877,13 @@ function CollapsibleChainGroup({
   const isYouTubeApprovalPending = youtubeApprovalBlocks.some(
     (block) => block.approval.status === 'pending',
   );
-  const isChainActive = isThinking || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
+  const isChainActive = isThinkingActive || isAnyRunning || isTerminalRunning || isYouTubeApprovalPending;
   const allToolsDone = toolCalls.length > 0 && !isAnyRunning;
   const isThinkingOnlyChain = hasThinkingBlocks
     && toolCalls.length === 0
     && terminalBlocks.length === 0
     && youtubeApprovalBlocks.length === 0;
+  const thinkingDuration = getThinkingDuration(blocks);
 
   const [expanded, setExpanded] = useState(isChainActive || isThinkingOnlyChain);
 
@@ -847,7 +914,10 @@ function CollapsibleChainGroup({
     }
 
     if (hasThinkingBlocks) {
-      return isThinking ? 'Thinking...' : 'Thought process';
+      const formattedDuration = formatDurationMs(thinkingDuration);
+      return isThinkingActive
+        ? 'Thinking'
+        : `Thought${formattedDuration ? ` ${formattedDuration}` : ''}`;
     }
 
     return 'Processing...';
@@ -896,11 +966,15 @@ function CollapsibleChainGroup({
                 <div key={idx} className="chain-item">
                   <div className="chain-item-marker">
                     <div className="chain-item-dot">
-                      {isThinking && idx === blocks.length - 1 ? <SpinnerIcon /> : <HourglassIcon />}
+                      {isThinkingActive && idx === blocks.length - 1 ? <SpinnerIcon /> : <HourglassIcon />}
                     </div>
                     {!isLast && <div className="chain-item-line" />}
                   </div>
-                  <ChainThinkingItem text={block.content} />
+                  <ChainThinkingItem
+                    text={block.content}
+                    durationMs={block.durationMs}
+                    isActive={isThinkingActive && !block.completedAt}
+                  />
                 </div>
               );
             }

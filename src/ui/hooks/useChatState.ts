@@ -39,6 +39,7 @@ interface UseChatStateReturn {
   thinkingRef: React.RefObject<string>;
   toolCallsRef: React.RefObject<ToolCall[]>;
   contentBlocksRef: React.RefObject<ContentBlock[]>;
+  turnStartedAtRef: React.RefObject<number | null>;
   
   // Actions
   setQuery: React.Dispatch<React.SetStateAction<string>>;
@@ -51,6 +52,7 @@ interface UseChatStateReturn {
   setThinkingCollapsed: (collapsed: boolean) => void;
   setIsThinking: (isThinking: boolean) => void;
   appendThinking: (chunk: string) => void;
+  completeThinking: () => void;
   appendResponse: (chunk: string) => void;
   addToolCall: (toolCall: ToolCall) => void;
   updateToolCall: (toolCall: ToolCall) => void;
@@ -108,6 +110,7 @@ export function useChatState(): UseChatStateReturn {
   const thinkingRef = useRef('');
   const toolCallsRef = useRef<ToolCall[]>([]);
   const contentBlocksRef = useRef<ContentBlock[]>([]);
+  const turnStartedAtRef = useRef<number | null>(null);
 
   const clearError = useCallback(() => {
     setError('');
@@ -132,6 +135,7 @@ export function useChatState(): UseChatStateReturn {
   }, []);
 
   const appendThinking = useCallback((chunk: string) => {
+    const now = Date.now();
     setThinking(prev => prev + chunk);
     thinkingRef.current += chunk;
 
@@ -140,17 +144,51 @@ export function useChatState(): UseChatStateReturn {
     const blocks = contentBlocksRef.current;
     if (blocks.length > 0 && blocks[blocks.length - 1].type === 'thinking') {
       const newBlocks = [...blocks];
+      const existingBlock = newBlocks[newBlocks.length - 1] as Extract<ContentBlock, { type: 'thinking' }>;
       newBlocks[newBlocks.length - 1] = {
         type: 'thinking',
-        content: (newBlocks[newBlocks.length - 1] as { type: 'thinking'; content: string }).content + chunk,
+        content: existingBlock.content + chunk,
+        startedAt: existingBlock.startedAt ?? now,
+        completedAt: existingBlock.completedAt,
+        durationMs: existingBlock.durationMs,
       };
       contentBlocksRef.current = newBlocks;
       setContentBlocks(newBlocks);
     } else {
-      const newBlocks: ContentBlock[] = [...blocks, { type: 'thinking', content: chunk }];
+      const newBlocks: ContentBlock[] = [...blocks, { type: 'thinking', content: chunk, startedAt: now }];
       contentBlocksRef.current = newBlocks;
       setContentBlocks(newBlocks);
     }
+  }, []);
+
+  const completeThinking = useCallback(() => {
+    const now = Date.now();
+    const blocks = contentBlocksRef.current;
+    const latestThinkingIndex = [...blocks]
+      .reverse()
+      .findIndex((block) => block.type === 'thinking' && !block.completedAt);
+
+    if (latestThinkingIndex < 0) {
+      return;
+    }
+
+    const blockIndex = blocks.length - 1 - latestThinkingIndex;
+    const currentBlock = blocks[blockIndex];
+    if (currentBlock.type !== 'thinking') {
+      return;
+    }
+
+    const startedAt = currentBlock.startedAt ?? now;
+    const completedAt = now;
+    const newBlocks = [...blocks];
+    newBlocks[blockIndex] = {
+      ...currentBlock,
+      startedAt,
+      completedAt,
+      durationMs: Math.max(0, completedAt - startedAt),
+    };
+    contentBlocksRef.current = newBlocks;
+    setContentBlocks(newBlocks);
   }, []);
 
   const appendResponse = useCallback((chunk: string) => {
@@ -362,10 +400,12 @@ export function useChatState(): UseChatStateReturn {
   }, []);
 
   const startQuery = useCallback((queryText: string) => {
+    const now = Date.now();
     setCurrentQuery(queryText);
     currentQueryRef.current = queryText;
+    turnStartedAtRef.current = now;
     clearError();
-    setStatus('Thinking...');
+    setStatus('Thinking');
     setIsThinking(true);
     setCanSubmit(false);
     // Reset tool calls and content blocks for new query
@@ -398,6 +438,7 @@ export function useChatState(): UseChatStateReturn {
     thinkingRef.current = '';
     toolCallsRef.current = [];
     contentBlocksRef.current = [];
+    turnStartedAtRef.current = null;
 
     clearError();
     setStatus(nextStatus);
@@ -405,12 +446,16 @@ export function useChatState(): UseChatStateReturn {
   }, [clearError]);
 
   const completeResponse = useCallback((attachedImages?: Array<{name: string; thumbnail: string}>, model?: string) => {
+    completeThinking();
     const completedQuery = currentQueryRef.current;
     const completedResponse = responseRef.current;
     const completedThinking = thinkingRef.current;
     const completedToolCalls = toolCallsRef.current.length > 0 ? [...toolCallsRef.current] : undefined;
     const completedContentBlocks = contentBlocksRef.current.length > 0 ? [...contentBlocksRef.current] : undefined;
     const timestamp = Date.now();
+    const completedDurationMs = turnStartedAtRef.current !== null
+      ? Math.max(0, timestamp - turnStartedAtRef.current)
+      : undefined;
     const responseVersions = completedResponse || completedToolCalls || completedContentBlocks
       ? [{
         responseIndex: 0,
@@ -418,6 +463,7 @@ export function useChatState(): UseChatStateReturn {
         model,
         timestamp,
         contentBlocks: completedContentBlocks,
+        durationMs: completedDurationMs,
       }]
       : undefined;
 
@@ -444,6 +490,7 @@ export function useChatState(): UseChatStateReturn {
         toolCalls: completedToolCalls,
         contentBlocks: completedContentBlocks,
         model,
+        durationMs: completedDurationMs,
         timestamp,
         activeResponseIndex: 0,
         responseVersions,
@@ -451,7 +498,7 @@ export function useChatState(): UseChatStateReturn {
     ]);
 
     clearStreamingState();
-  }, [clearStreamingState]);
+  }, [clearStreamingState, completeThinking]);
 
   const resetForNewChat = useCallback(() => {
     setStatus('Context cleared. Ready for new conversation.');
@@ -474,6 +521,7 @@ export function useChatState(): UseChatStateReturn {
     thinkingRef.current = '';
     toolCallsRef.current = [];
     contentBlocksRef.current = [];
+    turnStartedAtRef.current = null;
   }, [clearError]);
 
   const loadConversation = useCallback((id: string, messages: ChatMessage[]) => {
@@ -487,6 +535,7 @@ export function useChatState(): UseChatStateReturn {
     currentQueryRef.current = '';
     responseRef.current = '';
     thinkingRef.current = '';
+    turnStartedAtRef.current = null;
 
     clearError();
     setStatus('Conversation loaded. Ask a follow-up question.');
@@ -501,6 +550,7 @@ export function useChatState(): UseChatStateReturn {
       currentQuery: currentQueryRef.current,
       response: responseRef.current,
       thinking: thinkingRef.current,
+      turnStartedAt: turnStartedAtRef.current,
       isThinking,
       thinkingCollapsed,
       toolCalls: [...toolCallsRef.current],
@@ -522,6 +572,7 @@ export function useChatState(): UseChatStateReturn {
     responseRef.current = s.response;
     setThinking(s.thinking);
     thinkingRef.current = s.thinking;
+    turnStartedAtRef.current = s.turnStartedAt ?? null;
     setIsThinking(s.isThinking);
     setThinkingCollapsed(s.thinkingCollapsed);
     setToolCalls(s.toolCalls);
@@ -559,6 +610,7 @@ export function useChatState(): UseChatStateReturn {
     thinkingRef,
     toolCallsRef,
     contentBlocksRef,
+    turnStartedAtRef,
     
     // Actions
     setQuery,
@@ -571,6 +623,7 @@ export function useChatState(): UseChatStateReturn {
     setThinkingCollapsed,
     setIsThinking,
     appendThinking,
+    completeThinking,
     appendResponse,
     addToolCall,
     updateToolCall,

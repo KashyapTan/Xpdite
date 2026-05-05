@@ -142,6 +142,14 @@ export interface OllamaRegistryModelInfoResponse {
   error?: string;
 }
 
+export interface OllamaSettings {
+  local_context_size: number;
+  default_local_context_size: number;
+  min_local_context_size: number;
+  max_local_context_size: number;
+  is_custom: boolean;
+}
+
 interface RawProviderModel {
   id?: unknown;
   name?: unknown;
@@ -974,6 +982,42 @@ export const api = {
     } catch {
       console.error('Failed to save tool settings');
     }
+  },
+
+  // ============================================
+  // Ollama Settings
+  // ============================================
+
+  async getOllamaSettings(): Promise<OllamaSettings> {
+    try {
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/settings/ollama`);
+      if (!response.ok) throw new Error('Failed to fetch Ollama settings');
+      return response.json();
+    } catch {
+      return {
+        local_context_size: 32768,
+        default_local_context_size: 32768,
+        min_local_context_size: 512,
+        max_local_context_size: 1048576,
+        is_custom: false,
+      };
+    }
+  },
+
+  async setOllamaSettings(settings: { local_context_size: number | null }): Promise<OllamaSettings> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/settings/ollama`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    if (!response.ok) {
+      const detail = await readErrorDetail(response, 'Failed to save Ollama settings');
+      throw new Error(detail);
+    }
+    const payload = await response.json();
+    return payload.settings;
   },
 
   // ============================================

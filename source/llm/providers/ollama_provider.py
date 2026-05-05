@@ -15,10 +15,10 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from ollama import AsyncClient as OllamaAsyncClient
-from ...infrastructure.config import OLLAMA_CTX_SIZE
 from ...core.connection import broadcast_message
 from ...core.request_context import get_current_request, is_current_request_cancelled
 from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
+from ..core.ollama_settings import get_local_ollama_options
 from ..core.router import is_local_ollama_model
 from ...mcp_integration.core.handlers import handle_mcp_tool_calls
 from ...mcp_integration.core.manager import mcp_manager
@@ -187,7 +187,7 @@ async def stream_ollama_chat(
             "stream": True,
         }
         if is_local_ollama_model(model_name):
-            chat_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
+            chat_kwargs["options"] = get_local_ollama_options()
 
         stream = await client.chat(**chat_kwargs)
 
@@ -357,7 +357,7 @@ async def stream_ollama_chat(
                     "stream": False,
                 }
                 if is_local_ollama_model(model_name):
-                    fallback_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
+                    fallback_kwargs["options"] = get_local_ollama_options()
                 fallback = await client.chat(**fallback_kwargs)
 
                 content_str = ""

@@ -966,6 +966,12 @@ textarea,
 
 .message-timestamp {
   font-size: 0.68rem;
+  color: var(--color-text);
+  min-width: max-content;
+}
+
+.message-duration {
+  font-size: 0.68rem;
   color: var(--color-text-dim);
   min-width: max-content;
 }
@@ -1696,6 +1702,17 @@ textarea,
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: var(--font-family-ui);
+}
+
+.chain-tool-duration {
+  flex-shrink: 0;
+  color: var(--color-border-strong);
+  font-size: 0.72rem;
+  font-family: var(--font-family-mono);
+}
+
+.chain-tool-duration.running {
+  color: var(--color-text-dim);
 }
 
 .chain-tool-result {

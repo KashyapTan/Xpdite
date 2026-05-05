@@ -83,11 +83,13 @@ const chatStateMock = {
   toolCallsRef: { current: [] as unknown[] },
   contentBlocksRef: { current: [] as unknown[] },
   currentQueryRef: { current: '' },
+  turnStartedAtRef: { current: null as number | null },
   getSnapshot: vi.fn(() => ({
     chatHistory: [],
     currentQuery: '',
     response: '',
     thinking: '',
+    turnStartedAt: null,
     isThinking: false,
     thinkingCollapsed: true,
     toolCalls: [],
@@ -97,6 +99,7 @@ const chatStateMock = {
     canSubmit: true,
     status: '',
     error: '',
+    errorMessage: null,
   })),
   restoreSnapshot: vi.fn(),
   setStatus: vi.fn(),
@@ -110,6 +113,7 @@ const chatStateMock = {
   setThinkingCollapsed: vi.fn(),
   resetForNewChat: vi.fn(),
   appendThinking: vi.fn(),
+  completeThinking: vi.fn(),
   setIsThinking: vi.fn(),
   appendResponse: vi.fn(),
   completeResponse: vi.fn(),
@@ -312,6 +316,7 @@ describe('App websocket-driven behavior', () => {
     chatStateMock.contentBlocksRef.current = [];
     chatStateMock.responseRef.current = '';
     chatStateMock.thinkingRef.current = '';
+    chatStateMock.turnStartedAtRef.current = null;
     chatStateMock.setErrorMessage.mockImplementation((message: unknown, rawError?: string) => {
       chatStateMock.errorMessage = message;
       chatStateMock.error = rawError ?? '';
@@ -529,7 +534,7 @@ describe('App websocket-driven behavior', () => {
       expect.objectContaining({
         chat: expect.objectContaining({
           currentQuery: 'background question',
-          status: 'Thinking...',
+          status: 'Thinking',
           isThinking: true,
         }),
       }),
@@ -1040,12 +1045,52 @@ describe('App websocket-driven behavior', () => {
       content: {
         server: 'sub_agent',
         name: 'spawn_agent',
+        status: 'calling',
+        args: {
+          instruction: 'Research TurboTax',
+          agent_name: 'TurboTax Researcher',
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    nextSnapshot = latestCall?.[1] as {
+      chat: {
+        toolCalls: Array<{
+          agentId?: string;
+          status?: string;
+        }>;
+        contentBlocks: Array<{
+          type: string;
+          toolCall?: { agentId?: string; status?: string };
+        }>;
+      };
+    };
+
+    expect(nextSnapshot.chat.toolCalls).toHaveLength(1);
+    expect(nextSnapshot.chat.toolCalls[0]?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.toolCalls[0]?.status).toBe('complete');
+    expect(nextSnapshot.chat.contentBlocks).toHaveLength(1);
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.agentId).toBe('agent-1');
+    expect(nextSnapshot.chat.contentBlocks[0]?.toolCall?.status).toBe('complete');
+
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'tool_call',
+      tab_id: 'tab-2',
+      content: {
+        server: 'sub_agent',
+        name: 'spawn_agent',
         status: 'complete',
         result: 'Finished report',
         args: {
           instruction: 'Research TurboTax',
           agent_name: 'TurboTax Researcher',
-          model_tier: 'smart',
         },
       },
     });

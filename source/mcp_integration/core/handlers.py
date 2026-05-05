@@ -18,7 +18,6 @@ from ollama import AsyncClient as OllamaAsyncClient
 from ...infrastructure.config import (
     DEFAULT_MODEL,
     MAX_TOOL_RESULT_LENGTH,
-    OLLAMA_CTX_SIZE,
 )
 from ...core.connection import broadcast_message
 from ...core.request_context import (
@@ -32,6 +31,7 @@ from ...llm.core.artifacts import (
     emit_artifact_stream_events,
     serialize_blocks_for_model_content,
 )
+from ...llm.core.ollama_settings import get_local_ollama_options
 from .manager import mcp_manager
 from .retriever import retriever
 from ..executors.terminal_executor import execute_terminal_tool, is_terminal_tool
@@ -72,7 +72,7 @@ def _ollama_options_for_request_model() -> Dict[str, int] | None:
     from ...llm.core.router import is_local_ollama_model
 
     if is_local_ollama_model(_get_request_model()):
-        return {"num_ctx": OLLAMA_CTX_SIZE}
+        return get_local_ollama_options()
     return None
 
 

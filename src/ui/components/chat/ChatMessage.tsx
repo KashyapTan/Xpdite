@@ -16,6 +16,7 @@ import {
   formatMessageTimestamp,
   serializeMessageForCopy,
 } from '../../utils/chatMessages';
+import { formatDurationMs } from '../../utils/timing';
 import type { ArtifactBlockData, ChatMessage as ChatMessageType } from '../../types';
 
 interface ChatMessageProps {
@@ -117,6 +118,7 @@ function ChatMessageComponent({
     Math.max((message.responseVersions?.length ?? 1) - 1, 0),
   );
   const formattedTimestamp = formatMessageTimestamp(message.timestamp);
+  const formattedDuration = formatDurationMs(message.durationMs);
   const canPersistActions = !!message.messageId;
   const canSaveEdit = draftContent.trim().length > 0 && draftContent.trim() !== message.content.trim();
   const isErrorMessage = message.variant === 'error';
@@ -289,6 +291,9 @@ function ChatMessageComponent({
                   </ActionButton>
                 )}
                 <span className="message-timestamp">{formattedTimestamp}</span>
+                {formattedDuration && (
+                  <span className="message-duration">{formattedDuration}</span>
+                )}
                 {!isErrorMessage && !!message.responseVersions && message.responseVersions.length > 1 && (
                   <div className="message-response-nav">
                     <ActionButton

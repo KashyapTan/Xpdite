@@ -26,17 +26,18 @@ describe('ThinkingSection', () => {
     expect(container.firstChild).toBeNull();
   });
 
-  test('renders thought process label when not actively thinking', () => {
+  test('renders thought label when not actively thinking', () => {
     render(
       <ThinkingSection
         thinking="Reasoning output"
         isThinking={false}
+        durationMs={2300}
         collapsed={false}
         onToggle={() => {}}
       />,
     );
 
-    expect(screen.getByText('Thought process')).toBeInTheDocument();
+    expect(screen.getByText('Thought 2.3 sec')).toBeInTheDocument();
     expect(screen.queryByTestId('loading-dots')).not.toBeInTheDocument();
   });
 
@@ -50,7 +51,7 @@ describe('ThinkingSection', () => {
       />,
     );
 
-    expect(screen.getByText('Thinking...')).toBeInTheDocument();
+    expect(screen.getByText('Thinking')).toBeInTheDocument();
     expect(screen.getByTestId('loading-dots')).toBeInTheDocument();
   });
 

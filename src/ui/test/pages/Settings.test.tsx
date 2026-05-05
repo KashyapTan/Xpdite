@@ -47,6 +47,10 @@ vi.mock('../../components/settings/SettingsSubAgents', () => ({
   default: () => <div data-testid="settings-subagents">subagents</div>,
 }));
 
+vi.mock('../../components/settings/SettingsOllama', () => ({
+  default: () => <div><h2>Ollama</h2><div data-testid="settings-ollama">ollama</div></div>,
+}));
+
 vi.mock('react-router-dom', () => ({
   useOutletContext: () => ({
     setMini: vi.fn(),

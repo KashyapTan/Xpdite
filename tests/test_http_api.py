@@ -814,6 +814,43 @@ class TestHttpApiEndpoints:
         db_mock.set_setting.assert_any_call("tool_retriever_top_k", "7")
 
     @pytest.mark.anyio
+    async def test_get_ollama_settings_returns_payload(self):
+        with patch(
+            "source.llm.core.ollama_settings.get_ollama_settings_payload",
+            return_value={
+                "local_context_size": 65536,
+                "default_local_context_size": 32768,
+                "min_local_context_size": 512,
+                "max_local_context_size": 1048576,
+                "is_custom": True,
+            },
+        ):
+            result = await http_api.get_ollama_settings()
+
+        assert result["local_context_size"] == 65536
+        assert result["is_custom"] is True
+
+    @pytest.mark.anyio
+    async def test_set_ollama_settings_persists_local_context_size(self):
+        with patch(
+            "source.llm.core.ollama_settings.set_local_ollama_context_size",
+            return_value={
+                "local_context_size": 65536,
+                "default_local_context_size": 32768,
+                "min_local_context_size": 512,
+                "max_local_context_size": 1048576,
+                "is_custom": True,
+            },
+        ) as setter:
+            result = await http_api.set_ollama_settings(
+                http_api.OllamaSettingsUpdate(local_context_size=65536)
+            )
+
+        setter.assert_called_once_with(65536)
+        assert result["status"] == "updated"
+        assert result["settings"]["local_context_size"] == 65536
+
+    @pytest.mark.anyio
     async def test_get_ollama_model_info_handles_cloud_manifest_without_layers(self):
         manifest_response = MagicMock()
         manifest_response.status_code = 200

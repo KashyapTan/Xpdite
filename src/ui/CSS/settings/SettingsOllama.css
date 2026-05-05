@@ -1,0 +1,193 @@
+.settings-ollama-container {
+  padding: 20px;
+  color: var(--color-text);
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.settings-ollama-header {
+  margin-bottom: 24px;
+}
+
+.settings-ollama-header h2 {
+  margin: 0 0 10px 0;
+  font-size: 1.5rem;
+}
+
+.settings-ollama-header p {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.settings-ollama-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-dim);
+}
+
+.settings-ollama-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 20px;
+}
+
+.settings-ollama-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.settings-ollama-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 5px;
+}
+
+.settings-ollama-desc {
+  color: var(--color-text-dim);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.settings-ollama-desc code {
+  font-family: var(--font-family-mono);
+  background: var(--color-surface-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.settings-ollama-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-strong);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.settings-ollama-badge.custom {
+  color: var(--color-green);
+  border-color: var(--color-green);
+  background: var(--color-green-soft);
+}
+
+.settings-ollama-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.settings-ollama-input {
+  width: 100%;
+  min-width: 0;
+  height: 38px;
+  padding: 0 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-family: var(--font-family-mono);
+  font-size: 0.9rem;
+  outline: none;
+}
+
+.settings-ollama-input:hover {
+  border-color: var(--color-border-strong);
+}
+
+.settings-ollama-input:focus {
+  border-color: var(--color-border-strong);
+  box-shadow: 0 0 0 2px var(--color-surface-strong);
+}
+
+.settings-ollama-button {
+  height: 38px;
+  padding: 0 14px;
+  border-radius: 6px;
+  border: 1px solid var(--color-button-neutral-border);
+  background: var(--color-button-neutral-background);
+  color: var(--color-button-neutral-text);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 600;
+  font-family: var(--font-family-ui);
+}
+
+.settings-ollama-button.primary {
+  border-color: var(--color-button-primary-border);
+  background: var(--color-button-primary-background);
+  color: var(--color-button-primary-text);
+}
+
+.settings-ollama-button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-button-neutral-background-hover);
+}
+
+.settings-ollama-button.primary:hover:not(:disabled) {
+  border-color: var(--color-button-primary-border);
+  background: var(--color-button-primary-background-hover);
+}
+
+.settings-ollama-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.settings-ollama-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  color: var(--color-text-dim);
+  font-size: 0.78rem;
+}
+
+.settings-ollama-note {
+  margin-top: 14px;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.settings-ollama-status {
+  margin-top: 14px;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-ollama-status.saved {
+  color: var(--color-green);
+}
+
+.settings-ollama-status.error {
+  color: var(--color-red);
+}
+
+.settings-ollama-status-icon {
+  flex-shrink: 0;
+}
+
+@media (max-width: 560px) {
+  .settings-ollama-input-row {
+    grid-template-columns: 1fr;
+  }
+}

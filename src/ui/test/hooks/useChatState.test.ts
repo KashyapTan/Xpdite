@@ -55,7 +55,7 @@ describe('useChatState', () => {
       expect(result.current.currentQuery).toBe('What is TypeScript?');
       expect(result.current.currentQueryRef.current).toBe('What is TypeScript?');
       expect(result.current.error).toBe('');
-      expect(result.current.status).toBe('Thinking...');
+      expect(result.current.status).toBe('Thinking');
       expect(result.current.isThinking).toBe(true);
       expect(result.current.canSubmit).toBe(false);
       expect(result.current.toolCalls).toEqual([]);
@@ -206,10 +206,11 @@ describe('useChatState', () => {
       });
 
       expect(result.current.contentBlocks).toHaveLength(1);
-      expect(result.current.contentBlocks[0]).toEqual({
+      expect(result.current.contentBlocks[0]).toMatchObject({
         type: 'thinking',
         content: 'Thinking...',
       });
+      expect(result.current.contentBlocks[0]).toHaveProperty('startedAt');
     });
 
     test('should append to existing thinking block', () => {
@@ -223,7 +224,7 @@ describe('useChatState', () => {
       });
 
       expect(result.current.contentBlocks).toHaveLength(1);
-      expect(result.current.contentBlocks[0]).toEqual({
+      expect(result.current.contentBlocks[0]).toMatchObject({
         type: 'thinking',
         content: 'First Second',
       });
@@ -246,9 +247,10 @@ describe('useChatState', () => {
       });
 
       expect(result.current.toolCalls).toHaveLength(1);
-      expect(result.current.toolCalls[0]).toEqual(toolCall);
+      expect(result.current.toolCalls[0]).toMatchObject(toolCall);
+      expect(result.current.toolCalls[0]).toHaveProperty('startedAt');
       expect(result.current.toolCallsRef.current).toHaveLength(1);
-      expect(result.current.toolCallsRef.current[0]).toEqual(toolCall);
+      expect(result.current.toolCallsRef.current[0]).toMatchObject(toolCall);
     });
 
     test('should add tool call content block', () => {

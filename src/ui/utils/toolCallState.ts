@@ -4,7 +4,7 @@ function isSubAgentToolCall(toolCall: ToolCall): boolean {
   return toolCall.server === 'sub_agent' && toolCall.name === 'spawn_agent';
 }
 
-function getSubAgentIdentity(toolCall: ToolCall): { agentName: string; modelTier: string } | null {
+function getSubAgentIdentity(toolCall: ToolCall): { agentName: string; modelTier?: string } | null {
   if (!isSubAgentToolCall(toolCall)) {
     return null;
   }
@@ -19,11 +19,11 @@ function getSubAgentIdentity(toolCall: ToolCall): { agentName: string; modelTier
     ? modelTierRaw.trim()
     : '';
 
-  if (!agentName || !modelTier) {
+  if (!agentName) {
     return null;
   }
 
-  return { agentName, modelTier };
+  return { agentName, ...(modelTier ? { modelTier } : {}) };
 }
 
 function hasOwnProperty<K extends PropertyKey>(value: object, key: K): value is Record<K, unknown> {
@@ -62,7 +62,11 @@ export function toolCallsMatch(existing: ToolCall, incoming: ToolCall): boolean 
       existingIdentity
       && incomingIdentity
       && existingIdentity.agentName === incomingIdentity.agentName
-      && existingIdentity.modelTier === incomingIdentity.modelTier
+      && (
+        !existingIdentity.modelTier
+        || !incomingIdentity.modelTier
+        || existingIdentity.modelTier === incomingIdentity.modelTier
+      )
       && (!!existing.agentId !== !!incoming.agentId)
     ) {
       return true;
@@ -82,11 +86,32 @@ export function hasToolCallMatch(toolCalls: ToolCall[], incoming: ToolCall): boo
 }
 
 export function mergeToolCalls(existing: ToolCall, incoming: ToolCall): ToolCall {
+  const now = Date.now();
+  const status = existing.status === 'complete' && incoming.status !== 'complete'
+    ? existing.status
+    : incoming.status ?? existing.status;
+  const startedAt =
+    incoming.startedAt
+    ?? existing.startedAt
+    ?? (incoming.status === 'calling' || incoming.status === 'progress' ? now : undefined);
+  const completedAt =
+    incoming.completedAt
+    ?? existing.completedAt
+    ?? (incoming.status === 'complete' ? now : undefined);
+  const durationMs =
+    incoming.durationMs
+    ?? existing.durationMs
+    ?? (startedAt !== undefined && completedAt !== undefined
+      ? Math.max(0, completedAt - startedAt)
+      : undefined);
   const merged: ToolCall = {
     ...existing,
     name: incoming.name || existing.name,
     server: incoming.server || existing.server,
-    status: incoming.status ?? existing.status,
+    status,
+    startedAt,
+    completedAt,
+    durationMs,
   };
 
   if (hasMeaningfulArgs(incoming.args)) {
@@ -138,6 +163,15 @@ export function applyToolCallChange(
   }, []);
 
   if (!foundMatch && insertIfMissing) {
+    if (
+      (canonicalToolCall.status === 'calling' || canonicalToolCall.status === 'progress')
+      && canonicalToolCall.startedAt === undefined
+    ) {
+      canonicalToolCall = {
+        ...canonicalToolCall,
+        startedAt: Date.now(),
+      };
+    }
     nextToolCalls.push(canonicalToolCall);
   }
 

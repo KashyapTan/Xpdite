@@ -15,7 +15,7 @@ from typing import Any, Mapping, Optional
 import litellm
 from ollama import AsyncClient as OllamaAsyncClient
 
-from ...infrastructure.config import OLLAMA_CTX_SIZE
+from .ollama_settings import get_local_ollama_context_size
 
 logger = logging.getLogger(__name__)
 
@@ -77,10 +77,14 @@ def _effective_ollama_context_window(
     *,
     native_context: Optional[int],
     model_num_ctx: Optional[int],
-    configured_num_ctx: int = OLLAMA_CTX_SIZE,
+    configured_num_ctx: int | None = None,
 ) -> tuple[Optional[int], str]:
     """Return the context window Xpdite will actually request from Ollama."""
-    configured = _positive_int(configured_num_ctx)
+    configured = _positive_int(
+        get_local_ollama_context_size()
+        if configured_num_ctx is None
+        else configured_num_ctx
+    )
     if configured is not None:
         if native_context is not None:
             return min(configured, native_context), "ollama_show+configured_num_ctx"

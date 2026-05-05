@@ -7,6 +7,7 @@ import type {
   ConversationTurnPayload,
   ResponseVariant,
   TerminalCommandBlock,
+  ToolCall,
   YouTubeTranscriptionApprovalBlock,
 } from '../types';
 
@@ -46,22 +47,36 @@ export function mapConversationContentBlock(
   }
 
   if (block.type === 'thinking') {
-    return {
+    const thinkingBlock: Extract<ContentBlock, { type: 'thinking' }> = {
       type: 'thinking',
       content: block.content ?? '',
     };
+    const startedAt = normalizeTimestamp(block.started_at) ?? block.startedAt;
+    const completedAt = normalizeTimestamp(block.completed_at) ?? block.completedAt;
+    const durationMs = block.duration_ms ?? block.durationMs;
+    if (startedAt !== undefined) thinkingBlock.startedAt = startedAt;
+    if (completedAt !== undefined) thinkingBlock.completedAt = completedAt;
+    if (durationMs !== undefined) thinkingBlock.durationMs = durationMs;
+    return thinkingBlock;
   }
 
   if (block.type === 'tool_call') {
+    const toolCall: ToolCall = {
+      name: block.name ?? '',
+      args: block.args ?? {},
+      result: block.result,
+      server: block.server ?? '',
+      status: 'complete' as const,
+    };
+    const startedAt = normalizeTimestamp(block.started_at) ?? block.startedAt;
+    const completedAt = normalizeTimestamp(block.completed_at) ?? block.completedAt;
+    const durationMs = block.duration_ms ?? block.durationMs;
+    if (startedAt !== undefined) toolCall.startedAt = startedAt;
+    if (completedAt !== undefined) toolCall.completedAt = completedAt;
+    if (durationMs !== undefined) toolCall.durationMs = durationMs;
     return {
       type: 'tool_call',
-      toolCall: {
-        name: block.name ?? '',
-        args: block.args ?? {},
-        result: block.result,
-        server: block.server ?? '',
-        status: 'complete',
-      },
+      toolCall,
     };
   }
 
@@ -116,13 +131,16 @@ export function mapConversationContentBlock(
 function mapResponseVariantPayload(
   variant: NonNullable<ConversationMessagePayload['response_variants']>[number],
 ): ResponseVariant {
-  return {
+  const mapped: ResponseVariant = {
     responseIndex: variant.response_index,
     content: variant.content,
     model: variant.model,
     timestamp: normalizeTimestamp(variant.timestamp) ?? variant.timestamp,
     contentBlocks: variant.content_blocks?.map(mapConversationContentBlock),
   };
+  const durationMs = variant.duration_ms ?? variant.durationMs;
+  if (durationMs !== undefined) mapped.durationMs = durationMs;
+  return mapped;
 }
 
 function imageNameFromPath(imagePath: string): string {
@@ -160,7 +178,7 @@ export function mapConversationMessagePayload(
       }
     : undefined;
 
-  return {
+  const mapped: ChatMessage = {
     role: message.role as 'user' | 'assistant',
     content: message.content,
     images: images && images.length > 0 ? images : undefined,
@@ -173,6 +191,9 @@ export function mapConversationMessagePayload(
     responseVersions: message.response_variants?.map(mapResponseVariantPayload),
     mobileOrigin,
   };
+  const durationMs = message.duration_ms ?? message.durationMs;
+  if (durationMs !== undefined) mapped.durationMs = durationMs;
+  return mapped;
 }
 
 export function mergeMessageMetadata(
@@ -201,6 +222,7 @@ export function mergeMessageMetadata(
             content: localMessage.content || variant.content,
             model: localMessage.model || variant.model,
             timestamp: localMessage.timestamp ?? variant.timestamp,
+            durationMs: localMessage.durationMs ?? variant.durationMs,
             contentBlocks:
               localMessage.contentBlocks && localMessage.contentBlocks.length > 0
                 ? localMessage.contentBlocks
@@ -225,6 +247,7 @@ export function mergeMessageMetadata(
         : persistedMessage.contentBlocks,
     model: localMessage.model || persistedMessage.model,
     timestamp: localMessage.timestamp ?? persistedMessage.timestamp,
+    durationMs: localMessage.durationMs ?? persistedMessage.durationMs,
     activeResponseIndex,
     responseVersions,
   };
@@ -246,6 +269,7 @@ export function applyResponseVariant(
     content: nextVariant.content,
     model: nextVariant.model ?? message.model,
     timestamp: nextVariant.timestamp ?? message.timestamp,
+    durationMs: nextVariant.durationMs ?? message.durationMs,
     contentBlocks: hasContentBlocks ? nextVariant.contentBlocks : undefined,
     toolCalls: hasContentBlocks ? undefined : message.toolCalls,
     thinking: undefined,

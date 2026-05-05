@@ -162,6 +162,20 @@ describe('ChatMessage', () => {
       expect(screen.getByText('Xpdite • claude-3')).toBeInTheDocument();
     });
 
+    test('renders answer duration in assistant footer', () => {
+      const message: ChatMessageType = {
+        role: 'assistant',
+        content: 'Response text',
+        messageId: 'assistant-1',
+        timestamp: Date.now(),
+        durationMs: 2400,
+      };
+
+      render(<ChatMessage message={message} {...defaultProps} />);
+
+      expect(screen.getByText('Answered in 2.4 sec')).toBeInTheDocument();
+    });
+
     test('uses selectedModel when message model is not set', () => {
       const message: ChatMessageType = {
         role: 'assistant',

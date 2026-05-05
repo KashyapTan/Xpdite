@@ -26,7 +26,8 @@ from ...llm.core.stream_recovery import (
     get_mid_stream_generated_suffix,
 )
 from ...llm.core.provider_errors import build_provider_error_message
-from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, OLLAMA_CTX_SIZE, USER_DATA_DIR
+from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, USER_DATA_DIR
+from ...llm.core.ollama_settings import get_local_ollama_options
 from ...core.connection import broadcast_message
 from ...core.request_context import (
     get_current_model,
@@ -1100,7 +1101,7 @@ async def _run_ollama_sub_agent(
             "stream": True,  # Enable streaming
         }
         if _is_local_ollama(model_name):
-            chat_kwargs["options"] = {"num_ctx": OLLAMA_CTX_SIZE}
+            chat_kwargs["options"] = get_local_ollama_options()
         if allow_tools:
             chat_kwargs["tools"] = tools
             chat_kwargs["think"] = False  # Ollama bug #10976 workaround

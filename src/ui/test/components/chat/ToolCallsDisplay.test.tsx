@@ -150,25 +150,46 @@ describe('InlineContentBlocks', () => {
     expect(container.textContent).toContain('youtube:Video Title');
   });
 
-  test('renders thinking blocks in a collapsible chain group', () => {
+  test('renders thinking blocks in a timed collapsible chain group', () => {
     // For thinking-only chains, content is rendered directly (no extra nested collapsible)
     // since the outer header already indicates it's thinking
-    const blocks: ContentBlock[] = [{ type: 'thinking', content: 'I should check `tool` output.' }];
+    const blocks: ContentBlock[] = [{
+      type: 'thinking',
+      content: 'I should check `tool` output.',
+      durationMs: 1500,
+    }];
     const { container } = render(<InlineContentBlocks blocks={blocks} isThinking={false} />);
 
-    // Chain header should be present with "Thought process" summary
+    // Chain header should be present with a completed thought duration.
     const chainHeader = container.querySelector('.tool-chain-header');
     expect(chainHeader).not.toBeNull();
-    expect(chainHeader).toHaveTextContent('Thought process');
+    expect(chainHeader).toHaveTextContent('Thought 1.5 sec');
 
     // Thinking content should be visible directly (thinking-only chains auto-expand)
     const thoughtContent = container.querySelector('.chain-thought-content');
     expect(thoughtContent).not.toBeNull();
     expect(thoughtContent).toHaveTextContent('I should check tool output.');
 
-    // No nested "Thinking..." label for thinking-only chains
+    // No nested "Thinking" label for thinking-only chains
     const thinkingLabel = container.querySelector('.chain-thought-label');
     expect(thinkingLabel).toBeNull();
+  });
+
+  test('treats an open live thinking block as active even if isThinking lags', () => {
+    const blocks: ContentBlock[] = [{
+      type: 'thinking',
+      content: 'Still reasoning.',
+      startedAt: Date.now(),
+    }];
+
+    const { container } = render(
+      <InlineContentBlocks blocks={blocks} isThinking={false} isStreaming={true} />,
+    );
+
+    const chainHeader = container.querySelector('.tool-chain-header');
+    expect(chainHeader).not.toBeNull();
+    expect(chainHeader).toHaveTextContent('Thinking');
+    expect(chainHeader).not.toHaveTextContent('Thought');
   });
 
   test('renders blocks in interleaved sequence (text, tools, thinking in order)', () => {
@@ -327,5 +348,26 @@ describe('InlineContentBlocks', () => {
     const result = container.querySelector('.chain-tool-result');
     expect(result).not.toBeNull();
     expect(result?.textContent).toContain('tool output lines');
+  });
+
+  test('shows completed tool duration when available', () => {
+    const blocks: ContentBlock[] = [
+      {
+        type: 'tool_call',
+        toolCall: {
+          name: 'search_docs',
+          args: {},
+          server: 'skills',
+          status: 'complete',
+          result: 'done',
+          durationMs: 2200,
+        },
+      },
+    ];
+
+    const { container } = render(<InlineContentBlocks blocks={blocks} />);
+    fireEvent.click(container.querySelector('.tool-chain-header') as HTMLElement);
+
+    expect(screen.getByText('2.2 sec')).toBeInTheDocument();
   });
 });

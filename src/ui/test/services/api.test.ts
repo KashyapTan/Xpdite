@@ -924,6 +924,50 @@ describe('api singleton - HTTP endpoints', () => {
     });
   });
 
+  describe('Ollama settings', () => {
+    test('gets Ollama settings', async () => {
+      const mockSettings = {
+        local_context_size: 65536,
+        default_local_context_size: 32768,
+        min_local_context_size: 512,
+        max_local_context_size: 1048576,
+        is_custom: true,
+      };
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve(mockSettings),
+      });
+
+      const result = await api.getOllamaSettings();
+      expect(result).toEqual(mockSettings);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/settings/ollama');
+    });
+
+    test('sets Ollama local context size', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({
+          status: 'updated',
+          settings: {
+            local_context_size: 65536,
+            default_local_context_size: 32768,
+            min_local_context_size: 512,
+            max_local_context_size: 1048576,
+            is_custom: true,
+          },
+        }),
+      });
+
+      const result = await api.setOllamaSettings({ local_context_size: 65536 });
+      expect(result.local_context_size).toBe(65536);
+      expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/settings/ollama', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ local_context_size: 65536 }),
+      });
+    });
+  });
+
   describe('getSubAgentSettings', () => {
     test('returns sub-agent settings on success', async () => {
       const mockSettings = { fast_model: 'llama3', smart_model: 'claude-3' };

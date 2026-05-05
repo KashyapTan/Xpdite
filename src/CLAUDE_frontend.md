@@ -202,6 +202,8 @@ Timeline item kinds: `thinking_tokens` (collapsible `ChainThinkingItem`), `think
 
 `src/ui/components/chat/toolCallUtils.ts` is the source of truth for human-readable tool-call badges, per-tool descriptions, and server summary fragments. When adding new MCP servers or tools, update that file (and keep `ToolCallsDisplay.tsx` wired to its helpers) so chat tool calls stay polished.
 
+Sub-agent rows must be reconciled through `src/ui/utils/toolCallState.ts`; do not append raw `spawn_agent` parent events or `tool_calls_summary` entries directly to `toolCalls` / `contentBlocks`. Sub-agent execution can stream an `agentId` row before the parent `tool_call` event arrives, and late parent events may omit `model_tier` or arrive after completion. Always use `applyToolCallChange()` so those events merge into the canonical row instead of rendering duplicate completed sub-agent entries.
+
 ### `InlineTerminalBlock` — embedded terminal in chat
 Filepath: `src/ui/components/chat/InlineTerminalBlock.tsx`
 
@@ -223,7 +225,7 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → marketplace → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama (placeholder) → anthropic → gemini → openai → openrouter`
+`models → connections → tools → marketplace → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama → anthropic → gemini → openai → openrouter`
 
 - **`marketplace`** → `<MarketplaceSettings>` — Community extension manager for skills, prompts, and server installs.
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
@@ -232,6 +234,7 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 - **`scheduled-jobs`** → `<SettingsScheduledJobs>` — Scheduled task controls (toggle, run-now, delete, per-job forwarding targets).
 - **`system-prompt`** → `<SettingsSystemPrompt>` — Editable system prompt template with Save/Reset. Placeholders: `current_datetime`, `os_info`, `skills_block`, `memory_block`, `artifacts_block`, `user_profile_block`.
+- **`ollama`** → `<SettingsOllama>` — Local Ollama `num_ctx` override. Cloud-tagged Ollama models continue using hosted maximum context metadata.
 
 ### `api` singleton
 - The `api` object provides typed HTTP helpers.
@@ -244,6 +247,8 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 ```ts
 // Models
 api.getOllamaModels()            → GET /api/models/ollama
+api.getOllamaSettings()          → GET /api/settings/ollama
+api.setOllamaSettings(settings)  → PUT /api/settings/ollama
 api.getEnabledModels()           → GET /api/models/enabled
 api.setEnabledModels(models)     → PUT /api/models/enabled
 api.getProviderModels(provider)  → GET /api/models/{provider}   // CloudModel[]

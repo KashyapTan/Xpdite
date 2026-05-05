@@ -733,6 +733,7 @@ function App() {
       currentQuery: '',
       response: '',
       thinking: '',
+      turnStartedAt: null,
       isThinking: false,
       thinkingCollapsed: true,
       toolCalls: [],
@@ -974,13 +975,14 @@ function App() {
 
     switch (data.type) {
       case 'query':
+        chat.turnStartedAt = Date.now();
         chat.currentQuery = String(data.content);
         if (tabId === activeTabIdRef.current) {
           startStreamPerfCycle(chat.currentQuery, snap.generatingModel || selectedModel);
         }
         chat.error = '';
         chat.errorMessage = null;
-        chat.status = 'Thinking...';
+        chat.status = 'Thinking';
         chat.isThinking = true;
         chat.canSubmit = false;
         chat.toolCalls = [];
@@ -988,26 +990,52 @@ function App() {
         break;
 
       case 'thinking_chunk': {
+        const now = Date.now();
         const tChunk = String(data.content);
         chat.thinking += tChunk;
         // Also interleave into contentBlocks so thinking appears positionally in the chain
         const tBlocks = [...chat.contentBlocks];
         if (tBlocks.length > 0 && tBlocks[tBlocks.length - 1].type === 'thinking') {
+          const existingBlock = tBlocks[tBlocks.length - 1] as Extract<ContentBlock, { type: 'thinking' }>;
           tBlocks[tBlocks.length - 1] = {
             type: 'thinking',
-            content: (tBlocks[tBlocks.length - 1] as { type: 'thinking'; content: string }).content + tChunk,
+            content: existingBlock.content + tChunk,
+            startedAt: existingBlock.startedAt ?? now,
+            completedAt: existingBlock.completedAt,
+            durationMs: existingBlock.durationMs,
           };
         } else {
-          tBlocks.push({ type: 'thinking', content: tChunk });
+          tBlocks.push({ type: 'thinking', content: tChunk, startedAt: now });
         }
         chat.contentBlocks = tBlocks;
         break;
       }
 
-      case 'thinking_complete':
+      case 'thinking_complete': {
+        const now = Date.now();
+        const latestThinkingIndex = [...chat.contentBlocks]
+          .reverse()
+          .findIndex((block) => block.type === 'thinking' && !block.completedAt);
+        if (latestThinkingIndex >= 0) {
+          const blockIndex = chat.contentBlocks.length - 1 - latestThinkingIndex;
+          const currentBlock = chat.contentBlocks[blockIndex];
+          if (currentBlock.type === 'thinking') {
+            const startedAt = currentBlock.startedAt ?? now;
+            const completedAt = now;
+            const blocks = [...chat.contentBlocks];
+            blocks[blockIndex] = {
+              ...currentBlock,
+              startedAt,
+              completedAt,
+              durationMs: Math.max(0, completedAt - startedAt),
+            };
+            chat.contentBlocks = blocks;
+          }
+        }
         chat.isThinking = false;
         chat.status = 'Receiving response...';
         break;
+      }
 
       case 'response_chunk': {
         const chunk = String(data.content);
@@ -1068,12 +1096,35 @@ function App() {
         if (tabId === activeTabIdRef.current) {
           finishStreamPerfCycle('background-response-complete');
         }
+        const completedAt = Date.now();
+        const latestThinkingIndex = [...chat.contentBlocks]
+          .reverse()
+          .findIndex((block) => block.type === 'thinking' && !block.completedAt);
+        if (latestThinkingIndex >= 0) {
+          const blockIndex = chat.contentBlocks.length - 1 - latestThinkingIndex;
+          const currentBlock = chat.contentBlocks[blockIndex];
+          if (currentBlock.type === 'thinking') {
+            const startedAt = currentBlock.startedAt ?? completedAt;
+            const blocks = [...chat.contentBlocks];
+            blocks[blockIndex] = {
+              ...currentBlock,
+              startedAt,
+              completedAt,
+              durationMs: Math.max(0, completedAt - startedAt),
+            };
+            chat.contentBlocks = blocks;
+          }
+        }
+        const responseDurationMs = chat.turnStartedAt !== null && chat.turnStartedAt !== undefined
+          ? Math.max(0, completedAt - chat.turnStartedAt)
+          : undefined;
         if (chat.error || chat.errorMessage) {
           chat.response = '';
           chat.thinking = '';
           chat.isThinking = false;
           chat.toolCalls = [];
           chat.contentBlocks = [];
+          chat.turnStartedAt = null;
           chat.canSubmit = true;
           break;
         }
@@ -1095,6 +1146,7 @@ function App() {
               toolCalls: chat.toolCalls.length > 0 ? [...chat.toolCalls] : undefined,
               contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
               model: snap.generatingModel || undefined,
+              durationMs: responseDurationMs,
               timestamp,
               activeResponseIndex: 0,
               responseVersions: [{
@@ -1102,6 +1154,7 @@ function App() {
                 content: chat.response,
                 model: snap.generatingModel || undefined,
                 timestamp,
+                durationMs: responseDurationMs,
                 contentBlocks: chat.contentBlocks.length > 0 ? [...chat.contentBlocks] : undefined,
               }],
             },
@@ -1113,6 +1166,7 @@ function App() {
         chat.isThinking = false;
         chat.toolCalls = [];
         chat.contentBlocks = [];
+        chat.turnStartedAt = null;
         chat.canSubmit = true;
         chat.error = '';
         chat.errorMessage = null;
@@ -1632,6 +1686,9 @@ function App() {
         ? [...chatState.contentBlocksRef.current]
         : undefined,
     model: generatingModelRef.current || selectedModel,
+    durationMs: chatState.turnStartedAtRef.current !== null
+      ? Math.max(0, Date.now() - chatState.turnStartedAtRef.current)
+      : undefined,
     timestamp: Date.now(),
   }), [chatState, selectedModel]);
 
@@ -1942,6 +1999,7 @@ function App() {
         break;
 
       case 'thinking_complete':
+        chatState.completeThinking();
         chatState.setIsThinking(false);
         chatState.setStatus('Receiving response...');
         break;

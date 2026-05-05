@@ -25,6 +25,9 @@ export interface ToolCall {
   result?: string;
   server: string;
   status?: 'calling' | 'progress' | 'complete';
+  startedAt?: number;
+  completedAt?: number;
+  durationMs?: number;
   /** Unique ID for sub-agent calls — used for matching progress updates */
   agentId?: string;
   /** Human-readable progress description (e.g. "Reading docs.openclaw.ai...") */
@@ -53,7 +56,13 @@ export interface ArtifactBlockData {
 
 export type ContentBlock =
   | { type: 'text'; content: string }
-  | { type: 'thinking'; content: string }
+  | {
+      type: 'thinking';
+      content: string;
+      startedAt?: number;
+      completedAt?: number;
+      durationMs?: number;
+    }
   | { type: 'artifact'; artifact: ArtifactBlockData }
   | { type: 'tool_call'; toolCall: ToolCall }
   | { type: 'terminal_command'; terminal: TerminalCommandBlock }
@@ -120,6 +129,7 @@ export interface ResponseVariant {
   model?: string;
   timestamp: number;
   contentBlocks?: ContentBlock[];
+  durationMs?: number;
 }
 
 export type ChatErrorSource =
@@ -151,6 +161,7 @@ export interface ChatMessage {
   /** Interleaved text + tool_call blocks (preferred over toolCalls for rendering) */
   contentBlocks?: ContentBlock[];
   model?: string;
+  durationMs?: number;
   messageId?: string;
   turnId?: string;
   timestamp?: number;
@@ -344,6 +355,12 @@ export interface ArtifactContentPayload {
 export interface ConversationContentBlockPayload {
   type: string;
   content?: string;
+  started_at?: number;
+  startedAt?: number;
+  completed_at?: number;
+  completedAt?: number;
+  duration_ms?: number;
+  durationMs?: number;
   artifact_id?: string;
   artifact_type?: ArtifactKind;
   name?: string;
@@ -398,6 +415,8 @@ export interface ConversationResponseVariantPayload {
   content: string;
   model?: string;
   timestamp: number;
+  duration_ms?: number;
+  durationMs?: number;
   content_blocks?: ConversationContentBlockPayload[];
 }
 
@@ -547,6 +566,7 @@ export interface ChatStateSnapshot {
   currentQuery: string;
   response: string;
   thinking: string;
+  turnStartedAt?: number | null;
   isThinking: boolean;
   thinkingCollapsed: boolean;
   toolCalls: ToolCall[];

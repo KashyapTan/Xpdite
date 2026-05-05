@@ -43,13 +43,16 @@ async def test_resolve_ollama_context_window_reads_show_metadata():
     with patch(
         "source.llm.core.model_context.OllamaAsyncClient",
         return_value=client,
+    ), patch(
+        "source.llm.core.model_context.get_local_ollama_context_size",
+        return_value=65536,
     ):
         from source.llm.core.model_context import resolve_model_context_window
 
         context = await resolve_model_context_window("gemma3:4b")
 
     assert context.model == "gemma3:4b"
-    assert context.context_window == 32768
+    assert context.context_window == 65536
     assert context.source == "ollama_show+configured_num_ctx"
 
 

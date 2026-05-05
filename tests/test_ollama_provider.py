@@ -151,6 +151,7 @@ async def test_stream_uses_explicit_model_name_without_global_fallback():
             return_value=client,
         ),
         patch("source.llm.providers.ollama_provider.mcp_manager.has_tools", return_value=False),
+        patch("source.llm.providers.ollama_provider.get_local_ollama_options", return_value={"num_ctx": 65536}),
         patch("source.llm.providers.ollama_provider.broadcast_message", new_callable=AsyncMock),
         patch("source.llm.providers.ollama_provider.get_current_request", return_value=None),
         patch("source.llm.providers.ollama_provider.is_current_request_cancelled", return_value=False),
@@ -168,7 +169,7 @@ async def test_stream_uses_explicit_model_name_without_global_fallback():
     assert text == "hello"
     assert stats == {"prompt_eval_count": 2, "eval_count": 1}
     assert client.chat.await_args_list[0].kwargs["model"] == "explicit-model"
-    assert client.chat.await_args_list[0].kwargs["options"] == {"num_ctx": 32768}
+    assert client.chat.await_args_list[0].kwargs["options"] == {"num_ctx": 65536}
 
 
 @pytest.mark.asyncio
