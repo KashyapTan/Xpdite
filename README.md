@@ -113,26 +113,111 @@ bun run build
 
 ### Architecture Diagram
 
-```text
-+--------------------+          IPC           +----------------------+
-| Electron Host      | <--------------------> | React UI (Renderer)  |
-| window + lifecycle |                        | chat + settings      |
-+---------+----------+                        +----------+-----------+
-          |                                              |
-          | starts/monitors                              | WebSocket + REST
-          v                                              v
-+--------------------+   stdio + inline tools   +--------------------+
-| Python Backend     | <-----------------------> | MCP Integrations   |
-| FastAPI + services |                           | tools + connectors |
-+---------+----------+                           +--------------------+
-          |
-          | /internal/mobile/*
-          v
-+--------------------+ <-----------------------> +--------------------+
-| Channel Bridge     |     Telegram/Discord/    | Mobile Platforms   |
-| (TypeScript svc)   |     WhatsApp adapters    | (remote chat)      |
-+--------------------+                          +--------------------+
+**System Overview** — the five major processes and how they connect:
+
+
+
+```mermaid
+
+graph LR
+
+  classDef electron fill:#4f46e5,stroke:#3730a3,color:#fff
+
+  classDef react fill:#0ea5e9,stroke:#0284c7,color:#fff
+
+  classDef python fill:#059669,stroke:#047857,color:#fff
+
+  classDef bridge fill:#e11d48,stroke:#be123c,color:#fff
+
+  classDef external fill:#475569,stroke:#334155,color:#fff
+
+
+
+  Electron["Electron Host\nWindow · IPC · Lifecycle"]:::electron
+
+  ReactUI["React UI\nChat · Tabs · Settings"]:::react
+
+  Backend["Python Backend\nFastAPI · Services · SQLite"]:::python
+
+  Bridge["Channel Bridge\nWhatsApp · Telegram · Discord"]:::bridge
+
+  External["External Services\nOllama · Cloud LLMs · Google OAuth"]:::external
+
+
+
+  Electron <-->|IPC| ReactUI
+
+  Electron -->|spawns| Backend
+
+  Electron -->|spawns| Bridge
+
+  ReactUI <-->|"WebSocket + REST"| Backend
+
+  Backend <-->|"/internal/mobile/*"| Bridge
+
+  Backend -->|"LLM calls"| External
+
+  Bridge <-->|"messages"| External
+
 ```
+
+
+
+**Backend Request Flow** — how a chat message moves through the Python process:
+
+
+
+```mermaid
+
+graph LR
+
+  classDef input fill:#4f46e5,stroke:#3730a3,color:#fff
+
+  classDef llm fill:#7c3aed,stroke:#6d28d9,color:#fff
+
+  classDef mcp fill:#d97706,stroke:#b45309,color:#fff
+
+  classDef tools fill:#be185d,stroke:#9d174d,color:#fff
+
+  classDef store fill:#059669,stroke:#047857,color:#fff
+
+
+
+  Input["WebSocket Handler\n+ Tab Queue"]:::input
+
+  Conv["Conversation Service\nsubmit_query()"]:::input
+
+  LLM["LLM Router\nOllama or Cloud LLM"]:::llm
+
+  MCP["MCP Tool Manager\nSemantic retrieval · Skill injection"]:::mcp
+
+  Inline["Inline Tools\nterminal · memory · sub_agent\nvideo_watcher · skills · scheduler"]:::tools
+
+  Subprocess["Subprocess Servers\nfilesystem · websearch · gmail · calendar"]:::tools
+
+  DB[("SQLite\nMessages · History · Events")]:::store
+
+
+
+  Input --> Conv
+
+  Conv --> LLM
+
+  LLM -->|"tool calls"| MCP
+
+  MCP --> Inline
+
+  MCP --> Subprocess
+
+  LLM -->|"stream response"| Input
+
+  Conv --> DB
+
+  Inline --> DB
+
+```
+
+
 
 ---
 
