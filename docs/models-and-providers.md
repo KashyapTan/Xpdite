@@ -16,6 +16,8 @@ This document describes how Xpdite handles local and cloud model providers.
 
 - `GET /api/models/ollama`
 - `GET /api/models/ollama/info/{model_name}`
+- `GET /api/settings/ollama`
+- `PUT /api/settings/ollama`
 - `GET /api/models/enabled`
 - `PUT /api/models/enabled`
 - `GET /api/models/anthropic`
@@ -33,6 +35,7 @@ This document describes how Xpdite handles local and cloud model providers.
 ## Runtime Notes
 
 - Ollama backend requests may be globally serialized for local GPU stability.
+- Local Ollama models use the persisted Settings > Ollama context size as `num_ctx`; Ollama cloud models continue using their advertised maximum context window.
 - Cloud provider requests run through provider-specific streaming logic.
 
 ## Related Docs
