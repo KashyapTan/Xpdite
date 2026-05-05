@@ -163,7 +163,7 @@ describe('InlineContentBlocks', () => {
     // Chain header should be present with a completed thought duration.
     const chainHeader = container.querySelector('.tool-chain-header');
     expect(chainHeader).not.toBeNull();
-    expect(chainHeader).toHaveTextContent('Thought 1.5 sec');
+    expect(chainHeader).toHaveTextContent('Thought 1.5s');
 
     // Thinking content should be visible directly (thinking-only chains auto-expand)
     const thoughtContent = container.querySelector('.chain-thought-content');
@@ -368,6 +368,6 @@ describe('InlineContentBlocks', () => {
     const { container } = render(<InlineContentBlocks blocks={blocks} />);
     fireEvent.click(container.querySelector('.tool-chain-header') as HTMLElement);
 
-    expect(screen.getByText('2.2 sec')).toBeInTheDocument();
+    expect(screen.getByText('2.2s')).toBeInTheDocument();
   });
 });

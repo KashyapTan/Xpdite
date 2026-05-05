@@ -173,7 +173,7 @@ describe('ChatMessage', () => {
 
       render(<ChatMessage message={message} {...defaultProps} />);
 
-      expect(screen.getByText('Answered in 2.4 sec')).toBeInTheDocument();
+      expect(screen.getByText('2.4s')).toBeInTheDocument();
     });
 
     test('uses selectedModel when message model is not set', () => {

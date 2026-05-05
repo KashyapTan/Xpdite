@@ -37,7 +37,7 @@ describe('ThinkingSection', () => {
       />,
     );
 
-    expect(screen.getByText('Thought 2.3 sec')).toBeInTheDocument();
+    expect(screen.getByText('Thought 2.3s')).toBeInTheDocument();
     expect(screen.queryByTestId('loading-dots')).not.toBeInTheDocument();
   });
 
