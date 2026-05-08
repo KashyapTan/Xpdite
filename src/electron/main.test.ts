@@ -14,6 +14,9 @@ const getChannelBridgeStatusMock = vi.fn(async () => ({
 }));
 const getServerPortMock = vi.fn(() => 8123);
 const getServerTokenMock = vi.fn(() => 'token-123');
+const mkdirSyncMock = vi.fn();
+const readFileSyncMock = vi.fn();
+const writeFileSyncMock = vi.fn();
 const isDevMock = vi.fn(() => false);
 const onBootMarkerMock = vi.fn();
 const onBridgeMessageMock = vi.fn();
@@ -52,6 +55,11 @@ class MockBrowserWindow extends EventEmitter {
   setPosition = vi.fn();
   setSize = vi.fn();
   setBackgroundColor = vi.fn();
+  contentProtected = false;
+  setContentProtection = vi.fn((enabled: boolean) => {
+    this.contentProtected = enabled;
+  });
+  isContentProtected = vi.fn(() => this.contentProtected);
   show = vi.fn();
   focus = vi.fn();
 }
@@ -68,6 +76,7 @@ function BrowserWindowMock(options?: unknown) {
 
 const appMock = {
   getAppPath: vi.fn(() => 'C:/Program Files/Xpdite'),
+  getPath: vi.fn(() => 'C:/Users/Test/AppData/Roaming/Xpdite'),
   on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
     appHandlers.set(event, handler);
     return appMock;
@@ -75,6 +84,12 @@ const appMock = {
   exit: vi.fn(),
   quit: vi.fn(),
 };
+
+vi.mock('node:fs', () => ({
+  mkdirSync: mkdirSyncMock,
+  readFileSync: readFileSyncMock,
+  writeFileSync: writeFileSyncMock,
+}));
 
 const ipcMainMock = {
   handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -142,6 +157,11 @@ describe('electron main entrypoint', () => {
     latestWindow = null;
 
     browserWindowCtorSpy.mockClear();
+    readFileSyncMock.mockImplementation(() => {
+      throw new Error('settings missing');
+    });
+    mkdirSyncMock.mockImplementation(() => undefined);
+    writeFileSyncMock.mockImplementation(() => undefined);
     onBootMarkerMock.mockImplementation((callback) => {
       bootMarkerCallback = callback;
     });
@@ -164,6 +184,7 @@ describe('electron main entrypoint', () => {
       show: true,
     }));
     expect(setDisplayMediaRequestHandlerMock).toHaveBeenCalledTimes(1);
+    expect(latestWindow?.setContentProtection).toHaveBeenCalledWith(false);
     expect(latestWindow?.setAlwaysOnTop).toHaveBeenCalledWith(true, 'screen-saver');
     expect(latestWindow?.show).toHaveBeenCalledTimes(1);
     expect(startPythonServerMock).toHaveBeenCalledTimes(1);
@@ -204,8 +225,47 @@ describe('electron main entrypoint', () => {
 
     ipcHandlers.get('set-mini-mode')?.(event, true);
     expect(latestWindow?.setSize).toHaveBeenCalledWith(52, 52, false);
+    expect(ipcHandlers.get('get-content-protection')?.(event)).toEqual({
+      enabled: false,
+      active: false,
+      supported: process.platform === 'darwin' || process.platform === 'win32',
+    });
+    expect(ipcHandlers.get('set-content-protection')?.(event, true)).toEqual({
+      enabled: true,
+      active: true,
+      supported: process.platform === 'darwin' || process.platform === 'win32',
+    });
+    expect(latestWindow?.setContentProtection).toHaveBeenCalledWith(true);
+    expect(writeFileSyncMock).toHaveBeenCalledWith(
+      path.join('C:/Users/Test/AppData/Roaming/Xpdite', 'general-settings.json'),
+      JSON.stringify({ invisibleMode: true }, null, 2),
+      'utf8',
+    );
     ipcHandlers.get('focus-window')?.(event);
     expect(latestWindow?.focus).toHaveBeenCalledTimes(1);
+  });
+
+  test('restores persisted content protection before showing the window', async () => {
+    readFileSyncMock.mockReturnValueOnce(JSON.stringify({ invisibleMode: true }));
+
+    await import('./main.js');
+    const readyHandler = appHandlers.get('ready');
+    expect(readyHandler).toBeTypeOf('function');
+
+    await readyHandler?.();
+    await flushPromises();
+
+    expect(readFileSyncMock).toHaveBeenCalledWith(
+      path.join('C:/Users/Test/AppData/Roaming/Xpdite', 'general-settings.json'),
+      'utf8',
+    );
+    expect(latestWindow?.setContentProtection).toHaveBeenCalledWith(true);
+    expect(latestWindow?.show).toHaveBeenCalledTimes(1);
+    expect(ipcHandlers.get('get-content-protection')?.(trustedEvent())).toEqual({
+      enabled: true,
+      active: true,
+      supported: process.platform === 'darwin' || process.platform === 'win32',
+    });
   });
 
   test('loads the React shell before backend boot resolves', async () => {

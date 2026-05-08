@@ -225,8 +225,9 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 
 ### Settings tabs (full list)
 `Settings.tsx` renders the following tabs in order:
-`models → connections → tools → marketplace → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama → anthropic → gemini → openai → openrouter`
+`general → models → connections → tools → marketplace → skills → memory → artifacts → scheduled-jobs → meeting → sub-agents → mobile → system-prompt → ollama → anthropic → gemini → openai → openrouter`
 
+- **`general`** → `<SettingsGeneral>` — App-level settings. Invisible Mode is backed by Electron IPC (`get-content-protection` / `set-content-protection`) and persists to Electron `userData/general-settings.json` so `BrowserWindow.setContentProtection()` can be restored before the renderer loads.
 - **`marketplace`** → `<MarketplaceSettings>` — Community extension manager for skills, prompts, and server installs.
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
@@ -298,6 +299,7 @@ api.skillsApi.delete(name)       → DELETE /api/skills/{name}
 ### IPC surface (preload.ts)
 Several key methods are exposed via `contextBridge`:
 - `window.electronAPI.setMiniMode(mini: boolean)`
+- `window.electronAPI.getContentProtection()` / `setContentProtection(enabled)` — Reads/writes the persisted invisible-mode setting and calls `BrowserWindow.setContentProtection()` in the main process.
 - `window.electronAPI.focusWindow()`
 - `window.electronAPI.getServerPort()` — returns the port the Python backend is listening on (production only)
 - `window.electronAPI.getServerToken()` — loopback auth token for protected local endpoints (artifact API)

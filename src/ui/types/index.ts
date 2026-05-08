@@ -520,11 +520,20 @@ export interface ElectronBootState {
   error?: string;
 }
 
+export interface ElectronContentProtectionStatus {
+  enabled: boolean;
+  active: boolean;
+  supported: boolean;
+  error?: string;
+}
+
 declare global {
   interface Window {
     electronAPI?: {
       focusWindow: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
+      getContentProtection?: () => Promise<ElectronContentProtectionStatus>;
+      setContentProtection?: (enabled: boolean) => Promise<ElectronContentProtectionStatus>;
       openExternalUrl?: (url: string) => Promise<{ success: boolean; error?: string }>;
       getServerPort: () => Promise<number>;
       getServerToken?: () => Promise<string>;

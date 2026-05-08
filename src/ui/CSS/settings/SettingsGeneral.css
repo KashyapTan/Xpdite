@@ -1,0 +1,156 @@
+.general-settings {
+  padding: 16px 20px;
+  max-width: 560px;
+  overflow-y: auto;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+}
+
+.general-settings-title {
+  font-size: 1.5rem;
+  color: var(--color-text);
+  margin: 0 0 12px;
+}
+
+.general-settings-card {
+  background-color: var(--color-surface);
+  border: 1px solid var(--color-surface);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.general-settings-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.general-settings-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.general-settings-pin {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  color: var(--color-text-muted);
+  background: var(--color-surface-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+.general-settings-pin.active {
+  color: var(--color-text);
+  background: var(--color-thumbtack-selected);
+}
+
+.general-settings-pin svg {
+  display: block;
+}
+
+.general-settings-card-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.general-settings-card-title {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--color-text);
+  margin: 0;
+}
+
+.general-settings-card-description,
+.general-settings-card-note {
+  font-size: 0.8rem;
+  color: var(--color-text-dim);
+  margin: 0;
+  line-height: 1.4;
+}
+
+.general-settings-card-note {
+  color: var(--color-text-muted);
+}
+
+.general-settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.general-settings-toggle input[type='checkbox'] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.general-settings-toggle:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.general-settings-toggle-slider {
+  width: 36px;
+  height: 20px;
+  background: var(--color-surface-strong);
+  border-radius: 10px;
+  position: relative;
+  transition: background 0.25s;
+  flex-shrink: 0;
+}
+
+.general-settings-toggle-slider::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  background: var(--color-text-muted);
+  border-radius: 50%;
+  transition: transform 0.25s, background 0.25s;
+}
+
+.general-settings-toggle input:checked + .general-settings-toggle-slider {
+  background: var(--color-thumbtack-selected);
+}
+
+.general-settings-toggle input:checked + .general-settings-toggle-slider::after {
+  transform: translateX(16px);
+  background: var(--color-text);
+}
+
+.general-settings-status-row {
+  min-height: 18px;
+  display: flex;
+  align-items: center;
+}
+
+.general-settings-status,
+.general-settings-warning {
+  font-size: 0.78rem;
+  color: var(--color-text-dim);
+}
+
+.general-settings-warning {
+  color: var(--color-text-muted);
+}

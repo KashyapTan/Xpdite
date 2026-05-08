@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, session, shell, type IpcMainInvokeEvent } from 'electron';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { isDev } from './utils.js';
@@ -17,6 +18,7 @@ const __dirname = path.dirname(__filename);
 let mainWindow: BrowserWindow | null = null;
 const DEFAULT_WINDOW_BOUNDS = { width: 420, height: 420 };
 let normalBounds = { ...DEFAULT_WINDOW_BOUNDS, x: 100, y: 100 };
+const GENERAL_SETTINGS_FILE = 'general-settings.json';
 const DEV_RENDERER_URL = 'http://127.0.0.1:5123';
 const bootProfileEnabled = process.env.XPDITE_BOOT_PROFILE === '1';
 const bootProfileStartedAt = Date.now();
@@ -25,6 +27,17 @@ const PERF_LOG_MAX_CHARS = 2000;
 const PERF_LOG_WINDOW_MS = 1500;
 const PERF_LOG_MAX_PER_WINDOW = 140;
 const PERF_LOG_MUTE_MS = 2500;
+
+type GeneralSettings = {
+    invisibleMode: boolean;
+};
+
+type ContentProtectionStatus = {
+    enabled: boolean;
+    active: boolean;
+    supported: boolean;
+    error?: string;
+};
 
 type PerfLogRateState = {
     windowStartedAt: number;
@@ -35,6 +48,74 @@ type PerfLogRateState = {
 };
 
 const perfLogRateStateBySender = new Map<number, PerfLogRateState>();
+const DEFAULT_GENERAL_SETTINGS: GeneralSettings = {
+    invisibleMode: false,
+};
+let generalSettings: GeneralSettings = { ...DEFAULT_GENERAL_SETTINGS };
+let contentProtectionEnabled = false;
+
+function isContentProtectionSupported(): boolean {
+    return process.platform === 'darwin' || process.platform === 'win32';
+}
+
+function getGeneralSettingsPath(): string {
+    return path.join(app.getPath('userData'), GENERAL_SETTINGS_FILE);
+}
+
+function loadGeneralSettings(): GeneralSettings {
+    try {
+        const rawSettings = readFileSync(getGeneralSettingsPath(), 'utf8');
+        const parsedSettings = JSON.parse(rawSettings) as Partial<GeneralSettings>;
+        return {
+            ...DEFAULT_GENERAL_SETTINGS,
+            invisibleMode: parsedSettings.invisibleMode === true,
+        };
+    } catch {
+        return { ...DEFAULT_GENERAL_SETTINGS };
+    }
+}
+
+function saveGeneralSettings(settings: GeneralSettings): string | null {
+    try {
+        const settingsPath = getGeneralSettingsPath();
+        mkdirSync(path.dirname(settingsPath), { recursive: true });
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
+        return null;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn('Failed to save general settings:', message);
+        return message;
+    }
+}
+
+function getContentProtectionStatus(error?: string): ContentProtectionStatus {
+    return {
+        enabled: contentProtectionEnabled,
+        active: readActiveContentProtection(),
+        supported: isContentProtectionSupported(),
+        ...(error ? { error } : {}),
+    };
+}
+
+function readActiveContentProtection(): boolean {
+    try {
+        return mainWindow?.isContentProtected() ?? contentProtectionEnabled;
+    } catch {
+        return contentProtectionEnabled;
+    }
+}
+
+function applyContentProtection(enabled: boolean): string | null {
+    contentProtectionEnabled = enabled;
+    try {
+        mainWindow?.setContentProtection(enabled);
+        return null;
+    } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn('Failed to apply content protection:', message);
+        return message;
+    }
+}
 
 function isTrustedPerfLogSender(event: IpcMainInvokeEvent): boolean {
     const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
@@ -355,6 +436,9 @@ async function cleanupAppProcesses(): Promise<void> {
 
 app.on('ready', async () => {
     bootProfile('app_ready');
+    generalSettings = loadGeneralSettings();
+    contentProtectionEnabled = generalSettings.invisibleMode;
+
     // Auto-approve getDisplayMedia requests for meeting recording.
     session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
         if (request.frame) {
@@ -406,6 +490,7 @@ app.on('ready', async () => {
     }
 
     normalBounds = mainWindow.getBounds();
+    applyContentProtection(contentProtectionEnabled);
     mainWindow.setAlwaysOnTop(true, 'screen-saver');
     mainWindow.show();
 
@@ -496,6 +581,39 @@ app.on('ready', async () => {
             mainWindow.setSize(normalBounds.width, normalBounds.height, false);
             mainWindow.setPosition(normalBounds.x, normalBounds.y, false);
         }
+    });
+
+    ipcMain.handle('get-content-protection', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return {
+                enabled: false,
+                active: false,
+                supported: false,
+                error: 'Untrusted sender',
+            } satisfies ContentProtectionStatus;
+        }
+
+        return getContentProtectionStatus();
+    });
+
+    ipcMain.handle('set-content-protection', (event, enabled: boolean) => {
+        if (!isTrustedIpcSender(event)) {
+            return {
+                enabled: contentProtectionEnabled,
+                active: readActiveContentProtection(),
+                supported: false,
+                error: 'Untrusted sender',
+            } satisfies ContentProtectionStatus;
+        }
+
+        const nextEnabled = enabled === true;
+        generalSettings = {
+            ...generalSettings,
+            invisibleMode: nextEnabled,
+        };
+        const applyError = applyContentProtection(nextEnabled);
+        const saveError = saveGeneralSettings(generalSettings);
+        return getContentProtectionStatus(applyError ?? saveError ?? undefined);
     });
 
     ipcMain.handle('focus-window', (event) => {

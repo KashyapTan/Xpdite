@@ -259,6 +259,34 @@ export function RotateCcwIcon(props: AppIconProps) {
   );
 }
 
+export function PinIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M12 17v5" />
+      <path d="M5 17h14" />
+      <path d="M17 17v-5.293a1 1 0 0 0-.293-.707L14 8V2" />
+      <path d="M7 17v-5.293a1 1 0 0 1 .293-.707L10 8V2" />
+      <path d="M5 2h14" />
+    </BaseIcon>
+  );
+}
+
+export function GeneralTabIcon(props: AppIconProps) {
+  return (
+    <BaseIcon {...props}>
+      <path d="M21 4h-7" />
+      <path d="M10 4H3" />
+      <circle cx="12" cy="4" r="2" />
+      <path d="M21 12h-9" />
+      <path d="M8 12H3" />
+      <circle cx="10" cy="12" r="2" />
+      <path d="M21 20h-5" />
+      <path d="M12 20H3" />
+      <circle cx="14" cy="20" r="2" />
+    </BaseIcon>
+  );
+}
+
 export function ConnectionsTabIcon(props: AppIconProps) {
   return (
     <BaseIcon {...props}>

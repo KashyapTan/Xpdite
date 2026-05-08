@@ -11,6 +11,10 @@ vi.mock('../../components/settings/SettingsModels', () => ({
   default: () => <div data-testid="settings-models">models</div>,
 }));
 
+vi.mock('../../components/settings/SettingsGeneral', () => ({
+  default: () => <div data-testid="settings-general">general</div>,
+}));
+
 vi.mock('../../components/settings/SettingsTools', () => ({
   default: () => <div data-testid="settings-tools">tools</div>,
 }));
@@ -70,6 +74,9 @@ describe('Settings page', () => {
 
   test('switches tabs and renders associated sections', async () => {
     render(<Settings />);
+
+    fireEvent.click(screen.getByText('General'));
+    expect(await screen.findByTestId('settings-general')).toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Connections'));
     expect(await screen.findByTestId('settings-connections')).toBeInTheDocument();

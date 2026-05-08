@@ -7,6 +7,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.log('electronAPI.setMiniMode called with:', mini);
         return ipcRenderer.invoke('set-mini-mode', mini);
     },
+    getContentProtection: () => {
+        return ipcRenderer.invoke('get-content-protection');
+    },
+    setContentProtection: (enabled: boolean) => {
+        return ipcRenderer.invoke('set-content-protection', enabled);
+    },
     focusWindow: () => {
         console.log('electronAPI.focusWindow called');
         return ipcRenderer.invoke('focus-window');

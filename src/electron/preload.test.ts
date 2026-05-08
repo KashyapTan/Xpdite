@@ -36,6 +36,8 @@ describe('preload bridge', () => {
     expect(key).toBe('electronAPI');
 
     await api.setMiniMode(true);
+    await api.getContentProtection();
+    await api.setContentProtection(true);
     await api.focusWindow();
     await api.getServerPort();
     await api.getServerToken();
@@ -45,6 +47,8 @@ describe('preload bridge', () => {
     await api.getChannelBridgePort();
     await api.getChannelBridgeStatus();
     expect(invokeMock).toHaveBeenCalledWith('set-mini-mode', true);
+    expect(invokeMock).toHaveBeenCalledWith('get-content-protection');
+    expect(invokeMock).toHaveBeenCalledWith('set-content-protection', true);
     expect(invokeMock).toHaveBeenCalledWith('focus-window');
     expect(invokeMock).toHaveBeenCalledWith('get-server-port');
     expect(invokeMock).toHaveBeenCalledWith('get-server-token');

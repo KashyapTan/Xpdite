@@ -4,6 +4,7 @@ import TitleBar from '../components/TitleBar';
 import {
   ArtifactsTabIcon,
   ConnectionsTabIcon,
+  GeneralTabIcon,
   MeetingTabIcon,
   MemoryTabIcon,
   MobileTabIcon,
@@ -15,6 +16,7 @@ import {
 } from '../components/icons/AppIcons';
 import '../CSS/pages/Settings.css';
 
+const SettingsGeneral = lazy(() => import('../components/settings/SettingsGeneral'));
 const modelsIcon = new URL('../assets/models.svg', import.meta.url).href;
 const connectionsIcon = new URL('../assets/mcp.svg', import.meta.url).href;
 const ollamaIcon = new URL('../assets/ollama.svg', import.meta.url).href;
@@ -58,6 +60,13 @@ const Settings: React.FC = () => {
 
   // Define all tabs
   const tabs: SettingsTab[] = [
+    {
+      id: 'general',
+      label: 'General',
+      icon: <GeneralTabIcon className="settings-icons" size={18} />,
+      className: 'settings-general-tab',
+      component: <SettingsGeneral />,
+    },
     {
       id: 'models',
       label: 'Models',
