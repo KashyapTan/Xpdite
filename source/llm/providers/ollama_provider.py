@@ -18,8 +18,9 @@ from ollama import AsyncClient as OllamaAsyncClient
 from ...core.connection import broadcast_message
 from ...core.request_context import get_current_request, is_current_request_cancelled
 from ..core.artifacts import ArtifactStreamParser, emit_artifact_stream_events
-from ..core.ollama_settings import get_local_ollama_options
+from ..core.ollama_settings import get_local_ollama_keep_alive, get_local_ollama_options
 from ..core.router import is_local_ollama_model
+from ..core.token_usage import empty_token_stats, has_token_usage, usage_from_ollama_response
 from ...mcp_integration.core.handlers import handle_mcp_tool_calls
 from ...mcp_integration.core.manager import mcp_manager
 from ...mcp_integration.core.tool_args import normalize_tool_args
@@ -104,7 +105,7 @@ async def stream_ollama_chat(
     client = OllamaAsyncClient()
 
     tool_calls_list: List[Dict[str, Any]] = []
-    _empty_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    _empty_stats: Dict[str, int] = empty_token_stats()
 
     ctx = get_current_request()
 
@@ -157,7 +158,7 @@ async def stream_ollama_chat(
             return (
                 pre_computed_response.get("content", ""),
                 pre_computed_response.get(
-                    "token_stats", {"prompt_eval_count": 0, "eval_count": 0}
+                    "token_stats", empty_token_stats()
                 ),
                 tool_calls_list,
                 pre_computed_response.get("interleaved_blocks"),
@@ -172,10 +173,7 @@ async def stream_ollama_chat(
     interleaved_blocks: List[Dict[str, Any]] = []
     thinking_tokens: list[str] = []
     final_message_content: str | None = None
-    collected_token_stats: Dict[str, int] = {
-        "prompt_eval_count": 0,
-        "eval_count": 0,
-    }
+    collected_token_stats: Dict[str, int] = empty_token_stats()
     artifact_parser = ArtifactStreamParser()
     thinking_complete_sent = False
     stream_emitted_visible_output = False
@@ -188,6 +186,7 @@ async def stream_ollama_chat(
         }
         if is_local_ollama_model(model_name):
             chat_kwargs["options"] = get_local_ollama_options()
+            chat_kwargs["keep_alive"] = get_local_ollama_keep_alive()
 
         stream = await client.chat(**chat_kwargs)
 
@@ -282,14 +281,8 @@ async def stream_ollama_chat(
 
             # Track final message and token stats
             if isinstance(chunk, dict) and chunk.get("done"):
-                token_stats = {
-                    "prompt_eval_count": chunk.get("prompt_eval_count", 0),
-                    "eval_count": chunk.get("eval_count", 0),
-                }
-                collected_token_stats["prompt_eval_count"] = (
-                    token_stats["prompt_eval_count"] or 0
-                )
-                collected_token_stats["eval_count"] = token_stats["eval_count"] or 0
+                token_stats = usage_from_ollama_response(chunk)
+                collected_token_stats = token_stats
                 await broadcast_message("token_usage", json.dumps(token_stats))
 
                 msg = chunk.get("message", {})
@@ -298,14 +291,8 @@ async def stream_ollama_chat(
                     if isinstance(mc, str) and mc:
                         final_message_content = mc
             elif hasattr(chunk, "done") and getattr(chunk, "done"):
-                token_stats = {
-                    "prompt_eval_count": getattr(chunk, "prompt_eval_count", 0),
-                    "eval_count": getattr(chunk, "eval_count", 0),
-                }
-                collected_token_stats["prompt_eval_count"] = (
-                    token_stats["prompt_eval_count"] or 0
-                )
-                collected_token_stats["eval_count"] = token_stats["eval_count"] or 0
+                token_stats = usage_from_ollama_response(chunk)
+                collected_token_stats = token_stats
                 await broadcast_message("token_usage", json.dumps(token_stats))
 
                 if hasattr(chunk, "message"):
@@ -358,6 +345,7 @@ async def stream_ollama_chat(
                 }
                 if is_local_ollama_model(model_name):
                     fallback_kwargs["options"] = get_local_ollama_options()
+                    fallback_kwargs["keep_alive"] = get_local_ollama_keep_alive()
                 fallback = await client.chat(**fallback_kwargs)
 
                 content_str = ""
@@ -386,28 +374,8 @@ async def stream_ollama_chat(
                         {"type": "thinking", "content": fallback_thinking}
                     )
 
-                fallback_token_stats = {
-                    "prompt_eval_count": 0,
-                    "eval_count": 0,
-                }
-                if isinstance(fallback, dict):
-                    fallback_token_stats["prompt_eval_count"] = (
-                        fallback.get("prompt_eval_count", 0) or 0
-                    )
-                    fallback_token_stats["eval_count"] = (
-                        fallback.get("eval_count", 0) or 0
-                    )
-                else:
-                    fallback_token_stats["prompt_eval_count"] = (
-                        getattr(fallback, "prompt_eval_count", 0) or 0
-                    )
-                    fallback_token_stats["eval_count"] = (
-                        getattr(fallback, "eval_count", 0) or 0
-                    )
-                if (
-                    fallback_token_stats["prompt_eval_count"]
-                    or fallback_token_stats["eval_count"]
-                ):
+                fallback_token_stats = usage_from_ollama_response(fallback)
+                if has_token_usage(fallback_token_stats):
                     collected_token_stats = fallback_token_stats
                     await broadcast_message(
                         "token_usage", json.dumps(fallback_token_stats)
@@ -492,7 +460,7 @@ async def _broadcast_tool_final_response(
     thinking = pre_computed.get("thinking", "")
     content = pre_computed.get("content", "")
     token_stats = pre_computed.get(
-        "token_stats", {"prompt_eval_count": 0, "eval_count": 0}
+        "token_stats", empty_token_stats()
     )
     interleaved_blocks: List[Dict[str, Any]] = []
 
@@ -512,7 +480,7 @@ async def _broadcast_tool_final_response(
     await broadcast_message("response_complete", "")
 
     # Broadcast token stats
-    if token_stats.get("prompt_eval_count") or token_stats.get("eval_count"):
+    if has_token_usage(token_stats):
         await broadcast_message("token_usage", json.dumps(token_stats))
 
     return content, token_stats, tool_calls_list, interleaved_blocks or None

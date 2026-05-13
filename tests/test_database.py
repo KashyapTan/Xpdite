@@ -323,21 +323,27 @@ class TestTokenUsage:
         assert usage["input"] == 100
         assert usage["output"] == 200
         assert usage["total"] == 300
+        assert usage["cached"] == 0
+        assert usage["cache_write"] == 0
 
     def test_token_usage_accumulates(self, db_manager):
         cid = db_manager.start_new_conversation("Accumulate")
-        db_manager.add_token_usage(cid, 50, 50)
-        db_manager.add_token_usage(cid, 30, 70)
+        db_manager.add_token_usage(cid, 50, 50, 10, 5)
+        db_manager.add_token_usage(cid, 30, 70, 2, 3)
         usage = db_manager.get_token_usage(cid)
         assert usage["input"] == 80
         assert usage["output"] == 120
+        assert usage["cached"] == 12
+        assert usage["cache_write"] == 8
 
     def test_negative_tokens_clamped_to_zero(self, db_manager):
         cid = db_manager.start_new_conversation("Negative")
-        db_manager.add_token_usage(cid, -50, -100)
+        db_manager.add_token_usage(cid, -50, -100, -10, -5)
         usage = db_manager.get_token_usage(cid)
         assert usage["input"] == 0
         assert usage["output"] == 0
+        assert usage["cached"] == 0
+        assert usage["cache_write"] == 0
 
     def test_none_tokens_treated_as_zero(self, db_manager):
         cid = db_manager.start_new_conversation("NoneTokens")
@@ -345,6 +351,8 @@ class TestTokenUsage:
         usage = db_manager.get_token_usage(cid)
         assert usage["input"] == 0
         assert usage["output"] == 0
+        assert usage["cached"] == 0
+        assert usage["cache_write"] == 0
 
 
 # ------------------------------------------------------------------

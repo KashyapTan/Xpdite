@@ -31,7 +31,13 @@ from ...llm.core.artifacts import (
     emit_artifact_stream_events,
     serialize_blocks_for_model_content,
 )
-from ...llm.core.ollama_settings import get_local_ollama_options
+from ...llm.core.ollama_settings import get_local_ollama_keep_alive, get_local_ollama_options
+from ...llm.core.token_usage import (
+    add_token_stats,
+    empty_token_stats,
+    has_token_usage,
+    usage_from_ollama_response,
+)
 from .manager import mcp_manager
 from .retriever import retriever
 from ..executors.terminal_executor import execute_terminal_tool, is_terminal_tool
@@ -78,27 +84,28 @@ def _ollama_options_for_request_model() -> Dict[str, int] | None:
 
 def _extract_token_stats(response: Any) -> Dict[str, int]:
     """Extract Ollama usage counters from dict or SDK response objects."""
-    if isinstance(response, dict):
-        return {
-            "prompt_eval_count": int(response.get("prompt_eval_count", 0) or 0),
-            "eval_count": int(response.get("eval_count", 0) or 0),
-        }
-    return {
-        "prompt_eval_count": int(getattr(response, "prompt_eval_count", 0) or 0),
-        "eval_count": int(getattr(response, "eval_count", 0) or 0),
-    }
+    return usage_from_ollama_response(response)
 
 
 async def _record_auxiliary_token_usage(token_stats: Dict[str, int]) -> None:
     """Broadcast and persist request-scoped usage outside the main return path."""
     input_tokens = token_stats.get("prompt_eval_count", 0)
     output_tokens = token_stats.get("eval_count", 0)
-    if not input_tokens and not output_tokens:
+    cached_reported = "cached_tokens" in token_stats
+    cache_write_reported = "cache_write_tokens" in token_stats
+    cached_tokens = token_stats.get("cached_tokens", 0)
+    cache_write_tokens = token_stats.get("cache_write_tokens", 0)
+    if not has_token_usage(token_stats):
         return
 
     ctx = get_current_request()
     if ctx is not None:
-        ctx.add_extra_token_usage(input_tokens, output_tokens)
+        ctx.add_extra_token_usage(
+            input_tokens,
+            output_tokens,
+            cached_tokens if cached_reported else None,
+            cache_write_tokens if cache_write_reported else None,
+        )
     await broadcast_message("token_usage", json.dumps(token_stats))
 
 
@@ -331,6 +338,7 @@ async def handle_mcp_tool_calls(
         ollama_options = _ollama_options_for_request_model()
         if ollama_options is not None:
             detection_kwargs["options"] = ollama_options
+            detection_kwargs["keep_alive"] = get_local_ollama_keep_alive()
         response = await async_client.chat(**detection_kwargs)
     except Exception as e:
         logger.error("Error in tool detection call: %s", e)
@@ -739,10 +747,7 @@ async def handle_mcp_tool_calls(
             ) = follow_up_result
             current_model_content = current_content or None
 
-        total_token_stats["prompt_eval_count"] += round_stats.get(
-            "prompt_eval_count", 0
-        )
-        total_token_stats["eval_count"] += round_stats.get("eval_count", 0)
+        add_token_stats(total_token_stats, round_stats)
         is_first_round = False
 
         # If no more tool calls, the final text was already streamed
@@ -803,7 +808,7 @@ async def _stream_tool_follow_up(
         current_round_blocks: List[Dict[str, Any]] = []
         thinking_chunks: list[str] = []
         tool_calls_found: List[Dict[str, Any]] = []
-        token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+        token_stats: Dict[str, int] = empty_token_stats()
         thinking_complete_sent = False
         artifact_parser = ArtifactStreamParser()
 
@@ -817,6 +822,7 @@ async def _stream_tool_follow_up(
         ollama_options = _ollama_options_for_request_model()
         if ollama_options is not None:
             follow_up_kwargs["options"] = ollama_options
+            follow_up_kwargs["keep_alive"] = get_local_ollama_keep_alive()
         stream = await async_client.chat(**follow_up_kwargs)
 
         async for chunk in stream:
@@ -901,15 +907,9 @@ async def _stream_tool_follow_up(
 
             # Track token stats on done
             if hasattr(chunk, "done") and getattr(chunk, "done"):
-                token_stats["prompt_eval_count"] = (
-                    getattr(chunk, "prompt_eval_count", 0) or 0
-                )
-                token_stats["eval_count"] = getattr(chunk, "eval_count", 0) or 0
+                token_stats = usage_from_ollama_response(chunk)
             elif isinstance(chunk, dict) and chunk.get("done"):
-                token_stats["prompt_eval_count"] = (
-                    chunk.get("prompt_eval_count", 0) or 0
-                )
-                token_stats["eval_count"] = chunk.get("eval_count", 0) or 0
+                token_stats = usage_from_ollama_response(chunk)
 
         if thinking_chunks and not thinking_complete_sent:
             await broadcast_message("thinking_complete", "")
@@ -993,5 +993,5 @@ async def _stream_tool_follow_up(
                 )
 
     if include_model_content:
-        return "", None, [], {"prompt_eval_count": 0, "eval_count": 0}, ""
-    return "", [], {"prompt_eval_count": 0, "eval_count": 0}, ""
+        return "", None, [], empty_token_stats(), ""
+    return "", [], empty_token_stats(), ""

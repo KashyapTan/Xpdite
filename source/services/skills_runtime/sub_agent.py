@@ -26,8 +26,22 @@ from ...llm.core.stream_recovery import (
     get_mid_stream_generated_suffix,
 )
 from ...llm.core.provider_errors import build_provider_error_message
+from ...llm.core.prompt_cache import (
+    mark_messages_for_anthropic_prompt_cache,
+    mark_tools_for_anthropic_prompt_cache,
+)
 from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, USER_DATA_DIR
-from ...llm.core.ollama_settings import get_local_ollama_options
+from ...llm.core.ollama_settings import get_local_ollama_keep_alive, get_local_ollama_options
+from ...llm.core.token_usage import (
+    add_sub_agent_token_totals,
+    build_prompt_cache_key,
+    has_token_usage,
+    supports_anthropic_cache_control,
+    supports_openai_prompt_cache_key,
+    usage_from_litellm_chat_usage,
+    usage_from_litellm_responses_usage,
+    usage_from_ollama_response,
+)
 from ...core.connection import broadcast_message
 from ...core.request_context import (
     get_current_model,
@@ -151,22 +165,36 @@ async def _record_sub_agent_token_usage(token_stats: dict) -> None:
     """Expose sub-agent LLM usage to the parent chat request and UI."""
     input_tokens = int(token_stats.get("prompt_tokens", 0) or 0)
     output_tokens = int(token_stats.get("completion_tokens", 0) or 0)
-    if not input_tokens and not output_tokens:
+    cached_reported = "cached_tokens" in token_stats
+    cache_write_reported = "cache_write_tokens" in token_stats
+    cached_tokens = int(token_stats.get("cached_tokens", 0) or 0)
+    cache_write_tokens = int(token_stats.get("cache_write_tokens", 0) or 0)
+    if (
+        not input_tokens
+        and not output_tokens
+        and not cached_reported
+        and not cache_write_reported
+    ):
         return
 
     ctx = get_current_request()
     if ctx is not None:
-        ctx.add_extra_token_usage(input_tokens, output_tokens)
+        ctx.add_extra_token_usage(
+            input_tokens,
+            output_tokens,
+            cached_tokens if cached_reported else None,
+            cache_write_tokens if cache_write_reported else None,
+        )
 
-    await broadcast_message(
-        "token_usage",
-        json.dumps(
-            {
-                "prompt_eval_count": input_tokens,
-                "eval_count": output_tokens,
-            }
-        ),
-    )
+    payload = {
+        "prompt_eval_count": input_tokens,
+        "eval_count": output_tokens,
+    }
+    if cached_reported:
+        payload["cached_tokens"] = cached_tokens
+    if cache_write_reported:
+        payload["cache_write_tokens"] = cache_write_tokens
+    await broadcast_message("token_usage", json.dumps(payload))
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +343,12 @@ async def _run_chatgpt_subscription_sub_agent(
         {"role": "user", "content": instruction},
     ]
     responses_tools = _responses_tools_from_chat_tools(openai_tools)
+    prompt_cache_key = build_prompt_cache_key(
+        "openai-codex",
+        litellm_model,
+        system_prompt=_SUB_AGENT_SYSTEM_PROMPT,
+        tools=responses_tools,
+    )
 
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
@@ -353,6 +387,7 @@ async def _run_chatgpt_subscription_sub_agent(
                 "stream": True,
                 "timeout": _SUB_AGENT_TIMEOUT,
                 "store": False,
+                "prompt_cache_key": prompt_cache_key,
             }
             if allow_tools:
                 create_kwargs["tools"] = responses_tools
@@ -434,12 +469,9 @@ async def _run_chatgpt_subscription_sub_agent(
                 elif event_type == "response.completed":
                     response_obj = _object_field(event, "response")
                     usage = _object_field(response_obj, "usage")
-                    total_tokens["prompt_tokens"] += (
-                        int(_object_field(usage, "input_tokens", 0) or 0)
-                    )
-                    total_tokens["completion_tokens"] += (
-                        int(_object_field(usage, "output_tokens", 0) or 0)
-                    )
+                    parsed_usage = usage_from_litellm_responses_usage(usage)
+                    if has_token_usage(parsed_usage):
+                        add_sub_agent_token_totals(total_tokens, parsed_usage)
 
             round_text = "".join(round_text_chunks)
             if round_text:
@@ -652,6 +684,31 @@ async def _run_cloud_sub_agent(
         if not openai_tools:
             openai_tools = None
 
+    if provider == "openai-codex":
+        return await _run_chatgpt_subscription_sub_agent(
+            litellm_model=litellm_model,
+            instruction=instruction,
+            openai_tools=openai_tools,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model_tier=model_tier,
+        )
+
+    use_anthropic_cache_control = supports_anthropic_cache_control(provider, model)
+    prompt_cache_key = (
+        build_prompt_cache_key(
+            provider,
+            model,
+            system_prompt=_SUB_AGENT_SYSTEM_PROMPT,
+            tools=openai_tools,
+        )
+        if supports_openai_prompt_cache_key(provider)
+        else None
+    )
+    if use_anthropic_cache_control:
+        messages = mark_messages_for_anthropic_prompt_cache(messages)
+        openai_tools = mark_tools_for_anthropic_prompt_cache(openai_tools)
+
     total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
     accumulated_text: list[str] = []
     transcript_steps: list[dict[str, Any]] = []
@@ -680,16 +737,6 @@ async def _run_cloud_sub_agent(
     if max_tokens is None and provider == "anthropic":
         max_tokens = 16384
 
-    if provider == "openai-codex":
-        return await _run_chatgpt_subscription_sub_agent(
-            litellm_model=litellm_model,
-            instruction=instruction,
-            openai_tools=openai_tools,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            model_tier=model_tier,
-        )
-
     rounds = 0
     while True:
         if is_current_request_cancelled():
@@ -710,6 +757,8 @@ async def _run_cloud_sub_agent(
         }
         if api_key:
             create_kwargs["api_key"] = api_key
+        if prompt_cache_key:
+            create_kwargs["prompt_cache_key"] = prompt_cache_key
         if max_tokens and max_tokens > 0:
             create_kwargs["max_tokens"] = max_tokens
         if allow_tools:
@@ -722,8 +771,10 @@ async def _run_cloud_sub_agent(
             finish_reason = None
             round_text_step_index: int | None = None
             stream_retry_count = 0
-            round_prompt_tokens = 0
-            round_completion_tokens = 0
+            round_token_stats: Dict[str, int] = {
+                "prompt_eval_count": 0,
+                "eval_count": 0,
+            }
 
             def _append_stream_text(chunk_text: str) -> None:
                 """Append streamed text and keep transcript text block in sync."""
@@ -746,13 +797,9 @@ async def _run_cloud_sub_agent(
 
                         # Extract usage from final chunk if available
                         if hasattr(chunk, "usage") and chunk.usage:
-                            prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
-                            completion = (
-                                getattr(chunk.usage, "completion_tokens", 0) or 0
-                            )
-                            if prompt or completion:
-                                round_prompt_tokens = int(prompt)
-                                round_completion_tokens = int(completion)
+                            parsed_usage = usage_from_litellm_chat_usage(chunk.usage)
+                            if has_token_usage(parsed_usage):
+                                round_token_stats = parsed_usage
 
                         if not chunk.choices:
                             continue
@@ -868,8 +915,7 @@ async def _run_cloud_sub_agent(
                     raise
 
             # After streaming, add collected text to accumulated
-            total_tokens["prompt_tokens"] += round_prompt_tokens
-            total_tokens["completion_tokens"] += round_completion_tokens
+            add_sub_agent_token_totals(total_tokens, round_token_stats)
 
             round_text = "".join(round_text_chunks)
             if round_text:
@@ -1102,6 +1148,7 @@ async def _run_ollama_sub_agent(
         }
         if _is_local_ollama(model_name):
             chat_kwargs["options"] = get_local_ollama_options()
+            chat_kwargs["keep_alive"] = get_local_ollama_keep_alive()
         if allow_tools:
             chat_kwargs["tools"] = tools
             chat_kwargs["think"] = False  # Ollama bug #10976 workaround
@@ -1136,8 +1183,10 @@ async def _run_ollama_sub_agent(
 
                     # Accumulate token counts from final chunk
                     if done:
-                        total_tokens["prompt_tokens"] += chunk.get("prompt_eval_count", 0) or 0
-                        total_tokens["completion_tokens"] += chunk.get("eval_count", 0) or 0
+                        add_sub_agent_token_totals(
+                            total_tokens,
+                            usage_from_ollama_response(chunk),
+                        )
 
                     # Stream model thinking/reasoning when available
                     thinking = msg.get("thinking", "") or msg.get("reasoning_content", "")
@@ -1184,8 +1233,10 @@ async def _run_ollama_sub_agent(
                     done = getattr(chunk, "done", False)
 
                     if done:
-                        total_tokens["prompt_tokens"] += getattr(chunk, "prompt_eval_count", 0) or 0
-                        total_tokens["completion_tokens"] += getattr(chunk, "eval_count", 0) or 0
+                        add_sub_agent_token_totals(
+                            total_tokens,
+                            usage_from_ollama_response(chunk),
+                        )
 
                     if msg:
                         thinking = (

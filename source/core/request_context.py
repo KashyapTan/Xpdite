@@ -90,6 +90,10 @@ class RequestContext:
         self.forced_skills: list = []  # List[Skill] at runtime
         self.extra_input_tokens = 0
         self.extra_output_tokens = 0
+        self.extra_cached_tokens = 0
+        self.extra_cache_write_tokens = 0
+        self.extra_cached_tokens_reported = False
+        self.extra_cache_write_tokens_reported = False
 
     # ── Read-only state ────────────────────────────────────────────
 
@@ -132,7 +136,13 @@ class RequestContext:
             return
         self._cancel_callbacks.append(callback)
 
-    def add_extra_token_usage(self, input_tokens: int, output_tokens: int) -> None:
+    def add_extra_token_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int | None = None,
+        cache_write_tokens: int | None = None,
+    ) -> None:
         """Accumulate token usage produced outside the main provider return path.
 
         Sub-agents and hidden Ollama tool-detection calls are real LLM calls, but
@@ -142,10 +152,21 @@ class RequestContext:
         """
         self.extra_input_tokens += max(0, int(input_tokens or 0))
         self.extra_output_tokens += max(0, int(output_tokens or 0))
+        if cached_tokens is not None:
+            self.extra_cached_tokens_reported = True
+            self.extra_cached_tokens += max(0, int(cached_tokens or 0))
+        if cache_write_tokens is not None:
+            self.extra_cache_write_tokens_reported = True
+            self.extra_cache_write_tokens += max(0, int(cache_write_tokens or 0))
 
     def get_extra_token_usage(self) -> dict[str, int]:
         """Return request-scoped auxiliary token usage."""
-        return {
+        usage = {
             "prompt_eval_count": self.extra_input_tokens,
             "eval_count": self.extra_output_tokens,
         }
+        if self.extra_cached_tokens_reported:
+            usage["cached_tokens"] = self.extra_cached_tokens
+        if self.extra_cache_write_tokens_reported:
+            usage["cache_write_tokens"] = self.extra_cache_write_tokens
+        return usage

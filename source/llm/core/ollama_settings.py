@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from ...infrastructure.config import OLLAMA_CTX_SIZE
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 OLLAMA_LOCAL_CONTEXT_SIZE_SETTING = "ollama_local_context_size"
 OLLAMA_LOCAL_CONTEXT_SIZE_MIN = 512
 OLLAMA_LOCAL_CONTEXT_SIZE_MAX = 1_048_576
+OLLAMA_LOCAL_KEEP_ALIVE_DEFAULT = "30m"
 
 
 def normalize_ollama_context_size(value: Any) -> int | None:
@@ -46,6 +48,11 @@ def get_local_ollama_context_size() -> int:
 def get_local_ollama_options() -> dict[str, int]:
     """Return Ollama chat options for local model calls."""
     return {"num_ctx": get_local_ollama_context_size()}
+
+
+def get_local_ollama_keep_alive() -> str:
+    """Return the keep_alive value for local Ollama chat calls."""
+    return os.environ.get("OLLAMA_KEEP_ALIVE", OLLAMA_LOCAL_KEEP_ALIVE_DEFAULT)
 
 
 def get_ollama_settings_payload() -> dict[str, int | bool]:

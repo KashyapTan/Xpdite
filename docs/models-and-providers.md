@@ -35,8 +35,10 @@ This document describes how Xpdite handles local and cloud model providers.
 ## Runtime Notes
 
 - Ollama backend requests may be globally serialized for local GPU stability.
-- Local Ollama models use the persisted Settings > Ollama context size as `num_ctx`; Ollama cloud models continue using their advertised maximum context window.
+- Local Ollama models use the persisted Settings > Ollama context size as `num_ctx` and pass `keep_alive` so the daemon can keep model/KV state warm; Ollama cloud models continue using their advertised maximum context window.
 - Cloud provider requests run through provider-specific streaming logic.
+- Prompt caching is provider-native. OpenAI/ChatGPT subscription requests include a hashed prompt-cache affinity key, Anthropic/Claude requests use ephemeral cache control, and Gemini/OpenRouter cache hits are recorded when the provider reports them.
+- Token accounting persists input, output, cached-read, and cache-write totals. Cached tokens are reported separately from the context-window total.
 
 ## Related Docs
 

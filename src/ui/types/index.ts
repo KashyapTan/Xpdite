@@ -191,6 +191,8 @@ export interface TokenUsage {
   total: number;
   input: number;
   output: number;
+  cached: number | null;
+  cacheWrite: number | null;
   limit: number;
 }
 
@@ -448,6 +450,8 @@ export interface ConversationResumedContent {
     total: number;
     input: number;
     output: number;
+    cached?: number;
+    cache_write?: number;
   };
 }
 
@@ -488,6 +492,8 @@ export interface SubAgentTranscriptStep {
 export interface TokenUsageContent {
   prompt_eval_count?: number;
   eval_count?: number;
+  cached_tokens?: number;
+  cache_write_tokens?: number;
 }
 
 // ============================================

@@ -34,6 +34,20 @@ from ..core.stream_recovery import (
     get_mid_stream_generated_suffix,
 )
 from ..core.provider_errors import build_provider_error_message
+from ..core.prompt_cache import (
+    mark_messages_for_anthropic_prompt_cache,
+    mark_tools_for_anthropic_prompt_cache,
+)
+from ..core.token_usage import (
+    add_token_stats,
+    build_prompt_cache_key,
+    empty_token_stats,
+    has_token_usage,
+    supports_anthropic_cache_control,
+    supports_openai_prompt_cache_key,
+    usage_from_litellm_chat_usage,
+    usage_from_litellm_responses_usage,
+)
 from ...mcp_integration.core.tool_args import normalize_tool_args, sanitize_tool_args
 from ...mcp_integration.core.tool_output import format_tool_output
 
@@ -853,7 +867,7 @@ async def _stream_chatgpt_subscription_responses(
 
     tool_calls_list: List[Dict[str, Any]] = []
     all_accumulated: list[str] = []
-    total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    total_token_stats: Dict[str, int] = empty_token_stats()
     interleaved_blocks: List[Dict[str, Any]] = []
 
     if allowed_tool_names:
@@ -876,6 +890,17 @@ async def _stream_chatgpt_subscription_responses(
             ]
             responses_tools = _responses_tools_from_chat_tools(selected_tools)
 
+    prompt_cache_key = (
+        build_prompt_cache_key(
+            provider,
+            model,
+            system_prompt=system_prompt,
+            tools=responses_tools,
+        )
+        if supports_openai_prompt_cache_key(provider)
+        else None
+    )
+
     try:
         model_info = litellm.get_model_info(litellm_model)
     except Exception:
@@ -893,8 +918,7 @@ async def _stream_chatgpt_subscription_responses(
         while has_more:
             current_round_blocks: List[Dict[str, Any]] = []
             artifact_parser = ArtifactStreamParser()
-            round_prompt_tokens = 0
-            round_completion_tokens = 0
+            round_token_stats: Dict[str, int] = empty_token_stats()
 
             if is_current_request_cancelled():
                 break
@@ -917,6 +941,8 @@ async def _stream_chatgpt_subscription_responses(
             }
             if instructions:
                 create_kwargs["instructions"] = instructions
+            if prompt_cache_key:
+                create_kwargs["prompt_cache_key"] = prompt_cache_key
             if reasoning_params:
                 create_kwargs["reasoning"] = {
                     "effort": reasoning_params["reasoning_effort"]
@@ -994,14 +1020,11 @@ async def _stream_chatgpt_subscription_responses(
                 elif event_type == "response.completed":
                     response_obj = _object_field(event, "response")
                     usage = _object_field(response_obj, "usage")
-                    prompt = _object_field(usage, "input_tokens", 0) or 0
-                    completion = _object_field(usage, "output_tokens", 0) or 0
-                    if prompt or completion:
-                        round_prompt_tokens = int(prompt)
-                        round_completion_tokens = int(completion)
+                    parsed_usage = usage_from_litellm_responses_usage(usage)
+                    if has_token_usage(parsed_usage):
+                        round_token_stats = parsed_usage
 
-            total_token_stats["prompt_eval_count"] += round_prompt_tokens
-            total_token_stats["eval_count"] += round_completion_tokens
+            add_token_stats(total_token_stats, round_token_stats)
 
             final_events = artifact_parser.finalize()
             if final_events:
@@ -1127,7 +1150,7 @@ async def _stream_litellm(
     # State accumulators (persist across all rounds)
     tool_calls_list: List[Dict[str, Any]] = []
     all_accumulated: list[str] = []
-    total_token_stats: Dict[str, int] = {"prompt_eval_count": 0, "eval_count": 0}
+    total_token_stats: Dict[str, int] = empty_token_stats()
     interleaved_blocks: List[Dict[str, Any]] = []
 
     # LiteLLM model string: "provider/model-name"
@@ -1180,6 +1203,21 @@ async def _stream_litellm(
                 if not tools:
                     tools = None
 
+        use_anthropic_cache_control = supports_anthropic_cache_control(provider, model)
+        prompt_cache_key = (
+            build_prompt_cache_key(
+                provider,
+                model,
+                system_prompt=system_prompt,
+                tools=tools,
+            )
+            if supports_openai_prompt_cache_key(provider)
+            else None
+        )
+        if use_anthropic_cache_control:
+            messages = mark_messages_for_anthropic_prompt_cache(messages)
+            tools = mark_tools_for_anthropic_prompt_cache(tools)
+
         rounds = 0
         has_more = True
         while has_more:
@@ -1188,8 +1226,7 @@ async def _stream_litellm(
             thinking_tokens: list[str] = []
             thinking_complete_sent = False
             artifact_parser = ArtifactStreamParser()
-            round_prompt_tokens = 0
-            round_completion_tokens = 0
+            round_token_stats: Dict[str, int] = empty_token_stats()
             round_raw_text_chunks: list[str] = []
 
             def _store_thinking_block() -> None:
@@ -1226,6 +1263,8 @@ async def _stream_litellm(
             }
             if api_key:
                 create_kwargs["api_key"] = api_key
+            if prompt_cache_key:
+                create_kwargs["prompt_cache_key"] = prompt_cache_key
 
             if max_tokens is not None and max_tokens > 0:
                 create_kwargs["max_tokens"] = max_tokens
@@ -1269,11 +1308,9 @@ async def _stream_litellm(
                         # Using assignment (last value wins) avoids double-counting
                         # if both a content chunk and a usage-only chunk carry data.
                         if hasattr(chunk, "usage") and chunk.usage:
-                            prompt = getattr(chunk.usage, "prompt_tokens", 0) or 0
-                            completion = getattr(chunk.usage, "completion_tokens", 0) or 0
-                            if prompt or completion:
-                                round_prompt_tokens = prompt
-                                round_completion_tokens = completion
+                            parsed_usage = usage_from_litellm_chat_usage(chunk.usage)
+                            if has_token_usage(parsed_usage):
+                                round_token_stats = parsed_usage
 
                         if not chunk.choices:
                             continue
@@ -1380,8 +1417,7 @@ async def _stream_litellm(
                     raise
 
             # Add this round's usage to running totals (summed across rounds)
-            total_token_stats["prompt_eval_count"] += round_prompt_tokens
-            total_token_stats["eval_count"] += round_completion_tokens
+            add_token_stats(total_token_stats, round_token_stats)
 
             # Finalize thinking section in UI for this round
             if thinking_tokens and not thinking_complete_sent:

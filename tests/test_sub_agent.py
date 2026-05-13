@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import litellm
@@ -14,8 +15,10 @@ from source.services.skills_runtime.sub_agent import (
     _uses_ollama_client,
     _get_sub_agent_tools,
     _EXCLUDED_TOOLS,
+    _SUB_AGENT_SYSTEM_PROMPT,
     _tool_progress_description,
     _truncate_safely,
+    _record_sub_agent_token_usage,
     _run_cloud_sub_agent,
     _run_ollama_sub_agent,
     execute_sub_agent,
@@ -30,6 +33,11 @@ class DummyProviderError(Exception):
         super().__init__(message)
         for key, value in attrs.items():
             setattr(self, key, value)
+
+
+class FakeRequestContext:
+    def __init__(self):
+        self.add_extra_token_usage = MagicMock()
 
 
 # ---------------------------------------------------------------------------
@@ -540,6 +548,14 @@ class TestRunCloudSubAgent:
         call_kwargs = mock_acompletion.call_args.kwargs
         assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert call_kwargs["api_key"] == "or-test-key"
+        assert "cache_control" not in call_kwargs
+        assert call_kwargs["messages"][0]["content"] == [
+            {
+                "type": "text",
+                "text": _SUB_AGENT_SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
     @patch("source.services.skills_runtime.sub_agent.litellm.get_model_info", return_value={})
@@ -568,6 +584,9 @@ class TestRunCloudSubAgent:
 
         assert result["error"] is None
         assert "response" in result
+        call_kwargs = mock_acompletion.call_args.kwargs
+        assert call_kwargs["prompt_cache_key"].startswith("xpdite-openai-gpt-4o-")
+        assert "Read file" not in call_kwargs["prompt_cache_key"]
 
     @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
     @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
@@ -714,6 +733,10 @@ class TestRunCloudSubAgent:
         assert create_kwargs["model"] == "chatgpt/gpt-5.4"
         assert create_kwargs["input"] == [{"role": "user", "content": "Summarize"}]
         assert create_kwargs["instructions"]
+        assert create_kwargs["prompt_cache_key"].startswith(
+            "xpdite-openai-codex-chatgpt-gpt-5.4-"
+        )
+        assert "Summarize" not in create_kwargs["prompt_cache_key"]
         assert "api_key" not in create_kwargs
 
     @patch("source.services.skills_runtime.sub_agent.is_current_request_cancelled", return_value=False)
@@ -872,7 +895,13 @@ class TestRunOllamaSubAgent:
         with patch("source.services.skills_runtime.sub_agent.OllamaAsyncClient", create=True):
             pass
 
-        with patch("ollama.AsyncClient", return_value=client):
+        with (
+            patch("ollama.AsyncClient", return_value=client),
+            patch(
+                "source.services.skills_runtime.sub_agent.get_local_ollama_keep_alive",
+                return_value="45m",
+            ),
+        ):
             result = await _run_ollama_sub_agent(
                 model_name="ollama/llama3.2",
                 instruction="Say hi",
@@ -888,6 +917,7 @@ class TestRunOllamaSubAgent:
             "error": None,
         }
         assert client.chat.await_args.kwargs["model"] == "llama3.2"
+        assert client.chat.await_args.kwargs["keep_alive"] == "45m"
         stream_types = [call.args[1] for call in mock_broadcast.await_args_list]
         assert any('"stream_type": "instruction"' in payload for payload in stream_types)
         assert any('"stream_type": "thinking_complete"' in payload for payload in stream_types)
@@ -953,6 +983,51 @@ class TestRunOllamaSubAgent:
 # ---------------------------------------------------------------------------
 # execute_sub_agent — integration-level with mocked LLM
 # ---------------------------------------------------------------------------
+
+
+class TestRecordSubAgentTokenUsage:
+    @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent.get_current_request")
+    async def test_omits_unreported_cache_fields_from_context_and_payload(
+        self, mock_request, mock_broadcast
+    ):
+        ctx = FakeRequestContext()
+        mock_request.return_value = ctx
+
+        await _record_sub_agent_token_usage(
+            {"prompt_tokens": 100, "completion_tokens": 50}
+        )
+
+        ctx.add_extra_token_usage.assert_called_once_with(100, 50, None, None)
+        assert json.loads(mock_broadcast.await_args.args[1]) == {
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+        }
+
+    @patch("source.services.skills_runtime.sub_agent.broadcast_message", new_callable=AsyncMock)
+    @patch("source.services.skills_runtime.sub_agent.get_current_request")
+    async def test_preserves_reported_zero_cache_fields(
+        self, mock_request, mock_broadcast
+    ):
+        ctx = FakeRequestContext()
+        mock_request.return_value = ctx
+
+        await _record_sub_agent_token_usage(
+            {
+                "prompt_tokens": 100,
+                "completion_tokens": 50,
+                "cached_tokens": 0,
+                "cache_write_tokens": 0,
+            }
+        )
+
+        ctx.add_extra_token_usage.assert_called_once_with(100, 50, 0, 0)
+        assert json.loads(mock_broadcast.await_args.args[1]) == {
+            "prompt_eval_count": 100,
+            "eval_count": 50,
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+        }
 
 
 class TestExecuteSubAgent:

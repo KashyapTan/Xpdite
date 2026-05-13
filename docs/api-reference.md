@@ -346,4 +346,5 @@ Server stream example:
 ## Notes
 
 - Some event payloads intentionally contain stringified JSON for compatibility.
+- `token_usage` content includes `prompt_eval_count` and `eval_count`; providers that report prompt-cache activity may also include `cached_tokens` and `cache_write_tokens`.
 - Keep this document and `source/api/websocket.py` protocol docstring in sync when adding/removing message types.

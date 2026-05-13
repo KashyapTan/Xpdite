@@ -1017,6 +1017,61 @@ class TestStreamLitellm:
         assert call_kwargs["api_key"] == "sk-secret-123"
 
     @pytest.mark.asyncio
+    async def test_openai_prompt_cache_key_passed_without_raw_prompt(
+        self, _mock_broadcast, _mock_cancelled
+    ):
+        chunks = [_text_chunk("ok", finish_reason="stop"), _usage_chunk(10, 2)]
+        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            await stream_cloud_chat(
+                provider="openai",
+                model="gpt-4.1",
+                api_key="sk-secret",
+                user_query="raw user content",
+                image_paths=[],
+                chat_history=[],
+                system_prompt="raw system prompt",
+            )
+
+        call_kwargs = mock_acomp.call_args.kwargs
+        assert call_kwargs["prompt_cache_key"].startswith("xpdite-openai-gpt-4.1-")
+        assert "raw user content" not in call_kwargs["prompt_cache_key"]
+        assert "raw system prompt" not in call_kwargs["prompt_cache_key"]
+
+    @pytest.mark.asyncio
+    async def test_anthropic_cache_control_marks_stable_messages_and_tools(
+        self, _mock_broadcast, _mock_cancelled, _mock_mcp
+    ):
+        chunks = [_text_chunk("ok", finish_reason="stop"), _usage_chunk(10, 2)]
+        mock_acomp = AsyncMock(return_value=_make_async_iter(chunks))
+        with patch("source.llm.providers.cloud_provider.litellm.acompletion", mock_acomp):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            await stream_cloud_chat(
+                provider="anthropic",
+                model="claude-sonnet-4-20250514",
+                api_key="sk-secret",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+                allowed_tool_names={"read_file"},
+                system_prompt="stable system prompt",
+            )
+
+        call_kwargs = mock_acomp.call_args.kwargs
+        assert "cache_control" not in call_kwargs
+        assert call_kwargs["messages"][0]["content"] == [
+            {
+                "type": "text",
+                "text": "stable system prompt",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
+        assert call_kwargs["tools"][-1]["cache_control"] == {"type": "ephemeral"}
+
+    @pytest.mark.asyncio
     async def test_openrouter_api_key_passed_directly(
         self, _mock_broadcast, _mock_cancelled
     ):
@@ -1033,11 +1088,20 @@ class TestStreamLitellm:
                 user_query="hi",
                 image_paths=[],
                 chat_history=[],
+                system_prompt="stable system prompt",
             )
 
         call_kwargs = mock_acomp.call_args.kwargs
         assert call_kwargs["model"] == "openrouter/anthropic/claude-3-5-sonnet"
         assert call_kwargs["api_key"] == "or-secret-key"
+        assert "cache_control" not in call_kwargs
+        assert call_kwargs["messages"][0]["content"] == [
+            {
+                "type": "text",
+                "text": "stable system prompt",
+                "cache_control": {"type": "ephemeral"},
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_openai_codex_routes_to_litellm_chatgpt_without_api_key(
@@ -1067,6 +1131,9 @@ class TestStreamLitellm:
         call_kwargs = mock_aresp.call_args.kwargs
         assert call_kwargs["model"] == "chatgpt/gpt-5.4"
         assert call_kwargs["input"] == [{"role": "user", "content": "hi"}]
+        assert call_kwargs["prompt_cache_key"].startswith(
+            "xpdite-openai-codex-gpt-5.4-"
+        )
         assert "api_key" not in call_kwargs
         mock_codex.configure_litellm_environment.assert_called_once_with()
 
@@ -2003,6 +2070,37 @@ class TestStreamLitellm:
         assert text == "Hello world!"
         assert stats["prompt_eval_count"] == 15
         assert stats["eval_count"] == 8
+
+    @pytest.mark.asyncio
+    async def test_cached_token_usage_on_usage_chunk(
+        self, _mock_broadcast, _mock_cancelled
+    ):
+        """Provider-reported cached tokens are preserved in stream stats."""
+        usage = SimpleNamespace(
+            prompt_tokens=1200,
+            completion_tokens=100,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=512),
+        )
+        chunks = [
+            _text_chunk("Cached"),
+            SimpleNamespace(choices=[], usage=usage),
+            _text_chunk(None, finish_reason="stop"),
+        ]
+        with _patch_acompletion(chunks):
+            from source.llm.providers.cloud_provider import stream_cloud_chat
+
+            _, stats, _, _ = await stream_cloud_chat(
+                provider="openai",
+                model="gpt-4.1",
+                api_key="sk-test",
+                user_query="hi",
+                image_paths=[],
+                chat_history=[],
+            )
+
+        assert stats["prompt_eval_count"] == 1200
+        assert stats["eval_count"] == 100
+        assert stats["cached_tokens"] == 512
 
     @pytest.mark.asyncio
     async def test_token_usage_summed_across_tool_rounds(

@@ -425,10 +425,15 @@ class TestConversationBranching:
 
             ctx = get_current_request()
             assert ctx is not None
-            ctx.add_extra_token_usage(7, 11)
+            ctx.add_extra_token_usage(7, 11, cached_tokens=3, cache_write_tokens=2)
             return (
                 "Fresh answer",
-                {"prompt_eval_count": 2, "eval_count": 4},
+                {
+                    "prompt_eval_count": 2,
+                    "eval_count": 4,
+                    "cached_tokens": 5,
+                    "cache_write_tokens": 1,
+                },
                 [],
                 [{"type": "text", "content": "Fresh answer"}],
             )
@@ -451,7 +456,13 @@ class TestConversationBranching:
 
         assert conversation_id == cid
         usage = db_manager.get_token_usage(cid)
-        assert usage == {"input": 9, "output": 15, "total": 24}
+        assert usage == {
+            "input": 9,
+            "output": 15,
+            "total": 24,
+            "cached": 8,
+            "cache_write": 3,
+        }
 
     @pytest.mark.anyio
     async def test_retry_message_creates_response_variant_and_truncates_later_turns(

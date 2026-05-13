@@ -12,7 +12,7 @@ interface UseTokenUsageReturn {
   tokenUsage: TokenUsage;
   showTokenPopup: boolean;
   setShowTokenPopup: (show: boolean) => void;
-  addTokens: (input: number, output: number) => void;
+  addTokens: (input: number, output: number, cached?: number, cacheWrite?: number) => void;
   resetTokens: () => void;
   setTokenUsage: (usage: Partial<TokenUsage>) => void;
   getSnapshot: () => TokenUsageSnapshot;
@@ -24,16 +24,20 @@ export function useTokenUsage(): UseTokenUsageReturn {
     total: 0,
     input: 0,
     output: 0,
+    cached: null,
+    cacheWrite: null,
     limit: UNKNOWN_LIMIT,
   });
   const [showTokenPopup, setShowTokenPopup] = useState(false);
 
-  const addTokens = useCallback((input: number, output: number) => {
+  const addTokens = useCallback((input: number, output: number, cached?: number, cacheWrite?: number) => {
     setTokenUsageState(prev => ({
       ...prev,
       total: prev.total + input + output,
       input: prev.input + input,
       output: prev.output + output,
+      cached: cached === undefined ? prev.cached : (prev.cached ?? 0) + cached,
+      cacheWrite: cacheWrite === undefined ? prev.cacheWrite : (prev.cacheWrite ?? 0) + cacheWrite,
     }));
   }, []);
 
@@ -42,6 +46,8 @@ export function useTokenUsage(): UseTokenUsageReturn {
       total: 0,
       input: 0,
       output: 0,
+      cached: null,
+      cacheWrite: null,
       limit: prev.limit,
     }));
   }, []);
@@ -58,7 +64,11 @@ export function useTokenUsage(): UseTokenUsageReturn {
   }), [tokenUsage]);
 
   const restoreSnapshot = useCallback((s: TokenUsageSnapshot) => {
-    setTokenUsageState({ ...s.tokenUsage });
+    setTokenUsageState({
+      cached: null,
+      cacheWrite: null,
+      ...s.tokenUsage,
+    });
   }, []);
 
   return {

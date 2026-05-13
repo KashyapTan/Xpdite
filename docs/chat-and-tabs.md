@@ -8,6 +8,7 @@ This document describes core chat behavior, tab/session isolation, and queue sem
 2. Backend enqueues request for that tab.
 3. Provider stream emits thinking/response/tool events.
 4. Frontend updates chat UI in real time.
+5. Token usage events update per-tab context-window state, including provider-reported cached/cache-write token metadata when available.
 
 ## Tab Model
 

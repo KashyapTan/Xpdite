@@ -85,7 +85,8 @@ async def websocket_endpoint(websocket: WebSocket):
       - artifact_deleted: Artifact was deleted or abandoned
       - tool_call: MCP tool call event
       - tool_calls_summary: Summary of all tool calls
-      - token_usage: Token usage statistics
+      - token_usage: Token usage statistics (`prompt_eval_count`, `eval_count`,
+        optional `cached_tokens`, optional `cache_write_tokens`)
       - context_cleared: Context was cleared
       - conversation_saved: Conversation was saved (includes turn metadata for patching)
       - conversations_list: List of conversations

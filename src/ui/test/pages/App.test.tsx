@@ -148,9 +148,11 @@ const screenshotStateMock = {
 };
 
 const tokenStateMock = {
-  tokenUsage: { total: 0, input: 0, output: 0, limit: 0 },
+  tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 0 },
   showTokenPopup: false,
-  getSnapshot: vi.fn(() => ({ tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } })),
+  getSnapshot: vi.fn(() => ({
+    tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 0 },
+  })),
   restoreSnapshot: vi.fn(),
   resetTokens: vi.fn(),
   setTokenUsage: vi.fn(),
@@ -610,7 +612,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });
@@ -782,6 +784,200 @@ describe('App websocket-driven behavior', () => {
     expect(chatStateMock.loadConversation).not.toHaveBeenCalled();
   });
 
+  test('active token usage preserves unreported cache fields', () => {
+    render(<App />);
+
+    tokenStateMock.addTokens.mockClear();
+
+    emitWebSocketEvent({
+      type: 'token_usage',
+      tab_id: 'tab-1',
+      content: {
+        prompt_eval_count: 100,
+        eval_count: 25,
+      },
+    });
+
+    expect(tokenStateMock.addTokens).toHaveBeenCalledWith(100, 25, undefined, undefined);
+
+    emitWebSocketEvent({
+      type: 'token_usage',
+      tab_id: 'tab-1',
+      content: {
+        prompt_eval_count: 50,
+        eval_count: 10,
+        cached_tokens: 0,
+        cache_write_tokens: 5,
+      },
+    });
+
+    expect(tokenStateMock.addTokens).toHaveBeenLastCalledWith(50, 10, 0, 5);
+  });
+
+  test('active conversation resume restores cached token usage', async () => {
+    render(<App />);
+
+    tokenStateMock.setTokenUsage.mockClear();
+
+    emitWebSocketEvent({
+      type: 'conversation_resumed',
+      tab_id: 'tab-1',
+      content: {
+        conversation_id: 'conv-active',
+        messages: [],
+        token_usage: {
+          total: 125,
+          input: 100,
+          output: 25,
+          cached: 40,
+          cache_write: 6,
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(tokenStateMock.setTokenUsage).toHaveBeenCalledWith({
+        total: 125,
+        input: 100,
+        output: 25,
+        cached: 40,
+        cacheWrite: 6,
+      });
+    });
+  });
+
+  test('background token usage preserves unreported and reported cache fields', async () => {
+    tabSnapshots.set('tab-2', {
+      chat: {
+        chatHistory: [],
+        currentQuery: '',
+        response: '',
+        thinking: '',
+        isThinking: false,
+        thinkingCollapsed: true,
+        toolCalls: [],
+        contentBlocks: [],
+        conversationId: null,
+        query: '',
+        canSubmit: true,
+        status: 'Ready',
+        error: '',
+      },
+      screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, cached: null, cacheWrite: null, limit: 0 } },
+      terminal: { terminalSessionActive: false, terminalSessionRequest: null },
+      generatingModel: 'openai/gpt-4o',
+    });
+
+    render(<App />);
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'token_usage',
+      tab_id: 'tab-2',
+      content: { prompt_eval_count: 10, eval_count: 5 },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    let latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    let nextSnapshot = latestCall?.[1] as {
+      tokens: { tokenUsage: { total: number; cached: number | null; cacheWrite: number | null } };
+    };
+
+    expect(nextSnapshot.tokens.tokenUsage.total).toBe(15);
+    expect(nextSnapshot.tokens.tokenUsage.cached).toBeNull();
+    expect(nextSnapshot.tokens.tokenUsage.cacheWrite).toBeNull();
+
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'token_usage',
+      tab_id: 'tab-2',
+      content: {
+        prompt_eval_count: 20,
+        eval_count: 10,
+        cached_tokens: 7,
+        cache_write_tokens: 3,
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    nextSnapshot = latestCall?.[1] as {
+      tokens: { tokenUsage: { total: number; cached: number | null; cacheWrite: number | null } };
+    };
+
+    expect(nextSnapshot.tokens.tokenUsage.total).toBe(45);
+    expect(nextSnapshot.tokens.tokenUsage.cached).toBe(7);
+    expect(nextSnapshot.tokens.tokenUsage.cacheWrite).toBe(3);
+  });
+
+  test('background conversation resume restores cached token usage', async () => {
+    tabSnapshots.set('tab-2', {
+      chat: {
+        chatHistory: [],
+        currentQuery: '',
+        response: '',
+        thinking: '',
+        isThinking: true,
+        thinkingCollapsed: true,
+        toolCalls: [],
+        contentBlocks: [],
+        conversationId: null,
+        query: '',
+        canSubmit: false,
+        status: 'Loading',
+        error: '',
+      },
+      screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, cached: null, cacheWrite: null, limit: 0 } },
+      terminal: { terminalSessionActive: false, terminalSessionRequest: null },
+      generatingModel: 'openai/gpt-4o',
+    });
+
+    render(<App />);
+    setTabSnapshotMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'conversation_resumed',
+      tab_id: 'tab-2',
+      content: {
+        conversation_id: 'conv-bg',
+        messages: [],
+        token_usage: {
+          total: 125,
+          input: 100,
+          output: 25,
+          cached: 40,
+          cache_write: 6,
+        },
+      },
+    });
+
+    await waitFor(() => {
+      expect(setTabSnapshotMock).toHaveBeenCalled();
+    });
+
+    const latestCall = setTabSnapshotMock.mock.calls[setTabSnapshotMock.mock.calls.length - 1];
+    const nextSnapshot = latestCall?.[1] as {
+      tokens: { tokenUsage: { total: number; input: number; output: number; cached: number | null; cacheWrite: number | null } };
+    };
+
+    expect(nextSnapshot.tokens.tokenUsage).toMatchObject({
+      total: 125,
+      input: 100,
+      output: 25,
+      cached: 40,
+      cacheWrite: 6,
+    });
+  });
+
   test('links first terminal output to pending run_command metadata', () => {
     render(<App />);
     chatStateMock.contentBlocksRef.current = [];
@@ -862,7 +1058,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });
@@ -939,7 +1135,7 @@ describe('App websocket-driven behavior', () => {
         error: '',
       },
       screenshots: { screenshots: [], captureMode: 'precision', meetingRecordingMode: false },
-      tokens: { tokenUsage: { total: 0, input: 0, output: 0, limit: 0 } },
+      tokens: { tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 0 } },
       terminal: { terminalSessionActive: false, terminalSessionRequest: null },
       generatingModel: 'openai/gpt-4o',
     });

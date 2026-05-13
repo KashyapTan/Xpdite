@@ -21,6 +21,7 @@ This document describes runtime configuration surfaces and defaults.
 | `XPDITE_THREAD_POOL_SIZE` | `4` | App thread pool size for blocking tasks |
 | `OLLAMA_CTX_SIZE` | `32768` | Default context window requested from local Ollama via `num_ctx`; users can override it in Settings > Ollama |
 | `OLLAMA_CONTEXT_LENGTH` | `32768` | Backward-compatible alias used when `OLLAMA_CTX_SIZE` is unset |
+| `OLLAMA_KEEP_ALIVE` | `30m` | Local Ollama chat `keep_alive` value used to retain loaded model/KV state between requests |
 | `PYTHON_SERVER_PORT` | `8000` (auto-select in `8000-8009`) | Port hint used by bridge integration |
 | `BRIDGE_PORT` | `9000` | Channel Bridge HTTP service port |
 | `XPDITE_MOBILE_DEBUG_LOGS` | unset | Enables verbose mobile bridge debug logging when set to `1` |

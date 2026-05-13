@@ -22,6 +22,7 @@ from ...core.state import app_state
 from ...core.thread_pool import run_in_thread
 from ...infrastructure.database import db
 from ...llm.core.router import route_chat
+from ...llm.core.token_usage import add_token_stats, merge_token_stats
 from ..artifacts import artifact_service
 from ..media.file_extractor import (
     ARCHIVE_EXTENSIONS,
@@ -832,12 +833,7 @@ class ConversationService:
                             if response_text.strip()
                             else continuation_response
                         )
-                    token_stats["prompt_eval_count"] = token_stats.get(
-                        "prompt_eval_count", 0
-                    ) + continuation_tokens.get("prompt_eval_count", 0)
-                    token_stats["eval_count"] = token_stats.get(
-                        "eval_count", 0
-                    ) + continuation_tokens.get("eval_count", 0)
+                    add_token_stats(token_stats, continuation_tokens)
                     if continuation_tool_calls:
                         tool_calls = [*tool_calls, *continuation_tool_calls]
                     if continuation_blocks:
@@ -858,16 +854,20 @@ class ConversationService:
                 finally:
                     hooks_runtime.set_stop_hook_active(tab_state, False)
 
-            extra_token_usage = ctx.get_extra_token_usage()
-            input_tokens = token_stats.get("prompt_eval_count", 0) + extra_token_usage[
-                "prompt_eval_count"
-            ]
-            output_tokens = token_stats.get("eval_count", 0) + extra_token_usage[
-                "eval_count"
-            ]
-            if input_tokens or output_tokens:
+            total_usage = merge_token_stats(token_stats, ctx.get_extra_token_usage())
+            input_tokens = total_usage.get("prompt_eval_count", 0)
+            output_tokens = total_usage.get("eval_count", 0)
+            cached_tokens = total_usage.get("cached_tokens", 0)
+            cache_write_tokens = total_usage.get("cache_write_tokens", 0)
+            if input_tokens or output_tokens or cached_tokens or cache_write_tokens:
                 try:
-                    db.add_token_usage(_require_conv_id(), input_tokens, output_tokens)
+                    db.add_token_usage(
+                        _require_conv_id(),
+                        input_tokens,
+                        output_tokens,
+                        cached_tokens,
+                        cache_write_tokens,
+                    )
                 except Exception as exc:
                     logger.error("Error saving token usage: %s", exc)
 

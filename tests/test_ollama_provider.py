@@ -152,6 +152,7 @@ async def test_stream_uses_explicit_model_name_without_global_fallback():
         ),
         patch("source.llm.providers.ollama_provider.mcp_manager.has_tools", return_value=False),
         patch("source.llm.providers.ollama_provider.get_local_ollama_options", return_value={"num_ctx": 65536}),
+        patch("source.llm.providers.ollama_provider.get_local_ollama_keep_alive", return_value="45m"),
         patch("source.llm.providers.ollama_provider.broadcast_message", new_callable=AsyncMock),
         patch("source.llm.providers.ollama_provider.get_current_request", return_value=None),
         patch("source.llm.providers.ollama_provider.is_current_request_cancelled", return_value=False),
@@ -170,6 +171,7 @@ async def test_stream_uses_explicit_model_name_without_global_fallback():
     assert stats == {"prompt_eval_count": 2, "eval_count": 1}
     assert client.chat.await_args_list[0].kwargs["model"] == "explicit-model"
     assert client.chat.await_args_list[0].kwargs["options"] == {"num_ctx": 65536}
+    assert client.chat.await_args_list[0].kwargs["keep_alive"] == "45m"
 
 
 @pytest.mark.asyncio
@@ -209,6 +211,7 @@ async def test_stream_omits_local_num_ctx_for_ollama_cloud_model():
     assert text == "cloud hello"
     assert stats == {"prompt_eval_count": 2, "eval_count": 1}
     assert "options" not in client.chat.await_args_list[0].kwargs
+    assert "keep_alive" not in client.chat.await_args_list[0].kwargs
 
 
 @pytest.mark.asyncio

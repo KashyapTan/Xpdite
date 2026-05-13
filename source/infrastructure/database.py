@@ -148,6 +148,14 @@ class DatabaseManager:
                     total_output_tokens INTEGER DEFAULT 0
                 )
             """)
+            for statement in (
+                "ALTER TABLE conversations ADD COLUMN total_cached_tokens INTEGER DEFAULT 0",
+                "ALTER TABLE conversations ADD COLUMN total_cache_write_tokens INTEGER DEFAULT 0",
+            ):
+                try:
+                    cursor.execute(statement)
+                except sqlite3.OperationalError:
+                    pass
 
             # --- TABLE: MESSAGES ---
             cursor.execute("""
@@ -1829,19 +1837,34 @@ class DatabaseManager:
             conn.commit()
 
     def add_token_usage(
-        self, conversation_id: str, input_tokens: int, output_tokens: int
+        self,
+        conversation_id: str,
+        input_tokens: int,
+        output_tokens: int,
+        cached_tokens: int = 0,
+        cache_write_tokens: int = 0,
     ) -> None:
         """Accumulate token usage for a conversation. Negative values are clamped to 0."""
         input_tokens = max(0, input_tokens or 0)
         output_tokens = max(0, output_tokens or 0)
+        cached_tokens = max(0, cached_tokens or 0)
+        cache_write_tokens = max(0, cache_write_tokens or 0)
 
         with self._connect() as conn:
             conn.execute(
                 """UPDATE conversations
                    SET total_input_tokens = total_input_tokens + ?,
-                       total_output_tokens = total_output_tokens + ?
+                       total_output_tokens = total_output_tokens + ?,
+                       total_cached_tokens = total_cached_tokens + ?,
+                       total_cache_write_tokens = total_cache_write_tokens + ?
                    WHERE id = ?""",
-                (input_tokens, output_tokens, conversation_id),
+                (
+                    input_tokens,
+                    output_tokens,
+                    cached_tokens,
+                    cache_write_tokens,
+                    conversation_id,
+                ),
             )
             conn.commit()
 
@@ -1849,14 +1872,23 @@ class DatabaseManager:
         """Get cumulative token usage for a conversation."""
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT total_input_tokens, total_output_tokens FROM conversations WHERE id = ?",
+                """SELECT total_input_tokens, total_output_tokens,
+                          total_cached_tokens, total_cache_write_tokens
+                   FROM conversations WHERE id = ?""",
                 (conversation_id,),
             ).fetchone()
 
         if row:
             inp, out = row[0] or 0, row[1] or 0
-            return {"input": inp, "output": out, "total": inp + out}
-        return {"input": 0, "output": 0, "total": 0}
+            cached, cache_write = row[2] or 0, row[3] or 0
+            return {
+                "input": inp,
+                "output": out,
+                "total": inp + out,
+                "cached": cached,
+                "cache_write": cache_write,
+            }
+        return {"input": 0, "output": 0, "total": 0, "cached": 0, "cache_write": 0}
 
     # ---------------------------------------------------------
     # SETTINGS OPERATIONS

@@ -15,6 +15,8 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
+        cached: null,
+        cacheWrite: null,
         limit: 0,
       });
       expect(result.current.showTokenPopup).toBe(false);
@@ -95,6 +97,38 @@ describe('useTokenUsage', () => {
       expect(result.current.tokenUsage.output).toBe(25000);
       expect(result.current.tokenUsage.total).toBe(75000);
     });
+
+    test('should track cached and cache-write tokens without adding them to total', () => {
+      const { result } = renderHook(() => useTokenUsage());
+
+      act(() => {
+        result.current.addTokens(1000, 250, 700, 100);
+      });
+
+      expect(result.current.tokenUsage.input).toBe(1000);
+      expect(result.current.tokenUsage.output).toBe(250);
+      expect(result.current.tokenUsage.cached).toBe(700);
+      expect(result.current.tokenUsage.cacheWrite).toBe(100);
+      expect(result.current.tokenUsage.total).toBe(1250);
+    });
+
+    test('should preserve unreported cache metrics until the provider reports them', () => {
+      const { result } = renderHook(() => useTokenUsage());
+
+      act(() => {
+        result.current.addTokens(1000, 250);
+      });
+
+      expect(result.current.tokenUsage.cached).toBeNull();
+      expect(result.current.tokenUsage.cacheWrite).toBeNull();
+
+      act(() => {
+        result.current.addTokens(500, 100, 0, 0);
+      });
+
+      expect(result.current.tokenUsage.cached).toBe(0);
+      expect(result.current.tokenUsage.cacheWrite).toBe(0);
+    });
   });
 
   describe('resetTokens', () => {
@@ -117,6 +151,8 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
+        cached: null,
+        cacheWrite: null,
         limit: 0,
       });
     });
@@ -191,6 +227,8 @@ describe('useTokenUsage', () => {
           total: 1000,
           input: 700,
           output: 300,
+          cached: 200,
+          cacheWrite: 50,
           limit: 50000,
         });
       });
@@ -199,6 +237,8 @@ describe('useTokenUsage', () => {
         total: 1000,
         input: 700,
         output: 300,
+        cached: 200,
+        cacheWrite: 50,
         limit: 50000,
       });
     });
@@ -258,6 +298,8 @@ describe('useTokenUsage', () => {
         total: 1500,
         input: 1000,
         output: 500,
+        cached: null,
+        cacheWrite: null,
         limit: 256000,
       });
     });
@@ -270,6 +312,8 @@ describe('useTokenUsage', () => {
           total: 5000,
           input: 3000,
           output: 2000,
+          cached: 1200,
+          cacheWrite: 400,
           limit: 100000,
         },
       };
@@ -311,6 +355,8 @@ describe('useTokenUsage', () => {
       expect(result.current.tokenUsage.total).toBe(3750);
       expect(result.current.tokenUsage.input).toBe(2500);
       expect(result.current.tokenUsage.output).toBe(1250);
+      expect(result.current.tokenUsage.cached).toBeNull();
+      expect(result.current.tokenUsage.cacheWrite).toBeNull();
       expect(result.current.tokenUsage.limit).toBe(64000);
     });
 
@@ -410,6 +456,8 @@ describe('useTokenUsage', () => {
         total: 0,
         input: 0,
         output: 0,
+        cached: null,
+        cacheWrite: null,
         limit: 0,
       });
     });

@@ -207,6 +207,12 @@ class TestStreamToolFollowUp:
                 handlers_module, "is_current_request_cancelled", return_value=False
             ),
             patch.object(handlers_module, "get_current_model", return_value="qwen3:8b"),
+            patch.object(
+                handlers_module, "get_local_ollama_options", return_value={"num_ctx": 4096}
+            ),
+            patch.object(
+                handlers_module, "get_local_ollama_keep_alive", return_value="45m"
+            ),
         ):
             (
                 text,
@@ -230,6 +236,8 @@ class TestStreamToolFollowUp:
             }
         ]
         assert stats == {"prompt_eval_count": 4, "eval_count": 9}
+        assert fake_client.chat.await_args.kwargs["options"] == {"num_ctx": 4096}
+        assert fake_client.chat.await_args.kwargs["keep_alive"] == "45m"
         mock_bcast.assert_any_await("thinking_chunk", "Let me think...")
         mock_bcast.assert_any_await("thinking_complete", "")
         mock_bcast.assert_any_await("response_chunk", "hello")

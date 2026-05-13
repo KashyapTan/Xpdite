@@ -128,6 +128,7 @@ Never call `ws.send()` directly in a component — go through `useWebSocket().se
 - **`wsSend`** helper auto-injects `tab_id: activeTabIdRef.current` as a default, but explicit `tab_id` fields in the message object override it (spread order: `{ tab_id: default, ...msg }`).
 - **Tab lifecycle**: `TabBar` creates/closes tabs; `TitleBar`'s "new chat" button and `ChatHistory.tsx` both create a new tab before navigating back to the chat route. Max 10 tabs. Tabs are ephemeral (don't survive app restart). TabBar is hidden when only 1 tab is open.
 - **Cleanup**: When a tab is closed, `registerOnTabClosed` fires a callback that deletes the tab's persisted snapshot from `TabContext`.
+- **Token usage state**: `token_usage` messages add `prompt_eval_count`, `eval_count`, and optional provider-reported `cached_tokens` / `cache_write_tokens` into `useTokenUsage`. Context-window progress remains `input + output`; cached/cache-write counts are displayed as separate metadata in `TokenUsagePopup` and are preserved in tab snapshots.
 
 ### Stale closure prevention — ref-based WS handler
 `App.tsx` subscribes to the WebSocket via `wsSubscribe` with an empty-ish dependency array to avoid re-subscribing on every render. To prevent stale closures, a `handleWebSocketMessageRef` is kept in sync with the latest `handleWebSocketMessage` on every render. The subscription callback calls `handleWebSocketMessageRef.current(data)` instead of the stale closure. The same pattern is used by `MeetingRecorderContext` via `handlersRef`.

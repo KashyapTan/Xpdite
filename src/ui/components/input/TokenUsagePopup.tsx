@@ -27,6 +27,10 @@ export function TokenUsagePopup({
   const percentage = hasLimit ? Math.round((tokenUsage.total / tokenUsage.limit) * 100) : 0;
   const inputPercentage = Math.round((tokenUsage.input / tokenUsage.total || 0) * 100);
   const outputPercentage = Math.round((tokenUsage.output / tokenUsage.total || 0) * 100);
+  const hasCachedTokens = tokenUsage.cached !== null;
+  const cachedPercentage = hasCachedTokens && tokenUsage.input > 0
+    ? Math.round((tokenUsage.cached / tokenUsage.input) * 100)
+    : 0;
   const totalLabel = tokenUsage.total.toLocaleString();
   const limitLabel = hasLimit ? `${tokenUsage.limit.toLocaleString()} tokens` : 'Unknown limit';
 
@@ -79,6 +83,22 @@ export function TokenUsagePopup({
               <span className="token-usage-label">Output Tokens</span>
               <span className="token-usage-value">
                 {tokenUsage.output.toLocaleString()} ({outputPercentage}%)
+              </span>
+            </div>
+            <div className="token-usage-row">
+              <span className="token-usage-label">Cached Tokens</span>
+              <span className="token-usage-value">
+                {hasCachedTokens
+                  ? `${tokenUsage.cached.toLocaleString()} (${cachedPercentage}% of input)`
+                  : 'Not reported'}
+              </span>
+            </div>
+            <div className="token-usage-row">
+              <span className="token-usage-label">Cache Writes</span>
+              <span className="token-usage-value">
+                {tokenUsage.cacheWrite !== null
+                  ? tokenUsage.cacheWrite.toLocaleString()
+                  : 'Not reported'}
               </span>
             </div>
           </div>

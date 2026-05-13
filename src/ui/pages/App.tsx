@@ -751,7 +751,7 @@ function App() {
       meetingRecordingMode: false,
     },
     tokens: {
-      tokenUsage: { total: 0, input: 0, output: 0, limit: 0 },
+      tokenUsage: { total: 0, input: 0, output: 0, cached: null, cacheWrite: null, limit: 0 },
     },
     terminal: {
       terminalSessionActive: false,
@@ -1285,7 +1285,22 @@ function App() {
         latestChat.error = '';
         latestChat.errorMessage = null;
         pendingTurnActionsRef.current.delete(tabId);
-        setTabSnapshot(tabId, { ...latestSnap, chat: latestChat });
+
+        let nextTokens = latestSnap.tokens;
+        if (resumeData.token_usage) {
+          nextTokens = {
+            tokenUsage: {
+              ...latestSnap.tokens.tokenUsage,
+              total: resumeData.token_usage.total || 0,
+              input: resumeData.token_usage.input || 0,
+              output: resumeData.token_usage.output || 0,
+              cached: typeof resumeData.token_usage.cached === 'number' ? resumeData.token_usage.cached : null,
+              cacheWrite: typeof resumeData.token_usage.cache_write === 'number' ? resumeData.token_usage.cache_write : null,
+            },
+          };
+        }
+
+        setTabSnapshot(tabId, { ...latestSnap, chat: latestChat, tokens: nextTokens });
         return;
       }
 
@@ -1539,10 +1554,18 @@ function App() {
         }
         const input = stats.prompt_eval_count || 0;
         const output = stats.eval_count || 0;
+        const cached = typeof stats.cached_tokens === 'number' ? stats.cached_tokens : undefined;
+        const cacheWrite = typeof stats.cache_write_tokens === 'number' ? stats.cache_write_tokens : undefined;
         const tu = { ...snap.tokens.tokenUsage };
         tu.total = (tu.total || 0) + input + output;
         tu.input = (tu.input || 0) + input;
         tu.output = (tu.output || 0) + output;
+        if (cached !== undefined) {
+          tu.cached = (tu.cached ?? 0) + cached;
+        }
+        if (cacheWrite !== undefined) {
+          tu.cacheWrite = (tu.cacheWrite ?? 0) + cacheWrite;
+        }
         setTabSnapshot(tabId, { ...snap, chat, tokens: { tokenUsage: tu } });
         return;
       }
@@ -2059,7 +2082,9 @@ function App() {
         }
         const input = stats.prompt_eval_count || 0;
         const output = stats.eval_count || 0;
-        tokenState.addTokens(input, output);
+        const cached = typeof stats.cached_tokens === 'number' ? stats.cached_tokens : undefined;
+        const cacheWrite = typeof stats.cache_write_tokens === 'number' ? stats.cache_write_tokens : undefined;
+        tokenState.addTokens(input, output, cached, cacheWrite);
         break;
       }
 
@@ -2147,6 +2172,8 @@ function App() {
             total: resumeData.token_usage.total || 0,
             input: resumeData.token_usage.input || 0,
             output: resumeData.token_usage.output || 0,
+            cached: typeof resumeData.token_usage.cached === 'number' ? resumeData.token_usage.cached : null,
+            cacheWrite: typeof resumeData.token_usage.cache_write === 'number' ? resumeData.token_usage.cache_write : null,
           });
         }
         break;

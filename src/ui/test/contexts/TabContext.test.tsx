@@ -531,7 +531,7 @@ describe('TabContext', () => {
           meetingRecordingMode: false,
         },
         tokens: {
-          tokenUsage: { total: 0, input: 0, output: 0, limit: 4096 },
+          tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 4096 },
         },
         terminal: {
           terminalSessionActive: false,
@@ -578,7 +578,7 @@ describe('TabContext', () => {
           meetingRecordingMode: false,
         },
         tokens: {
-          tokenUsage: { total: 0, input: 0, output: 0, limit: 4096 },
+          tokenUsage: { total: 0, input: 0, output: 0, cached: 0, cacheWrite: 0, limit: 4096 },
         },
         terminal: {
           terminalSessionActive: false,

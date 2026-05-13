@@ -11,6 +11,8 @@ describe('TokenUsagePopup', () => {
     total: 50000,
     input: 30000,
     output: 20000,
+    cached: 6000,
+    cacheWrite: 1200,
     limit: 100000,
   };
 
@@ -87,6 +89,46 @@ describe('TokenUsagePopup', () => {
       expect(screen.getByText('20,000 (40%)')).toBeInTheDocument();
     });
 
+    test('displays cached and cache write tokens with formatting', () => {
+      render(<TokenUsagePopup {...defaultProps} show={true} />);
+
+      expect(screen.getByText('Cached Tokens')).toBeInTheDocument();
+      expect(screen.getByText('6,000 (20% of input)')).toBeInTheDocument();
+      expect(screen.getByText('Cache Writes')).toBeInTheDocument();
+      expect(screen.getByText('1,200')).toBeInTheDocument();
+    });
+
+    test('shows unreported cache metrics without fabricating zeros', () => {
+      render(
+        <TokenUsagePopup
+          {...defaultProps}
+          tokenUsage={{ ...defaultTokenUsage, cached: null, cacheWrite: null }}
+          show={true}
+        />
+      );
+
+      expect(screen.getAllByText('Not reported')).toHaveLength(2);
+    });
+
+    test('handles reported zero cached tokens with zero input', () => {
+      render(
+        <TokenUsagePopup
+          {...defaultProps}
+          tokenUsage={{
+            total: 10,
+            input: 0,
+            output: 10,
+            cached: 0,
+            cacheWrite: 0,
+            limit: 100,
+          }}
+          show={true}
+        />
+      );
+
+      expect(screen.getByText('0 (0% of input)')).toBeInTheDocument();
+    });
+
     test('displays header with token summary', () => {
       render(<TokenUsagePopup {...defaultProps} show={true} />);
 
@@ -114,6 +156,8 @@ describe('TokenUsagePopup', () => {
         total: 120000,
         input: 80000,
         output: 40000,
+        cached: 0,
+        cacheWrite: 0,
         limit: 100000,
       };
 
@@ -132,6 +176,8 @@ describe('TokenUsagePopup', () => {
         total: 25000,
         input: 15000,
         output: 10000,
+        cached: 0,
+        cacheWrite: 0,
         limit: 100000,
       };
 
@@ -147,6 +193,8 @@ describe('TokenUsagePopup', () => {
         total: 0,
         input: 0,
         output: 0,
+        cached: 0,
+        cacheWrite: 0,
         limit: 100000,
       };
 
@@ -164,6 +212,8 @@ describe('TokenUsagePopup', () => {
         total: 12345,
         input: 10000,
         output: 2345,
+        cached: 0,
+        cacheWrite: 0,
         limit: 0,
       };
 
@@ -183,6 +233,8 @@ describe('TokenUsagePopup', () => {
         total: 33333,
         input: 20000,
         output: 13333,
+        cached: 0,
+        cacheWrite: 0,
         limit: 100000,
       };
 
@@ -252,7 +304,7 @@ describe('TokenUsagePopup', () => {
       expect(usageSection).toBeInTheDocument();
 
       const rows = document.querySelectorAll('.token-usage-row');
-      expect(rows.length).toBe(3); // Total, Input, Output
+      expect(rows.length).toBe(5); // Total, Input, Output, Cached, Cache Writes
     });
   });
 
@@ -262,6 +314,8 @@ describe('TokenUsagePopup', () => {
         total: 2000,
         input: 1200,
         output: 800,
+        cached: 0,
+        cacheWrite: 0,
         limit: 4000,
       };
 
@@ -277,6 +331,8 @@ describe('TokenUsagePopup', () => {
         total: 500000,
         input: 300000,
         output: 200000,
+        cached: 0,
+        cacheWrite: 0,
         limit: 1000000,
       };
 

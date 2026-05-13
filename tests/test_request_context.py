@@ -83,3 +83,23 @@ class TestRequestContext:
     def test_forced_skills_default(self):
         ctx = RequestContext()
         assert ctx.forced_skills == []
+
+    def test_extra_token_usage_omits_unreported_cache_fields(self):
+        ctx = RequestContext()
+        ctx.add_extra_token_usage(10, 5)
+
+        assert ctx.get_extra_token_usage() == {
+            "prompt_eval_count": 10,
+            "eval_count": 5,
+        }
+
+    def test_extra_token_usage_preserves_reported_zero_cache_fields(self):
+        ctx = RequestContext()
+        ctx.add_extra_token_usage(10, 5, cached_tokens=0, cache_write_tokens=0)
+
+        assert ctx.get_extra_token_usage() == {
+            "prompt_eval_count": 10,
+            "eval_count": 5,
+            "cached_tokens": 0,
+            "cache_write_tokens": 0,
+        }
