@@ -89,25 +89,69 @@ describe('TokenUsagePopup', () => {
       expect(screen.getByText('20,000 (40%)')).toBeInTheDocument();
     });
 
-    test('displays cached and cache write tokens with formatting', () => {
+    test('displays cached and cache creation tokens with formatting', () => {
       render(<TokenUsagePopup {...defaultProps} show={true} />);
 
       expect(screen.getByText('Cached Tokens')).toBeInTheDocument();
       expect(screen.getByText('6,000 (20% of input)')).toBeInTheDocument();
-      expect(screen.getByText('Cache Writes')).toBeInTheDocument();
+      expect(screen.getByText('Cache Created')).toBeInTheDocument();
       expect(screen.getByText('1,200')).toBeInTheDocument();
     });
 
-    test('shows unreported cache metrics without fabricating zeros', () => {
+    test('shows unreported supported cache metrics without fabricating zeros', () => {
       render(
         <TokenUsagePopup
           {...defaultProps}
+          modelId="anthropic/claude-sonnet-4-20250514"
           tokenUsage={{ ...defaultTokenUsage, cached: null, cacheWrite: null }}
           show={true}
         />
       );
 
       expect(screen.getAllByText('Not reported')).toHaveLength(2);
+    });
+
+    test('shows Ollama cached tokens as unsupported when no provider metric exists', () => {
+      render(
+        <TokenUsagePopup
+          {...defaultProps}
+          modelId="qwen3:8b"
+          tokenUsage={{ ...defaultTokenUsage, cached: null, cacheWrite: null }}
+          show={true}
+        />
+      );
+
+      expect(screen.getByText('Cached Tokens')).toBeInTheDocument();
+      expect(screen.getByText('Not supported')).toBeInTheDocument();
+      expect(screen.queryByText('Cache Created')).not.toBeInTheDocument();
+    });
+
+    test('hides cache creation row for OpenAI models when not reported', () => {
+      render(
+        <TokenUsagePopup
+          {...defaultProps}
+          modelId="openai/gpt-4o"
+          tokenUsage={{ ...defaultTokenUsage, cached: 0, cacheWrite: null }}
+          show={true}
+        />
+      );
+
+      expect(screen.getByText('0 (0% of input)')).toBeInTheDocument();
+      expect(screen.queryByText('Cache Created')).not.toBeInTheDocument();
+    });
+
+    test('shows cache creation row for Anthropic-compatible models', () => {
+      render(
+        <TokenUsagePopup
+          {...defaultProps}
+          modelId="openrouter/anthropic/claude-3-5-sonnet"
+          tokenUsage={{ ...defaultTokenUsage, cached: 0, cacheWrite: null }}
+          show={true}
+        />
+      );
+
+      expect(screen.getByText('Cache Created')).toBeInTheDocument();
+      expect(screen.getByText('Not reported')).toBeInTheDocument();
     });
 
     test('handles reported zero cached tokens with zero input', () => {
@@ -304,7 +348,7 @@ describe('TokenUsagePopup', () => {
       expect(usageSection).toBeInTheDocument();
 
       const rows = document.querySelectorAll('.token-usage-row');
-      expect(rows.length).toBe(5); // Total, Input, Output, Cached, Cache Writes
+      expect(rows.length).toBe(5); // Total, Input, Output, Cached, Cache Created
     });
   });
 

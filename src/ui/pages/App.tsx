@@ -3157,6 +3157,7 @@ function App() {
 
               <TokenUsagePopup
                 tokenUsage={tokenState.tokenUsage}
+                modelId={generatingModelRef.current || selectedModel}
                 show={tokenState.showTokenPopup}
                 onMouseEnter={() => tokenState.setShowTokenPopup(true)}
                 onMouseLeave={() => tokenState.setShowTokenPopup(false)}

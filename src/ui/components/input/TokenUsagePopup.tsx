@@ -5,9 +5,11 @@
  */
 import React from 'react';
 import type { TokenUsage } from '../../types';
+import { getModelProviderKey } from '../../utils/modelDisplay';
 
 interface TokenUsagePopupProps {
   tokenUsage: TokenUsage;
+  modelId?: string;
   show: boolean;
   onMouseEnter: () => void;
   onMouseLeave: () => void;
@@ -17,12 +19,22 @@ interface TokenUsagePopupProps {
 
 export function TokenUsagePopup({
   tokenUsage,
+  modelId = '',
   show,
   onMouseEnter,
   onMouseLeave,
   onClick,
   contextWindowIcon,
 }: TokenUsagePopupProps) {
+  const providerKey = modelId ? getModelProviderKey(modelId) : '';
+  const normalizedModelId = modelId.toLowerCase();
+  const isOllamaModel = providerKey === 'ollama';
+  const supportsCacheWriteMetric = providerKey === 'anthropic'
+    || (providerKey === 'openrouter' && (
+      normalizedModelId.includes('anthropic/')
+      || normalizedModelId.includes('claude')
+    ));
+  const showCacheWriteMetric = tokenUsage.cacheWrite !== null || supportsCacheWriteMetric;
   const hasLimit = tokenUsage.limit > 0;
   const percentage = hasLimit ? Math.round((tokenUsage.total / tokenUsage.limit) * 100) : 0;
   const inputPercentage = Math.round((tokenUsage.input / tokenUsage.total || 0) * 100);
@@ -33,6 +45,11 @@ export function TokenUsagePopup({
     : 0;
   const totalLabel = tokenUsage.total.toLocaleString();
   const limitLabel = hasLimit ? `${tokenUsage.limit.toLocaleString()} tokens` : 'Unknown limit';
+  const cachedTokenLabel = hasCachedTokens
+    ? `${tokenUsage.cached.toLocaleString()} (${cachedPercentage}% of input)`
+    : isOllamaModel
+      ? 'Not supported'
+      : 'Not reported';
 
   return (
     <div
@@ -86,21 +103,31 @@ export function TokenUsagePopup({
               </span>
             </div>
             <div className="token-usage-row">
-              <span className="token-usage-label">Cached Tokens</span>
+              <span
+                className="token-usage-label"
+                title="Prompt input tokens served from a provider prompt cache."
+              >
+                Cached Tokens
+              </span>
               <span className="token-usage-value">
-                {hasCachedTokens
-                  ? `${tokenUsage.cached.toLocaleString()} (${cachedPercentage}% of input)`
-                  : 'Not reported'}
+                {cachedTokenLabel}
               </span>
             </div>
-            <div className="token-usage-row">
-              <span className="token-usage-label">Cache Writes</span>
-              <span className="token-usage-value">
-                {tokenUsage.cacheWrite !== null
-                  ? tokenUsage.cacheWrite.toLocaleString()
-                  : 'Not reported'}
-              </span>
-            </div>
+            {showCacheWriteMetric && (
+              <div className="token-usage-row">
+                <span
+                  className="token-usage-label"
+                  title="Prompt input tokens written into a provider prompt cache."
+                >
+                  Cache Created
+                </span>
+                <span className="token-usage-value">
+                  {tokenUsage.cacheWrite !== null
+                    ? tokenUsage.cacheWrite.toLocaleString()
+                    : 'Not reported'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
