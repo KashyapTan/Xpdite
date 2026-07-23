@@ -920,6 +920,80 @@ function App() {
     });
   }, []);
 
+  // ── Auto Mode (Instant Answer) trigger ────────────────────────
+  // The backend hotkey listener broadcasts `auto_mode_trigger`; Layout restores
+  // the window without focus and hands off via `navigate('/', { state })`. We
+  // orchestrate the actual capture + submit here, reusing the normal submit
+  // flow. The nonce guard makes this idempotent across effect re-runs.
+  const processedAutoNonceRef = useRef<number>(0);
+  useEffect(() => {
+    const state = location.state as {
+      autoTrigger?: {
+        prompt?: string;
+        model?: string;
+        keep_context?: boolean;
+        nonce?: number;
+      };
+    } | null;
+    const trigger = state?.autoTrigger;
+    if (!trigger || !isConnected) {
+      return;
+    }
+    const nonce = trigger.nonce ?? 0;
+    if (nonce === processedAutoNonceRef.current) {
+      return;
+    }
+    processedAutoNonceRef.current = nonce;
+
+    const prompt = (trigger.prompt ?? '').trim();
+    if (!prompt) {
+      return;
+    }
+    const model = trigger.model || selectedModel;
+
+    // Submit the saved prompt + a fresh full-screen capture into `tabId`.
+    // `auto_mode: true` lets the backend capture even when the tab already has
+    // history (keep-context mode). Never touches focus.
+    const submitAuto = (tabId: string) => {
+      chatState.startQuery(prompt);
+      setTimeout(scrollToBottom, 50);
+      generatingModelRef.current = model;
+      wsSendRaw({
+        tab_id: tabId,
+        type: 'submit_query',
+        content: prompt,
+        capture_mode: 'fullscreen',
+        auto_mode: true,
+        model,
+        attached_files: [],
+      });
+    };
+
+    if (trigger.keep_context) {
+      // Chain into the current conversation.
+      submitAuto(activeTabIdRef.current);
+      return;
+    }
+
+    // One-shot: open a brand-new tab (createTab snapshots the outgoing tab via
+    // beforeSwitch) and submit there once its state is initialised.
+    const newTabId = createTab();
+    if (!newTabId) {
+      // MAX_TABS reached — fall back to the current tab so the answer still shows.
+      submitAuto(activeTabIdRef.current);
+      return;
+    }
+    setTimeout(() => submitAuto(newTabId), 0);
+  }, [
+    location.state,
+    isConnected,
+    selectedModel,
+    chatState,
+    scrollToBottom,
+    createTab,
+    wsSendRaw,
+  ]);
+
   const buildChatError = useCallback((
     rawError: string,
     {

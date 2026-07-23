@@ -154,3 +154,73 @@
 .general-settings-warning {
   color: var(--color-text-muted);
 }
+
+/* ── Auto Mode config body ─────────────────────────────────────── */
+.general-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-surface-strong);
+}
+
+.general-settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.general-settings-field-label {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.general-settings-textarea,
+.general-settings-select {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--color-surface-strong);
+  border: 1px solid var(--color-surface-strong);
+  border-radius: 6px;
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: 0.85rem;
+  padding: 8px 10px;
+  transition: border-color 0.2s;
+}
+
+.general-settings-textarea {
+  resize: vertical;
+  min-height: 60px;
+  line-height: 1.4;
+}
+
+.general-settings-textarea:focus,
+.general-settings-select:focus {
+  outline: none;
+  border-color: var(--color-thumbtack-selected);
+}
+
+.general-settings-subrow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+}
+
+.general-settings-subrow-title {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.general-settings-disclaimer {
+  font-size: 0.78rem;
+  color: var(--color-text-muted);
+  margin: 0;
+  line-height: 1.4;
+  padding: 8px 10px;
+  background: var(--color-surface-strong);
+  border-radius: 6px;
+}

@@ -20,6 +20,14 @@ from ..core.connection import (
 from ..core.state import app_state
 from ..core.thread_pool import run_in_thread
 from ..infrastructure.database import db
+from ..infrastructure.config import (
+    AUTO_MODE_ENABLED_KEY,
+    AUTO_MODE_PROMPT_KEY,
+    AUTO_MODE_PINNED_MODEL_KEY,
+    AUTO_MODE_KEEP_CONTEXT_KEY,
+    AUTO_MODE_FLASH_KEY,
+    DEFAULT_AUTO_MODE_PROMPT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +186,10 @@ class MessageHandler:
         tab_id = self._get_tab_id(data)
         query_text = data.get("content", "").strip()
         capture_mode = data.get("capture_mode", "none")
+        # Auto Mode submits programmatically after a full-screen capture. The
+        # flag lets the capture fire even when the target tab already has chat
+        # history (keep-context mode), which a manual submit intentionally skips.
+        auto_mode = bool(data.get("auto_mode", False))
         model = data.get("model", "")
         attached_files_raw = data.get("attached_files", [])
         attached_files: list[dict[str, str]] = []
@@ -222,7 +234,7 @@ class MessageHandler:
         if (
             capture_mode == CaptureMode.FULLSCREEN
             and len(session.state.screenshot_list) == 0
-            and len(session.state.chat_history) == 0
+            and (len(session.state.chat_history) == 0 or auto_mode)
         ):
             token = set_current_tab_id(tab_id)
             try:
@@ -726,6 +738,64 @@ class MessageHandler:
         }
         await self.websocket.send_text(
             json.dumps({"type": "meeting_settings", "content": updated})
+        )
+
+    # ── Auto Mode (Instant Answer) settings ───────────────────────
+
+    @staticmethod
+    def _read_auto_mode_settings() -> Dict[str, Any]:
+        """Read the persisted Auto Mode settings into a JSON-friendly dict."""
+        return {
+            "enabled": db.get_setting(AUTO_MODE_ENABLED_KEY) == "true",
+            "prompt": db.get_setting(AUTO_MODE_PROMPT_KEY) or DEFAULT_AUTO_MODE_PROMPT,
+            "pinned_model": db.get_setting(AUTO_MODE_PINNED_MODEL_KEY) or "",
+            "keep_context": db.get_setting(AUTO_MODE_KEEP_CONTEXT_KEY) == "true",
+            "flash": db.get_setting(AUTO_MODE_FLASH_KEY) == "true",
+        }
+
+    async def _handle_auto_mode_get_settings(self, data: Dict[str, Any]):
+        """Return the current Auto Mode settings to the client."""
+        await self.websocket.send_text(
+            json.dumps(
+                {"type": "auto_mode_settings", "content": self._read_auto_mode_settings()}
+            )
+        )
+
+    async def _handle_auto_mode_update_settings(self, data: Dict[str, Any]):
+        """Persist Auto Mode settings and re-arm the gate immediately.
+
+        The ``enabled`` flag is mirrored onto ``app_state`` so the hotkey
+        listener (a background thread) sees the change on the very next press
+        with no restart. Other fields are read fresh from the DB at trigger
+        time, so persisting is enough.
+        """
+        settings = data.get("settings", {})
+        if not isinstance(settings, dict):
+            settings = {}
+
+        if "enabled" in settings:
+            enabled = bool(settings["enabled"])
+            db.set_setting(AUTO_MODE_ENABLED_KEY, "true" if enabled else "false")
+            app_state.auto_mode_enabled = enabled
+        if "prompt" in settings:
+            db.set_setting(AUTO_MODE_PROMPT_KEY, str(settings["prompt"]))
+        if "pinned_model" in settings:
+            db.set_setting(AUTO_MODE_PINNED_MODEL_KEY, str(settings["pinned_model"]))
+        if "keep_context" in settings:
+            db.set_setting(
+                AUTO_MODE_KEEP_CONTEXT_KEY,
+                "true" if bool(settings["keep_context"]) else "false",
+            )
+        if "flash" in settings:
+            db.set_setting(
+                AUTO_MODE_FLASH_KEY,
+                "true" if bool(settings["flash"]) else "false",
+            )
+
+        await self.websocket.send_text(
+            json.dumps(
+                {"type": "auto_mode_settings", "content": self._read_auto_mode_settings()}
+            )
         )
 
     async def _handle_meeting_generate_analysis(self, data: Dict[str, Any]):

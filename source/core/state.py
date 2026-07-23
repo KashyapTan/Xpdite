@@ -37,6 +37,12 @@ class AppState:
         # Match the frontend's default so the hotkey is live on first launch.
         self.capture_mode: str = "precision"
 
+        # Auto Mode (Instant Answer) gate. When True, the screenshot hotkey
+        # runs the hands-off auto pipeline instead of a region capture. Read by
+        # the hotkey listener at trigger time; loaded from the DB at boot and
+        # updated immediately when the Settings toggle changes.
+        self.auto_mode_enabled: bool = False
+
         # Active tab — updated from every incoming WS message so that
         # background-thread screenshot captures route to the correct tab.
         self.active_tab_id: str = "default"

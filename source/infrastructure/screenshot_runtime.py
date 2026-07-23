@@ -188,8 +188,28 @@ def _is_precision_capture_enabled():
     return app_state.capture_mode == CaptureMode.PRECISION
 
 
+def _is_auto_mode_enabled():
+    """Return whether Auto Mode has taken over the screenshot hotkey.
+
+    When True, pressing the screenshot hotkey runs the hands-off Auto Mode
+    pipeline (full-screen capture + auto-submit) instead of a region capture,
+    regardless of the current capture mode. Checked at trigger time so the
+    Settings toggle takes effect immediately with no restart.
+    """
+    from ..core.state import app_state
+
+    return bool(app_state.auto_mode_enabled)
+
+
 class ScreenshotService:
-    def __init__(self, callback=None, start_callback=None, cancel_callback=None):
+    def __init__(
+        self,
+        callback=None,
+        start_callback=None,
+        cancel_callback=None,
+        auto_callback=None,
+        mini_toggle_callback=None,
+    ):
         self.listener = None
         self.running = False
         self.callback = callback  # Function to call when screenshot is taken
@@ -199,9 +219,14 @@ class ScreenshotService:
         self.cancel_callback = (
             cancel_callback  # Function to call when screenshot capture is cancelled
         )
+        # Function to call when the hotkey fires while Auto Mode is enabled.
+        self.auto_callback = auto_callback
+        # Function to call for the always-on mini-mode toggle hotkey.
+        self.mini_toggle_callback = mini_toggle_callback
         self.capturing = False
         self._lock = threading.Lock()
-        self._last_trigger_time = 0  # Debounce timestamp
+        self._last_trigger_time = 0  # Debounce timestamp (screenshot / auto hotkey)
+        self._last_mini_trigger_time = 0  # Debounce timestamp (mini-toggle hotkey)
 
     def _do_capture(self, save_folder):
         try:
@@ -236,9 +261,14 @@ class ScreenshotService:
             with self._lock:
                 if not self.running:  # Check if service is still running
                     return
-                if not _is_precision_capture_enabled():
+                # Auto Mode takes over this hotkey when enabled: run the
+                # hands-off pipeline instead of a region capture. Checked first
+                # and independently of the precision-mode gate.
+                auto = _is_auto_mode_enabled()
+                if not auto and not _is_precision_capture_enabled():
                     logger.debug(
-                        "Hotkey ignored - region capture is only active in precision mode"
+                        "Hotkey ignored - region capture is only active in "
+                        "precision mode and Auto Mode is off"
                     )
                     return
                 if self.capturing:
@@ -246,8 +276,21 @@ class ScreenshotService:
                 # Debounce: ignore triggers within 1.5s of the last one
                 if current_time - self._last_trigger_time < 1.5:
                     return
-                self.capturing = True
                 self._last_trigger_time = current_time
+                # Only region capture sets ``capturing`` — the auto pipeline runs
+                # off-thread and reuses the standard submit flow, so it does not
+                # block the listener the way the modal region selector does.
+                if not auto:
+                    self.capturing = True
+
+            if auto:
+                logger.info("Auto Mode hotkey detected! Running instant answer...")
+                if self.auto_callback:
+                    threading.Thread(
+                        target=self.auto_callback, daemon=True
+                    ).start()
+                return
+
             logger.info("Hotkey detected! Starting region selection...")
 
             # Call the start callback if provided
@@ -258,8 +301,33 @@ class ScreenshotService:
                 target=self._do_capture, args=(save_folder,), daemon=True
             ).start()
 
+        def on_mini_toggle():
+            """Always-on global hotkey that toggles mini mode.
+
+            Unlike the screenshot/auto hotkey this is never gated — it is an
+            explicit request about the window itself, so it works regardless of
+            capture mode or Auto Mode state.
+            """
+            current_time = time.time()
+            with self._lock:
+                if not self.running:
+                    return
+                # Short debounce so a quick double-press can't leave the window
+                # in an inconsistent intermediate size.
+                if current_time - self._last_mini_trigger_time < 0.5:
+                    return
+                self._last_mini_trigger_time = current_time
+            logger.info("Mini-mode toggle hotkey detected!")
+            if self.mini_toggle_callback:
+                threading.Thread(
+                    target=self.mini_toggle_callback, daemon=True
+                ).start()
+
         hotkey = "<ctrl>+." if is_mac else "<alt>+."
-        self.listener = keyboard.GlobalHotKeys({hotkey: on_activate})
+        mini_hotkey = "<ctrl>+," if is_mac else "<alt>+,"
+        self.listener = keyboard.GlobalHotKeys(
+            {hotkey: on_activate, mini_hotkey: on_mini_toggle}
+        )
         self.listener.start()
         try:
             while self.running:

@@ -625,6 +625,21 @@ app.on('ready', async () => {
         mainWindow.focus();
     });
 
+    // Show the overlay WITHOUT activating it. This is the Auto Mode answer
+    // surface path: the window becomes visible + always-on-top but never grabs
+    // keyboard/foreground focus, so the user's underlying app stays active.
+    // HARD RULE: the Auto Mode flow must never call 'focus-window'.
+    ipcMain.handle('show-inactive', (event) => {
+        if (!isTrustedIpcSender(event)) {
+            return;
+        }
+
+        if (!mainWindow) return;
+        // Re-assert always-on-top in case it was dropped, then show inactive.
+        mainWindow.setAlwaysOnTop(true, 'screen-saver');
+        mainWindow.showInactive();
+    });
+
     ipcMain.handle('open-external-url', async (event, url: string) => {
         if (!isTrustedIpcSender(event)) {
             return { success: false, error: 'Untrusted sender' };

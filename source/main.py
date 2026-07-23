@@ -82,6 +82,12 @@ from .services.media.screenshots import (
     process_screenshot_start,
 )
 
+# Import Auto Mode + mini-toggle hotkey hooks
+from .services.media.auto_mode import (
+    process_auto_mode,
+    process_mini_toggle,
+)
+
 # Configure logging before runtime startup.
 logging.basicConfig(
     level=logging.INFO,
@@ -209,6 +215,17 @@ def start_server():
 
     init_tab_manager()
 
+    # Restore the persisted Auto Mode gate before the hotkey listener starts so
+    # the very first trigger is correctly armed/disarmed (mirrors how Invisible
+    # Mode restores its persisted state before the renderer loads).
+    try:
+        from .infrastructure.database import db
+        from .infrastructure.config import AUTO_MODE_ENABLED_KEY
+
+        app_state.auto_mode_enabled = db.get_setting(AUTO_MODE_ENABLED_KEY) == "true"
+    except Exception as e:
+        logger.warning("Failed to restore Auto Mode setting (non-fatal): %s", e)
+
     app_state.server_loop_holder["loop"] = loop
     app_state.server_loop_holder["port"] = port
 
@@ -248,7 +265,11 @@ def start_screenshot_service():
         from .infrastructure.screenshot_runtime import ScreenshotService
 
         app_state.screenshot_service = ScreenshotService(
-            process_screenshot, process_screenshot_start, process_screenshot_cancelled
+            process_screenshot,
+            process_screenshot_start,
+            process_screenshot_cancelled,
+            auto_callback=process_auto_mode,
+            mini_toggle_callback=process_mini_toggle,
         )
         app_state.service_thread = threading.Thread(
             target=app_state.screenshot_service.start_listener,
@@ -328,7 +349,10 @@ def main():
 
     logger.info("Server running at: http://localhost:%d", port)
     logger.info("WebSocket endpoint: ws://localhost:%d/ws", port)
-    logger.info("Hotkeys: Alt + . - Take region screenshot")
+    logger.info(
+        "Hotkeys: Alt/Ctrl + . - Region screenshot (or Auto Mode when enabled); "
+        "Alt/Ctrl + , - Toggle mini mode"
+    )
     logger.info("Press Ctrl+C to stop")
     logger.info("=" * 50)
 

@@ -537,6 +537,8 @@ declare global {
   interface Window {
     electronAPI?: {
       focusWindow: () => Promise<void>;
+      /** Show the overlay without activating it (Auto Mode answer surface). */
+      showInactive?: () => Promise<void>;
       setMiniMode: (mini: boolean) => Promise<void>;
       getContentProtection?: () => Promise<ElectronContentProtectionStatus>;
       setContentProtection?: (enabled: boolean) => Promise<ElectronContentProtectionStatus>;
