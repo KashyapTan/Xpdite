@@ -143,6 +143,20 @@ describe('Layout', () => {
     expect(typeof options.state.autoTrigger.nonce).toBe('number');
   });
 
+  test('successive auto_mode_trigger events produce strictly increasing nonces', () => {
+    render(<Layout />);
+
+    emitWs({ type: 'auto_mode_trigger', content: { prompt: 'a' } });
+    emitWs({ type: 'auto_mode_trigger', content: { prompt: 'b' } });
+
+    expect(navigateMock).toHaveBeenCalledTimes(2);
+    const first = navigateMock.mock.calls[0][1].state.autoTrigger.nonce as number;
+    const second = navigateMock.mock.calls[1][1].state.autoTrigger.nonce as number;
+    // A wall-clock nonce could collide within the same millisecond; the
+    // monotonic counter guarantees the second trigger is never dropped.
+    expect(second).toBeGreaterThan(first);
+  });
+
   test('auto_mode_trigger restores from mini and flashes when requested', async () => {
     const { container } = render(<Layout />);
 

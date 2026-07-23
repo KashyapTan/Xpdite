@@ -23,6 +23,7 @@ from source.infrastructure.config import (
     AUTO_MODE_PINNED_MODEL_KEY,
     AUTO_MODE_KEEP_CONTEXT_KEY,
     AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_PROMPT_MAX_CHARS,
     DEFAULT_AUTO_MODE_PROMPT,
 )
 
@@ -163,6 +164,27 @@ class TestAutoModeSettingsHandlers:
         assert store.data[AUTO_MODE_FLASH_KEY] == "true"
         assert store.data[AUTO_MODE_PROMPT_KEY] == "keep me"
 
+    async def test_update_caps_prompt_length(self, handler, store):
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"prompt": "x" * (AUTO_MODE_PROMPT_MAX_CHARS + 500)}}
+        )
+
+        assert len(store.data[AUTO_MODE_PROMPT_KEY]) == AUTO_MODE_PROMPT_MAX_CHARS
+
+    async def test_update_coerces_string_booleans(self, handler, store):
+        # A stray "false" string must not read as truthy and arm the gate.
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": "false"}}
+        )
+        assert app_state.auto_mode_enabled is False
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "false"
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": "true"}}
+        )
+        assert app_state.auto_mode_enabled is True
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "true"
+
 
 class TestAutoModeSubmitCapture:
     """The auto_mode flag forces a capture even when the tab has history."""
@@ -214,6 +236,38 @@ class TestAutoModeSubmitCapture:
         mock_capture.assert_not_awaited()
         session.queue.enqueue.assert_awaited_once()
 
+    async def test_auto_mode_submit_preserves_selected_model(self, handler):
+        # A pinned Auto Mode model must not overwrite the user's current model.
+        app_state.selected_model = "orig-model"
+        session = _make_session()
+        await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+                "model": "pinned-model",
+            },
+        )
+        assert app_state.selected_model == "orig-model"
+
+    async def test_manual_submit_updates_selected_model(self, handler):
+        app_state.selected_model = "orig-model"
+        session = _make_session()
+        await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "none",
+                "model": "picked-model",
+            },
+        )
+        assert app_state.selected_model == "picked-model"
+
 
 class TestAutoModeService:
     def test_resolve_payload_defaults_to_current_model(self, store):
@@ -233,6 +287,8 @@ class TestAutoModeService:
                 AUTO_MODE_PROMPT_KEY: "Summarize",
                 AUTO_MODE_KEEP_CONTEXT_KEY: "true",
                 AUTO_MODE_FLASH_KEY: "true",
+                # Pinned model must still be an enabled model to be honored.
+                "enabled_models": json.dumps(["pinned-vision"]),
             }
         )
         app_state.selected_model = "current-model"
@@ -243,6 +299,21 @@ class TestAutoModeService:
         assert payload["prompt"] == "Summarize"
         assert payload["keep_context"] is True
         assert payload["flash"] is True
+
+    def test_resolve_payload_pinned_model_not_enabled_falls_back(self, store):
+        # A model pinned then later disabled/removed must fall back to the
+        # current model rather than making every trigger fail silently.
+        store.data.update(
+            {
+                AUTO_MODE_PINNED_MODEL_KEY: "removed-model",
+                "enabled_models": json.dumps(["some-other-model"]),
+            }
+        )
+        app_state.selected_model = "current-model"
+
+        payload = auto_mode._resolve_auto_mode_payload()
+
+        assert payload["model"] == "current-model"
 
     def test_resolve_payload_blank_prompt_falls_back(self, store):
         store.data[AUTO_MODE_PROMPT_KEY] = "   "

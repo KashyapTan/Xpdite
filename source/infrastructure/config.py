@@ -177,6 +177,10 @@ AUTO_MODE_FLASH_KEY = "auto_mode_flash"
 # Default prompt shipped so the feature works before the user customizes it.
 DEFAULT_AUTO_MODE_PROMPT = "Answer the question on my screen concisely."
 
+# The saved prompt is re-sent to the LLM on every trigger, so cap its stored
+# length to avoid unbounded token/latency cost from a pathological value.
+AUTO_MODE_PROMPT_MAX_CHARS = 8000
+
 
 # Google OAuth configuration
 GOOGLE_USER_DATA = str(USER_DATA_DIR / "google")

@@ -181,6 +181,34 @@ describe('SettingsGeneral', () => {
     });
   });
 
+  test('a settings echo does not clobber an in-progress prompt edit', async () => {
+    render(<SettingsGeneral />);
+    emitWs({ type: 'auto_mode_settings', content: { ...AUTO_DEFAULTS, enabled: true, prompt: 'saved' } });
+
+    const textarea = screen.getByLabelText(/Prompt sent with every capture/i) as HTMLTextAreaElement;
+    await userEvent.clear(textarea);
+    await userEvent.type(textarea, 'in progress'); // focuses the textarea
+
+    // A reconnect re-fetch echo lands while the user is still typing.
+    emitWs({ type: 'auto_mode_settings', content: { ...AUTO_DEFAULTS, enabled: true, prompt: 'server value' } });
+
+    expect(textarea.value).toBe('in progress');
+  });
+
+  test('a pinned model no longer in the enabled list is still shown as an option', async () => {
+    render(<SettingsGeneral />);
+    emitWs({
+      type: 'auto_mode_settings',
+      content: { ...AUTO_DEFAULTS, enabled: true, pinned_model: 'removed-model' },
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('option', { name: /removed-model \(unavailable\)/i }),
+      ).toBeInTheDocument();
+    });
+  });
+
   test('keep-context toggle persists', async () => {
     render(<SettingsGeneral />);
     emitWs({ type: 'auto_mode_settings', content: { ...AUTO_DEFAULTS, enabled: true } });

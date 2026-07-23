@@ -26,6 +26,7 @@ from ..infrastructure.config import (
     AUTO_MODE_PINNED_MODEL_KEY,
     AUTO_MODE_KEEP_CONTEXT_KEY,
     AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_PROMPT_MAX_CHARS,
     DEFAULT_AUTO_MODE_PROMPT,
 )
 
@@ -203,8 +204,10 @@ class MessageHandler:
                     continue
                 attached_files.append({"path": path, "name": name})
 
-        # Update the selected model in global state
-        if model:
+        # Update the selected model in global state. Skip for Auto Mode turns:
+        # a pinned Auto Mode model must not overwrite the user's current model
+        # (which is also the fallback used to resolve the next Auto trigger).
+        if model and not auto_mode:
             app_state.selected_model = model
 
         if not query_text:
@@ -773,23 +776,33 @@ class MessageHandler:
         if not isinstance(settings, dict):
             settings = {}
 
+        def _coerce_bool(value: Any) -> bool:
+            # Defensive: accept real booleans and "true"/"false" strings alike
+            # so a stray string payload can't flip a flag the wrong way.
+            if isinstance(value, str):
+                return value.strip().lower() == "true"
+            return bool(value)
+
         if "enabled" in settings:
-            enabled = bool(settings["enabled"])
+            enabled = _coerce_bool(settings["enabled"])
             db.set_setting(AUTO_MODE_ENABLED_KEY, "true" if enabled else "false")
             app_state.auto_mode_enabled = enabled
         if "prompt" in settings:
-            db.set_setting(AUTO_MODE_PROMPT_KEY, str(settings["prompt"]))
+            # Cap the stored prompt: it is re-sent to the LLM on every trigger,
+            # so an unbounded value would waste tokens/latency indefinitely.
+            prompt = str(settings["prompt"])[:AUTO_MODE_PROMPT_MAX_CHARS]
+            db.set_setting(AUTO_MODE_PROMPT_KEY, prompt)
         if "pinned_model" in settings:
             db.set_setting(AUTO_MODE_PINNED_MODEL_KEY, str(settings["pinned_model"]))
         if "keep_context" in settings:
             db.set_setting(
                 AUTO_MODE_KEEP_CONTEXT_KEY,
-                "true" if bool(settings["keep_context"]) else "false",
+                "true" if _coerce_bool(settings["keep_context"]) else "false",
             )
         if "flash" in settings:
             db.set_setting(
                 AUTO_MODE_FLASH_KEY,
-                "true" if bool(settings["flash"]) else "false",
+                "true" if _coerce_bool(settings["flash"]) else "false",
             )
 
         await self.websocket.send_text(

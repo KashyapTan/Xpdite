@@ -48,8 +48,14 @@ def _resolve_auto_mode_payload() -> dict:
     if not prompt:
         prompt = DEFAULT_AUTO_MODE_PROMPT
 
+    # Use the pinned model only if it is still an enabled model. A model that
+    # was pinned and later disabled/removed would otherwise make every trigger
+    # fail silently (hands-off, shown inactive — the user might never notice).
     pinned_model = (db.get_setting(AUTO_MODE_PINNED_MODEL_KEY) or "").strip()
-    model = pinned_model or app_state.selected_model
+    if pinned_model and pinned_model in db.get_enabled_models():
+        model = pinned_model
+    else:
+        model = app_state.selected_model
 
     keep_context = db.get_setting(AUTO_MODE_KEEP_CONTEXT_KEY) == "true"
     flash = db.get_setting(AUTO_MODE_FLASH_KEY) == "true"
@@ -93,6 +99,20 @@ class AutoModeHandler:
         await broadcast_message("toggle_mini_mode", {})
 
 
+def _log_task_result(task: "asyncio.Task") -> None:
+    """Surface exceptions from the fire-and-forget hotkey coroutine.
+
+    Without this the exception would only reach asyncio's default handler with
+    no Auto-Mode context, so a failed trigger would be silent.
+    """
+    try:
+        exc = task.exception()
+    except asyncio.CancelledError:
+        return
+    if exc is not None:
+        logger.error("Auto Mode hotkey coroutine failed: %s", exc, exc_info=exc)
+
+
 def _schedule_on_server_loop(coro_factory) -> None:
     """Schedule a coroutine on the uvicorn loop from a background thread."""
     server_loop = app_state.server_loop_holder.get("loop")
@@ -101,7 +121,8 @@ def _schedule_on_server_loop(coro_factory) -> None:
         return
 
     def schedule():
-        asyncio.create_task(coro_factory())
+        task = asyncio.create_task(coro_factory())
+        task.add_done_callback(_log_task_result)
 
     try:
         server_loop.call_soon_threadsafe(schedule)

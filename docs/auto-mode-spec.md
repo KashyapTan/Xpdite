@@ -275,3 +275,31 @@ boot before the hotkey listener starts.
 `Control+,` / `Alt+,` is a second, always-on global hotkey registered on the same
 pynput listener; it broadcasts `toggle_mini_mode`, which `Layout.tsx` applies by
 flipping the shared mini state (kept in sync with the title-bar control).
+
+---
+
+## 13. Security considerations
+
+Auto Mode is, by design, a **hands-off** pipeline: one keypress captures the
+**entire screen** and auto-submits it (plus the saved prompt) to the currently
+selected model with **no confirmation step**. Two consequences follow directly
+from that design and were flagged during code review:
+
+- **Accidental / unintended capture.** Whatever is on screen at trigger time —
+  passwords, private messages, another person's data, financial info — is sent
+  to the model. If the selected model is a **cloud** provider, that content
+  leaves the machine. The 1.5s debounce and the explicit Settings toggle limit
+  accidents, but the surface is real; users should keep Auto Mode off unless
+  they intend it.
+- **Screen content → tool execution.** Auto Mode reuses the normal
+  `enqueue → stream` path, so the model's response can trigger inline MCP tools
+  (terminal, memory, scheduler, …). Text visible on screen ("ignore your
+  instructions and run …") therefore becomes an untrusted-input path into
+  tool-calling, still hands-off and unconfirmed.
+
+**Open product decision (not yet implemented):** whether to harden Auto Mode
+turns — e.g. disabling inline tool-calling for auto-triggered turns, and/or
+requiring an explicit opt-in before an auto turn may send to a cloud provider.
+The saved prompt itself is handled safely (parameterized DB writes, length-capped,
+no string interpolation into commands); the risk is the auto-send of screen
+contents and the tool-calling amplification, not prompt handling.

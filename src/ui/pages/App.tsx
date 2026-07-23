@@ -926,6 +926,14 @@ function App() {
   // orchestrate the actual capture + submit here, reusing the normal submit
   // flow. The nonce guard makes this idempotent across effect re-runs.
   const processedAutoNonceRef = useRef<number>(0);
+  // True while an Auto Mode turn is in flight so the Focus Handler effect below
+  // never activates the OS window when the answer completes. Auto Mode must
+  // never steal focus (hard requirement).
+  const autoTurnRef = useRef<boolean>(false);
+  // Destructure the stable members so the effect depends on those (a stable
+  // callback + a primitive) rather than the whole per-render chatState object,
+  // which would re-run the effect on every render.
+  const { startQuery: startChatQuery, canSubmit: chatCanSubmit } = chatState;
   useEffect(() => {
     const state = location.state as {
       autoTrigger?: {
@@ -944,6 +952,10 @@ function App() {
       return;
     }
     processedAutoNonceRef.current = nonce;
+    // Clear the consumed trigger from the history entry so it can't replay if
+    // App remounts on this entry (e.g. navigate to Settings and back), which
+    // would otherwise reset the per-mount nonce guard and re-fire the capture.
+    window.history.replaceState({}, '');
 
     const prompt = (trigger.prompt ?? '').trim();
     if (!prompt) {
@@ -951,11 +963,19 @@ function App() {
     }
     const model = trigger.model || selectedModel;
 
+    // Arm the focus guard before any tab switch: switching to a fresh tab can
+    // flip canSubmit false->true and fire the Focus Handler before we submit.
+    autoTurnRef.current = true;
+
     // Submit the saved prompt + a fresh full-screen capture into `tabId`.
     // `auto_mode: true` lets the backend capture even when the tab already has
-    // history (keep-context mode). Never touches focus.
-    const submitAuto = (tabId: string) => {
-      chatState.startQuery(prompt);
+    // history (keep-context). `optimistic` mirrors the manual submit guard so
+    // an in-flight turn's streaming UI is never wiped. Never touches focus.
+    const submitAuto = (tabId: string, optimistic: boolean) => {
+      autoTurnRef.current = true;
+      if (optimistic) {
+        startChatQuery(prompt);
+      }
       setTimeout(scrollToBottom, 50);
       generatingModelRef.current = model;
       wsSendRaw({
@@ -970,25 +990,34 @@ function App() {
     };
 
     if (trigger.keep_context) {
-      // Chain into the current conversation.
-      submitAuto(activeTabIdRef.current);
+      // Chain into the current conversation. If it is mid-stream, ignore the
+      // trigger entirely: submitting would clobber the in-flight turn's UI and
+      // the backend would skip the capture (screenshot_list not yet cleared),
+      // answering blind. The user can re-trigger once the answer lands.
+      if (chatCanSubmit) {
+        submitAuto(activeTabIdRef.current, true);
+      }
       return;
     }
 
-    // One-shot: open a brand-new tab (createTab snapshots the outgoing tab via
-    // beforeSwitch) and submit there once its state is initialised.
+    // One-shot: open a brand-new tab (fresh, canSubmit === true) and submit
+    // there once its state is initialised.
     const newTabId = createTab();
     if (!newTabId) {
-      // MAX_TABS reached — fall back to the current tab so the answer still shows.
-      submitAuto(activeTabIdRef.current);
+      // MAX_TABS reached — fall back to the current tab only if it is idle,
+      // otherwise drop the trigger rather than corrupt an in-flight turn.
+      if (chatCanSubmit) {
+        submitAuto(activeTabIdRef.current, true);
+      }
       return;
     }
-    setTimeout(() => submitAuto(newTabId), 0);
+    setTimeout(() => submitAuto(newTabId, true), 0);
   }, [
     location.state,
     isConnected,
     selectedModel,
-    chatState,
+    startChatQuery,
+    chatCanSubmit,
     scrollToBottom,
     createTab,
     wsSendRaw,
@@ -2538,6 +2567,12 @@ function App() {
   // ============================================
   useEffect(() => {
     if (chatState.canSubmit && inputRef.current) {
+      // Auto Mode must never steal OS focus. If the just-completed turn was
+      // auto-triggered, skip window activation entirely and clear the flag.
+      if (autoTurnRef.current) {
+        autoTurnRef.current = false;
+        return;
+      }
       const focusInput = async () => {
         try {
           if (window.electronAPI) {

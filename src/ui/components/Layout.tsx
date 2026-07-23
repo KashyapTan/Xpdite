@@ -6,6 +6,15 @@ import BootScreen from './boot/BootScreen';
 import xpditeLogo from '../assets/new/xpdite-logo-transparent.svg';
 import '../CSS/components/Layout.css';
 
+// Strictly-increasing nonce for Auto Mode triggers. A wall-clock timestamp can
+// collide within the same millisecond (dropping the second trigger); this stays
+// monotonic while still ordering roughly by time.
+let autoTriggerNonce = 0;
+function nextAutoTriggerNonce(): number {
+  autoTriggerNonce = Math.max(autoTriggerNonce + 1, Date.now());
+  return autoTriggerNonce;
+}
+
 interface HotkeyWindowBridgeProps {
   /** Live mirror of the current mini state (read at event time, never stale). */
   miniRef: React.MutableRefObject<boolean>;
@@ -55,7 +64,7 @@ const HotkeyWindowBridge: React.FC<HotkeyWindowBridgeProps> = ({
         }
         // Hand off to the chat route; App reads `location.state.autoTrigger`.
         navigate('/', {
-          state: { autoTrigger: { ...payload, nonce: Date.now() } },
+          state: { autoTrigger: { ...payload, nonce: nextAutoTriggerNonce() } },
         });
       }
     });

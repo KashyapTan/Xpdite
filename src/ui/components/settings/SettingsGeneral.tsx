@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import type { ElectronContentProtectionStatus } from '../../types';
 import { PinIcon } from '../icons/AppIcons';
 import { useWebSocket } from '../../contexts/WebSocketContext';
@@ -31,9 +31,14 @@ const SettingsGeneral: React.FC = () => {
   const [message, setMessage] = useState('');
 
   // ── Auto Mode ────────────────────────────────────────────────
-  const { send, subscribe } = useWebSocket();
+  const { send, subscribe, isConnected } = useWebSocket();
   const [autoMode, setAutoMode] = useState<AutoModeSettings | null>(null);
   const [autoModels, setAutoModels] = useState<string[]>([]);
+  // True while the user is editing the prompt textarea, so an incoming settings
+  // echo (e.g. a reconnect re-fetch) doesn't overwrite unsaved edits.
+  const promptFocusedRef = useRef(false);
+  // Last prompt value known to be persisted, so blur only saves real changes.
+  const lastSavedPromptRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,7 +85,14 @@ const SettingsGeneral: React.FC = () => {
   useEffect(() => {
     const unsubscribe = subscribe((data) => {
       if (data.type === 'auto_mode_settings') {
-        setAutoMode(data.content as AutoModeSettings);
+        const incoming = data.content as AutoModeSettings;
+        if (promptFocusedRef.current) {
+          // Keep the in-progress prompt edit; merge everything else.
+          setAutoMode((prev) => (prev ? { ...incoming, prompt: prev.prompt } : incoming));
+        } else {
+          lastSavedPromptRef.current = incoming.prompt;
+          setAutoMode(incoming);
+        }
       } else if (data.type === '__ws_connected') {
         send({ type: 'auto_mode_get_settings' });
       }
@@ -204,7 +216,7 @@ const SettingsGeneral: React.FC = () => {
               type="checkbox"
               aria-label="Auto Mode"
               checked={autoEnabled}
-              disabled={!autoLoaded}
+              disabled={!autoLoaded || !isConnected}
               onChange={(event) => patchAutoMode({ enabled: event.target.checked })}
             />
             <span className="general-settings-toggle-slider" />
@@ -223,10 +235,20 @@ const SettingsGeneral: React.FC = () => {
                 rows={3}
                 value={autoMode?.prompt ?? ''}
                 placeholder="Answer the question on my screen concisely."
+                onFocus={() => {
+                  promptFocusedRef.current = true;
+                }}
                 onChange={(event) =>
                   setAutoMode((prev) => (prev ? { ...prev, prompt: event.target.value } : prev))
                 }
-                onBlur={(event) => send({ type: 'auto_mode_update_settings', settings: { prompt: event.target.value } })}
+                onBlur={(event) => {
+                  promptFocusedRef.current = false;
+                  const value = event.target.value;
+                  if (value !== lastSavedPromptRef.current) {
+                    lastSavedPromptRef.current = value;
+                    send({ type: 'auto_mode_update_settings', settings: { prompt: value } });
+                  }
+                }}
               />
             </div>
 
@@ -241,6 +263,11 @@ const SettingsGeneral: React.FC = () => {
                 onChange={(event) => patchAutoMode({ pinned_model: event.target.value })}
               >
                 <option value="">Use currently selected model</option>
+                {autoMode?.pinned_model && !autoModels.includes(autoMode.pinned_model) && (
+                  <option value={autoMode.pinned_model}>
+                    {autoMode.pinned_model} (unavailable)
+                  </option>
+                )}
                 {autoModels.map((model) => (
                   <option key={model} value={model}>
                     {model}
