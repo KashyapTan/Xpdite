@@ -20,7 +20,6 @@ interface HotkeyWindowBridgeProps {
   miniRef: React.MutableRefObject<boolean>;
   toggleMini: (val: boolean) => Promise<void>;
   setIsHidden: (hidden: boolean) => void;
-  onFlash: () => void;
 }
 
 /**
@@ -38,7 +37,6 @@ const HotkeyWindowBridge: React.FC<HotkeyWindowBridgeProps> = ({
   miniRef,
   toggleMini,
   setIsHidden,
-  onFlash,
 }) => {
   const { subscribe } = useWebSocket();
   const navigate = useNavigate();
@@ -59,16 +57,22 @@ const HotkeyWindowBridge: React.FC<HotkeyWindowBridgeProps> = ({
         void window.electronAPI?.showInactive?.();
 
         const payload = (data.content ?? {}) as Record<string, unknown>;
-        if (payload.flash) {
-          onFlash();
-        }
         // Hand off to the chat route; App reads `location.state.autoTrigger`.
         navigate('/', {
           state: { autoTrigger: { ...payload, nonce: nextAutoTriggerNonce() } },
         });
+        return;
+      }
+
+      if (data.type === 'auto_mode_error') {
+        setIsHidden(false);
+        const payload = (data.content ?? {}) as Record<string, unknown>;
+        navigate('/', {
+          state: { autoError: { ...payload, nonce: nextAutoTriggerNonce() } },
+        });
       }
     });
-  }, [subscribe, navigate, toggleMini, setIsHidden, onFlash, miniRef]);
+  }, [subscribe, navigate, toggleMini, setIsHidden, miniRef]);
 
   return null;
 };
@@ -116,7 +120,6 @@ const Layout: React.FC = () => {
         miniRef={miniRef}
         toggleMini={toggleMini}
         setIsHidden={setIsHidden}
-        onFlash={triggerFlash}
       />
       <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
         <div
@@ -135,7 +138,7 @@ const Layout: React.FC = () => {
 
         <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
           <BootScreen />
-          <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden }} />
+          <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden, triggerFlash }} />
         </div>
       </div>
     </WebSocketProvider>

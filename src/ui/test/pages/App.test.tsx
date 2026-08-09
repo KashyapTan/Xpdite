@@ -34,6 +34,7 @@ const navigateMock = vi.fn();
 const wsSendMock = vi.fn();
 const wsSubscribeMock = vi.fn();
 const setIsHiddenMock = vi.fn();
+const triggerFlashMock = vi.fn();
 const createTabMock = vi.fn();
 let isConnectedMock = true;
 
@@ -173,7 +174,12 @@ vi.mock('react-router-dom', async () => {
     ...actual,
     useLocation: () => ({ pathname: '/', state: locationStateMock }),
     useNavigate: () => navigateMock,
-    useOutletContext: () => ({ setMini: vi.fn(), setIsHidden: setIsHiddenMock, isHidden: false }),
+    useOutletContext: () => ({
+      setMini: vi.fn(),
+      setIsHidden: setIsHiddenMock,
+      isHidden: false,
+      triggerFlash: triggerFlashMock,
+    }),
   };
 });
 
@@ -337,6 +343,140 @@ describe('App websocket-driven behavior', () => {
     expect(screen.getByText('title-bar')).toBeInTheDocument();
     expect(screen.getByText('tab-bar')).toBeInTheDocument();
     expect(await screen.findByText('response-area')).toBeInTheDocument();
+  });
+
+  test('waits for initial tab restore before submitting an Auto Mode trigger', async () => {
+    locationStateMock = {
+      autoTrigger: {
+        prompt: 'Explain the screen',
+        model: 'openai/gpt-4o',
+        keep_context: false,
+        nonce: 101,
+      },
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'submit_query',
+        tab_id: 'tab-3',
+        content: 'Explain the screen',
+        capture_mode: 'fullscreen',
+        auto_mode: true,
+        model: 'openai/gpt-4o',
+      }));
+    });
+    expect(createTabMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('does not mutate the active tab when Auto Mode cannot create a fresh tab', async () => {
+    createTabMock.mockReturnValue(null);
+    locationStateMock = {
+      autoTrigger: {
+        prompt: 'Explain the screen',
+        model: 'openai/gpt-4o',
+        keep_context: false,
+        nonce: 102,
+      },
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(chatStateMock.setErrorMessage).toHaveBeenCalled();
+    });
+    expect(wsSendMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'submit_query',
+    }));
+  });
+
+  test('rejects keep-context Auto Mode while the current tab is busy', async () => {
+    chatStateMock.canSubmit = false;
+    locationStateMock = {
+      autoTrigger: {
+        prompt: 'Explain the screen',
+        model: 'openai/gpt-4o',
+        keep_context: true,
+        nonce: 103,
+      },
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(chatStateMock.setErrorMessage).toHaveBeenCalled();
+    });
+    expect(wsSendMock).not.toHaveBeenCalledWith(expect.objectContaining({
+      type: 'submit_query',
+    }));
+  });
+
+  test('flashes only after the Auto Mode screenshot has been added', async () => {
+    locationStateMock = {
+      autoTrigger: {
+        prompt: 'Explain the screen',
+        model: 'openai/gpt-4o',
+        keep_context: false,
+        flash: true,
+        nonce: 104,
+      },
+    };
+
+    render(<App />);
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'submit_query',
+        tab_id: 'tab-3',
+      }));
+    });
+    expect(triggerFlashMock).not.toHaveBeenCalled();
+
+    emitWebSocketEvent({
+      type: 'screenshot_added',
+      tab_id: 'tab-3',
+      content: { id: 'fresh', image_data: 'abc', timestamp: 1 },
+    });
+    expect(triggerFlashMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('restores visibility when an Auto Mode capture fails in a background tab', async () => {
+    locationStateMock = {
+      autoTrigger: {
+        prompt: 'Explain the screen',
+        model: 'openai/gpt-4o',
+        keep_context: false,
+        nonce: 105,
+      },
+    };
+
+    render(<App />);
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith(expect.objectContaining({
+        type: 'submit_query',
+        tab_id: 'tab-3',
+      }));
+    });
+    setIsHiddenMock.mockClear();
+
+    emitWebSocketEvent({
+      type: 'error',
+      tab_id: 'tab-3',
+      content: 'Auto Mode could not capture the screen. No request was sent.',
+    });
+
+    expect(setIsHiddenMock).toHaveBeenCalledWith(false);
+  });
+
+  test('synchronizes the selected model for backend hotkey resolution', async () => {
+    render(<App />);
+
+    await waitFor(() => {
+      expect(wsSendMock).toHaveBeenCalledWith({
+        type: 'set_selected_model',
+        model: 'openai/gpt-4o',
+      });
+    });
   });
 
   test('submits query through websocket with active tab routing', async () => {

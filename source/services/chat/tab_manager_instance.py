@@ -63,6 +63,7 @@ def init_tab_manager() -> TabManager:
                     model=query.model,
                     action=query.action,
                     target_message_id=query.target_message_id,
+                    tools_enabled=query.tools_enabled,
                 )
             finally:
                 reset_current_tab_id(token)

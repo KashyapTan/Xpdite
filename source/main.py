@@ -222,7 +222,14 @@ def start_server():
         from .infrastructure.database import db
         from .infrastructure.config import AUTO_MODE_ENABLED_KEY
 
-        app_state.auto_mode_enabled = db.get_setting(AUTO_MODE_ENABLED_KEY) == "true"
+        from .services.media.auto_mode import auto_mode_capability
+
+        supported, reason = auto_mode_capability()
+        app_state.auto_mode_enabled = (
+            supported and db.get_setting(AUTO_MODE_ENABLED_KEY) == "true"
+        )
+        if not supported:
+            logger.info("Auto Mode disabled for this session: %s", reason)
     except Exception as e:
         logger.warning("Failed to restore Auto Mode setting (non-fatal): %s", e)
 

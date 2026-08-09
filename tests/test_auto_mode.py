@@ -23,6 +23,7 @@ from source.infrastructure.config import (
     AUTO_MODE_PINNED_MODEL_KEY,
     AUTO_MODE_KEEP_CONTEXT_KEY,
     AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_ALLOW_CLOUD_KEY,
     AUTO_MODE_PROMPT_MAX_CHARS,
     DEFAULT_AUTO_MODE_PROMPT,
 )
@@ -50,7 +51,7 @@ class _FakeSettingsStore:
 
 
 def _make_session(chat_history=None):
-    queue = SimpleNamespace(enqueue=AsyncMock())
+    queue = SimpleNamespace(enqueue=AsyncMock(), has_pending_work=False)
     state = SimpleNamespace(
         screenshot_list=[],
         chat_history=list(chat_history or []),
@@ -185,6 +186,36 @@ class TestAutoModeSettingsHandlers:
         assert app_state.auto_mode_enabled is True
         assert store.data[AUTO_MODE_ENABLED_KEY] == "true"
 
+    async def test_wayland_capability_refuses_enable(self, handler, store, monkeypatch):
+        monkeypatch.setattr(
+            handlers.MessageHandler,
+            "_auto_mode_capability",
+            staticmethod(
+                lambda: {"supported": False, "unsupported_reason": "Wayland"}
+            ),
+        )
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": True}}
+        )
+
+        assert app_state.auto_mode_enabled is False
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "false"
+        websocket_content = handler.websocket.sent[-1]["content"]
+        assert websocket_content["supported"] is False
+
+    async def test_selected_model_sync_accepts_only_enabled_models(
+        self, handler, store
+    ):
+        store.data["enabled_models"] = json.dumps(["model-a"])
+        app_state.selected_model = "old"
+
+        await handler._handle_set_selected_model({"model": "missing"})
+        assert app_state.selected_model == "old"
+
+        await handler._handle_set_selected_model({"model": "model-a"})
+        assert app_state.selected_model == "model-a"
+
 
 class TestAutoModeSubmitCapture:
     """The auto_mode flag forces a capture even when the tab has history."""
@@ -199,17 +230,26 @@ class TestAutoModeSubmitCapture:
                 new=AsyncMock(return_value=([], "look")),
             ),
             patch.object(
-                handlers.ScreenshotHandler, "capture_fullscreen", new=AsyncMock()
+                handlers.ScreenshotHandler,
+                "capture_fullscreen",
+                new=AsyncMock(return_value="capture-id"),
             ) as mock_capture,
+            patch.object(
+                handlers.ScreenshotHandler,
+                "clear_screenshots",
+                new=AsyncMock(
+                    side_effect=lambda tab_state: tab_state.screenshot_list.clear()
+                ),
+            ) as mock_clear,
             patch.object(handlers, "set_current_tab_id", return_value=object()),
             patch.object(handlers, "reset_current_tab_id"),
         ):
             await handler._handle_submit_query(payload)
-        return mock_capture
+        return mock_capture, mock_clear
 
     async def test_auto_mode_captures_despite_history(self, handler):
         session = _make_session(chat_history=[{"role": "user", "content": "prev"}])
-        mock_capture = await self._run_submit(
+        mock_capture, _ = await self._run_submit(
             handler,
             session,
             {
@@ -224,7 +264,7 @@ class TestAutoModeSubmitCapture:
 
     async def test_manual_submit_skips_capture_with_history(self, handler):
         session = _make_session(chat_history=[{"role": "user", "content": "prev"}])
-        mock_capture = await self._run_submit(
+        mock_capture, _ = await self._run_submit(
             handler,
             session,
             {
@@ -267,6 +307,87 @@ class TestAutoModeSubmitCapture:
             },
         )
         assert app_state.selected_model == "picked-model"
+
+    async def test_capture_failure_never_enqueues(self, handler, websocket):
+        session = _make_session()
+        manager = _FakeTabManager(session)
+        handler._get_tab_manager = lambda: manager
+        with (
+            patch.object(
+                handlers.ConversationService,
+                "extract_skill_slash_commands",
+                new=AsyncMock(return_value=([], "look")),
+            ),
+            patch.object(
+                handlers.ScreenshotHandler,
+                "capture_fullscreen",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handlers, "set_current_tab_id", return_value=object()),
+            patch.object(handlers, "reset_current_tab_id"),
+        ):
+            await handler._handle_submit_query(
+                {
+                    "tab_id": "t",
+                    "content": "look",
+                    "capture_mode": "fullscreen",
+                    "auto_mode": True,
+                }
+            )
+
+        session.queue.enqueue.assert_not_awaited()
+        assert websocket.sent[-1]["type"] == "error"
+        assert "No request was sent" in websocket.sent[-1]["content"]
+
+    async def test_busy_keep_context_never_captures_or_enqueues(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "old"}])
+        session.queue.has_pending_work = True
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+            },
+        )
+        mock_capture.assert_not_awaited()
+        session.queue.enqueue.assert_not_awaited()
+
+    async def test_auto_mode_clears_stale_capture_and_disables_tools(self, handler):
+        session = _make_session()
+        session.state.screenshot_list.append({"id": "old", "path": "/tmp/old.png"})
+        mock_capture, mock_clear = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+            },
+        )
+        mock_clear.assert_awaited_once_with(tab_state=session.state)
+        mock_capture.assert_awaited_once_with(tab_state=session.state)
+        queued = session.queue.enqueue.await_args.args[0]
+        assert queued.tools_enabled is False
+
+    async def test_false_string_is_not_treated_as_auto_mode(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "old"}])
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": "false",
+            },
+        )
+        mock_capture.assert_not_awaited()
+        queued = session.queue.enqueue.await_args.args[0]
+        assert queued.tools_enabled is True
 
 
 class TestAutoModeService:
@@ -332,6 +453,33 @@ class TestAutoModeService:
         msg_type, content = mock_bcast.await_args.args
         assert msg_type == "auto_mode_trigger"
         assert content["model"] == "m"
+
+    async def test_cloud_trigger_requires_explicit_opt_in(self, store, monkeypatch):
+        app_state.auto_mode_enabled = True
+        app_state.selected_model = "openai/gpt-4o"
+        mock_bcast = AsyncMock()
+        monkeypatch.setattr(auto_mode, "broadcast_message", mock_bcast)
+
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+
+        assert mock_bcast.await_args.args[0] == "auto_mode_error"
+        assert "cloud capture" in mock_bcast.await_args.args[1]["message"]
+
+        store.data[AUTO_MODE_ALLOW_CLOUD_KEY] = "true"
+        mock_bcast.reset_mock()
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+        assert mock_bcast.await_args.args[0] == "auto_mode_trigger"
+
+    def test_wayland_is_reported_unsupported(self, monkeypatch):
+        monkeypatch.setattr(auto_mode.sys, "platform", "linux")
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        assert auto_mode.auto_mode_capability()[0] is False
+
+    def test_linux_x11_is_supported(self, monkeypatch):
+        monkeypatch.setattr(auto_mode.sys, "platform", "linux")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+        assert auto_mode.auto_mode_capability() == (True, "")
 
     async def test_trigger_noop_when_disabled(self, monkeypatch):
         app_state.auto_mode_enabled = False

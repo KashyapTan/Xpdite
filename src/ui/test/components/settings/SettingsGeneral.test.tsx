@@ -64,6 +64,9 @@ const AUTO_DEFAULTS = {
   pinned_model: '',
   keep_context: false,
   flash: false,
+  allow_cloud: false,
+  supported: true,
+  unsupported_reason: '',
 };
 
 describe('SettingsGeneral', () => {
@@ -218,5 +221,31 @@ describe('SettingsGeneral', () => {
       type: 'auto_mode_update_settings',
       settings: { keep_context: true },
     });
+  });
+
+  test('cloud screenshots require an explicit opt-in', async () => {
+    render(<SettingsGeneral />);
+    emitWs({ type: 'auto_mode_settings', content: { ...AUTO_DEFAULTS, enabled: true } });
+
+    await userEvent.click(screen.getByLabelText('Allow cloud screenshots'));
+    expect(sendMock).toHaveBeenCalledWith({
+      type: 'auto_mode_update_settings',
+      settings: { allow_cloud: true },
+    });
+  });
+
+  test('disables Auto Mode when the platform cannot show it safely', () => {
+    render(<SettingsGeneral />);
+    emitWs({
+      type: 'auto_mode_settings',
+      content: {
+        ...AUTO_DEFAULTS,
+        supported: false,
+        unsupported_reason: 'Unavailable on Wayland.',
+      },
+    });
+
+    expect(screen.getByLabelText('Auto Mode')).toBeDisabled();
+    expect(screen.getByText('Unavailable on Wayland.')).toBeInTheDocument();
   });
 });

@@ -18,6 +18,9 @@ interface AutoModeSettings {
   pinned_model: string;
   keep_context: boolean;
   flash: boolean;
+  allow_cloud: boolean;
+  supported: boolean;
+  unsupported_reason: string;
 }
 
 function errorMessageFor(error: unknown): string {
@@ -216,12 +219,18 @@ const SettingsGeneral: React.FC = () => {
               type="checkbox"
               aria-label="Auto Mode"
               checked={autoEnabled}
-              disabled={!autoLoaded || !isConnected}
+              disabled={!autoLoaded || !isConnected || autoMode?.supported === false}
               onChange={(event) => patchAutoMode({ enabled: event.target.checked })}
             />
             <span className="general-settings-toggle-slider" />
           </label>
         </div>
+
+        {autoMode?.supported === false && (
+          <p className="general-settings-disclaimer">
+            {autoMode.unsupported_reason}
+          </p>
+        )}
 
         {autoEnabled && (
           <div className="general-settings-body">
@@ -312,9 +321,28 @@ const SettingsGeneral: React.FC = () => {
               </label>
             </div>
 
+            <div className="general-settings-subrow">
+              <div className="general-settings-card-info">
+                <span className="general-settings-subrow-title">Allow cloud screenshots</span>
+                <span className="general-settings-card-note">
+                  Permit Auto Mode to send the full-screen capture to a remote model provider.
+                </span>
+              </div>
+              <label className="general-settings-toggle">
+                <input
+                  type="checkbox"
+                  aria-label="Allow cloud screenshots"
+                  checked={autoMode?.allow_cloud ?? false}
+                  onChange={(event) => patchAutoMode({ allow_cloud: event.target.checked })}
+                />
+                <span className="general-settings-toggle-slider" />
+              </label>
+            </div>
+
             <p className="general-settings-disclaimer">
-              Auto Mode sends a screenshot with every trigger. Make sure your selected (or pinned)
-              model is vision-capable, otherwise it won&apos;t be able to read your screen.
+              Auto Mode sends a screenshot with every trigger and disables tool use for that turn.
+              Cloud models are blocked unless you explicitly allow cloud screenshots above. Make
+              sure the selected model is vision-capable.
             </p>
           </div>
         )}

@@ -26,6 +26,7 @@ from ..infrastructure.config import (
     AUTO_MODE_PINNED_MODEL_KEY,
     AUTO_MODE_KEEP_CONTEXT_KEY,
     AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_ALLOW_CLOUD_KEY,
     AUTO_MODE_PROMPT_MAX_CHARS,
     DEFAULT_AUTO_MODE_PROMPT,
 )
@@ -190,7 +191,12 @@ class MessageHandler:
         # Auto Mode submits programmatically after a full-screen capture. The
         # flag lets the capture fire even when the target tab already has chat
         # history (keep-context mode), which a manual submit intentionally skips.
-        auto_mode = bool(data.get("auto_mode", False))
+        auto_mode_raw = data.get("auto_mode", False)
+        auto_mode = (
+            auto_mode_raw.strip().lower() == "true"
+            if isinstance(auto_mode_raw, str)
+            else auto_mode_raw is True
+        )
         model = data.get("model", "")
         attached_files_raw = data.get("attached_files", [])
         attached_files: list[dict[str, str]] = []
@@ -231,9 +237,29 @@ class MessageHandler:
 
         session = self._get_tab_manager().get_or_create(tab_id)
 
+        if auto_mode and session.queue.has_pending_work:
+            await self.websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "content": "Auto Mode could not start because this tab is still processing another request.",
+                        "tab_id": tab_id,
+                    }
+                )
+            )
+            return
+
         # ── Capture fullscreen screenshot BEFORE enqueuing ────────
         # This runs immediately on the event loop so it isn't blocked by
         # the Ollama global queue or another tab's in-flight request.
+        if auto_mode and capture_mode == CaptureMode.FULLSCREEN:
+            # Auto Mode always uses a new capture. This also removes stale
+            # screenshots left during the response_complete/finally window.
+            if session.state.screenshot_list:
+                await self._screenshot_handler().clear_screenshots(
+                    tab_state=session.state
+                )
+
         if (
             capture_mode == CaptureMode.FULLSCREEN
             and len(session.state.screenshot_list) == 0
@@ -241,11 +267,22 @@ class MessageHandler:
         ):
             token = set_current_tab_id(tab_id)
             try:
-                await self._screenshot_handler().capture_fullscreen(
+                screenshot_id = await self._screenshot_handler().capture_fullscreen(
                     tab_state=session.state
                 )
             finally:
                 reset_current_tab_id(token)
+            if auto_mode and not screenshot_id:
+                await self.websocket.send_text(
+                    json.dumps(
+                        {
+                            "type": "error",
+                            "content": "Auto Mode could not capture the screen. No request was sent.",
+                            "tab_id": tab_id,
+                        }
+                    )
+                )
+                return
 
         queued = QueuedQuery(
             tab_id=tab_id,
@@ -255,12 +292,20 @@ class MessageHandler:
             attached_files=attached_files,
             forced_skills=forced_skills,
             llm_query=llm_query,
+            tools_enabled=not auto_mode,
         )
 
         try:
             await session.queue.enqueue(queued)
         except QueueFullError:
             await broadcast_to_tab(tab_id, "queue_full", {"tab_id": tab_id})
+
+    async def _handle_set_selected_model(self, data: Dict[str, Any]):
+        """Keep the hotkey fallback model synchronized with the renderer."""
+        model = str(data.get("model", "")).strip()
+        if not model or model not in db.get_enabled_models():
+            return
+        app_state.selected_model = model
 
     async def _enqueue_turn_action(self, data: Dict[str, Any], action: str) -> None:
         from ..services.chat.query_queue import QueuedQuery, QueueFullError
@@ -748,13 +793,24 @@ class MessageHandler:
     @staticmethod
     def _read_auto_mode_settings() -> Dict[str, Any]:
         """Read the persisted Auto Mode settings into a JSON-friendly dict."""
+        capability = MessageHandler._auto_mode_capability()
         return {
-            "enabled": db.get_setting(AUTO_MODE_ENABLED_KEY) == "true",
+            "enabled": capability["supported"]
+            and db.get_setting(AUTO_MODE_ENABLED_KEY) == "true",
             "prompt": db.get_setting(AUTO_MODE_PROMPT_KEY) or DEFAULT_AUTO_MODE_PROMPT,
             "pinned_model": db.get_setting(AUTO_MODE_PINNED_MODEL_KEY) or "",
             "keep_context": db.get_setting(AUTO_MODE_KEEP_CONTEXT_KEY) == "true",
             "flash": db.get_setting(AUTO_MODE_FLASH_KEY) == "true",
+            "allow_cloud": db.get_setting(AUTO_MODE_ALLOW_CLOUD_KEY) == "true",
+            **capability,
         }
+
+    @staticmethod
+    def _auto_mode_capability() -> Dict[str, Any]:
+        from ..services.media.auto_mode import auto_mode_capability
+
+        supported, reason = auto_mode_capability()
+        return {"supported": supported, "unsupported_reason": reason}
 
     async def _handle_auto_mode_get_settings(self, data: Dict[str, Any]):
         """Return the current Auto Mode settings to the client."""
@@ -785,6 +841,7 @@ class MessageHandler:
 
         if "enabled" in settings:
             enabled = _coerce_bool(settings["enabled"])
+            enabled = enabled and bool(self._auto_mode_capability()["supported"])
             db.set_setting(AUTO_MODE_ENABLED_KEY, "true" if enabled else "false")
             app_state.auto_mode_enabled = enabled
         if "prompt" in settings:
@@ -803,6 +860,11 @@ class MessageHandler:
             db.set_setting(
                 AUTO_MODE_FLASH_KEY,
                 "true" if _coerce_bool(settings["flash"]) else "false",
+            )
+        if "allow_cloud" in settings:
+            db.set_setting(
+                AUTO_MODE_ALLOW_CLOUD_KEY,
+                "true" if _coerce_bool(settings["allow_cloud"]) else "false",
             )
 
         await self.websocket.send_text(

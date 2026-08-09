@@ -173,6 +173,7 @@ AUTO_MODE_PROMPT_KEY = "auto_mode_prompt"
 AUTO_MODE_PINNED_MODEL_KEY = "auto_mode_pinned_model"
 AUTO_MODE_KEEP_CONTEXT_KEY = "auto_mode_keep_context"
 AUTO_MODE_FLASH_KEY = "auto_mode_flash"
+AUTO_MODE_ALLOW_CLOUD_KEY = "auto_mode_allow_cloud"
 
 # Default prompt shipped so the feature works before the user customizes it.
 DEFAULT_AUTO_MODE_PROMPT = "Answer the question on my screen concisely."

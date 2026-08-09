@@ -157,7 +157,7 @@ describe('Layout', () => {
     expect(second).toBeGreaterThan(first);
   });
 
-  test('auto_mode_trigger restores from mini and flashes when requested', async () => {
+  test('auto_mode_trigger restores from mini but defers flash until capture completes', async () => {
     const { container } = render(<Layout />);
 
     // Put the window into mini first.
@@ -171,6 +171,20 @@ describe('Layout', () => {
     await waitFor(() => {
       expect(container.querySelector('.app-wrapper')).toHaveClass('normal-mode');
     });
-    expect(container.querySelector('.auto-mode-flash')).not.toBeNull();
+    expect(container.querySelector('.auto-mode-flash')).toBeNull();
+  });
+
+  test('auto_mode_error is surfaced without calling the focus APIs', () => {
+    render(<Layout />);
+
+    emitWs({ type: 'auto_mode_error', content: { message: 'Cloud capture blocked.' } });
+
+    expect(window.electronAPI?.showInactive).not.toHaveBeenCalled();
+    expect(window.electronAPI?.focusWindow).not.toHaveBeenCalled();
+    expect(navigateMock).toHaveBeenCalledWith('/', {
+      state: {
+        autoError: expect.objectContaining({ message: 'Cloud capture blocked.' }),
+      },
+    });
   });
 });

@@ -625,7 +625,9 @@ def take_fullscreen_screenshot(save_folder="screenshots"):
 
     try:
         # Capture the entire screen
-        screen = ImageGrab.grab()
+        # Pillow requires ``all_screens=True`` to include monitors with
+        # negative coordinates on Windows. Other platforms reject/ignore it.
+        screen = ImageGrab.grab(all_screens=True) if os.name == "nt" else ImageGrab.grab()
 
         # Generate unique filename with timestamp
         filepath = _build_screenshot_path(save_folder, "fullscreen")

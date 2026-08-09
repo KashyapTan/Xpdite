@@ -499,6 +499,7 @@ class ConversationService:
         model: Optional[str] = None,
         action: str = "submit",
         target_message_id: Optional[str] = None,
+        tools_enabled: bool = True,
     ) -> Optional[str]:
         """
         Handle query submission from a client.
@@ -513,6 +514,7 @@ class ConversationService:
             model: Explicit model override (e.g. from queued query).
             action: 'submit' for new turns, 'retry' to regenerate, 'edit' to edit an earlier turn.
             target_message_id: Stable message identifier for retry/edit actions.
+            tools_enabled: Whether the model may discover or invoke tools.
 
         Returns:
             The conversation_id (str) or None on failure.
@@ -766,6 +768,7 @@ class ConversationService:
                 history_for_llm,
                 forced_skills=ctx.forced_skills,
                 tool_retrieval_query=tool_retrieval_query,
+                tools_enabled=tools_enabled,
             )
 
             interrupted = ctx.cancelled
@@ -826,6 +829,7 @@ class ConversationService:
                         continuation_history,
                         forced_skills=ctx.forced_skills,
                         tool_retrieval_query=continuation_prompt,
+                        tools_enabled=tools_enabled,
                     )
                     if continuation_response.strip():
                         response_text = (

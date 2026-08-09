@@ -128,7 +128,7 @@ async def stream_ollama_chat(
     # ── MCP Tool Calling Phase ───────────────────────────────────
     pre_computed_response: Optional[Dict[str, Any]] = None
 
-    if mcp_manager.has_tools():
+    if mcp_manager.has_tools() and prefiltered_tools != []:
         try:
             (
                 updated_messages,

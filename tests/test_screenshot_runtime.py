@@ -206,6 +206,22 @@ def test_take_fullscreen_screenshot_returns_none_on_capture_failure(tmp_path):
         assert sr.take_fullscreen_screenshot(str(tmp_path)) is None
 
 
+def test_take_fullscreen_screenshot_includes_all_windows_screens(tmp_path):
+    fake_screen = Image.new("RGB", (80, 40), color="blue")
+    with (
+        patch("source.infrastructure.screenshot_runtime.os.name", "nt"),
+        patch(
+            "source.infrastructure.screenshot_runtime.ImageGrab.grab",
+            return_value=fake_screen,
+        ) as mock_grab,
+        patch("source.infrastructure.screenshot_runtime.copy_image_to_clipboard"),
+        patch("source.infrastructure.screenshot_runtime.copy_file_to_clipboard"),
+    ):
+        assert sr.take_fullscreen_screenshot(str(tmp_path)) is not None
+
+    mock_grab.assert_called_once_with(all_screens=True)
+
+
 def test_take_region_screenshot_uses_native_macos_capture_and_skips_tk(tmp_path):
     recorded = {}
 

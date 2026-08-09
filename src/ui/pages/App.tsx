@@ -655,15 +655,17 @@ function App() {
   const activeTabIdRef = useRef(activeTabId);
   const saveTabStateRef = useRef<(tabId: string) => void>(() => {});
   const hasRestoredInitialTabRef = useRef(false);
+  const [hasRestoredInitialTab, setHasRestoredInitialTab] = useState(false);
   const syncedTabIdsRef = useRef<Set<string>>(new Set(tabs.map((tab) => tab.id)));
 
   // ============================================
   // Context from Layout
   // ============================================
-  const { setMini, setIsHidden } = useOutletContext<{
+  const { setMini, setIsHidden, triggerFlash } = useOutletContext<{
     setMini: (val: boolean) => void;
     setIsHidden: (val: boolean) => void;
     isHidden: boolean;
+    triggerFlash: () => void;
   }>();
 
   const location = useLocation();
@@ -869,6 +871,7 @@ function App() {
     activeTabIdRef.current = activeTabId;
     restoreTabState(activeTabId);
     setShowScrollBottom(false);
+    setHasRestoredInitialTab(true);
   }, [activeTabId, restoreTabState]);
 
   useEffect(() => {
@@ -926,6 +929,8 @@ function App() {
   // orchestrate the actual capture + submit here, reusing the normal submit
   // flow. The nonce guard makes this idempotent across effect re-runs.
   const processedAutoNonceRef = useRef<number>(0);
+  const pendingAutoCaptureTabRef = useRef<string | null>(null);
+  const pendingAutoFlashTabRef = useRef<string | null>(null);
   // True while an Auto Mode turn is in flight so the Focus Handler effect below
   // never activates the OS window when the answer completes. Auto Mode must
   // never steal focus (hard requirement).
@@ -933,18 +938,41 @@ function App() {
   // Destructure the stable members so the effect depends on those (a stable
   // callback + a primitive) rather than the whole per-render chatState object,
   // which would re-run the effect on every render.
-  const { startQuery: startChatQuery, canSubmit: chatCanSubmit } = chatState;
+  const {
+    startQuery: startChatQuery,
+    canSubmit: chatCanSubmit,
+    setStatus: setChatStatus,
+    setErrorMessage: setChatErrorMessage,
+  } = chatState;
   useEffect(() => {
     const state = location.state as {
       autoTrigger?: {
         prompt?: string;
         model?: string;
         keep_context?: boolean;
+        flash?: boolean;
         nonce?: number;
       };
+      autoError?: { message?: string; nonce?: number };
     } | null;
+    const autoError = state?.autoError;
+    if (autoError && autoError.nonce !== processedAutoNonceRef.current) {
+      processedAutoNonceRef.current = autoError.nonce ?? 0;
+      window.history.replaceState({}, '');
+      const message = autoError.message || 'Auto Mode could not start.';
+      const descriptor = createChatErrorDescriptor({
+        rawError: message,
+        source: 'backend',
+        action: 'submit',
+        model: selectedModel,
+      });
+      setChatStatus(descriptor.status);
+      setChatErrorMessage(descriptor.message, descriptor.rawError);
+      setIsHidden(false);
+      return;
+    }
     const trigger = state?.autoTrigger;
-    if (!trigger || !isConnected) {
+    if (!trigger || !isConnected || !hasRestoredInitialTab || !selectedModel) {
       return;
     }
     const nonce = trigger.nonce ?? 0;
@@ -978,6 +1006,8 @@ function App() {
       }
       setTimeout(scrollToBottom, 50);
       generatingModelRef.current = model;
+      pendingAutoCaptureTabRef.current = tabId;
+      pendingAutoFlashTabRef.current = trigger.flash ? tabId : null;
       wsSendRaw({
         tab_id: tabId,
         type: 'submit_query',
@@ -996,6 +1026,17 @@ function App() {
       // answering blind. The user can re-trigger once the answer lands.
       if (chatCanSubmit) {
         submitAuto(activeTabIdRef.current, true);
+      } else {
+        autoTurnRef.current = false;
+        const message = 'Auto Mode could not start because this tab is still processing another request.';
+        const descriptor = createChatErrorDescriptor({
+          rawError: message,
+          source: 'backend',
+          action: 'submit',
+          model,
+        });
+        setChatStatus(descriptor.status);
+        setChatErrorMessage(descriptor.message, descriptor.rawError);
       }
       return;
     }
@@ -1004,11 +1045,16 @@ function App() {
     // there once its state is initialised.
     const newTabId = createTab();
     if (!newTabId) {
-      // MAX_TABS reached — fall back to the current tab only if it is idle,
-      // otherwise drop the trigger rather than corrupt an in-flight turn.
-      if (chatCanSubmit) {
-        submitAuto(activeTabIdRef.current, true);
-      }
+      autoTurnRef.current = false;
+      const message = 'Auto Mode needs a fresh tab, but the tab limit has been reached.';
+      const descriptor = createChatErrorDescriptor({
+        rawError: message,
+        source: 'queue',
+        action: 'submit',
+        model,
+      });
+      setChatStatus(descriptor.status);
+      setChatErrorMessage(descriptor.message, descriptor.rawError);
       return;
     }
     setTimeout(() => submitAuto(newTabId, true), 0);
@@ -1016,11 +1062,15 @@ function App() {
     location.state,
     isConnected,
     selectedModel,
+    hasRestoredInitialTab,
     startChatQuery,
     chatCanSubmit,
     scrollToBottom,
     createTab,
     wsSendRaw,
+    setChatStatus,
+    setChatErrorMessage,
+    setIsHidden,
   ]);
 
   const buildChatError = useCallback((
@@ -1445,6 +1495,10 @@ function App() {
           chat.status = descriptor.status;
         }
         chat.canSubmit = true;
+        if (pendingAutoCaptureTabRef.current === tabId) {
+          pendingAutoCaptureTabRef.current = null;
+          setIsHidden(false);
+        }
         if (pendingTurnAction) {
           chat.response = '';
           chat.thinking = '';
@@ -1695,6 +1749,14 @@ function App() {
         const screenshots = { ...snap.screenshots };
         screenshots.screenshots = [...screenshots.screenshots, ssData as unknown as Screenshot];
         setTabSnapshot(tabId, { ...snap, chat, screenshots });
+        if (pendingAutoCaptureTabRef.current === tabId) {
+          pendingAutoCaptureTabRef.current = null;
+          setIsHidden(false);
+        }
+        if (pendingAutoFlashTabRef.current === tabId) {
+          pendingAutoFlashTabRef.current = null;
+          triggerFlash();
+        }
         return;
       }
 
@@ -1728,9 +1790,11 @@ function App() {
     getTabSnapshot,
     markStreamPerfChunk,
     selectedModel,
+    setIsHidden,
     setQueueItems,
     setTabSnapshot,
     startStreamPerfCycle,
+    triggerFlash,
   ]);
 
   // ============================================
@@ -1757,6 +1821,19 @@ function App() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isConnected, location.pathname]); // re-fetch when backend connects or user returns from Settings
+
+  const handleSelectedModelChange = useCallback((model: string) => {
+    setSelectedModel(model);
+    if (isConnected && model) {
+      wsSendRaw({ type: 'set_selected_model', model });
+    }
+  }, [isConnected, wsSendRaw]);
+
+  useEffect(() => {
+    if (isConnected && selectedModel) {
+      wsSendRaw({ type: 'set_selected_model', model: selectedModel });
+    }
+  }, [isConnected, selectedModel, wsSendRaw]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1858,6 +1935,8 @@ function App() {
         return true;
 
       case 'screenshot_cancelled':
+        pendingAutoCaptureTabRef.current = null;
+        pendingAutoFlashTabRef.current = null;
         chatState.setStatus(String(data.content) || 'Screenshot cancelled.');
         chatState.clearError();
         setIsHidden(false);
@@ -1968,7 +2047,12 @@ function App() {
         }
         screenshotState.addScreenshot(ssData);
         chatState.setStatus('Screenshot added to context.');
+        pendingAutoCaptureTabRef.current = null;
         setIsHidden(false);
+        if (pendingAutoFlashTabRef.current === activeTabIdRef.current) {
+          pendingAutoFlashTabRef.current = null;
+          triggerFlash();
+        }
         break;
       }
 
@@ -2293,6 +2377,9 @@ function App() {
         break;
 
       case 'error':
+        pendingAutoCaptureTabRef.current = null;
+        pendingAutoFlashTabRef.current = null;
+        setIsHidden(false);
         finishStreamPerfCycle('error');
         if (activePendingTurnAction) {
           pendingTurnActionsRef.current.delete(activeTabIdRef.current);
@@ -2427,6 +2514,7 @@ function App() {
     showActiveChatError,
     startStreamPerfCycle,
     tokenState,
+    triggerFlash,
     updateTabTitle,
     wsSend,
   ]);
@@ -3202,7 +3290,7 @@ function App() {
             onQueryChange={chatState.setQuery}
             onSubmit={handleSubmit}
             onStopStreaming={handleStopStreaming}
-            onSelectModel={setSelectedModel}
+            onSelectModel={handleSelectedModelChange}
           />
 
           <div className="input-options-section">
@@ -3239,7 +3327,7 @@ function App() {
                     name="model-selector"
                     className="model-select"
                     value={selectedModel}
-                    onChange={(e) => setSelectedModel(e.target.value)}
+                    onChange={(e) => handleSelectedModelChange(e.target.value)}
                     disabled={!isConnected || enabledModels.length === 0}
                   >
                     {enabledModels.length === 0 && (

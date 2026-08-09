@@ -21,6 +21,8 @@ same way via ``toggle_mini_mode``.
 
 import asyncio
 import logging
+import os
+import sys
 
 from ...core.state import app_state
 from ...core.connection import broadcast_message
@@ -29,10 +31,25 @@ from ...infrastructure.config import (
     AUTO_MODE_PINNED_MODEL_KEY,
     AUTO_MODE_KEEP_CONTEXT_KEY,
     AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_ALLOW_CLOUD_KEY,
     DEFAULT_AUTO_MODE_PROMPT,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def auto_mode_capability() -> tuple[bool, str]:
+    """Return whether non-activating window display is safe on this session."""
+    is_linux = sys.platform.startswith("linux")
+    is_wayland = bool(os.environ.get("WAYLAND_DISPLAY")) or (
+        os.environ.get("XDG_SESSION_TYPE", "").strip().lower() == "wayland"
+    )
+    if is_linux and is_wayland:
+        return (
+            False,
+            "Auto Mode is unavailable on Wayland because the window cannot be shown without stealing focus.",
+        )
+    return True, ""
 
 
 def _resolve_auto_mode_payload() -> dict:
@@ -85,7 +102,30 @@ class AutoModeHandler:
             logger.debug("Auto Mode trigger ignored - disabled")
             return
 
+        supported, reason = auto_mode_capability()
+        if not supported:
+            logger.warning("Auto Mode trigger blocked: %s", reason)
+            await broadcast_message("auto_mode_error", {"message": reason})
+            return
+
         payload = _resolve_auto_mode_payload()
+        from ...infrastructure.database import db
+        from ...llm.core.router import is_local_ollama_model
+
+        if (
+            not is_local_ollama_model(str(payload["model"]))
+            and db.get_setting(AUTO_MODE_ALLOW_CLOUD_KEY) != "true"
+        ):
+            await broadcast_message(
+                "auto_mode_error",
+                {
+                    "message": (
+                        "Auto Mode blocked this cloud capture. Enable cloud screenshots "
+                        "in Settings > General to opt in."
+                    )
+                },
+            )
+            return
         logger.info(
             "Auto Mode trigger → model=%s keep_context=%s",
             payload["model"],
