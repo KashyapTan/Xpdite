@@ -1,0 +1,512 @@
+"""Tests for Auto Mode (Instant Answer).
+
+Covers the three backend seams the feature adds:
+  - Settings handlers (persist + arm/disarm the gate immediately).
+  - The submit-query capture condition (auto_mode forces a capture even when the
+    target tab already has history — i.e. keep-context mode).
+  - The auto_mode service: payload resolution + trigger/mini broadcasts.
+"""
+
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+import source.api.handlers as handlers
+import source.services.media.auto_mode as auto_mode
+from source.core.state import app_state
+from source.infrastructure.database import db
+from source.infrastructure.config import (
+    AUTO_MODE_ENABLED_KEY,
+    AUTO_MODE_PROMPT_KEY,
+    AUTO_MODE_PINNED_MODEL_KEY,
+    AUTO_MODE_KEEP_CONTEXT_KEY,
+    AUTO_MODE_FLASH_KEY,
+    AUTO_MODE_ALLOW_CLOUD_KEY,
+    AUTO_MODE_PROMPT_MAX_CHARS,
+    DEFAULT_AUTO_MODE_PROMPT,
+)
+
+
+class _FakeWebSocket:
+    def __init__(self):
+        self.sent: list[dict] = []
+
+    async def send_text(self, message: str):
+        self.sent.append(json.loads(message))
+
+
+class _FakeSettingsStore:
+    """In-memory stand-in for the settings key/value table."""
+
+    def __init__(self, initial=None):
+        self.data = dict(initial or {})
+
+    def get_setting(self, key):
+        return self.data.get(key)
+
+    def set_setting(self, key, value):
+        self.data[key] = value
+
+
+def _make_session(chat_history=None):
+    queue = SimpleNamespace(enqueue=AsyncMock(), has_pending_work=False)
+    state = SimpleNamespace(
+        screenshot_list=[],
+        chat_history=list(chat_history or []),
+    )
+    return SimpleNamespace(state=state, queue=queue)
+
+
+class _FakeTabManager:
+    def __init__(self, session):
+        self.session = session
+
+    def get_or_create(self, _tab_id):
+        return self.session
+
+
+@pytest.fixture(autouse=True)
+def _restore_auto_state():
+    saved_enabled = app_state.auto_mode_enabled
+    saved_model = app_state.selected_model
+    yield
+    app_state.auto_mode_enabled = saved_enabled
+    app_state.selected_model = saved_model
+
+
+@pytest.fixture()
+def websocket():
+    return _FakeWebSocket()
+
+
+@pytest.fixture()
+def handler(websocket):
+    return handlers.MessageHandler(websocket)
+
+
+@pytest.fixture()
+def store(monkeypatch):
+    """Patch the settings-table accessors with an in-memory store."""
+    s = _FakeSettingsStore()
+    monkeypatch.setattr(db, "get_setting", s.get_setting)
+    monkeypatch.setattr(db, "set_setting", s.set_setting)
+    return s
+
+
+class TestAutoModeSettingsHandlers:
+    async def test_get_returns_defaults(self, handler, websocket, store):
+        await handler._handle_auto_mode_get_settings({})
+
+        msg = websocket.sent[-1]
+        assert msg["type"] == "auto_mode_settings"
+        content = msg["content"]
+        assert content["enabled"] is False
+        assert content["prompt"] == DEFAULT_AUTO_MODE_PROMPT
+        assert content["pinned_model"] == ""
+        assert content["keep_context"] is False
+        assert content["flash"] is False
+
+    async def test_update_persists_and_arms_gate(self, handler, websocket, store):
+        app_state.auto_mode_enabled = False
+
+        await handler._handle_auto_mode_update_settings(
+            {
+                "settings": {
+                    "enabled": True,
+                    "prompt": "Explain the error",
+                    "pinned_model": "openai/gpt-4o",
+                    "keep_context": True,
+                    "flash": True,
+                }
+            }
+        )
+
+        # app_state is armed immediately so the hotkey listener sees it.
+        assert app_state.auto_mode_enabled is True
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "true"
+        assert store.data[AUTO_MODE_PROMPT_KEY] == "Explain the error"
+        assert store.data[AUTO_MODE_PINNED_MODEL_KEY] == "openai/gpt-4o"
+        assert store.data[AUTO_MODE_KEEP_CONTEXT_KEY] == "true"
+        assert store.data[AUTO_MODE_FLASH_KEY] == "true"
+
+        echoed = websocket.sent[-1]["content"]
+        assert echoed["enabled"] is True
+        assert echoed["prompt"] == "Explain the error"
+
+    async def test_update_disable_disarms_immediately(self, handler, store):
+        app_state.auto_mode_enabled = True
+        store.data[AUTO_MODE_ENABLED_KEY] = "true"
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": False}}
+        )
+
+        assert app_state.auto_mode_enabled is False
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "false"
+
+    async def test_update_ignores_non_dict_settings(self, handler, store):
+        app_state.auto_mode_enabled = True
+
+        await handler._handle_auto_mode_update_settings({"settings": "nope"})
+
+        # Nothing written, gate unchanged, still echoes current settings.
+        assert store.data == {}
+        assert app_state.auto_mode_enabled is True
+
+    async def test_partial_update_leaves_other_keys(self, handler, store):
+        store.data[AUTO_MODE_PROMPT_KEY] = "keep me"
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"flash": True}}
+        )
+
+        assert store.data[AUTO_MODE_FLASH_KEY] == "true"
+        assert store.data[AUTO_MODE_PROMPT_KEY] == "keep me"
+
+    async def test_update_caps_prompt_length(self, handler, store):
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"prompt": "x" * (AUTO_MODE_PROMPT_MAX_CHARS + 500)}}
+        )
+
+        assert len(store.data[AUTO_MODE_PROMPT_KEY]) == AUTO_MODE_PROMPT_MAX_CHARS
+
+    async def test_update_coerces_string_booleans(self, handler, store):
+        # A stray "false" string must not read as truthy and arm the gate.
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": "false"}}
+        )
+        assert app_state.auto_mode_enabled is False
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "false"
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": "true"}}
+        )
+        assert app_state.auto_mode_enabled is True
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "true"
+
+    async def test_wayland_capability_refuses_enable(self, handler, store, monkeypatch):
+        monkeypatch.setattr(
+            handlers.MessageHandler,
+            "_auto_mode_capability",
+            staticmethod(
+                lambda: {"supported": False, "unsupported_reason": "Wayland"}
+            ),
+        )
+
+        await handler._handle_auto_mode_update_settings(
+            {"settings": {"enabled": True}}
+        )
+
+        assert app_state.auto_mode_enabled is False
+        assert store.data[AUTO_MODE_ENABLED_KEY] == "false"
+        websocket_content = handler.websocket.sent[-1]["content"]
+        assert websocket_content["supported"] is False
+
+    async def test_selected_model_sync_accepts_only_enabled_models(
+        self, handler, store
+    ):
+        store.data["enabled_models"] = json.dumps(["model-a"])
+        app_state.selected_model = "old"
+
+        await handler._handle_set_selected_model({"model": "missing"})
+        assert app_state.selected_model == "old"
+
+        await handler._handle_set_selected_model({"model": "model-a"})
+        assert app_state.selected_model == "model-a"
+
+
+class TestAutoModeSubmitCapture:
+    """The auto_mode flag forces a capture even when the tab has history."""
+
+    async def _run_submit(self, handler, session, payload):
+        manager = _FakeTabManager(session)
+        handler._get_tab_manager = lambda: manager
+        with (
+            patch.object(
+                handlers.ConversationService,
+                "extract_skill_slash_commands",
+                new=AsyncMock(return_value=([], "look")),
+            ),
+            patch.object(
+                handlers.ScreenshotHandler,
+                "capture_fullscreen",
+                new=AsyncMock(return_value="capture-id"),
+            ) as mock_capture,
+            patch.object(
+                handlers.ScreenshotHandler,
+                "clear_screenshots",
+                new=AsyncMock(
+                    side_effect=lambda tab_state: tab_state.screenshot_list.clear()
+                ),
+            ) as mock_clear,
+            patch.object(handlers, "set_current_tab_id", return_value=object()),
+            patch.object(handlers, "reset_current_tab_id"),
+        ):
+            await handler._handle_submit_query(payload)
+        return mock_capture, mock_clear
+
+    async def test_auto_mode_captures_despite_history(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "prev"}])
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t-auto",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+            },
+        )
+        mock_capture.assert_awaited_once_with(tab_state=session.state)
+        session.queue.enqueue.assert_awaited_once()
+
+    async def test_manual_submit_skips_capture_with_history(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "prev"}])
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t-manual",
+                "content": "look",
+                "capture_mode": "fullscreen",
+            },
+        )
+        mock_capture.assert_not_awaited()
+        session.queue.enqueue.assert_awaited_once()
+
+    async def test_auto_mode_submit_preserves_selected_model(self, handler):
+        # A pinned Auto Mode model must not overwrite the user's current model.
+        app_state.selected_model = "orig-model"
+        session = _make_session()
+        await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+                "model": "pinned-model",
+            },
+        )
+        assert app_state.selected_model == "orig-model"
+
+    async def test_manual_submit_updates_selected_model(self, handler):
+        app_state.selected_model = "orig-model"
+        session = _make_session()
+        await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "none",
+                "model": "picked-model",
+            },
+        )
+        assert app_state.selected_model == "picked-model"
+
+    async def test_capture_failure_never_enqueues(self, handler, websocket):
+        session = _make_session()
+        manager = _FakeTabManager(session)
+        handler._get_tab_manager = lambda: manager
+        with (
+            patch.object(
+                handlers.ConversationService,
+                "extract_skill_slash_commands",
+                new=AsyncMock(return_value=([], "look")),
+            ),
+            patch.object(
+                handlers.ScreenshotHandler,
+                "capture_fullscreen",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(handlers, "set_current_tab_id", return_value=object()),
+            patch.object(handlers, "reset_current_tab_id"),
+        ):
+            await handler._handle_submit_query(
+                {
+                    "tab_id": "t",
+                    "content": "look",
+                    "capture_mode": "fullscreen",
+                    "auto_mode": True,
+                }
+            )
+
+        session.queue.enqueue.assert_not_awaited()
+        assert websocket.sent[-1]["type"] == "error"
+        assert "No request was sent" in websocket.sent[-1]["content"]
+
+    async def test_busy_keep_context_never_captures_or_enqueues(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "old"}])
+        session.queue.has_pending_work = True
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+            },
+        )
+        mock_capture.assert_not_awaited()
+        session.queue.enqueue.assert_not_awaited()
+
+    async def test_auto_mode_clears_stale_capture_and_disables_tools(self, handler):
+        session = _make_session()
+        session.state.screenshot_list.append({"id": "old", "path": "/tmp/old.png"})
+        mock_capture, mock_clear = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": True,
+            },
+        )
+        mock_clear.assert_awaited_once_with(tab_state=session.state)
+        mock_capture.assert_awaited_once_with(tab_state=session.state)
+        queued = session.queue.enqueue.await_args.args[0]
+        assert queued.tools_enabled is False
+
+    async def test_false_string_is_not_treated_as_auto_mode(self, handler):
+        session = _make_session(chat_history=[{"role": "user", "content": "old"}])
+        mock_capture, _ = await self._run_submit(
+            handler,
+            session,
+            {
+                "tab_id": "t",
+                "content": "look",
+                "capture_mode": "fullscreen",
+                "auto_mode": "false",
+            },
+        )
+        mock_capture.assert_not_awaited()
+        queued = session.queue.enqueue.await_args.args[0]
+        assert queued.tools_enabled is True
+
+
+class TestAutoModeService:
+    def test_resolve_payload_defaults_to_current_model(self, store):
+        app_state.selected_model = "current-model"
+
+        payload = auto_mode._resolve_auto_mode_payload()
+
+        assert payload["prompt"] == DEFAULT_AUTO_MODE_PROMPT
+        assert payload["model"] == "current-model"
+        assert payload["keep_context"] is False
+        assert payload["flash"] is False
+
+    def test_resolve_payload_uses_pinned_model_and_settings(self, store):
+        store.data.update(
+            {
+                AUTO_MODE_PINNED_MODEL_KEY: "pinned-vision",
+                AUTO_MODE_PROMPT_KEY: "Summarize",
+                AUTO_MODE_KEEP_CONTEXT_KEY: "true",
+                AUTO_MODE_FLASH_KEY: "true",
+                # Pinned model must still be an enabled model to be honored.
+                "enabled_models": json.dumps(["pinned-vision"]),
+            }
+        )
+        app_state.selected_model = "current-model"
+
+        payload = auto_mode._resolve_auto_mode_payload()
+
+        assert payload["model"] == "pinned-vision"
+        assert payload["prompt"] == "Summarize"
+        assert payload["keep_context"] is True
+        assert payload["flash"] is True
+
+    def test_resolve_payload_pinned_model_not_enabled_falls_back(self, store):
+        # A model pinned then later disabled/removed must fall back to the
+        # current model rather than making every trigger fail silently.
+        store.data.update(
+            {
+                AUTO_MODE_PINNED_MODEL_KEY: "removed-model",
+                "enabled_models": json.dumps(["some-other-model"]),
+            }
+        )
+        app_state.selected_model = "current-model"
+
+        payload = auto_mode._resolve_auto_mode_payload()
+
+        assert payload["model"] == "current-model"
+
+    def test_resolve_payload_blank_prompt_falls_back(self, store):
+        store.data[AUTO_MODE_PROMPT_KEY] = "   "
+        payload = auto_mode._resolve_auto_mode_payload()
+        assert payload["prompt"] == DEFAULT_AUTO_MODE_PROMPT
+
+    async def test_trigger_broadcasts_when_enabled(self, store, monkeypatch):
+        app_state.auto_mode_enabled = True
+        app_state.selected_model = "m"
+        mock_bcast = AsyncMock()
+        monkeypatch.setattr(auto_mode, "broadcast_message", mock_bcast)
+
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+
+        mock_bcast.assert_awaited_once()
+        msg_type, content = mock_bcast.await_args.args
+        assert msg_type == "auto_mode_trigger"
+        assert content["model"] == "m"
+
+    async def test_cloud_trigger_requires_explicit_opt_in(self, store, monkeypatch):
+        app_state.auto_mode_enabled = True
+        app_state.selected_model = "openai/gpt-4o"
+        mock_bcast = AsyncMock()
+        monkeypatch.setattr(auto_mode, "broadcast_message", mock_bcast)
+
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+
+        assert mock_bcast.await_args.args[0] == "auto_mode_error"
+        assert "cloud capture" in mock_bcast.await_args.args[1]["message"]
+
+        store.data[AUTO_MODE_ALLOW_CLOUD_KEY] = "true"
+        mock_bcast.reset_mock()
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+        assert mock_bcast.await_args.args[0] == "auto_mode_trigger"
+
+    def test_wayland_is_reported_unsupported(self, monkeypatch):
+        monkeypatch.setattr(auto_mode.sys, "platform", "linux")
+        monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
+        assert auto_mode.auto_mode_capability()[0] is False
+
+    def test_linux_x11_is_supported(self, monkeypatch):
+        monkeypatch.setattr(auto_mode.sys, "platform", "linux")
+        monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+        monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+        assert auto_mode.auto_mode_capability() == (True, "")
+
+    async def test_trigger_noop_when_disabled(self, monkeypatch):
+        app_state.auto_mode_enabled = False
+        mock_bcast = AsyncMock()
+        monkeypatch.setattr(auto_mode, "broadcast_message", mock_bcast)
+
+        await auto_mode.AutoModeHandler.on_auto_mode_trigger()
+
+        mock_bcast.assert_not_awaited()
+
+    async def test_mini_toggle_broadcasts(self, monkeypatch):
+        mock_bcast = AsyncMock()
+        monkeypatch.setattr(auto_mode, "broadcast_message", mock_bcast)
+
+        await auto_mode.AutoModeHandler.on_mini_toggle()
+
+        mock_bcast.assert_awaited_once()
+        assert mock_bcast.await_args.args[0] == "toggle_mini_mode"
+
+
+class TestAutoModeGating:
+    def test_is_auto_mode_enabled_reflects_state(self):
+        # screenshot_runtime imports tkinter at module load; skip if unavailable.
+        pytest.importorskip("tkinter")
+        from source.infrastructure import screenshot_runtime as sr
+
+        app_state.auto_mode_enabled = True
+        assert sr._is_auto_mode_enabled() is True
+        app_state.auto_mode_enabled = False
+        assert sr._is_auto_mode_enabled() is False

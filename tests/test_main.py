@@ -103,10 +103,19 @@ class TestMainServices:
         starts = {"count": 0}
 
         class _FakeScreenshotService:
-            def __init__(self, process, process_start, process_cancel):
+            def __init__(
+                self,
+                process,
+                process_start,
+                process_cancel,
+                auto_callback=None,
+                mini_toggle_callback=None,
+            ):
                 self.process = process
                 self.process_start = process_start
                 self.process_cancel = process_cancel
+                self.auto_callback = auto_callback
+                self.mini_toggle_callback = mini_toggle_callback
 
             def start_listener(self, _folder):
                 starts["count"] += 1
@@ -123,6 +132,8 @@ class TestMainServices:
         assert fake_state.service_thread is not None
         assert fake_state.service_thread.started is True
         assert fake_state.screenshot_service.process_cancel is main_module.process_screenshot_cancelled
+        assert fake_state.screenshot_service.auto_callback is main_module.process_auto_mode
+        assert fake_state.screenshot_service.mini_toggle_callback is main_module.process_mini_toggle
         assert starts["count"] == 1
 
     def test_start_screenshot_service_handles_errors(self, monkeypatch):

@@ -61,6 +61,9 @@ async def websocket_endpoint(websocket: WebSocket):
       - meeting_get_compute_info: Get GPU compute backend info
       - meeting_get_settings: Get meeting recorder settings
       - meeting_update_settings: Update meeting recorder settings
+      - auto_mode_get_settings: Get Auto Mode (Instant Answer) settings
+      - auto_mode_update_settings: Update Auto Mode settings (arms/disarms the gate)
+      - set_selected_model: Synchronize the renderer's selected model for hotkeys
       - meeting_generate_analysis: Generate AI summary and action suggestions (optional: model)
       - meeting_execute_action: Execute a suggested action via MCP tools
       - ollama_pull_model: Pull an Ollama model with streaming progress
@@ -118,6 +121,12 @@ async def websocket_endpoint(websocket: WebSocket):
       - meeting_processing_progress: Tier 2 processing progress update
       - meeting_compute_info: GPU compute backend information
       - meeting_settings: Meeting recorder settings values
+      - auto_mode_settings: Auto Mode settings values
+      - auto_mode_trigger: Run the Auto Mode pipeline (new tab + full-screen
+        capture + auto-submit the saved prompt); content carries prompt/model/
+        keep_context/flash
+      - auto_mode_error: Auto Mode was blocked before capture; content carries a message
+      - toggle_mini_mode: Request the frontend to toggle mini mode
       - meeting_analysis_started: AI analysis generation started
       - meeting_analysis_complete: AI summary and actions ready
       - meeting_analysis_error: AI analysis generation failed

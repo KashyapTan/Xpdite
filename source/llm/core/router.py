@@ -70,6 +70,7 @@ async def route_chat(
     chat_history: List[Dict[str, Any]],
     forced_skills: list | None = None,  # List[Skill] at runtime
     tool_retrieval_query: Optional[str] = None,
+    tools_enabled: bool = True,
 ) -> tuple[str, Dict[str, int], List[Dict[str, Any]], Optional[List[Dict[str, Any]]]]:
     """
     Route a chat request to the correct LLM provider.
@@ -106,7 +107,7 @@ async def route_chat(
     retrieval_query = tool_retrieval_query or user_query
 
     retrieved_tools: list = []
-    if mcp_manager.has_tools():
+    if tools_enabled and mcp_manager.has_tools():
         from ...mcp_integration.core.handlers import retrieve_relevant_tools
 
         retrieved_tools = retrieve_relevant_tools(retrieval_query)
@@ -173,7 +174,8 @@ async def route_chat(
 
         from ..providers.ollama_provider import stream_ollama_chat
 
-        prefiltered_tools = retrieved_tools if retrieved_tools else None
+        # An explicit empty list disables Ollama's fallback retrieval path.
+        prefiltered_tools = retrieved_tools if tools_enabled else []
 
         return await stream_ollama_chat(
             model_name,
@@ -252,7 +254,8 @@ async def route_chat(
         user_query,
         image_paths,
         chat_history,
-        allowed_tool_names=allowed_tool_names if allowed_tool_names else None,
+        # An explicit empty set makes provider-side authorization fail closed.
+        allowed_tool_names=allowed_tool_names if tools_enabled else set(),
         system_prompt=system_prompt,
     )
 

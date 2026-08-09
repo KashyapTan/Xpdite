@@ -17,6 +17,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
         console.log('electronAPI.focusWindow called');
         return ipcRenderer.invoke('focus-window');
     },
+    showInactive: () => {
+        return ipcRenderer.invoke('show-inactive');
+    },
     openExternalUrl: (url: string) => {
         return ipcRenderer.invoke('open-external-url', url);
     },

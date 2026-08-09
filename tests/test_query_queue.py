@@ -78,6 +78,23 @@ class TestEnqueue:
         process_fn.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_has_pending_work_covers_consumer_startup_and_cleanup(self, queue):
+        release = asyncio.Event()
+
+        async def _wait(_item):
+            await release.wait()
+            return "conv-123"
+
+        queue._process_fn = _wait
+        await queue.enqueue(_make_query())
+        await asyncio.sleep(0)
+        assert queue.has_pending_work is True
+
+        release.set()
+        await asyncio.sleep(0.05)
+        assert queue.has_pending_work is False
+
+    @pytest.mark.asyncio
     async def test_consumer_exits_when_empty(self, queue, process_fn):
         await queue.enqueue(_make_query())
         await asyncio.sleep(0.05)

@@ -162,6 +162,27 @@ class CaptureMode:
     NONE = "none"
 
 
+# ── Auto Mode (Instant Answer) ─────────────────────────────────────
+# When Auto Mode is enabled, the existing screenshot hotkey stops doing a
+# region capture and instead runs a hands-off pipeline: full-screen capture →
+# auto-submit the user's saved prompt → stream the answer into a new tab
+# without ever stealing OS focus. All settings persist in the ``settings`` DB
+# table under these keys and are read by the hotkey listener at trigger time.
+AUTO_MODE_ENABLED_KEY = "auto_mode_enabled"
+AUTO_MODE_PROMPT_KEY = "auto_mode_prompt"
+AUTO_MODE_PINNED_MODEL_KEY = "auto_mode_pinned_model"
+AUTO_MODE_KEEP_CONTEXT_KEY = "auto_mode_keep_context"
+AUTO_MODE_FLASH_KEY = "auto_mode_flash"
+AUTO_MODE_ALLOW_CLOUD_KEY = "auto_mode_allow_cloud"
+
+# Default prompt shipped so the feature works before the user customizes it.
+DEFAULT_AUTO_MODE_PROMPT = "Answer the question on my screen concisely."
+
+# The saved prompt is re-sent to the LLM on every trigger, so cap its stored
+# length to avoid unbounded token/latency cost from a pathological value.
+AUTO_MODE_PROMPT_MAX_CHARS = 8000
+
+
 # Google OAuth configuration
 GOOGLE_USER_DATA = str(USER_DATA_DIR / "google")
 os.makedirs(GOOGLE_USER_DATA, exist_ok=True)

@@ -43,6 +43,7 @@ class QueuedQuery:
     llm_query: Optional[str] = None
     action: str = "submit"
     target_message_id: Optional[str] = None
+    tools_enabled: bool = True
 
 
 class ConversationQueue:
@@ -190,6 +191,14 @@ class ConversationQueue:
     @property
     def is_processing(self) -> bool:
         return self._active_ctx is not None and not self._active_ctx.is_done
+
+    @property
+    def has_pending_work(self) -> bool:
+        """Whether a request is active or waiting to become active."""
+        consumer_running = (
+            self._consumer_task is not None and not self._consumer_task.done()
+        )
+        return self.is_processing or not self._queue.empty() or consumer_running
 
     @property
     def queued_items(self) -> List[Dict[str, Any]]:

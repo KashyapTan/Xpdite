@@ -131,6 +131,57 @@ _ROUTE_PATCHES = {
 
 class TestRouteChat:
     @pytest.mark.asyncio
+    async def test_route_chat_disables_ollama_tool_retrieval_explicitly(self):
+        mock_stream = AsyncMock(
+            return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
+        )
+        mock_retrieve = MagicMock(return_value=[{"function": {"name": "danger"}}])
+        mock_mcp = MagicMock()
+        mock_mcp.has_tools.return_value = True
+        patches = {**_ROUTE_PATCHES}
+        patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
+        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = mock_retrieve
+        ctx = {k: patch(k, v) for k, v in patches.items()}
+        for p in ctx.values():
+            p.start()
+        try:
+            with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
+                from source.llm.core.router import route_chat
+
+                await route_chat("llama3:8b", "screen text", [], [], tools_enabled=False)
+
+            mock_retrieve.assert_not_called()
+            assert mock_stream.await_args.kwargs["prefiltered_tools"] == []
+        finally:
+            for p in ctx.values():
+                p.stop()
+
+    @pytest.mark.asyncio
+    async def test_route_chat_disables_cloud_tools_explicitly(self):
+        mock_stream = AsyncMock(
+            return_value=("reply", {"prompt_eval_count": 1, "eval_count": 2}, [], None)
+        )
+        mock_km = MagicMock()
+        mock_km.get_api_key.return_value = "sk-test"
+        patches = {**_ROUTE_PATCHES}
+        patches["source.llm.providers.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches["source.llm.core.key_manager.key_manager"] = mock_km
+        ctx = {k: patch(k, v) for k, v in patches.items()}
+        for p in ctx.values():
+            p.start()
+        try:
+            from source.llm.core.router import route_chat
+
+            await route_chat(
+                "openai/gpt-4o", "screen text", [], [], tools_enabled=False
+            )
+
+            assert mock_stream.await_args.kwargs["allowed_tool_names"] == set()
+        finally:
+            for p in ctx.values():
+                p.stop()
+
+    @pytest.mark.asyncio
     async def test_route_chat_calls_ollama_for_local_model(self):
         """Ollama models should be dispatched to stream_ollama_chat."""
         mock_stream = AsyncMock(

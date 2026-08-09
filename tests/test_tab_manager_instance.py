@@ -75,6 +75,27 @@ class TestProcessFnRouting:
         assert submit_kwargs["queue"].tab_id == "tab-ollama"
 
     @pytest.mark.asyncio
+    async def test_auto_mode_tool_policy_reaches_conversation_service(self, monkeypatch):
+        manager = init_tab_manager()
+        submit_query_mock = AsyncMock(return_value="conv-auto")
+        monkeypatch.setattr(ConversationService, "submit_query", submit_query_mock)
+
+        async def fake_run(_tab_id, process_fn):
+            return await process_fn()
+
+        monkeypatch.setattr(ollama_global_queue, "run", fake_run)
+        await manager._process_fn(
+            QueuedQuery(
+                tab_id="tab-auto",
+                content="explain screen",
+                model="qwen3-vl:8b",
+                tools_enabled=False,
+            )
+        )
+
+        assert submit_query_mock.await_args.kwargs["tools_enabled"] is False
+
+    @pytest.mark.asyncio
     async def test_non_ollama_provider_submits_directly_without_global_queue(
         self, monkeypatch
     ):
