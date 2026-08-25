@@ -1,5 +1,6 @@
 """Tests for DatabaseManager CRUD operations."""
 
+import json
 
 import pytest
 import sqlite3
@@ -26,9 +27,7 @@ class TestDatabasePathing:
             expected_user_data / "xpdite_app.db"
         )
 
-    def test_default_database_migrates_legacy_cwd_database(
-        self, tmp_path, monkeypatch
-    ):
+    def test_default_database_migrates_legacy_cwd_database(self, tmp_path, monkeypatch):
         import source.infrastructure.database as database_module
 
         legacy_root = tmp_path / "legacy-root"
@@ -114,7 +113,9 @@ class TestMessages:
         msgs = db_manager.get_full_conversation(cid)
         assert msgs == []
 
-    def test_get_active_chat_history_preserves_artifact_only_assistant_turns(self, db_manager):
+    def test_get_active_chat_history_preserves_artifact_only_assistant_turns(
+        self, db_manager
+    ):
         cid = db_manager.start_new_conversation("Artifact history")
         user_message = db_manager.add_message(cid, "user", "Build a file")
         assistant_message = db_manager.add_message(
@@ -161,7 +162,9 @@ class TestMessages:
 
 
 class TestTurnVersioning:
-    def _seed_turn(self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"):
+    def _seed_turn(
+        self, db_manager, conversation_id, user_content="Hello", assistant_content="Hi"
+    ):
         user_message = db_manager.add_message(conversation_id, "user", user_content)
         assistant_message = db_manager.add_message(
             conversation_id,
@@ -195,7 +198,9 @@ class TestTurnVersioning:
 
     def test_save_response_version_tracks_multiple_variants(self, db_manager):
         cid = db_manager.start_new_conversation("Variants")
-        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="First answer")
+        _, assistant_message = self._seed_turn(
+            db_manager, cid, assistant_content="First answer"
+        )
 
         saved = db_manager.save_response_version(
             cid,
@@ -217,7 +222,9 @@ class TestTurnVersioning:
 
     def test_set_active_response_version_switches_visible_response(self, db_manager):
         cid = db_manager.start_new_conversation("Switch variant")
-        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="Original")
+        _, assistant_message = self._seed_turn(
+            db_manager, cid, assistant_content="Original"
+        )
         db_manager.save_response_version(
             cid,
             assistant_message["message_id"],
@@ -236,7 +243,9 @@ class TestTurnVersioning:
 
     def test_set_active_response_version_rejects_negative_index(self, db_manager):
         cid = db_manager.start_new_conversation("Invalid variant")
-        _, assistant_message = self._seed_turn(db_manager, cid, assistant_content="Original")
+        _, assistant_message = self._seed_turn(
+            db_manager, cid, assistant_content="Original"
+        )
 
         with pytest.raises(ValueError, match="non-negative"):
             db_manager.set_active_response_version(
@@ -263,7 +272,10 @@ class TestTurnVersioning:
 
         messages = db_manager.get_full_conversation(cid)
         assert len(messages) == 2
-        assert [message["content"] for message in messages] == ["First", "First alternate"]
+        assert [message["content"] for message in messages] == [
+            "First",
+            "First alternate",
+        ]
         assert len(messages[1]["response_variants"]) == 2
 
     def test_update_user_message_scopes_to_conversation(self, db_manager):
@@ -394,7 +406,9 @@ class TestSearch:
 
     def test_search_by_message_content(self, db_manager):
         cid = db_manager.start_new_conversation("Work chat")
-        db_manager.add_message(cid, "user", "Can you summarise the deployment pipeline?")
+        db_manager.add_message(
+            cid, "user", "Can you summarise the deployment pipeline?"
+        )
         results = db_manager.search_conversations("deployment pipeline")
         assert any(r["id"] == cid for r in results)
 
@@ -515,8 +529,15 @@ class TestSearch:
 
     def test_search_with_fts5_operators_doesnt_raise(self, db_manager):
         """FTS5 boolean operators inside the term must not break the query."""
-        for term in ["hello AND world", "hello OR world", "hello NOT world",
-                     "test*", "-negative", "(parens)", "col:value"]:
+        for term in [
+            "hello AND world",
+            "hello OR world",
+            "hello NOT world",
+            "test*",
+            "-negative",
+            "(parens)",
+            "col:value",
+        ]:
             results = db_manager.search_conversations(term)
             assert isinstance(results, list), f"Raised for term: {term!r}"
 
@@ -537,19 +558,23 @@ class TestSearch:
 
     def test_fts5_phrase_wraps_in_double_quotes(self, db_manager):
         from source.infrastructure.database import DatabaseManager
+
         assert DatabaseManager._fts5_phrase("hello world") == '"hello world"'
 
     def test_fts5_phrase_escapes_internal_quotes(self, db_manager):
         from source.infrastructure.database import DatabaseManager
+
         assert DatabaseManager._fts5_phrase('say "hi"') == '"say ""hi"""'
 
     def test_fts5_phrase_escapes_consecutive_quotes(self, db_manager):
         from source.infrastructure.database import DatabaseManager
+
         # '""' → each " doubled → '""""' → wrapped → '""""""' (6 chars)
         assert DatabaseManager._fts5_phrase('""') == '""""""'
 
     def test_fts5_phrase_empty_string(self, db_manager):
         from source.infrastructure.database import DatabaseManager
+
         assert DatabaseManager._fts5_phrase("") == '""'
 
 
@@ -653,12 +678,8 @@ class TestTerminalEvents:
 
     def test_multiple_terminal_events_ordered(self, db_manager):
         cid = db_manager.start_new_conversation("Multiple events")
-        db_manager.save_terminal_event(
-            cid, 0, "cmd1", 0, "out1", "/", 10
-        )
-        db_manager.save_terminal_event(
-            cid, 1, "cmd2", 0, "out2", "/", 20
-        )
+        db_manager.save_terminal_event(cid, 0, "cmd1", 0, "out1", "/", 10)
+        db_manager.save_terminal_event(cid, 1, "cmd2", 0, "out2", "/", 20)
         events = db_manager.get_terminal_events(cid)
         assert len(events) == 2
         assert events[0]["command"] == "cmd1"
@@ -688,6 +709,34 @@ class TestEnabledModels:
         db_manager.set_enabled_models(["old"])
         db_manager.set_enabled_models(["new1", "new2"])
         assert db_manager.get_enabled_models() == ["new1", "new2"]
+
+
+class TestModelReasoningEfforts:
+    def test_empty_by_default(self, db_manager):
+        assert db_manager.get_model_reasoning_efforts() == {}
+
+    def test_set_get_and_lookup(self, db_manager):
+        efforts = {
+            "openai-codex/gpt-5.6-sol": "max",
+            "openai-codex/gpt-5.6-luna": "low",
+        }
+        db_manager.set_model_reasoning_efforts(efforts)
+
+        assert db_manager.get_model_reasoning_efforts() == efforts
+        assert (
+            db_manager.get_model_reasoning_effort("openai-codex/gpt-5.6-sol") == "max"
+        )
+        assert db_manager.get_model_reasoning_effort("openai-codex/missing") is None
+
+    def test_corrupt_or_invalid_values_are_ignored(self, db_manager):
+        db_manager.set_setting("model_reasoning_efforts", "not-json")
+        assert db_manager.get_model_reasoning_efforts() == {}
+
+        db_manager.set_setting(
+            "model_reasoning_efforts",
+            json.dumps({"valid": "high", "invalid": "extreme", "numeric": 4}),
+        )
+        assert db_manager.get_model_reasoning_efforts() == {"valid": "high"}
 
 
 # ------------------------------------------------------------------
@@ -895,4 +944,3 @@ class TestSchemaConstraints:
                     "INSERT INTO messages (conversation_id, role, content) VALUES (?, ?, ?)",
                     (None, "user", "text"),
                 )
-

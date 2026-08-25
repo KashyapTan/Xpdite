@@ -112,6 +112,7 @@ class TestIsOllamaCloudModel:
 _ROUTE_PATCHES = {
     "source.infrastructure.database.db": MagicMock(
         get_setting=MagicMock(return_value=None),
+        get_model_reasoning_effort=MagicMock(return_value="xhigh"),
     ),
     "source.llm.core.prompt.build_system_prompt": MagicMock(return_value="system"),
     "source.llm.core.prompt.build_artifacts_prompt_block": MagicMock(
@@ -140,7 +141,9 @@ class TestRouteChat:
         mock_mcp.has_tools.return_value = True
         patches = {**_ROUTE_PATCHES}
         patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
-        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = mock_retrieve
+        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = (
+            mock_retrieve
+        )
         ctx = {k: patch(k, v) for k, v in patches.items()}
         for p in ctx.values():
             p.start()
@@ -148,7 +151,9 @@ class TestRouteChat:
             with patch.object(mcp_manager_module, "mcp_manager", mock_mcp):
                 from source.llm.core.router import route_chat
 
-                await route_chat("llama3:8b", "screen text", [], [], tools_enabled=False)
+                await route_chat(
+                    "llama3:8b", "screen text", [], [], tools_enabled=False
+                )
 
             mock_retrieve.assert_not_called()
             assert mock_stream.await_args.kwargs["prefiltered_tools"] == []
@@ -218,8 +223,8 @@ class TestRouteChat:
 
         patches = {**_ROUTE_PATCHES}
         patches["source.llm.providers.ollama_provider.stream_ollama_chat"] = mock_stream
-        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = MagicMock(
-            return_value=retrieved_tools
+        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = (
+            MagicMock(return_value=retrieved_tools)
         )
 
         ctx = {k: patch(k, v) for k, v in patches.items()}
@@ -309,7 +314,7 @@ class TestRouteChat:
 
     @pytest.mark.asyncio
     async def test_route_chat_calls_openai_codex_without_api_key(self):
-        """ChatGPT subscription models dispatch through LiteLLM without API-key lookup."""
+        """ChatGPT subscription models dispatch to app-server before LiteLLM."""
         mock_stream = AsyncMock(
             return_value=(
                 "subscription reply",
@@ -319,19 +324,18 @@ class TestRouteChat:
             )
         )
         mock_km = MagicMock()
-        mock_codex = MagicMock()
-        mock_codex.get_status.return_value = {"connected": True}
         retrieved_tools = [{"function": {"name": "read_file"}}]
 
         mock_mcp = MagicMock()
         mock_mcp.has_tools.return_value = True
 
         patches = {**_ROUTE_PATCHES}
-        patches["source.llm.providers.cloud_provider.stream_cloud_chat"] = mock_stream
+        patches[
+            "source.llm.providers.openai_codex_provider.stream_openai_codex_chat"
+        ] = mock_stream
         patches["source.llm.core.key_manager.key_manager"] = mock_km
-        patches["source.services.integrations.openai_codex.openai_codex"] = mock_codex
-        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = MagicMock(
-            return_value=retrieved_tools
+        patches["source.mcp_integration.core.handlers.retrieve_relevant_tools"] = (
+            MagicMock(return_value=retrieved_tools)
         )
         patches["source.core.thread_pool.run_in_thread"] = AsyncMock(
             side_effect=lambda fn, *args, **kwargs: fn(*args, **kwargs)
@@ -348,17 +352,15 @@ class TestRouteChat:
 
                 assert result[0] == "subscription reply"
                 mock_stream.assert_awaited_once_with(
-                    "openai-codex",
                     "gpt-5.4",
-                    "",
                     "Hi",
                     [],
                     [],
                     allowed_tool_names={"read_file"},
                     system_prompt="system",
+                    reasoning_effort="xhigh",
                 )
                 mock_km.get_api_key.assert_not_called()
-                mock_codex.get_status.assert_called_once_with()
         finally:
             for p in ctx.values():
                 p.stop()

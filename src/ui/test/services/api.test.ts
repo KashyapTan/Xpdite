@@ -398,6 +398,38 @@ describe('api singleton - HTTP endpoints', () => {
     });
   });
 
+  describe('model reasoning efforts', () => {
+    test('fetches saved effort overrides', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ 'openai-codex/gpt-5.6-sol': 'max' }),
+      });
+
+      await expect(api.getModelReasoningEfforts()).resolves.toEqual({
+        'openai-codex/gpt-5.6-sol': 'max',
+      });
+      expect(fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/models/reasoning-efforts',
+      );
+    });
+
+    test('persists effort overrides', async () => {
+      global.fetch = vi.fn().mockResolvedValue({ ok: true });
+      const efforts = { 'openai-codex/gpt-5.6-terra': 'ultra' } as const;
+
+      await api.setModelReasoningEfforts(efforts);
+
+      expect(fetch).toHaveBeenCalledWith(
+        'http://localhost:8000/api/models/reasoning-efforts',
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ efforts }),
+        },
+      );
+    });
+  });
+
   describe('healthCheck', () => {
     test('returns true when server is healthy', async () => {
       global.fetch = vi.fn().mockResolvedValue({ ok: true });
@@ -680,7 +712,17 @@ describe('api singleton - HTTP endpoints', () => {
 
     test('fetches ChatGPT subscription models from the Codex endpoint', async () => {
       const rawModels = [
-        { id: 'openai-codex/gpt-5.4', display_name: 'GPT-5.4' },
+        {
+          id: 'openai-codex/gpt-5.4',
+          model: 'gpt-5.4',
+          display_name: 'GPT-5.4',
+          description: 'Flagship subscription model',
+          hidden: false,
+          is_default: true,
+          supported_reasoning_efforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+          default_reasoning_effort: 'medium',
+          input_modalities: ['text', 'image'],
+        },
       ];
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -696,9 +738,29 @@ describe('api singleton - HTTP endpoints', () => {
           display_name: 'GPT-5.4',
           context_length: undefined,
           provider_group: undefined,
+          model: 'gpt-5.4',
+          description: 'Flagship subscription model',
+          hidden: false,
+          is_default: true,
+          supported_reasoning_efforts: [{ reasoningEffort: 'medium', description: 'Balanced' }],
+          default_reasoning_effort: 'medium',
+          input_modalities: ['text', 'image'],
         },
       ]);
       expect(fetch).toHaveBeenCalledWith('http://localhost:8000/api/models/openai-codex');
+    });
+
+    test('filters hidden ChatGPT catalog entries', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve([
+          { id: 'openai-codex/visible', display_name: 'Visible', hidden: false },
+          { id: 'openai-codex/hidden', display_name: 'Hidden', hidden: true },
+        ]),
+      });
+
+      const result = await api.getProviderModels('openai-codex');
+      expect(result.map((model) => model.id)).toEqual(['openai-codex/visible']);
     });
 
     test('throws error with detail on failure', async () => {

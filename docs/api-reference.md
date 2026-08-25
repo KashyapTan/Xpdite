@@ -53,11 +53,17 @@ Example response:
 - `GET /api/models/openai`
 - `GET /api/models/gemini`
 - `GET /api/models/openrouter`
+- `GET /api/models/openai-codex`
+- `GET /api/openai/codex/status`
+- `POST /api/openai/codex/connect/browser`
+- `POST /api/openai/codex/connect/device`
+- `POST /api/openai/codex/cancel`
+- `POST /api/openai/codex/disconnect`
 - `GET /api/keys`
 - `PUT /api/keys/{provider}`
 - `DELETE /api/keys/{provider}`
 
-`GET /api/models/context-window/{model_name}` resolves the effective context window used by the chat UI for a selected model. Cloud providers use LiteLLM model metadata; local Ollama models use local model metadata plus the configured `num_ctx` value; cloud-tagged Ollama models use the hosted model metadata without the local `num_ctx` cap. `GET/PUT /api/settings/ollama` manages the persisted local Ollama context-size override.
+`GET /api/models/context-window/{model_name}` resolves the effective context window used by the chat UI for a selected model. API-key cloud providers use LiteLLM model metadata; local Ollama models use local model metadata plus the configured `num_ctx` value; cloud-tagged Ollama models use the hosted model metadata without the local `num_ctx` cap. The pinned Codex protocol does not report a ChatGPT subscription context window, so `openai-codex/*` returns `null` with source `unknown` (the UI uses a zero denominator for display). `GET/PUT /api/settings/ollama` manages the persisted local Ollama context-size override.
 
 Example response:
 
@@ -68,6 +74,12 @@ Example response:
   "source": "litellm_model_info"
 }
 ```
+
+`GET /api/models/openai-codex` is account-authoritative and requires an active ChatGPT connection. Model objects can include `model`, `display_name`, `description`, `is_default`, `supported_reasoning_efforts`, `default_reasoning_effort`, `input_modalities`, and upgrade metadata. Hidden catalog entries are excluded.
+
+`GET/PUT /api/models/reasoning-efforts` reads or replaces per-model ChatGPT reasoning-effort overrides. Keys are fully-qualified `openai-codex/<model>` IDs and values are capability-checked again against the live model catalog before each turn.
+
+`GET /api/openai/codex/status` exposes backward-compatible `connected` and `connecting` booleans plus a richer `connection_state`: `runtime_unavailable`, `disconnected`, `authenticating`, `connected`, `refreshing`, `rate_limited`, `reconnect_required`, or `degraded`. Connector failures map to stable safe HTTP errors; OAuth tokens, prompts, and raw protocol payloads are never returned.
 
 ### Artifacts
 

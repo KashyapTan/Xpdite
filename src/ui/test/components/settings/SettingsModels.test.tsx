@@ -22,6 +22,8 @@ vi.mock('../../../services/api', () => ({
     getOllamaModelInfo: vi.fn(),
     getEnabledModels: vi.fn(),
     setEnabledModels: vi.fn(),
+    getModelReasoningEfforts: vi.fn(),
+    setModelReasoningEfforts: vi.fn(),
     getApiKeyStatus: vi.fn(),
     getOpenAICodexStatus: vi.fn(),
     getProviderModels: vi.fn(),
@@ -35,7 +37,7 @@ vi.mock('../../../utils/modelDisplay', () => ({
     const labels: Record<string, string> = {
       anthropic: 'Anthropic',
       openai: 'OpenAI',
-      'openai-codex': 'ChatGPT Subscription',
+      'openai-codex': 'ChatGPT subscription (via OpenAI Codex)',
       gemini: 'Gemini',
       openrouter: 'OpenRouter',
       ollama: 'Ollama',
@@ -65,7 +67,23 @@ const mockOpenAIModels = [
 ]
 
 const mockOpenAICodexModels = [
-  { id: 'openai-codex/gpt-5.4', provider: 'openai-codex', display_name: 'GPT-5.4' },
+  {
+    id: 'openai-codex/gpt-5.4',
+    provider: 'openai-codex',
+    display_name: 'GPT-5.4',
+    description: 'Flagship subscription model',
+    is_default: true,
+    supported_reasoning_efforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' },
+      { reasoningEffort: 'ultra' },
+    ],
+    default_reasoning_effort: 'medium',
+    input_modalities: ['text', 'image'],
+  },
 ]
 
 const mockGeminiModels = [
@@ -137,6 +155,8 @@ describe('SettingsModels', () => {
       },
     })
     mockedApi.getOpenAICodexStatus.mockResolvedValue(mockCodexDisconnected)
+    mockedApi.getModelReasoningEfforts.mockResolvedValue({})
+    mockedApi.setModelReasoningEfforts.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
@@ -377,9 +397,45 @@ describe('SettingsModels', () => {
       render(<SettingsModels />)
 
       await waitFor(() => {
-        expect(screen.getByText('ChatGPT Subscription')).toBeInTheDocument()
-        expect(screen.getByText('GPT-5.4')).toBeInTheDocument()
+        expect(screen.getByText('ChatGPT subscription (via OpenAI Codex)')).toBeInTheDocument()
+        expect(screen.getByText('GPT-5.4 (Default)')).toBeInTheDocument()
+        expect(screen.getByText(/Flagship subscription model/)).toBeInTheDocument()
+        expect(screen.getByText(/Configurable reasoning effort/)).toBeInTheDocument()
       })
+    })
+
+    test('should persist a supported ChatGPT reasoning effort without toggling the model', async () => {
+      const user = userEvent.setup()
+      mockedApi.getEnabledModels.mockResolvedValue(['openai-codex/gpt-5.4'])
+      mockedApi.getModelReasoningEfforts.mockResolvedValue({
+        'openai-codex/gpt-5.4': 'medium',
+      })
+      mockedApi.getApiKeyStatus.mockResolvedValue(mockKeyStatusNoKeys)
+      mockedApi.getOpenAICodexStatus.mockResolvedValue({
+        ...mockCodexDisconnected,
+        connected: true,
+      })
+      mockedApi.getOllamaModels.mockResolvedValue({ models: [] })
+      mockedApi.getProviderModels.mockImplementation(async (provider) => {
+        if (provider === 'openai-codex') return mockOpenAICodexModels
+        return []
+      })
+
+      render(<SettingsModels />)
+
+      const picker = await screen.findByRole('combobox', {
+        name: 'Reasoning effort for GPT-5.4',
+      })
+      expect(picker).toHaveValue('medium')
+      expect(screen.getByRole('option', { name: 'Max' })).toBeInTheDocument()
+      expect(screen.getByRole('option', { name: 'Ultra' })).toBeInTheDocument()
+
+      await user.selectOptions(picker, 'max')
+
+      expect(mockedApi.setModelReasoningEfforts).toHaveBeenCalledWith({
+        'openai-codex/gpt-5.4': 'max',
+      })
+      expect(mockedApi.setEnabledModels).not.toHaveBeenCalled()
     })
 
     test('should show ChatGPT connect placeholder when subscription is disconnected', async () => {

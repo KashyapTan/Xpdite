@@ -5,6 +5,7 @@ import {
   type OllamaModel,
   type OllamaRegistryModelInfo,
   type OpenAICodexStatus,
+  type ReasoningEffort,
 } from '../../services/api';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { formatModelLabel, getProviderLabel } from '../../utils/modelDisplay';
@@ -16,6 +17,22 @@ type ProviderKey = CloudProvider | 'ollama';
 
 const CLOUD_PROVIDERS: CloudProvider[] = ['anthropic', 'openai', 'openai-codex', 'gemini', 'openrouter'];
 const KNOWN_CLOUD_PROVIDERS = new Set<CloudProvider>(CLOUD_PROVIDERS);
+const REASONING_EFFORT_ORDER: ReasoningEffort[] = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+  'ultra',
+];
+const REASONING_EFFORT_LABELS: Record<ReasoningEffort, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'XHigh',
+  max: 'Max',
+  ultra: 'Ultra',
+};
 
 const EMPTY_CLOUD_MODELS: Record<CloudProvider, ProviderModel[]> = {
   anthropic: [],
@@ -153,6 +170,7 @@ const SettingsModels: React.FC = () => {
   const [keyStatus, setKeyStatus] = useState<Record<string, { has_key: boolean; masked: string | null }>>({});
   const [codexStatus, setCodexStatus] = useState<OpenAICodexStatus>(EMPTY_CODEX_STATUS);
   const [enabledModels, setEnabledModels] = useState<string[]>([]);
+  const [reasoningEfforts, setReasoningEfforts] = useState<Record<string, ReasoningEffort>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [providerErrors, setProviderErrors] = useState<Record<ProviderKey, string>>(EMPTY_PROVIDER_ERRORS);
@@ -206,13 +224,15 @@ const SettingsModels: React.FC = () => {
       setLoading(true);
       setError('');
       try {
-        const [enabled, keys, codex] = await Promise.all([
+        const [enabled, savedReasoningEfforts, keys, codex] = await Promise.all([
           api.getEnabledModels(),
+          api.getModelReasoningEfforts(),
           api.getApiKeyStatus(),
           api.getOpenAICodexStatus().catch(() => EMPTY_CODEX_STATUS),
         ]);
 
         setEnabledModels(enabled);
+        setReasoningEfforts(savedReasoningEfforts);
         setKeyStatus(keys);
         setCodexStatus(codex);
 
@@ -288,6 +308,20 @@ const SettingsModels: React.FC = () => {
         // Persist to backend (SQLite) — fire-and-forget
         void api.setEnabledModels(updated);
 
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const setModelReasoningEffort = useCallback(
+    (modelId: string, effort: ReasoningEffort) => {
+      setReasoningEfforts((previous) => {
+        const updated = { ...previous, [modelId]: effort };
+        void api.setModelReasoningEfforts(updated).catch(() => {
+          setError('Could not save the model reasoning effort.');
+          setReasoningEfforts(previous);
+        });
         return updated;
       });
     },
@@ -550,10 +584,14 @@ const SettingsModels: React.FC = () => {
   ) => {
     const enabledModelId = toEnabledModelId(provider, model.id);
     const isEnabled = enabledModels.includes(enabledModelId);
-    const modelLabel = provider === 'openrouter' || provider === 'openai-codex'
+    const baseModelLabel = provider === 'openrouter' || provider === 'openai-codex'
       ? model.display_name || formatModelLabel(model.id)
       : formatModelLabel(model.id);
+    const modelLabel = provider === 'openai-codex' && model.is_default
+      ? `${baseModelLabel} (Default)`
+      : baseModelLabel;
     const metaParts: string[] = [];
+    let supportedEfforts: ReasoningEffort[] = [];
 
     if (provider === 'openrouter') {
       const contextLabel = formatContextLength(model.context_length);
@@ -561,9 +599,33 @@ const SettingsModels: React.FC = () => {
         metaParts.push(contextLabel);
       }
       metaParts.push(model.id);
+    } else if (provider === 'openai-codex') {
+      if (model.description) {
+        metaParts.push(model.description);
+      }
+      const efforts = (model.supported_reasoning_efforts ?? [])
+        .map((effort) => typeof effort === 'string' ? effort : effort.reasoningEffort)
+        .filter((effort): effort is string => Boolean(effort));
+      const effortSet = new Set(efforts);
+      supportedEfforts = REASONING_EFFORT_ORDER.filter((effort) => effortSet.has(effort));
+      if (efforts.length > 0) {
+        metaParts.push('Configurable reasoning effort');
+      }
+      if (model.input_modalities?.includes('image')) {
+        metaParts.push('Images');
+      }
     } else if (model.display_name && model.display_name !== modelLabel) {
       metaParts.push(model.display_name);
     }
+
+    const savedEffort = reasoningEfforts[enabledModelId];
+    const selectedEffort = supportedEfforts.includes(savedEffort)
+      ? savedEffort
+      : supportedEfforts.includes('high')
+        ? 'high'
+        : supportedEfforts.includes(model.default_reasoning_effort as ReasoningEffort)
+          ? model.default_reasoning_effort as ReasoningEffort
+          : supportedEfforts[0];
 
     return (
       <div
@@ -582,6 +644,31 @@ const SettingsModels: React.FC = () => {
           <span className="settings-model-name">{modelLabel}</span>
           <span className="settings-model-meta">{metaParts.join(' · ')}</span>
         </div>
+        {provider === 'openai-codex' && selectedEffort && (
+          <label
+            className="settings-model-effort"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <select
+              aria-label={`Reasoning effort for ${baseModelLabel}`}
+              value={selectedEffort}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => {
+                event.stopPropagation();
+                setModelReasoningEffort(
+                  enabledModelId,
+                  event.target.value as ReasoningEffort,
+                );
+              }}
+            >
+              {supportedEfforts.map((effort) => (
+                <option key={effort} value={effort}>
+                  {REASONING_EFFORT_LABELS[effort]}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
     );
   };
@@ -594,9 +681,19 @@ const SettingsModels: React.FC = () => {
     const hasConnection = provider === 'openai-codex'
       ? codexStatus.connected
       : keyStatus[provider]?.has_key;
-    const providerError = providerErrors[provider];
+    const codexStateError = provider === 'openai-codex'
+      && ['runtime_unavailable', 'reconnect_required', 'degraded'].includes(codexStatus.connection_state ?? '')
+      ? codexStatus.last_error ?? ''
+      : '';
+    const providerError = providerErrors[provider] || codexStateError;
     const missingConnectionLabel = provider === 'openai-codex'
-      ? 'Connect ChatGPT in the OpenAI tab to browse subscription models.'
+      ? codexStatus.connection_state === 'runtime_unavailable'
+        ? 'The bundled OpenAI Codex runtime is unavailable. Reinstall or rebuild Xpdite.'
+        : codexStatus.connection_state === 'reconnect_required'
+          ? 'Reconnect ChatGPT in the OpenAI tab to refresh subscription models.'
+          : codexStatus.connection_state === 'authenticating'
+            ? 'Waiting for ChatGPT sign-in to finish...'
+            : 'Connect ChatGPT in the OpenAI tab to browse subscription models.'
       : `No API key configured. Add one in the ${getProviderLabel(provider)} tab.`;
 
     return (

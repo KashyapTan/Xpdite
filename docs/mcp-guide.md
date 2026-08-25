@@ -56,11 +56,19 @@ Registered in-process and intercepted in provider loops.
 - Runs tool rounds up to `MAX_MCP_TOOL_ROUNDS`.
 - Streams follow-up tokens between tool calls.
 
-### Cloud Path
+### API-key Cloud Path
 
 - Streams via LiteLLM provider integration.
 - Executes tool calls when emitted.
 - Continues iterative text/tool/text rounds until completion.
+
+### ChatGPT Subscription Path
+
+- Streams through the bundled Codex app-server using an isolated ephemeral thread.
+- Registers only the semantically retrieved Xpdite tools as per-turn dynamic tools.
+- Routes server-initiated tool calls through the same shared `XpditeToolExecutor` used by API-key cloud providers.
+- Rejects unregistered names through a private per-turn alias map and fails closed if Codex attempts a shell, file, web, or other built-in tool outside Xpdite's allowlist.
+- Does not retry a turn after a tool may have produced an external side effect.
 
 ## Add a New Subprocess MCP Server
 
@@ -90,7 +98,7 @@ if __name__ == "__main__":
 2. Register with `register_inline_tools(...)` in MCP manager init.
 3. Add execution interception in:
    - `source/mcp_integration/core/handlers.py` (Ollama path)
-   - `source/llm/providers/cloud_provider.py` (cloud path)
+   - `source/llm/core/tool_executor.py` (API-key cloud and ChatGPT subscription paths)
 4. Implement execution logic in backend services/executors.
 5. Add tests for definition and execution flow.
 

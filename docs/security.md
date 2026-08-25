@@ -43,6 +43,7 @@ Coverage note:
 
 - Provider API keys are encrypted before persistence.
 - Google OAuth tokens are stored in user data directory and managed by backend integration flows.
+- ChatGPT OAuth is owned exclusively by the bundled Codex app-server in a private connector home. Xpdite does not copy, decode, log, or refresh those tokens itself. Routine status and catalog calls consume redacted account RPC data only.
 
 Current limitation:
 
@@ -60,6 +61,8 @@ Current limitation:
 - Terminal tool execution requires approval flow based on configured ask-level.
 - Tool outputs are sanitized/truncated for stability and leakage reduction.
 - Inline tool interceptors centralize execution controls.
+- ChatGPT turns run in a connector-owned empty directory with environment access disabled. Only the per-request retrieved Xpdite tool allowlist is exposed as dynamic tools; unexpected Codex built-ins fail the turn closed.
+- App-server diagnostics retain only a bounded redacted stderr tail. Prompts, tool arguments/results, OAuth URLs, and authorization material are excluded from protocol error messages.
 
 ## Recommended Hardening Practices
 

@@ -186,31 +186,32 @@ async def route_chat(
             prefiltered_tools=prefiltered_tools,
         )
 
-    # ── Cloud provider path ──────────────────────────────────────────
-    # Tools are handled inline during streaming — no separate detection phase.
+    # Reuse the exact already-retrieved allowlist for every remote provider.
+    allowed_tool_names: set[str] = (
+        {t["function"]["name"] for t in retrieved_tools} if retrieved_tools else set()
+    )
+
+    # ChatGPT subscription inference is owned end-to-end by Codex app-server,
+    # before importing or entering the generic LiteLLM path.
+    if provider == "openai-codex":
+        from ..providers.openai_codex_provider import stream_openai_codex_chat
+
+        return await stream_openai_codex_chat(
+            model,
+            user_query,
+            image_paths,
+            chat_history,
+            allowed_tool_names=allowed_tool_names if tools_enabled else set(),
+            system_prompt=system_prompt,
+            reasoning_effort=db.get_model_reasoning_effort(model_name),
+        )
+
+    # ── API-key cloud provider path ──────────────────────────────────
     from .key_manager import key_manager
     from ..providers.cloud_provider import stream_cloud_chat
 
-    if provider == "openai-codex":
-        from ...services.integrations.openai_codex import openai_codex
-
-        codex_status = await run_in_thread(openai_codex.get_status)
-        if not codex_status.get("connected"):
-            from ...core.connection import broadcast_message
-
-            message = "Connect ChatGPT in Settings > OpenAI before using subscription models."
-            await broadcast_message("error", message)
-            return (
-                f"Error: {message}",
-                {"prompt_eval_count": 0, "eval_count": 0},
-                [],
-                None,
-            )
-        api_key = ""
-    else:
-        api_key = key_manager.get_api_key(provider)
-
-    if provider != "openai-codex" and not api_key:
+    api_key = key_manager.get_api_key(provider)
+    if not api_key:
         from ...core.connection import broadcast_message
 
         await broadcast_message(
@@ -225,11 +226,6 @@ async def route_chat(
 
     if is_current_request_cancelled():
         return "", {"prompt_eval_count": 0, "eval_count": 0}, [], None
-
-    # Reuse tools already retrieved above for skill injection
-    allowed_tool_names: set[str] = (
-        {t["function"]["name"] for t in retrieved_tools} if retrieved_tools else set()
-    )
 
     if allowed_tool_names:
         logger.info(

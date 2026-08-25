@@ -206,10 +206,38 @@
 
 /* ====== Model info (name + meta) ====== */
 .settings-model-info {
+    flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 1px;
     overflow: hidden;
+}
+
+.settings-model-effort {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-dim);
+    font-size: 0.65rem;
+}
+
+.settings-model-effort select {
+    height: 26px;
+    min-width: 76px;
+    padding: 0 22px 0 8px;
+    border: 1px solid var(--color-surface-strong);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text);
+    font: inherit;
+    cursor: pointer;
+}
+
+.settings-model-effort select:focus {
+    outline: none;
+    border-color: var(--color-border-strong);
 }
 
 .settings-model-name {
@@ -546,4 +574,3 @@
     font-size: 0.8rem;
     color: var(--color-red);
 }
-

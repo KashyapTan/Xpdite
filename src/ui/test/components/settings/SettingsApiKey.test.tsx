@@ -136,6 +136,7 @@ describe('SettingsApiKey', () => {
     render(<SettingsApiKey provider="openai" />);
 
     await screen.findByText('ChatGPT Subscription');
+    expect(screen.getByText('Connect your ChatGPT subscription through OpenAI Codex.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
 
     await waitFor(() => {
@@ -143,5 +144,20 @@ describe('SettingsApiKey', () => {
       expect(openExternalUrl).toHaveBeenCalledWith('https://chatgpt.com/auth/openai/codex');
     });
   });
-});
 
+  test('shows a distinct bundled-runtime unavailable state', async () => {
+    mockedApi.getApiKeyStatus.mockResolvedValue({
+      openai: { has_key: false, masked: null },
+    });
+    mockedApi.getOpenAICodexStatus.mockResolvedValue({
+      ...disconnectedCodexStatus,
+      available: false,
+      connection_state: 'runtime_unavailable',
+      last_error: 'Bundled runtime missing',
+      error_code: 'codex_runtime_unavailable',
+    });
+
+    render(<SettingsApiKey provider="openai" />);
+    expect(await screen.findByText('Bundled runtime missing')).toBeInTheDocument();
+  });
+});

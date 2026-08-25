@@ -52,7 +52,10 @@ class TestHttpApiHelpers:
         assert http_api._extract_openrouter_error(response) == "HTTP 429"
 
     def test_ollama_helper_parsers_cover_namespaced_refs_and_urls(self):
-        assert http_api._parse_ollama_model_ref("ollama/llama3.2:8b") == ("llama3.2", "8b")
+        assert http_api._parse_ollama_model_ref("ollama/llama3.2:8b") == (
+            "llama3.2",
+            "8b",
+        )
         assert http_api._parse_ollama_model_ref("namespace/model:latest") == (
             "namespace/model",
             "latest",
@@ -71,9 +74,9 @@ class TestHttpApiHelpers:
     def test_misc_helper_functions_handle_sizes_layers_and_validation(self):
         assert http_api._human_readable_size(1536) == "1.50 KB"
         assert http_api._human_readable_size(1024**5) == "1.00 PB"
-        assert http_api._parse_ollama_layer_type("application/vnd.ollama.image.model") == (
-            "model_weights"
-        )
+        assert http_api._parse_ollama_layer_type(
+            "application/vnd.ollama.image.model"
+        ) == ("model_weights")
         assert http_api._parse_ollama_layer_type("application/unknown") == "unknown"
         assert http_api._validate_artifact_type(None) is None
         assert http_api._validate_artifact_status(None) is None
@@ -121,23 +124,21 @@ class TestOpenAICodexApiEndpoints:
     @pytest.mark.anyio
     async def test_get_openai_codex_status_delegates_to_service(self):
         service = MagicMock()
-        service.get_status.return_value = {
-            "available": True,
-            "connected": True,
-            "email": "user@example.com",
-        }
-
-        async def fake_run_in_thread(fn, *args, **kwargs):
-            return fn(*args, **kwargs)
+        service.get_status_async = AsyncMock(
+            return_value={
+                "available": True,
+                "connected": True,
+                "email": "user@example.com",
+            }
+        )
 
         with (
             patch("source.services.integrations.openai_codex.openai_codex", service),
-            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.get_openai_codex_status()
 
         assert result["connected"] is True
-        service.get_status.assert_called_once_with()
+        service.get_status_async.assert_awaited_once_with()
 
     @pytest.mark.anyio
     async def test_openai_codex_browser_connect_invalidates_model_cache(self):
@@ -166,49 +167,46 @@ class TestOpenAICodexApiEndpoints:
     @pytest.mark.anyio
     async def test_get_openai_codex_models_normalizes_app_server_models(self):
         service = MagicMock()
-        service.get_status.return_value = {"connected": True}
-        service.list_models.return_value = [
-            {
-                "model": "gpt-5.4",
-                "displayName": "GPT-5.4",
-                "contextWindow": 400000,
-            },
-            {"id": "gpt-5.3-codex", "description": "GPT-5.3 Codex"},
-        ]
-
-        async def fake_run_in_thread(fn, *args, **kwargs):
-            return fn(*args, **kwargs)
+        service.list_models_async = AsyncMock(
+            return_value=[
+                {
+                    "id": "gpt-5.4",
+                    "model": "gpt-5.4",
+                    "displayName": "GPT-5.4",
+                    "isDefault": True,
+                    "supportedReasoningEfforts": [{"reasoningEffort": "medium"}],
+                    "inputModalities": ["text", "image"],
+                },
+                {"id": "gpt-5.3-codex", "displayName": "GPT-5.3 Codex"},
+            ]
+        )
 
         with (
             patch("source.services.integrations.openai_codex.openai_codex", service),
-            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
-            patch.object(http_api, "_MODEL_CACHE", {}),
         ):
             result = await http_api.get_openai_codex_models(refresh=True)
 
         assert result[0]["id"] == "openai-codex/gpt-5.4"
         assert result[0]["provider"] == "openai-codex"
         assert result[0]["display_name"] == "GPT-5.4"
-        assert result[0]["context_length"] == 400000
+        assert result[0]["context_length"] is None
+        assert result[0]["is_default"] is True
+        assert result[0]["input_modalities"] == ["text", "image"]
         assert result[1]["id"] == "openai-codex/gpt-5.3-codex"
+        service.list_models_async.assert_awaited_once_with(refresh=True)
 
     @pytest.mark.anyio
     async def test_get_openai_codex_models_returns_empty_when_disconnected(self):
         service = MagicMock()
-        service.get_status.return_value = {"connected": False}
-
-        async def fake_run_in_thread(fn, *args, **kwargs):
-            return fn(*args, **kwargs)
+        service.list_models_async = AsyncMock(return_value=[])
 
         with (
             patch("source.services.integrations.openai_codex.openai_codex", service),
-            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
-            patch.object(http_api, "_MODEL_CACHE", {}),
         ):
             result = await http_api.get_openai_codex_models(refresh=True)
 
         assert result == []
-        service.list_models.assert_not_called()
+        service.list_models_async.assert_awaited_once_with(refresh=True)
 
 
 class TestArtifactApiEndpoints:
@@ -230,7 +228,9 @@ class TestArtifactApiEndpoints:
         assert exc.value.status_code == 403
 
     @pytest.mark.anyio
-    async def test_require_marketplace_access_enforces_session_token_when_configured(self):
+    async def test_require_marketplace_access_enforces_session_token_when_configured(
+        self,
+    ):
         request = Request(
             {
                 "type": "http",
@@ -243,7 +243,9 @@ class TestArtifactApiEndpoints:
 
         with patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"):
             with pytest.raises(HTTPException) as exc:
-                await http_api._require_marketplace_access(request, marketplace_token="wrong")
+                await http_api._require_marketplace_access(
+                    request, marketplace_token="wrong"
+                )
 
             await http_api._require_marketplace_access(
                 request,
@@ -307,7 +309,10 @@ class TestArtifactApiEndpoints:
     @pytest.mark.anyio
     async def test_list_artifacts_for_conversation_passes_conversation_scope(self):
         service = MagicMock()
-        service.list_artifacts.return_value = {"artifacts": [{"id": "artifact-1"}], "total": 1}
+        service.list_artifacts.return_value = {
+            "artifacts": [{"id": "artifact-1"}],
+            "total": 1,
+        }
 
         async def fake_run_in_thread(fn, *args, **kwargs):
             return fn(*args, **kwargs)
@@ -316,7 +321,9 @@ class TestArtifactApiEndpoints:
             patch("source.services.artifacts.artifact_service", service),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
-            result = await http_api.list_artifacts_for_conversation("conv-123", type="html")
+            result = await http_api.list_artifacts_for_conversation(
+                "conv-123", type="html"
+            )
 
         assert result["total"] == 1
         service.list_artifacts.assert_called_once_with(
@@ -445,7 +452,10 @@ class TestMarketplaceApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch(
+                "source.services.marketplace.service.get_marketplace_service",
+                return_value=service,
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
             patch.object(http_api, "SERVER_SESSION_TOKEN", "secret-token"),
         ):
@@ -491,7 +501,10 @@ class TestMarketplaceApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch(
+                "source.services.marketplace.service.get_marketplace_service",
+                return_value=service,
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.get_marketplace_catalog()
@@ -509,7 +522,10 @@ class TestMarketplaceApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.marketplace.service.get_marketplace_service", return_value=service),
+            patch(
+                "source.services.marketplace.service.get_marketplace_service",
+                return_value=service,
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException, match="bad manifest"):
@@ -553,9 +569,13 @@ class TestMarketplaceApiEndpoints:
         service.update_artifact.assert_not_called()
 
     @pytest.mark.anyio
-    async def test_install_marketplace_item_returns_http_400_for_unexpected_errors(self):
+    async def test_install_marketplace_item_returns_http_400_for_unexpected_errors(
+        self,
+    ):
         service = MagicMock()
-        service.install_item_async = AsyncMock(side_effect=RuntimeError("archive download failed"))
+        service.install_item_async = AsyncMock(
+            side_effect=RuntimeError("archive download failed")
+        )
 
         with patch(
             "source.services.marketplace.service.get_marketplace_service",
@@ -585,7 +605,7 @@ class TestMarketplaceApiEndpoints:
             result = await http_api.install_marketplace_package(
                 http_api.MarketplacePackageInstallRequest(
                     runner="npx",
-                    package_input='@modelcontextprotocol/server-everything --debug',
+                    package_input="@modelcontextprotocol/server-everything --debug",
                 )
             )
 
@@ -595,7 +615,7 @@ class TestMarketplaceApiEndpoints:
         }
         service.install_package_async.assert_awaited_once_with(
             runner="npx",
-            package_input='@modelcontextprotocol/server-everything --debug',
+            package_input="@modelcontextprotocol/server-everything --debug",
         )
 
     @pytest.mark.anyio
@@ -757,7 +777,9 @@ class TestHttpApiEndpoints:
         service.search.return_value = fake_result
 
         with (
-            patch("source.services.filesystem.file_browser.file_browser_service", service),
+            patch(
+                "source.services.filesystem.file_browser.file_browser_service", service
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.browse_files()
@@ -779,7 +801,9 @@ class TestHttpApiEndpoints:
         service.search.return_value = fake_result
 
         with (
-            patch("source.services.filesystem.file_browser.file_browser_service", service),
+            patch(
+                "source.services.filesystem.file_browser.file_browser_service", service
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             result = await http_api.browse_files(query="foo")
@@ -1044,7 +1068,9 @@ class TestHttpApiEndpoints:
                 "source.services.scheduling.scheduler.scheduler_service",
                 scheduler_service,
             ),
-            patch.object(http_api.CronTrigger, "from_crontab", return_value=MagicMock()),
+            patch.object(
+                http_api.CronTrigger, "from_crontab", return_value=MagicMock()
+            ),
         ):
             result = await http_api.update_scheduled_job(
                 "job-1",
@@ -1084,7 +1110,9 @@ class TestHttpApiEndpoints:
     async def test_run_scheduled_job_now_maps_runtime_errors_to_500(self):
         scheduler_service = MagicMock()
         scheduler_service.get_job.return_value = {"id": "job-1", "name": "Digest"}
-        scheduler_service.run_job_now = AsyncMock(side_effect=RuntimeError("queue offline"))
+        scheduler_service.run_job_now = AsyncMock(
+            side_effect=RuntimeError("queue offline")
+        )
 
         with patch(
             "source.services.scheduling.scheduler.scheduler_service",
@@ -1135,7 +1163,8 @@ class TestHttpApiEndpoints:
     @pytest.mark.anyio
     async def test_get_enabled_models_reads_from_db(self):
         with patch(
-            "source.infrastructure.database.db", MagicMock(get_enabled_models=lambda: ["a", "b"])
+            "source.infrastructure.database.db",
+            MagicMock(get_enabled_models=lambda: ["a", "b"]),
         ):
             result = await http_api.get_enabled_models()
         assert result == ["a", "b"]
@@ -1149,6 +1178,40 @@ class TestHttpApiEndpoints:
 
         db_mock.set_enabled_models.assert_called_once_with(["m1", "m2"])
         assert result == {"status": "updated", "models": ["m1", "m2"]}
+
+    @pytest.mark.anyio
+    async def test_model_reasoning_efforts_round_trip(self):
+        db_mock = MagicMock()
+        db_mock.get_model_reasoning_efforts.return_value = {
+            "openai-codex/gpt-5.6-sol": "max"
+        }
+        with patch("source.infrastructure.database.db", db_mock):
+            current = await http_api.get_model_reasoning_efforts()
+            body = http_api.ModelReasoningEffortsUpdate(
+                efforts={"openai-codex/gpt-5.6-terra": "ULTRA"}
+            )
+            updated = await http_api.set_model_reasoning_efforts(body)
+
+        assert current == {"openai-codex/gpt-5.6-sol": "max"}
+        db_mock.set_model_reasoning_efforts.assert_called_once_with(
+            {"openai-codex/gpt-5.6-terra": "ultra"}
+        )
+        assert updated == {
+            "status": "updated",
+            "efforts": {"openai-codex/gpt-5.6-terra": "ultra"},
+        }
+
+    @pytest.mark.anyio
+    async def test_model_reasoning_efforts_reject_invalid_values(self):
+        for efforts in (
+            {"openai/gpt-5": "high"},
+            {"openai-codex/gpt-5.6-sol": "extreme"},
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await http_api.set_model_reasoning_efforts(
+                    http_api.ModelReasoningEffortsUpdate(efforts=efforts)
+                )
+            assert exc.value.status_code == 400
 
     @pytest.mark.anyio
     async def test_get_api_key_status_delegates_to_key_manager(self):
@@ -1727,7 +1790,9 @@ class TestHttpApiEndpoints:
     @pytest.mark.anyio
     async def test_set_mobile_platform_config_rejects_incomplete_discord_config(self):
         db_mock = MagicMock()
-        db_mock.get_setting.return_value = '{"enabled": false, "token": "discord-token"}'
+        db_mock.get_setting.return_value = (
+            '{"enabled": false, "token": "discord-token"}'
+        )
 
         body = http_api.MobilePlatformConfig(enabled=True, applicationId="1234567890")
         with patch("source.infrastructure.database.db", db_mock):
@@ -1804,7 +1869,9 @@ class TestHttpApiEndpoints:
             },
         }
 
-    def test_write_mobile_channels_config_file_serializes_discord_credentials(self, tmp_path):
+    def test_write_mobile_channels_config_file_serializes_discord_credentials(
+        self, tmp_path
+    ):
         db_mock = MagicMock()
         db_mock.get_setting.side_effect = lambda key: {
             "mobile_channel_telegram": None,
@@ -2141,7 +2208,9 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.filesystem.file_browser.file_browser_service", service),
+            patch(
+                "source.services.filesystem.file_browser.file_browser_service", service
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             service.search.side_effect = FileNotFoundError("missing")
@@ -2228,7 +2297,10 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.skills_runtime.skills.get_skill_manager", return_value=manager),
+            patch(
+                "source.services.skills_runtime.skills.get_skill_manager",
+                return_value=manager,
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             all_skills = await http_api.get_skills()
@@ -2277,7 +2349,10 @@ class TestHttpApiEndpoints:
             return fn(*args, **kwargs)
 
         with (
-            patch("source.services.skills_runtime.skills.get_skill_manager", return_value=manager),
+            patch(
+                "source.services.skills_runtime.skills.get_skill_manager",
+                return_value=manager,
+            ),
             patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
         ):
             with pytest.raises(HTTPException) as not_found:

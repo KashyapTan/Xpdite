@@ -68,6 +68,7 @@ https://github.com/user-attachments/assets/956f8147-c917-4aa2-bc60-771742cbdc9b
 1. Choose how you want to run models:
    - **Local with Ollama (recommended)**: Download and install Ollama from [ollama.com/download](https://ollama.com/download).
    - **Cloud providers**: Bring your own API key (Anthropic, OpenAI, Gemini, or OpenRouter).
+   - **ChatGPT subscription**: Connect your ChatGPT account through the bundled OpenAI Codex runtime using browser OAuth or device code; available models follow your account entitlements.
 2. If you install Ollama, open Xpdite and go to **Settings -> Models** to pull models directly from the UI.
 3. Browse available local models at [ollama.com/search](https://ollama.com/search).
 
