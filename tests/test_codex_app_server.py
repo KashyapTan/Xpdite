@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,16 @@ def codex_client(tmp_path, monkeypatch):
 
 def _transcript(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def test_python_runtime_override_uses_current_interpreter(tmp_path, monkeypatch):
+    fixture = tmp_path / "fixture.py"
+    fixture.write_text("print('fixture')\n", encoding="utf-8")
+    monkeypatch.setenv("XPDITE_CODEX_BINARY", str(fixture))
+
+    client = CodexAppServerClient()
+
+    assert client.get_launch_command() == [sys.executable, str(fixture.resolve())]
 
 
 async def test_canonical_handshake_and_bidirectional_id_collision(

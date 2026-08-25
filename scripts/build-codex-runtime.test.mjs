@@ -4,7 +4,19 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { copyCodexRuntime, resolveCodexRuntimePaths } from './build-codex-runtime.mjs';
+import {
+    copyCodexRuntime,
+    getCodexRuntimeDetails,
+    resolveCodexRuntimePaths,
+} from './build-codex-runtime.mjs';
+
+test('getCodexRuntimeDetails resolves the Windows x64 package and executable', () => {
+    assert.deepEqual(getCodexRuntimeDetails('win32', 'x64'), {
+        packageName: 'codex-win32-x64',
+        targetTriple: 'x86_64-pc-windows-msvc',
+        binaryName: 'codex.exe',
+    });
+});
 
 test('copyCodexRuntime copies the resolved mac runtime into dist-codex-runtime', async () => {
     const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'xpdite-codex-build-'));

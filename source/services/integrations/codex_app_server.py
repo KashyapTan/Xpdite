@@ -441,7 +441,13 @@ class CodexAppServerClient:
 
     def get_launch_command(self) -> list[str]:
         try:
-            return [str(self.get_codex_binary_path())]
+            binary_path = self.get_codex_binary_path()
+            # Explicit developer/test overrides can point at a Python protocol
+            # fixture. POSIX can execute its shebang directly, but Windows
+            # CreateProcess cannot launch .py files as native executables.
+            if binary_path.suffix.lower() in {".py", ".pyw"}:
+                return [sys.executable, str(binary_path)]
+            return [str(binary_path)]
         except FileNotFoundError as native_error:
             wrapper = (
                 PROJECT_ROOT / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"

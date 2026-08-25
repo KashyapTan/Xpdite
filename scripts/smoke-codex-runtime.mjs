@@ -65,15 +65,16 @@ async function waitForResponse(lines, requestId, child) {
     });
 }
 
-async function stopChild(child) {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    child.stdin.end();
-    const exited = new Promise((resolve) => child.once('exit', resolve));
+async function stopChild(child, closed) {
+    if (child.exitCode === null && child.signalCode === null) {
+        child.stdin.end();
+    }
     const wait = () => new Promise((resolve) => setTimeout(resolve, 3_000, 'timeout'));
-    if (await Promise.race([exited, wait()]) === 'timeout') {
+    if (await Promise.race([closed, wait()]) === 'timeout') {
         child.kill('SIGTERM');
-        if (await Promise.race([exited, wait()]) === 'timeout') {
+        if (await Promise.race([closed, wait()]) === 'timeout') {
             child.kill('SIGKILL');
+            await Promise.race([closed, wait()]);
         }
     }
 }
@@ -92,6 +93,9 @@ export async function smokePackagedCodexRuntime({ root = process.cwd() } = {}) {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
     });
+    // `exit` can fire before Windows releases stdio/cwd handles. The `close`
+    // event is the lifecycle boundary after all child stdio streams close.
+    const childClosed = new Promise((resolve) => child.once('close', resolve));
     const lines = readline.createInterface({ input: child.stdout });
     let stderr = '';
     child.stderr.on('data', (chunk) => {
@@ -135,8 +139,13 @@ export async function smokePackagedCodexRuntime({ root = process.cwd() } = {}) {
         throw error;
     } finally {
         lines.close();
-        await stopChild(child);
-        await fs.rm(tempRoot, { recursive: true, force: true });
+        await stopChild(child, childClosed);
+        await fs.rm(tempRoot, {
+            recursive: true,
+            force: true,
+            maxRetries: process.platform === 'win32' ? 10 : 2,
+            retryDelay: 100,
+        });
     }
 }
 
