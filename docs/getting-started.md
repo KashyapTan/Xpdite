@@ -12,6 +12,7 @@ This guide covers initial setup for both end users and contributors.
 1. Choose how you want to run models:
    - **Local with Ollama (recommended)**: download and install from [ollama.com/download](https://ollama.com/download).
    - **Cloud providers**: bring your own API key (Anthropic, OpenAI, Gemini, or OpenRouter).
+   - **ChatGPT subscription**: choose OpenAI Codex and connect through browser OAuth or device code. Xpdite then lists the non-hidden models authorized for that account.
 2. After installing Ollama, open Xpdite and go to **Settings -> Models**.
 3. Pull models directly from the UI in the Models tab.
 4. Find models at [ollama.com/search](https://ollama.com/search).
@@ -33,6 +34,7 @@ This guide covers initial setup for both end users and contributors.
     - Pull models from **Settings -> Models** inside Xpdite
 4.  **Cloud API keys** (optional)
     - Anthropic, OpenAI, Gemini, or OpenRouter
+    - ChatGPT subscription through OpenAI Codex
 5.  **Google account** (optional)
     - Needed only for Gmail and Calendar tools
 

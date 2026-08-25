@@ -15,6 +15,9 @@ from .config import USER_DATA_DIR
 
 logger = logging.getLogger(__name__)
 
+_MODEL_REASONING_EFFORTS_KEY = "model_reasoning_efforts"
+_VALID_REASONING_EFFORTS = {"low", "medium", "high", "xhigh", "max", "ultra"}
+
 
 def _default_database_path() -> Path:
     """Return the primary SQLite path for the active runtime."""
@@ -61,8 +64,12 @@ def _migrate_legacy_database_if_needed(target_path: Path) -> None:
         try:
             if target_path.exists():
                 target_path.unlink()
-            with sqlite3.connect(str(legacy_path), check_same_thread=False) as source_conn:
-                with sqlite3.connect(str(target_path), check_same_thread=False) as target_conn:
+            with sqlite3.connect(
+                str(legacy_path), check_same_thread=False
+            ) as source_conn:
+                with sqlite3.connect(
+                    str(target_path), check_same_thread=False
+                ) as target_conn:
                     source_conn.backup(target_conn)
             logger.info(
                 "Migrated legacy database from '%s' to '%s'",
@@ -87,7 +94,11 @@ def _migrate_legacy_database_if_needed(target_path: Path) -> None:
 class DatabaseManager:
     def __init__(self, database_path: str | os.PathLike[str] | None = None):
         """Initialize the database manager with the given file path."""
-        resolved_path = Path(database_path) if database_path is not None else _default_database_path()
+        resolved_path = (
+            Path(database_path)
+            if database_path is not None
+            else _default_database_path()
+        )
         if database_path is None:
             _migrate_legacy_database_if_needed(resolved_path)
 
@@ -603,7 +614,9 @@ class DatabaseManager:
         *,
         include_content: bool = False,
     ) -> Dict[str, Dict[str, Any]]:
-        ids = [artifact_id for artifact_id in dict.fromkeys(artifact_ids) if artifact_id]
+        ids = [
+            artifact_id for artifact_id in dict.fromkeys(artifact_ids) if artifact_id
+        ]
         if not ids:
             return {}
 
@@ -719,7 +732,8 @@ class DatabaseManager:
                 "status": (
                     "deleted"
                     if artifact_row is None
-                    or str((artifact_row or {}).get("status") or "").lower() == "deleted"
+                    or str((artifact_row or {}).get("status") or "").lower()
+                    == "deleted"
                     else "ready"
                 ),
             }
@@ -811,7 +825,9 @@ class DatabaseManager:
                 "response_index": row[0],
                 "content": row[1],
                 "model": row[2],
-                "content_blocks": self._resolve_content_blocks(row[3], conn, artifact_map),
+                "content_blocks": self._resolve_content_blocks(
+                    row[3], conn, artifact_map
+                ),
                 "timestamp": row[4],
             }
             for row in rows
@@ -822,7 +838,9 @@ class DatabaseManager:
         row: tuple,
         conn: sqlite3.Connection,
         artifact_map: Optional[Dict[str, Dict[str, Any]]] = None,
-        response_variants_by_assistant: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+        response_variants_by_assistant: Optional[
+            Dict[str, List[Dict[str, Any]]]
+        ] = None,
     ) -> Dict[str, Any]:
         message = {
             "num_messages": row[0],
@@ -1276,7 +1294,9 @@ class DatabaseManager:
                     "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
                     (assistant_id,),
                 )
-                conn.execute("DELETE FROM artifacts WHERE message_id = ?", (assistant_id,))
+                conn.execute(
+                    "DELETE FROM artifacts WHERE message_id = ?", (assistant_id,)
+                )
 
             conn.execute(
                 "DELETE FROM terminal_events WHERE conversation_id = ? AND message_index > ?",
@@ -1607,7 +1627,9 @@ class DatabaseManager:
             for row in rows
         ]
 
-    def delete_artifacts_for_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+    def delete_artifacts_for_conversation(
+        self, conversation_id: str
+    ) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
                 """SELECT id, conversation_id, message_id, artifact_type, title, language,
@@ -1762,7 +1784,9 @@ class DatabaseManager:
                     "DELETE FROM message_response_versions WHERE assistant_message_id = ?",
                     (assistant_id,),
                 )
-                conn.execute("DELETE FROM artifacts WHERE message_id = ?", (assistant_id,))
+                conn.execute(
+                    "DELETE FROM artifacts WHERE message_id = ?", (assistant_id,)
+                )
             conn.execute(
                 "DELETE FROM artifacts WHERE conversation_id = ?",
                 (conversation_id,),
@@ -1925,6 +1949,35 @@ class DatabaseManager:
     def set_enabled_models(self, models: List[str]):
         """Save the list of enabled model names."""
         self.set_setting("enabled_models", json.dumps(models))
+
+    def get_model_reasoning_efforts(self) -> Dict[str, str]:
+        """Return valid per-model reasoning-effort overrides."""
+        value = self.get_setting(_MODEL_REASONING_EFFORTS_KEY)
+        if not value:
+            return {}
+        try:
+            decoded = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        if not isinstance(decoded, dict):
+            return {}
+        return {
+            str(model_id): str(effort)
+            for model_id, effort in decoded.items()
+            if isinstance(model_id, str)
+            and isinstance(effort, str)
+            and effort in _VALID_REASONING_EFFORTS
+        }
+
+    def get_model_reasoning_effort(self, model_id: str) -> str | None:
+        """Return the saved reasoning effort for one fully-qualified model ID."""
+        return self.get_model_reasoning_efforts().get(model_id)
+
+    def set_model_reasoning_efforts(self, efforts: Dict[str, str]) -> None:
+        """Replace all per-model reasoning-effort overrides."""
+        self.set_setting(
+            _MODEL_REASONING_EFFORTS_KEY, json.dumps(efforts, sort_keys=True)
+        )
 
     def get_system_prompt_template(self) -> str | None:
         """Returns the user-saved system prompt template, or None if not set."""

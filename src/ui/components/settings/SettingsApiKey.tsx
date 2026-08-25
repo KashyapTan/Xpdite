@@ -114,7 +114,9 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
   }, [provider, refreshCodexStatus]);
 
   useEffect(() => {
-    if (provider !== 'openai' || !codexStatus.auth_in_progress) {
+    const transientState = codexStatus.connection_state === 'authenticating'
+      || codexStatus.connection_state === 'refreshing';
+    if (provider !== 'openai' || (!codexStatus.auth_in_progress && !transientState)) {
       return undefined;
     }
 
@@ -123,7 +125,7 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
     }, 2000);
 
     return () => window.clearInterval(intervalId);
-  }, [codexStatus.auth_in_progress, provider, refreshCodexStatus]);
+  }, [codexStatus.auth_in_progress, codexStatus.connection_state, provider, refreshCodexStatus]);
 
   const handleSave = async () => {
     const key = inputValue.trim();
@@ -255,12 +257,24 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
       codexStatus.email,
       codexStatus.plan_type ? `${codexStatus.plan_type} plan` : null,
     ].filter(Boolean).join(' · ');
+    const connectionState = codexStatus.connection_state
+      ?? (codexStatus.connected ? 'connected' : codexStatus.auth_in_progress ? 'authenticating' : 'disconnected');
+    const statusLabel: Record<string, string> = {
+      runtime_unavailable: 'Runtime unavailable',
+      disconnected: 'Not connected',
+      authenticating: 'Waiting for ChatGPT sign-in...',
+      connected: 'Connected',
+      refreshing: 'Refreshing connection...',
+      rate_limited: 'Usage limit reached',
+      reconnect_required: 'Reconnect required',
+      degraded: 'Connector error',
+    };
 
     return (
       <div className="settings-apikey-panel settings-codex-panel">
         <div className="settings-apikey-header">
           <h2>ChatGPT Subscription</h2>
-          <p>Use your ChatGPT Plus or Pro account through Xpdite's LiteLLM tool loop.</p>
+          <p>Connect your ChatGPT subscription through OpenAI Codex.</p>
         </div>
 
         <div className="settings-apikey-content">
@@ -280,7 +294,9 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
                 <span className="settings-apikey-masked">
                   {connectedLabel || 'ChatGPT account'}
                 </span>
-                <span className="settings-apikey-status">Connected</span>
+                  <span className="settings-apikey-status">
+                    {statusLabel[connectionState] ?? 'Connected'}
+                  </span>
               </div>
               <button
                 className="settings-apikey-delete-btn"
@@ -295,7 +311,7 @@ const SettingsApiKey: React.FC<SettingsApiKeyProps> = ({ provider }) => {
           {!codexLoading && codexStatus.available && !codexStatus.connected && (
             <div className="settings-codex-connect">
               <div className="settings-codex-state">
-                {codexStatus.auth_in_progress ? 'Waiting for ChatGPT sign-in...' : 'Not connected'}
+                {statusLabel[connectionState] ?? 'Not connected'}
               </div>
               <div className="settings-codex-actions">
                 {!codexStatus.auth_in_progress && (

@@ -488,8 +488,11 @@ function parseWsPayloadWithGuard<T>(
 }
 
 type SubAgentStreamPayload = SubAgentStreamContent & { accumulated?: string };
+const subAgentDeltaText = new Map<string, string>();
 
-function buildSubAgentStreamToolCall(stream: SubAgentStreamPayload): ToolCall | null {
+function buildSubAgentStreamToolCall(
+  stream: SubAgentStreamPayload,
+): ToolCall | null {
   const safeAgentId = typeof stream.agent_id === 'string' && stream.agent_id ? stream.agent_id : undefined;
   if (!safeAgentId) {
     return null;
@@ -507,7 +510,10 @@ function buildSubAgentStreamToolCall(stream: SubAgentStreamPayload): ToolCall | 
   const safeContent = typeof stream.content === 'string' ? stream.content : undefined;
 
   let streamResult = 'Sub-agent is working...';
-  if (safeTranscript && safeTranscript.length > 0) {
+  if (stream.is_delta && safeContent !== undefined) {
+    streamResult = `${subAgentDeltaText.get(safeAgentId) ?? ''}${safeContent}`;
+    subAgentDeltaText.set(safeAgentId, streamResult);
+  } else if (safeTranscript && safeTranscript.length > 0) {
     streamResult = JSON.stringify(safeTranscript);
   } else if (safeAccumulated && safeAccumulated.trim().length > 0) {
     streamResult = safeAccumulated;
@@ -516,6 +522,9 @@ function buildSubAgentStreamToolCall(stream: SubAgentStreamPayload): ToolCall | 
   }
 
   const isFinal = stream.stream_type === 'final';
+  if (isFinal) {
+    subAgentDeltaText.delete(safeAgentId);
+  }
   return {
     name: 'spawn_agent',
     args: { agent_name: safeAgentName, model_tier: safeModelTier },

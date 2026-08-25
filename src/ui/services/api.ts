@@ -74,6 +74,18 @@ export interface ProviderModel {
   display_name: string;
   provider_group?: string;
   context_length?: number;
+  model?: string;
+  description?: string;
+  hidden?: boolean;
+  is_default?: boolean;
+  supported_reasoning_efforts?: Array<string | { reasoningEffort?: string; description?: string }>;
+  default_reasoning_effort?: string;
+  input_modalities?: string[];
+  upgrade?: unknown;
+  upgrade_info?: unknown;
+  availability_nux?: unknown;
+  supports_personality?: boolean;
+  additional_speed_tiers?: unknown[];
 }
 
 export interface ModelContextWindowResponse {
@@ -81,6 +93,9 @@ export interface ModelContextWindowResponse {
   context_window: number | null;
   source: string;
 }
+
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
+export type ModelReasoningEfforts = Record<string, ReasoningEffort>;
 
 export interface OpenAICodexStatus {
   available: boolean;
@@ -98,6 +113,12 @@ export interface OpenAICodexStatus {
   auth_mode: string | null;
   last_error: string | null;
   binary_path?: string | null;
+  connection_state?: 'runtime_unavailable' | 'disconnected' | 'authenticating' | 'connected' | 'refreshing' | 'rate_limited' | 'reconnect_required' | 'degraded';
+  error_code?: string | null;
+  runtime_version?: string | null;
+  runtime_generation?: number;
+  models_refreshed_at?: number | null;
+  rate_limits?: Record<string, unknown> | null;
 }
 
 export interface OllamaModel {
@@ -158,6 +179,17 @@ interface RawProviderModel {
   description?: unknown;
   provider_group?: unknown;
   context_length?: unknown;
+  model?: unknown;
+  hidden?: unknown;
+  is_default?: unknown;
+  supported_reasoning_efforts?: unknown;
+  default_reasoning_effort?: unknown;
+  input_modalities?: unknown;
+  upgrade?: unknown;
+  upgrade_info?: unknown;
+  availability_nux?: unknown;
+  supports_personality?: unknown;
+  additional_speed_tiers?: unknown;
 }
 
 interface RawMcpServerToolSummary {
@@ -349,6 +381,9 @@ function normalizeProviderModel(provider: string, rawModel: RawProviderModel): P
   if (!id) {
     return null;
   }
+  if (rawModel.hidden === true) {
+    return null;
+  }
 
   const displayName = typeof rawModel.display_name === 'string'
     ? rawModel.display_name
@@ -356,13 +391,40 @@ function normalizeProviderModel(provider: string, rawModel: RawProviderModel): P
       ? rawModel.description
       : id;
 
-  return {
+  const normalized: ProviderModel = {
     id,
     provider: typeof rawModel.provider === 'string' ? rawModel.provider : provider,
     display_name: displayName,
     provider_group: typeof rawModel.provider_group === 'string' ? rawModel.provider_group : undefined,
     context_length: typeof rawModel.context_length === 'number' ? rawModel.context_length : undefined,
   };
+  if (typeof rawModel.model === 'string') normalized.model = rawModel.model;
+  if (provider === 'openai-codex' && typeof rawModel.description === 'string') {
+    normalized.description = rawModel.description;
+  }
+  if (typeof rawModel.hidden === 'boolean') normalized.hidden = rawModel.hidden;
+  if (typeof rawModel.is_default === 'boolean') normalized.is_default = rawModel.is_default;
+  if (Array.isArray(rawModel.supported_reasoning_efforts)) {
+    normalized.supported_reasoning_efforts = rawModel.supported_reasoning_efforts as ProviderModel['supported_reasoning_efforts'];
+  }
+  if (typeof rawModel.default_reasoning_effort === 'string') {
+    normalized.default_reasoning_effort = rawModel.default_reasoning_effort;
+  }
+  if (Array.isArray(rawModel.input_modalities)) {
+    normalized.input_modalities = rawModel.input_modalities.filter(
+      (value): value is string => typeof value === 'string',
+    );
+  }
+  if (rawModel.upgrade !== undefined) normalized.upgrade = rawModel.upgrade;
+  if (rawModel.upgrade_info !== undefined) normalized.upgrade_info = rawModel.upgrade_info;
+  if (rawModel.availability_nux !== undefined) normalized.availability_nux = rawModel.availability_nux;
+  if (typeof rawModel.supports_personality === 'boolean') {
+    normalized.supports_personality = rawModel.supports_personality;
+  }
+  if (Array.isArray(rawModel.additional_speed_tiers)) {
+    normalized.additional_speed_tiers = rawModel.additional_speed_tiers;
+  }
+  return normalized;
 }
 
 function normalizeMcpServerTool(rawTool: unknown): McpServerToolSummary | null {
@@ -699,6 +761,34 @@ export const api = {
       });
     } catch {
       console.error('Failed to save enabled models');
+    }
+  },
+
+  /** Fetch per-model reasoning-effort overrides from SQLite. */
+  async getModelReasoningEfforts(): Promise<ModelReasoningEfforts> {
+    try {
+      const base = await baseUrl();
+      const response = await fetch(`${base}/api/models/reasoning-efforts`);
+      if (!response.ok) throw new Error('Failed to fetch model reasoning efforts');
+      const payload = await response.json();
+      return payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as ModelReasoningEfforts
+        : {};
+    } catch {
+      return {};
+    }
+  },
+
+  /** Replace all per-model reasoning-effort overrides. */
+  async setModelReasoningEfforts(efforts: ModelReasoningEfforts): Promise<void> {
+    const base = await baseUrl();
+    const response = await fetch(`${base}/api/models/reasoning-efforts`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ efforts }),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to save model reasoning efforts');
     }
   },
 

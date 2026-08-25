@@ -10,6 +10,38 @@ permissions:
   contents: read
 
 jobs:
+  codex-runtime:
+    name: Codex runtime (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - windows-latest
+          - macos-14
+          - macos-15-intel
+          - ubuntu-24.04
+          - ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Initialize packaged Codex app-server
+        run: bun run test:codex-runtime
+
   verify:
     runs-on: windows-latest
     timeout-minutes: 90

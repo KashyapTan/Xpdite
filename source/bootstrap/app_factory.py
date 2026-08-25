@@ -90,6 +90,15 @@ async def _stop_file_browser_indexer() -> None:
         logger.warning("Failed to stop file browser indexer: %s", e)
 
 
+async def _stop_openai_codex_connector() -> None:
+    from ..services.integrations.openai_codex import openai_codex
+
+    try:
+        await run_in_thread(openai_codex.shutdown)
+    except Exception as e:
+        logger.warning("Failed to stop the OpenAI Codex connector: %s", e)
+
+
 async def _cancel_marketplace_refresh_task(app: FastAPI) -> None:
     task = getattr(app.state, "marketplace_refresh_task", None)
     if task is None or task.done():
@@ -124,6 +133,7 @@ def create_app() -> FastAPI:
         finally:
             await _stop_file_browser_indexer()
             await _cancel_marketplace_refresh_task(app)
+            await _stop_openai_codex_connector()
 
     app = FastAPI(
         title="Xpdite API",

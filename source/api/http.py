@@ -223,8 +223,7 @@ async def _require_local_api_access(
         raise HTTPException(status_code=403, detail="Local API access denied")
 
     if SERVER_SESSION_TOKEN and not (
-        server_token
-        and secrets.compare_digest(server_token, SERVER_SESSION_TOKEN)
+        server_token and secrets.compare_digest(server_token, SERVER_SESSION_TOKEN)
     ):
         raise HTTPException(status_code=403, detail="Local API access denied")
 
@@ -337,7 +336,9 @@ async def get_artifact(
 
     artifact = await _run_in_thread(artifact_service.get_artifact, artifact_id)
     if artifact is None:
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Artifact '{artifact_id}' not found"
+        )
     return artifact
 
 
@@ -373,11 +374,7 @@ async def update_artifact(
     """Update artifact metadata or content."""
     from ..services.artifacts import artifact_service
 
-    if (
-        payload.title is None
-        and payload.content is None
-        and payload.language is None
-    ):
+    if payload.title is None and payload.content is None and payload.language is None:
         artifact = await _run_in_thread(artifact_service.get_artifact, artifact_id)
     else:
         artifact = await _run_in_thread(
@@ -389,7 +386,9 @@ async def update_artifact(
         )
 
     if artifact is None:
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Artifact '{artifact_id}' not found"
+        )
     return artifact
 
 
@@ -403,7 +402,9 @@ async def delete_artifact(
 
     deleted = await _run_in_thread(artifact_service.delete_artifact, artifact_id)
     if deleted is None:
-        raise HTTPException(status_code=404, detail=f"Artifact '{artifact_id}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Artifact '{artifact_id}' not found"
+        )
 
     payload = _artifact_deleted_payload(deleted)
     await manager.broadcast_json("artifact_deleted", payload)
@@ -649,6 +650,12 @@ class EnabledModelsUpdate(BaseModel):
     models: List[str]
 
 
+class ModelReasoningEffortsUpdate(BaseModel):
+    """Per-model reasoning effort overrides from the Models settings page."""
+
+    efforts: dict[str, str]
+
+
 @router.get("/models/enabled")
 async def get_enabled_models() -> List[str]:
     """
@@ -672,6 +679,44 @@ async def set_enabled_models(body: EnabledModelsUpdate):
 
     db.set_enabled_models(body.models)
     return {"status": "updated", "models": body.models}
+
+
+@router.get("/models/reasoning-efforts")
+async def get_model_reasoning_efforts() -> dict[str, str]:
+    """Get persisted reasoning-effort overrides keyed by qualified model ID."""
+    from ..infrastructure.database import db
+
+    return db.get_model_reasoning_efforts()
+
+
+@router.put("/models/reasoning-efforts")
+async def set_model_reasoning_efforts(
+    body: ModelReasoningEffortsUpdate,
+) -> dict[str, Any]:
+    """Validate and replace per-model ChatGPT reasoning-effort overrides."""
+    from ..infrastructure.database import db
+
+    allowed_efforts = {"low", "medium", "high", "xhigh", "max", "ultra"}
+    if len(body.efforts) > 200:
+        raise HTTPException(status_code=400, detail="Too many model effort settings")
+
+    normalized: dict[str, str] = {}
+    for raw_model_id, raw_effort in body.efforts.items():
+        model_id = raw_model_id.strip()
+        effort = raw_effort.strip().lower()
+        if (
+            not model_id.startswith("openai-codex/")
+            or len(model_id) > 200
+            or effort not in allowed_efforts
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid ChatGPT model reasoning-effort setting",
+            )
+        normalized[model_id] = effort
+
+    db.set_model_reasoning_efforts(normalized)
+    return {"status": "updated", "efforts": normalized}
 
 
 # ============================================
@@ -783,7 +828,9 @@ async def save_api_key(provider: str, body: ApiKeyUpdate):
 
             response = await _run_in_thread(_validate_huggingface)
             if response.status_code != 200:
-                raise ValueError(response.text.strip()[:200] or f"HTTP {response.status_code}")
+                raise ValueError(
+                    response.text.strip()[:200] or f"HTTP {response.status_code}"
+                )
 
     except Exception as e:
         error_msg = str(e)
@@ -866,16 +913,32 @@ GEMINI_FALLBACK = [
 
 def _normalize_openai_codex_http_error(exc: Exception) -> HTTPException:
     detail = str(exc).strip() or f"OpenAI Codex request failed ({type(exc).__name__})"
-    status_code = 503 if isinstance(exc, FileNotFoundError) else 400
+    code = str(getattr(exc, "code", ""))
+    if isinstance(exc, FileNotFoundError) or code in {
+        "codex_runtime_unavailable",
+        "chatgpt_upstream_unavailable",
+        "chatgpt_stream_disconnected",
+    }:
+        status_code = 503
+    elif code in {"chatgpt_not_connected", "chatgpt_auth_expired"}:
+        status_code = 401
+    elif code in {"chatgpt_workspace_denied", "chatgpt_model_unavailable"}:
+        status_code = 403
+    elif code == "chatgpt_usage_limit":
+        status_code = 429
+    elif code == "chatgpt_context_limit":
+        status_code = 413
+    else:
+        status_code = 400
     return HTTPException(status_code=status_code, detail=detail[:300])
 
 
 @router.get("/openai/codex/status")
 async def get_openai_codex_status():
-    """Get ChatGPT subscription auth status without starting chat runtime."""
+    """Get authoritative ChatGPT subscription account/runtime status."""
     from ..services.integrations.openai_codex import openai_codex
 
-    return await _run_in_thread(openai_codex.get_status)
+    return await openai_codex.get_status_async()
 
 
 @router.post("/openai/codex/connect/browser")
@@ -1017,15 +1080,19 @@ def _to_cloud_model(
     *,
     provider_group: Optional[str] = None,
     context_length: Optional[int] = None,
+    metadata: Optional[dict] = None,
 ) -> dict:
     """Normalize cloud model payload shape across providers."""
-    return {
+    payload = {
         "id": model_id,
         "provider": provider,
         "display_name": display_name,
         "provider_group": provider_group or provider,
         "context_length": context_length,
     }
+    if metadata:
+        payload.update(metadata)
+    return payload
 
 
 @router.get("/models/anthropic")
@@ -1301,53 +1368,52 @@ async def get_openrouter_models(refresh: bool = False) -> List[dict]:
 
 @router.get("/models/openai-codex")
 async def get_openai_codex_models(refresh: bool = False) -> List[dict]:
-    """Get LiteLLM ChatGPT subscription models for the authenticated account."""
+    """Get the authoritative Codex model catalog for the ChatGPT account."""
     from ..services.integrations.openai_codex import openai_codex
 
-    async def _fetch() -> List[dict]:
-        def _load_models() -> List[dict]:
-            status = openai_codex.get_status()
-            if not status.get("connected"):
-                return []
+    try:
+        raw_models = await openai_codex.list_models_async(refresh=refresh)
+    except Exception as exc:
+        raise _normalize_openai_codex_http_error(exc) from exc
 
-            raw_models = openai_codex.list_models()
-            normalized: list[dict] = []
-            for raw_model in raw_models:
-                model_id = str(raw_model.get("model") or raw_model.get("id") or "").strip()
-                if not model_id:
-                    continue
-                display_name = str(
-                    raw_model.get("displayName")
-                    or raw_model.get("description")
-                    or model_id
-                ).strip()
-                context_length_raw = raw_model.get("contextWindow")
-                context_length = (
-                    context_length_raw if isinstance(context_length_raw, int) else None
-                )
-                normalized.append(
-                    _to_cloud_model(
-                        model_id=f"openai-codex/{model_id}",
-                        provider="openai-codex",
-                        display_name=display_name,
-                        context_length=context_length,
+    normalized: list[dict] = []
+    for raw_model in raw_models:
+        picker_id = str(raw_model.get("id") or "").strip()
+        if not picker_id or raw_model.get("hidden"):
+            continue
+        normalized.append(
+            _to_cloud_model(
+                model_id=f"openai-codex/{picker_id}",
+                provider="openai-codex",
+                display_name=str(raw_model.get("displayName") or picker_id),
+                context_length=None,
+                metadata={
+                    "model": raw_model.get("model") or picker_id,
+                    "description": raw_model.get("description"),
+                    "hidden": False,
+                    "is_default": bool(raw_model.get("isDefault")),
+                    "supported_reasoning_efforts": raw_model.get(
+                        "supportedReasoningEfforts"
                     )
-                )
-
-            normalized.sort(
-                key=lambda item: (
-                    0 if str(item["id"]).endswith("/gpt-5.4") else 1,
-                    str(item["id"]),
-                )
+                    or [],
+                    "default_reasoning_effort": raw_model.get("defaultReasoningEffort"),
+                    "input_modalities": raw_model.get("inputModalities") or [],
+                    "upgrade": raw_model.get("upgrade"),
+                    "upgrade_info": raw_model.get("upgradeInfo"),
+                    "availability_nux": raw_model.get("availabilityNux"),
+                    "supports_personality": raw_model.get("supportsPersonality"),
+                    "additional_speed_tiers": raw_model.get("additionalSpeedTiers")
+                    or [],
+                },
             )
-            return normalized
-
-        try:
-            return await _run_in_thread(_load_models)
-        except Exception as exc:
-            raise _normalize_openai_codex_http_error(exc) from exc
-
-    return await _get_cached_or_fetch_models("openai-codex", refresh, _fetch)
+        )
+    normalized.sort(
+        key=lambda item: (
+            0 if item.get("is_default") else 1,
+            str(item.get("display_name") or item["id"]).lower(),
+        )
+    )
+    return normalized
 
 
 # ============================================
@@ -1840,7 +1906,9 @@ async def create_marketplace_source(
     from ..services.marketplace.service import get_marketplace_service
 
     if not body.location.strip():
-        raise HTTPException(status_code=400, detail="Marketplace source location is required")
+        raise HTTPException(
+            status_code=400, detail="Marketplace source location is required"
+        )
     service = get_marketplace_service()
     created_source = None
     try:
@@ -1932,7 +2000,9 @@ async def install_marketplace_item(
             body.source_id,
             body.manifest_item_id,
         )
-        raise HTTPException(status_code=400, detail=str(e) or "Marketplace install failed")
+        raise HTTPException(
+            status_code=400, detail=str(e) or "Marketplace install failed"
+        )
 
 
 @router.post("/marketplace/install-package")
@@ -1988,7 +2058,9 @@ async def install_marketplace_repo(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.exception("Unexpected marketplace repo install failure for %s", repo_input)
+        logger.exception(
+            "Unexpected marketplace repo install failure for %s", repo_input
+        )
         raise HTTPException(
             status_code=400,
             detail=str(e) or "Marketplace repo install failed",
@@ -2065,7 +2137,9 @@ async def update_marketplace_install_secrets(
 
     service = get_marketplace_service()
     try:
-        result = await _run_in_thread(service.set_install_secrets, install_id, body.secrets)
+        result = await _run_in_thread(
+            service.set_install_secrets, install_id, body.secrets
+        )
         return {"status": "updated", **result}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2371,11 +2445,17 @@ async def set_mobile_platform_config(platform_id: str, config: MobilePlatformCon
         existing["authMethod"] = "pairing_code"
     if platform_id == "discord" and existing.get("enabled"):
         if not existing.get("token"):
-            raise HTTPException(status_code=400, detail="Discord bot token is required.")
+            raise HTTPException(
+                status_code=400, detail="Discord bot token is required."
+            )
         if not existing.get("publicKey"):
-            raise HTTPException(status_code=400, detail="Discord public key is required.")
+            raise HTTPException(
+                status_code=400, detail="Discord public key is required."
+            )
         if not existing.get("applicationId"):
-            raise HTTPException(status_code=400, detail="Discord application ID is required.")
+            raise HTTPException(
+                status_code=400, detail="Discord application ID is required."
+            )
 
     # Set initial status
     if "status" not in existing:
@@ -2504,7 +2584,9 @@ async def update_scheduled_job(job_id: str, job_data: ScheduledJobUpdate):
         tz = ZoneInfo(effective_timezone)
         CronTrigger.from_crontab(effective_cron, timezone=tz)
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Invalid cron expression: {e}") from e
+        raise HTTPException(
+            status_code=400, detail=f"Invalid cron expression: {e}"
+        ) from e
 
     # Build update dict from non-None values
     updates: dict[str, Any] = {}

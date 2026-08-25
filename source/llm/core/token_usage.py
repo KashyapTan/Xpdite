@@ -207,7 +207,7 @@ def build_prompt_cache_key(
 
 def supports_openai_prompt_cache_key(provider: str) -> bool:
     """Whether this provider path should receive OpenAI prompt_cache_key."""
-    return provider in {"openai", "openai-codex"}
+    return provider == "openai"
 
 
 def supports_anthropic_cache_control(provider: str, model: str) -> bool:

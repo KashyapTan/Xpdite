@@ -178,8 +178,6 @@ async def _resolve_ollama_context_window(model_name: str) -> ModelContextWindow:
 
 
 def _litellm_provider_for(provider: str) -> str:
-    if provider == "openai-codex":
-        return "chatgpt"
     return provider
 
 
@@ -189,16 +187,17 @@ def _litellm_context_from_info(model_info: Mapping[str, Any]) -> Optional[int]:
     )
 
 
-def _resolve_openai_codex_context_window(model_name: str) -> ModelContextWindow:
+async def _resolve_openai_codex_context_window(model_name: str) -> ModelContextWindow:
     """Resolve ChatGPT subscription model context from the Codex model list."""
     try:
         from ...services.integrations.openai_codex import openai_codex
 
-        models = openai_codex.list_models()
+        models = await openai_codex.list_models_async()
         normalized = model_name.strip()
         for raw_model in models:
-            raw_id = str(raw_model.get("model") or raw_model.get("id") or "").strip()
-            if raw_id == normalized:
+            picker_id = str(raw_model.get("id") or "").strip()
+            underlying_id = str(raw_model.get("model") or "").strip()
+            if normalized in {picker_id, underlying_id}:
                 return ModelContextWindow(
                     model=f"openai-codex/{normalized}",
                     context_window=_positive_int(raw_model.get("contextWindow")),
@@ -247,6 +246,6 @@ async def resolve_model_context_window(model_name: str) -> ModelContextWindow:
         return await _resolve_ollama_context_window(model)
 
     if provider == "openai-codex":
-        return _resolve_openai_codex_context_window(model)
+        return await _resolve_openai_codex_context_window(model)
 
     return _resolve_cloud_context_window(provider, model)

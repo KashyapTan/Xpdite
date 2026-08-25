@@ -158,6 +158,9 @@ jobs:
       - name: Install Python dependencies
         run: uv sync --group dev --python 3.13
 
+      - name: Initialize packaged Codex app-server
+        run: bun run test:codex-runtime
+
       - name: Build Windows release
         env:
           XPDITE_BUILD_VERSION: ${{ needs.resolve-release.outputs.version }}
@@ -204,6 +207,9 @@ jobs:
 
       - name: Install Python dependencies
         run: uv sync --group dev --python 3.13
+
+      - name: Initialize packaged Codex app-server
+        run: bun run test:codex-runtime
 
       - name: Build macOS release
         env:

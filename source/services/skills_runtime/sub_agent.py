@@ -30,8 +30,15 @@ from ...llm.core.prompt_cache import (
     mark_messages_for_anthropic_prompt_cache,
     mark_tools_for_anthropic_prompt_cache,
 )
-from ...infrastructure.config import MAX_MCP_TOOL_ROUNDS, MAX_TOOL_RESULT_LENGTH, USER_DATA_DIR
-from ...llm.core.ollama_settings import get_local_ollama_keep_alive, get_local_ollama_options
+from ...infrastructure.config import (
+    MAX_MCP_TOOL_ROUNDS,
+    MAX_TOOL_RESULT_LENGTH,
+    USER_DATA_DIR,
+)
+from ...llm.core.ollama_settings import (
+    get_local_ollama_keep_alive,
+    get_local_ollama_options,
+)
 from ...llm.core.token_usage import (
     add_sub_agent_token_totals,
     build_prompt_cache_key,
@@ -39,7 +46,6 @@ from ...llm.core.token_usage import (
     supports_anthropic_cache_control,
     supports_openai_prompt_cache_key,
     usage_from_litellm_chat_usage,
-    usage_from_litellm_responses_usage,
     usage_from_ollama_response,
 )
 from ...core.connection import broadcast_message
@@ -85,6 +91,7 @@ def _tool_progress_description(fn_name: str, fn_args: dict) -> str:
     else:
         desc = f"Using {fn_name}..."
     return desc[:200]
+
 
 # Tools that sub-agents must never access
 _EXCLUDED_TOOLS = {
@@ -232,7 +239,7 @@ def _uses_ollama_client(model_name: str) -> bool:
     """Whether the model should be called via the Ollama AsyncClient.
 
     Models with a known cloud provider prefix (``anthropic/``, ``openai/``,
-    ``openai-codex/``, ``gemini/``, ``openrouter/``) go through LiteLLM.  Everything else — including cloud-
+    ``openai-codex/``, ``gemini/``, ``openrouter/``) use a remote provider. Everything else — including cloud-
     hosted Ollama models like ``qwen3.5:397b-cloud`` — goes through the
     Ollama client.
     """
@@ -246,16 +253,6 @@ def _uses_ollama_client(model_name: str) -> bool:
 def _prepare_cloud_sub_agent_provider(provider: str) -> tuple[str, str | None]:
     """Return the LiteLLM provider name and API key for a cloud sub-agent."""
     from ...llm.core.key_manager import key_manager
-
-    if provider == "openai-codex":
-        from ...services.integrations.openai_codex import openai_codex
-
-        status = openai_codex.get_status()
-        if not status.get("connected"):
-            raise RuntimeError(
-                "Connect ChatGPT in Settings > OpenAI before using subscription sub-agents."
-            )
-        return "chatgpt", None
 
     api_key = key_manager.get_api_key(provider)
     if not api_key:
@@ -306,10 +303,7 @@ def _get_sub_agent_tools(instruction: str) -> Optional[List[Dict[str, Any]]]:
         return None
 
     # Filter out excluded tools
-    filtered = [
-        t for t in retrieved
-        if t["function"]["name"] not in _EXCLUDED_TOOLS
-    ]
+    filtered = [t for t in retrieved if t["function"]["name"] not in _EXCLUDED_TOOLS]
     return filtered if filtered else None
 
 
@@ -318,323 +312,156 @@ def _get_sub_agent_tools(instruction: str) -> Optional[List[Dict[str, Any]]]:
 # ---------------------------------------------------------------------------
 
 
-async def _run_chatgpt_subscription_sub_agent(
+async def _run_codex_app_server_sub_agent(
     *,
-    litellm_model: str,
+    model: str,
     instruction: str,
-    openai_tools: Optional[List[Dict[str, Any]]],
+    tools: Optional[List[Dict[str, Any]]],
     agent_id: str,
     agent_name: str,
     model_tier: str,
 ) -> Dict[str, Any]:
-    """Execute a ChatGPT subscription sub-agent with Responses API tool events."""
-    from ...llm.providers.cloud_provider import (
-        _event_type_value,
-        _merge_response_function_item,
-        _object_field,
-        _response_function_calls_to_chat_tool_calls,
-        _responses_function_call_items,
-        _responses_tools_from_chat_tools,
-        _tool_result_message,
-    )
-    from ...mcp_integration.core.manager import mcp_manager
+    """Run a ChatGPT-backed sub-agent through the shared app-server provider."""
+    from ...infrastructure.database import db
+    from ...llm.providers.openai_codex_provider import stream_openai_codex_chat
 
-    responses_input: List[Dict[str, Any]] = [
-        {"role": "user", "content": instruction},
-    ]
-    responses_tools = _responses_tools_from_chat_tools(openai_tools)
-    prompt_cache_key = build_prompt_cache_key(
-        "openai-codex",
-        litellm_model,
-        system_prompt=_SUB_AGENT_SYSTEM_PROMPT,
-        tools=responses_tools,
-    )
-
-    total_tokens = {"prompt_tokens": 0, "completion_tokens": 0}
-    accumulated_text: list[str] = []
     transcript_steps: list[dict[str, Any]] = [
         {"type": "instruction", "content": instruction}
     ]
+    text_step_index: int | None = None
+    text_chunks: list[str] = []
+    error_text: str | None = None
 
-    if agent_id:
-        await broadcast_message(
-            "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "instruction",
-                "content": instruction,
-                "transcript": transcript_steps,
-            }),
-        )
+    def transcript_snapshot() -> list[dict[str, Any]]:
+        if text_step_index is not None:
+            transcript_steps[text_step_index]["content"] = "".join(text_chunks)
+        return transcript_steps
 
-    rounds = 0
-    try:
-        while True:
-            if is_current_request_cancelled():
-                break
-
-            rounds += 1
-            if rounds > MAX_MCP_TOOL_ROUNDS + 1:
-                break
-
-            allow_tools = responses_tools is not None and rounds <= MAX_MCP_TOOL_ROUNDS
-            create_kwargs: Dict[str, Any] = {
-                "model": litellm_model,
-                "input": responses_input,
-                "instructions": _SUB_AGENT_SYSTEM_PROMPT,
-                "stream": True,
-                "timeout": _SUB_AGENT_TIMEOUT,
-                "store": False,
-                "prompt_cache_key": prompt_cache_key,
+    async def emit(event_type: str, content: Any) -> None:
+        nonlocal text_step_index, error_text
+        stream_type = event_type
+        payload_content = str(content or "")
+        extra: dict[str, Any] = {}
+        if event_type == "response_chunk":
+            stream_type = "thinking"
+            if text_step_index is None:
+                transcript_steps.append({"type": "text", "content": ""})
+                text_step_index = len(transcript_steps) - 1
+            text_chunks.append(payload_content)
+        elif event_type == "thinking_chunk":
+            stream_type = "thinking"
+        elif event_type == "tool_call":
+            stream_type = "tool_call"
+            try:
+                tool_payload = json.loads(payload_content)
+            except json.JSONDecodeError:
+                tool_payload = {}
+            extra = {
+                "tool_name": tool_payload.get("name"),
+                "tool_args": tool_payload.get("args") or {},
+                "tool_result": tool_payload.get("result"),
             }
-            if allow_tools:
-                create_kwargs["tools"] = responses_tools
-                create_kwargs["tool_choice"] = "auto"
-                create_kwargs["parallel_tool_calls"] = True
-
-            round_text_chunks: list[str] = []
-            round_text_step_index: int | None = None
-            pending_tool_calls: Dict[int, Dict[str, str]] = {}
-
-            def _append_stream_text(chunk_text: str) -> None:
-                nonlocal round_text_step_index
-                if not chunk_text:
-                    return
-                round_text_chunks.append(chunk_text)
-                if round_text_step_index is None:
-                    transcript_steps.append({"type": "text", "content": chunk_text})
-                    round_text_step_index = len(transcript_steps) - 1
-                    return
-                existing = str(
-                    transcript_steps[round_text_step_index].get("content", "")
+            if tool_payload.get("status") == "calling":
+                transcript_steps.append(
+                    {
+                        "type": "tool_call",
+                        "name": tool_payload.get("name"),
+                        "args": tool_payload.get("args") or {},
+                        "status": "calling",
+                    }
                 )
-                transcript_steps[round_text_step_index]["content"] = (
-                    f"{existing}{chunk_text}"
-                )
+            else:
+                for step in reversed(transcript_steps):
+                    if (
+                        step.get("type") == "tool_call"
+                        and step.get("name") == tool_payload.get("name")
+                        and step.get("status") == "calling"
+                    ):
+                        step["status"] = "complete"
+                        step["result"] = str(tool_payload.get("result") or "")[
+                            :_TRANSCRIPT_RESULT_PREVIEW
+                        ]
+                        break
+        elif event_type == "error":
+            error_text = payload_content
+            stream_type = "error"
+        else:
+            return
 
-            async for event in await litellm.aresponses(**create_kwargs):
-                if is_current_request_cancelled():
-                    break
-
-                event_type = _event_type_value(event)
-                if event_type == "response.output_text.delta":
-                    delta = str(_object_field(event, "delta") or "")
-                    if delta:
-                        _append_stream_text(delta)
-                        if agent_id:
-                            await broadcast_message(
-                                "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": delta,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
-                            )
-                elif event_type == "response.output_item.added":
-                    output_index = int(_object_field(event, "output_index", 0) or 0)
-                    _merge_response_function_item(
-                        pending_tool_calls,
-                        output_index,
-                        _object_field(event, "item"),
-                    )
-                elif event_type == "response.function_call_arguments.delta":
-                    output_index = int(_object_field(event, "output_index", 0) or 0)
-                    state = pending_tool_calls.setdefault(
-                        output_index,
-                        {"id": "", "call_id": "", "name": "", "arguments": ""},
-                    )
-                    state["arguments"] += str(_object_field(event, "delta") or "")
-                elif event_type == "response.function_call_arguments.done":
-                    output_index = int(_object_field(event, "output_index", 0) or 0)
-                    state = pending_tool_calls.setdefault(
-                        output_index,
-                        {"id": "", "call_id": "", "name": "", "arguments": ""},
-                    )
-                    arguments = _object_field(event, "arguments")
-                    if arguments is not None:
-                        state["arguments"] = str(arguments)
-                elif event_type == "response.output_item.done":
-                    output_index = int(_object_field(event, "output_index", 0) or 0)
-                    _merge_response_function_item(
-                        pending_tool_calls,
-                        output_index,
-                        _object_field(event, "item"),
-                    )
-                elif event_type == "response.completed":
-                    response_obj = _object_field(event, "response")
-                    usage = _object_field(response_obj, "usage")
-                    parsed_usage = usage_from_litellm_responses_usage(usage)
-                    if has_token_usage(parsed_usage):
-                        add_sub_agent_token_totals(total_tokens, parsed_usage)
-
-            round_text = "".join(round_text_chunks)
-            if round_text:
-                accumulated_text.append(round_text)
-                if agent_id:
-                    await broadcast_message(
-                        "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "thinking_complete",
-                            "content": round_text,
-                            "transcript": transcript_steps,
-                        }),
-                    )
-
-            assistant_tool_calls = _response_function_calls_to_chat_tool_calls(
-                pending_tool_calls,
-                rounds,
+        if agent_id:
+            is_delta = event_type == "response_chunk"
+            await broadcast_message(
+                "sub_agent_stream",
+                json.dumps(
+                    {
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "model_tier": model_tier,
+                        "stream_type": stream_type,
+                        "content": payload_content,
+                        **(
+                            {"is_delta": True}
+                            if is_delta
+                            else {"transcript": transcript_snapshot()}
+                        ),
+                        **extra,
+                    }
+                ),
             )
-            if not assistant_tool_calls:
-                break
 
-            responses_input.extend(_responses_function_call_items(assistant_tool_calls))
-
-            for tc_info in assistant_tool_calls:
-                fn_name = tc_info["function"]["name"]
-                fn_args, arg_error = normalize_tool_args(
-                    tc_info["function"]["arguments"]
-                )
-
-                if arg_error:
-                    result_str = (
-                        f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                    )
-                    transcript_steps.append({
-                        "type": "tool_call",
-                        "name": fn_name,
-                        "args": {},
-                        "status": "error",
-                        "result": result_str,
-                    })
-                    responses_input.append(
-                        _tool_result_message(tc_info, result_str, "responses")
-                    )
-                    continue
-
-                if fn_name in _EXCLUDED_TOOLS:
-                    result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                    transcript_steps.append({
-                        "type": "tool_call",
-                        "name": fn_name,
-                        "args": fn_args,
-                        "status": "blocked",
-                        "result": result_str,
-                    })
-                    responses_input.append(
-                        _tool_result_message(tc_info, result_str, "responses")
-                    )
-                    continue
-
-                if is_current_request_cancelled():
-                    break
-
-                step_index = len(transcript_steps)
-                transcript_steps.append({
-                    "type": "tool_call",
-                    "name": fn_name,
-                    "args": fn_args,
-                    "status": "calling",
-                })
-                if agent_id:
-                    await broadcast_message(
-                        "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "tool_call",
-                            "tool_name": fn_name,
-                            "tool_args": fn_args,
-                            "transcript": transcript_steps,
-                        }),
-                    )
-
-                try:
-                    result = await mcp_manager.call_tool(fn_name, fn_args)
-                    result_str = str(result)
-                    if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                        result_str = _truncate_safely(
-                            result_str,
-                            MAX_TOOL_RESULT_LENGTH,
-                        )
-                except Exception as e:
-                    logger.warning("ChatGPT sub-agent tool %s failed: %s", fn_name, e)
-                    result_str = f"Tool execution error: {type(e).__name__}"
-
-                result_preview = (
-                    result_str[:_TRANSCRIPT_RESULT_PREVIEW]
-                    if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW
-                    else result_str
-                )
-                transcript_steps[step_index] = {
-                    "type": "tool_call",
-                    "name": fn_name,
-                    "args": fn_args,
-                    "status": "complete",
-                    "result": result_preview,
-                }
-                responses_input.append(
-                    _tool_result_message(tc_info, result_str, "responses")
-                )
-
-                if agent_id:
-                    await broadcast_message(
-                        "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "tool_result",
-                            "tool_name": fn_name,
-                            "tool_result": result_preview,
-                            "transcript": transcript_steps,
-                        }),
-                    )
-
-            if is_current_request_cancelled():
-                break
-    except Exception as e:
-        error_msg = build_provider_error_message("openai-codex", e)
-        logger.error(
-            "ChatGPT subscription sub-agent streaming failed (%s): %s",
-            type(e).__name__,
-            error_msg,
-        )
-        return {
-            "response": "".join(accumulated_text),
-            "token_stats": total_tokens,
-            "error": error_msg,
-        }
-
-    final_response = "".join(accumulated_text)
     if agent_id:
+        transcript_snapshot()
         await broadcast_message(
             "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "final",
-                "content": final_response,
-                "transcript": transcript_steps,
-                "token_stats": total_tokens,
-            }),
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "instruction",
+                    "content": instruction,
+                    "transcript": transcript_steps,
+                }
+            ),
         )
 
-    return {
-        "response": final_response,
-        "token_stats": total_tokens,
-        "error": None,
+    allowed = {
+        str(tool.get("function", {}).get("name"))
+        for tool in tools or []
+        if isinstance(tool, dict) and tool.get("function", {}).get("name")
     }
+    response, usage, _tool_calls, _blocks = await stream_openai_codex_chat(
+        model,
+        instruction,
+        [],
+        [],
+        allowed_tool_names=allowed,
+        system_prompt=_SUB_AGENT_SYSTEM_PROMPT,
+        reasoning_effort=db.get_model_reasoning_effort(f"openai-codex/{model}"),
+        event_broadcaster=emit,
+        emit_terminal_events=False,
+    )
+    token_stats = {
+        "prompt_tokens": int(usage.get("prompt_eval_count") or 0),
+        "completion_tokens": int(usage.get("eval_count") or 0),
+    }
+    if agent_id:
+        transcript_snapshot()
+        await broadcast_message(
+            "sub_agent_stream",
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "final",
+                    "content": response,
+                    "transcript": transcript_steps,
+                    "token_stats": token_stats,
+                }
+            ),
+        )
+    return {"response": response, "token_stats": token_stats, "error": error_text}
 
 
 async def _run_cloud_sub_agent(
@@ -654,6 +481,16 @@ async def _run_cloud_sub_agent(
     from ...mcp_integration.core.manager import mcp_manager
 
     provider, model = parse_provider(model_name)
+    if provider == "openai-codex":
+        return await _run_codex_app_server_sub_agent(
+            model=model,
+            instruction=instruction,
+            tools=tools,
+            agent_id=agent_id,
+            agent_name=agent_name,
+            model_tier=model_tier,
+        )
+
     try:
         litellm_provider, api_key = await run_in_thread(
             _prepare_cloud_sub_agent_provider,
@@ -680,19 +517,11 @@ async def _run_cloud_sub_agent(
     openai_tools: Optional[List[Dict]] = None
     if tools:
         tool_names = {t["function"]["name"] for t in tools}
-        openai_tools = [t for t in all_openai_tools if t["function"]["name"] in tool_names]
+        openai_tools = [
+            t for t in all_openai_tools if t["function"]["name"] in tool_names
+        ]
         if not openai_tools:
             openai_tools = None
-
-    if provider == "openai-codex":
-        return await _run_chatgpt_subscription_sub_agent(
-            litellm_model=litellm_model,
-            instruction=instruction,
-            openai_tools=openai_tools,
-            agent_id=agent_id,
-            agent_name=agent_name,
-            model_tier=model_tier,
-        )
 
     use_anthropic_cache_control = supports_anthropic_cache_control(provider, model)
     prompt_cache_key = (
@@ -718,14 +547,16 @@ async def _run_cloud_sub_agent(
     if agent_id:
         await broadcast_message(
             "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "instruction",
-                "content": instruction,
-                "transcript": transcript_steps,
-            }),
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "instruction",
+                    "content": instruction,
+                    "transcript": transcript_steps,
+                }
+            ),
         )
 
     try:
@@ -786,8 +617,12 @@ async def _run_cloud_sub_agent(
                     transcript_steps.append({"type": "text", "content": chunk_text})
                     round_text_step_index = len(transcript_steps) - 1
                     return
-                existing = str(transcript_steps[round_text_step_index].get("content", ""))
-                transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
+                existing = str(
+                    transcript_steps[round_text_step_index].get("content", "")
+                )
+                transcript_steps[round_text_step_index]["content"] = (
+                    f"{existing}{chunk_text}"
+                )
 
             while True:
                 try:
@@ -808,28 +643,34 @@ async def _run_cloud_sub_agent(
                         finish_reason = chunk.choices[0].finish_reason
 
                         # Stream reasoning/thinking content if provider exposes it
-                        reasoning_content = getattr(delta, "reasoning_content", None) if delta else None
+                        reasoning_content = (
+                            getattr(delta, "reasoning_content", None) if delta else None
+                        )
                         if reasoning_content:
                             if isinstance(reasoning_content, str):
                                 thinking_text = reasoning_content
                             else:
                                 try:
-                                    thinking_text = json.dumps(reasoning_content, ensure_ascii=False)
+                                    thinking_text = json.dumps(
+                                        reasoning_content, ensure_ascii=False
+                                    )
                                 except TypeError:
                                     thinking_text = str(reasoning_content)
                             _append_stream_text(thinking_text)
                             if agent_id:
                                 await broadcast_message(
                                     "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": thinking_text,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
+                                    json.dumps(
+                                        {
+                                            "agent_id": agent_id,
+                                            "agent_name": agent_name,
+                                            "model_tier": model_tier,
+                                            "stream_type": "thinking",
+                                            "content": thinking_text,
+                                            "accumulated": "".join(round_text_chunks),
+                                            "transcript": transcript_steps,
+                                        }
+                                    ),
                                 )
 
                         # Stream text content
@@ -838,15 +679,17 @@ async def _run_cloud_sub_agent(
                             if agent_id:
                                 await broadcast_message(
                                     "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": delta.content,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
+                                    json.dumps(
+                                        {
+                                            "agent_id": agent_id,
+                                            "agent_name": agent_name,
+                                            "model_tier": model_tier,
+                                            "stream_type": "thinking",
+                                            "content": delta.content,
+                                            "accumulated": "".join(round_text_chunks),
+                                            "transcript": transcript_steps,
+                                        }
+                                    ),
                                 )
 
                         # Accumulate tool calls from deltas
@@ -863,9 +706,13 @@ async def _run_cloud_sub_agent(
                                     tool_calls_accum[idx]["id"] = tc_delta.id
                                 if tc_delta.function:
                                     if tc_delta.function.name:
-                                        tool_calls_accum[idx]["function"]["name"] = tc_delta.function.name
+                                        tool_calls_accum[idx]["function"]["name"] = (
+                                            tc_delta.function.name
+                                        )
                                     if tc_delta.function.arguments:
-                                        tool_calls_accum[idx]["function"]["arguments"] += tc_delta.function.arguments
+                                        tool_calls_accum[idx]["function"][
+                                            "arguments"
+                                        ] += tc_delta.function.arguments
                     break
                 except litellm.exceptions.MidStreamFallbackError as e:
                     recovered_suffix = get_mid_stream_generated_suffix(
@@ -877,15 +724,17 @@ async def _run_cloud_sub_agent(
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": recovered_suffix,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": recovered_suffix,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
                         logger.warning(
                             "Sub-agent mid-stream fallback recovered %d trailing chars for %s/%s (%s)",
@@ -898,7 +747,10 @@ async def _run_cloud_sub_agent(
                         )
                         break
 
-                    if e.is_pre_first_chunk and stream_retry_count < MID_STREAM_RETRY_LIMIT:
+                    if (
+                        e.is_pre_first_chunk
+                        and stream_retry_count < MID_STREAM_RETRY_LIMIT
+                    ):
                         stream_retry_count += 1
                         logger.warning(
                             "Sub-agent stream failed before first chunk for %s/%s; retrying round %d/%d (%s)",
@@ -923,19 +775,23 @@ async def _run_cloud_sub_agent(
                 if agent_id:
                     await broadcast_message(
                         "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "thinking_complete",
-                            "content": round_text,
-                            "transcript": transcript_steps,
-                        }),
+                        json.dumps(
+                            {
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "thinking_complete",
+                                "content": round_text,
+                                "transcript": transcript_steps,
+                            }
+                        ),
                     )
 
             # Process tool calls if any
             if tool_calls_accum:
-                sorted_tool_calls = [tool_calls_accum[i] for i in sorted(tool_calls_accum.keys())]
+                sorted_tool_calls = [
+                    tool_calls_accum[i] for i in sorted(tool_calls_accum.keys())
+                ]
 
                 # Append assistant message with tool calls
                 assistant_msg: Dict[str, Any] = {
@@ -948,44 +804,82 @@ async def _run_cloud_sub_agent(
                 # Execute each tool
                 for tc in sorted_tool_calls:
                     fn_name = tc["function"]["name"]
-                    fn_args, arg_error = normalize_tool_args(tc["function"]["arguments"])
+                    fn_args, arg_error = normalize_tool_args(
+                        tc["function"]["arguments"]
+                    )
                     tc_id = tc.get("id", "")
 
                     if arg_error:
-                        result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "error", "result": result_str})
+                        result_str = (
+                            f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": result_str,
+                            }
+                        )
+                        transcript_steps.append(
+                            {
+                                "type": "tool_call",
+                                "name": fn_name,
+                                "args": {},
+                                "status": "error",
+                                "result": result_str,
+                            }
+                        )
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_error",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "tool_error",
+                                        "tool_name": fn_name,
+                                        "error": result_str,
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
                         continue
 
                     if fn_name in _EXCLUDED_TOOLS:
-                        result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                        messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "blocked", "result": result_str})
+                        result_str = (
+                            f"Error: Tool '{fn_name}' is not available to sub-agents."
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "content": result_str,
+                            }
+                        )
+                        transcript_steps.append(
+                            {
+                                "type": "tool_call",
+                                "name": fn_name,
+                                "args": fn_args,
+                                "status": "blocked",
+                                "result": result_str,
+                            }
+                        )
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_blocked",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "tool_blocked",
+                                        "tool_name": fn_name,
+                                        "error": result_str,
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
                         continue
 
@@ -994,47 +888,72 @@ async def _run_cloud_sub_agent(
 
                     # Broadcast tool call start
                     step_index = len(transcript_steps)
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                    transcript_steps.append(
+                        {
+                            "type": "tool_call",
+                            "name": fn_name,
+                            "args": fn_args,
+                            "status": "calling",
+                        }
+                    )
                     if agent_id:
                         await broadcast_message(
                             "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_call",
-                                "tool_name": fn_name,
-                                "tool_args": fn_args,
-                                "transcript": transcript_steps,
-                            }),
+                            json.dumps(
+                                {
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_call",
+                                    "tool_name": fn_name,
+                                    "tool_args": fn_args,
+                                    "transcript": transcript_steps,
+                                }
+                            ),
                         )
 
                     try:
                         result = await mcp_manager.call_tool(fn_name, fn_args)
                         result_str = str(result)
                         if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                            result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
+                            result_str = _truncate_safely(
+                                result_str, MAX_TOOL_RESULT_LENGTH
+                            )
                     except Exception as e:
                         logger.warning("Cloud sub-agent tool %s failed: %s", fn_name, e)
                         result_str = f"Tool execution error: {type(e).__name__}"
 
-                    messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_str})
-                    result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
-                    transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
+                    messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": result_str}
+                    )
+                    result_preview = (
+                        result_str[:_TRANSCRIPT_RESULT_PREVIEW]
+                        if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW
+                        else result_str
+                    )
+                    transcript_steps[step_index] = {
+                        "type": "tool_call",
+                        "name": fn_name,
+                        "args": fn_args,
+                        "status": "complete",
+                        "result": result_preview,
+                    }
 
                     # Broadcast tool result
                     if agent_id:
                         await broadcast_message(
                             "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_result",
-                                "tool_name": fn_name,
-                                "tool_result": result_preview,
-                                "transcript": transcript_steps,
-                            }),
+                            json.dumps(
+                                {
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_result",
+                                    "tool_name": fn_name,
+                                    "tool_result": result_preview,
+                                    "transcript": transcript_steps,
+                                }
+                            ),
                         )
 
                 # Check cancellation after tool execution loop
@@ -1062,15 +981,17 @@ async def _run_cloud_sub_agent(
     if agent_id:
         await broadcast_message(
             "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "final",
-                "content": final_response,
-                "transcript": transcript_steps,
-                "token_stats": total_tokens,
-            }),
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "final",
+                    "content": final_response,
+                    "transcript": transcript_steps,
+                    "token_stats": total_tokens,
+                }
+            ),
         )
 
     return {
@@ -1120,14 +1041,16 @@ async def _run_ollama_sub_agent(
     if agent_id:
         await broadcast_message(
             "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "instruction",
-                "content": instruction,
-                "transcript": transcript_steps,
-            }),
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "instruction",
+                    "content": instruction,
+                    "transcript": transcript_steps,
+                }
+            ),
         )
 
     rounds = 0
@@ -1169,8 +1092,12 @@ async def _run_ollama_sub_agent(
                     transcript_steps.append({"type": "text", "content": chunk_text})
                     round_text_step_index = len(transcript_steps) - 1
                     return
-                existing = str(transcript_steps[round_text_step_index].get("content", ""))
-                transcript_steps[round_text_step_index]["content"] = f"{existing}{chunk_text}"
+                existing = str(
+                    transcript_steps[round_text_step_index].get("content", "")
+                )
+                transcript_steps[round_text_step_index]["content"] = (
+                    f"{existing}{chunk_text}"
+                )
 
             async for chunk in await client.chat(**chat_kwargs):
                 if is_current_request_cancelled():
@@ -1189,21 +1116,25 @@ async def _run_ollama_sub_agent(
                         )
 
                     # Stream model thinking/reasoning when available
-                    thinking = msg.get("thinking", "") or msg.get("reasoning_content", "")
+                    thinking = msg.get("thinking", "") or msg.get(
+                        "reasoning_content", ""
+                    )
                     if thinking:
                         _append_stream_text(thinking)
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": thinking,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": thinking,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
 
                     # Stream text content
@@ -1213,15 +1144,17 @@ async def _run_ollama_sub_agent(
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "thinking",
-                                    "content": content,
-                                    "accumulated": "".join(round_text_chunks),
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "thinking",
+                                        "content": content,
+                                        "accumulated": "".join(round_text_chunks),
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
 
                     # Collect tool calls from the message
@@ -1240,23 +1173,25 @@ async def _run_ollama_sub_agent(
 
                     if msg:
                         thinking = (
-                            getattr(msg, "thinking", "") or
-                            getattr(msg, "reasoning_content", "")
+                            getattr(msg, "thinking", "")
+                            or getattr(msg, "reasoning_content", "")
                         ) or ""
                         if thinking:
                             _append_stream_text(thinking)
                             if agent_id:
                                 await broadcast_message(
                                     "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": thinking,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
+                                    json.dumps(
+                                        {
+                                            "agent_id": agent_id,
+                                            "agent_name": agent_name,
+                                            "model_tier": model_tier,
+                                            "stream_type": "thinking",
+                                            "content": thinking,
+                                            "accumulated": "".join(round_text_chunks),
+                                            "transcript": transcript_steps,
+                                        }
+                                    ),
                                 )
 
                         content = getattr(msg, "content", "") or ""
@@ -1265,15 +1200,17 @@ async def _run_ollama_sub_agent(
                             if agent_id:
                                 await broadcast_message(
                                     "sub_agent_stream",
-                                    json.dumps({
-                                        "agent_id": agent_id,
-                                        "agent_name": agent_name,
-                                        "model_tier": model_tier,
-                                        "stream_type": "thinking",
-                                        "content": content,
-                                        "accumulated": "".join(round_text_chunks),
-                                        "transcript": transcript_steps,
-                                    }),
+                                    json.dumps(
+                                        {
+                                            "agent_id": agent_id,
+                                            "agent_name": agent_name,
+                                            "model_tier": model_tier,
+                                            "stream_type": "thinking",
+                                            "content": content,
+                                            "accumulated": "".join(round_text_chunks),
+                                            "transcript": transcript_steps,
+                                        }
+                                    ),
                                 )
 
                         if getattr(msg, "tool_calls", None):
@@ -1286,32 +1223,46 @@ async def _run_ollama_sub_agent(
                 if agent_id:
                     await broadcast_message(
                         "sub_agent_stream",
-                        json.dumps({
-                            "agent_id": agent_id,
-                            "agent_name": agent_name,
-                            "model_tier": model_tier,
-                            "stream_type": "thinking_complete",
-                            "content": round_text,
-                            "transcript": transcript_steps,
-                        }),
+                        json.dumps(
+                            {
+                                "agent_id": agent_id,
+                                "agent_name": agent_name,
+                                "model_tier": model_tier,
+                                "stream_type": "thinking_complete",
+                                "content": round_text,
+                                "transcript": transcript_steps,
+                            }
+                        ),
                     )
 
             # Process tool calls if any
             if tool_calls_list:
                 # Append assistant message
-                messages.append({"role": "assistant", "content": round_text, "tool_calls": tool_calls_list})
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": round_text,
+                        "tool_calls": tool_calls_list,
+                    }
+                )
 
                 for tc in tool_calls_list:
                     if isinstance(tc, dict):
                         fn = tc.get("function", {})
                         if not fn or not fn.get("name"):
-                            logger.warning("Skipping malformed Ollama tool call: %s", tc)
+                            logger.warning(
+                                "Skipping malformed Ollama tool call: %s", tc
+                            )
                             continue
                         fn_name = fn["name"]
                         fn_args = fn.get("arguments", {})
                     else:
-                        if not getattr(tc, "function", None) or not getattr(tc.function, "name", None):
-                            logger.warning("Skipping malformed Ollama tool call object: %s", tc)
+                        if not getattr(tc, "function", None) or not getattr(
+                            tc.function, "name", None
+                        ):
+                            logger.warning(
+                                "Skipping malformed Ollama tool call object: %s", tc
+                            )
                             continue
                         fn_name = tc.function.name
                         fn_args = tc.function.arguments
@@ -1319,40 +1270,68 @@ async def _run_ollama_sub_agent(
                     # Decode args: may be dict already or a JSON string
                     fn_args, arg_error = normalize_tool_args(fn_args)
                     if arg_error:
-                        result_str = f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
-                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": {}, "status": "error", "result": result_str})
+                        result_str = (
+                            f"Error: Invalid tool arguments for {fn_name}: {arg_error}"
+                        )
+                        messages.append(
+                            {"role": "tool", "content": result_str, "name": fn_name}
+                        )
+                        transcript_steps.append(
+                            {
+                                "type": "tool_call",
+                                "name": fn_name,
+                                "args": {},
+                                "status": "error",
+                                "result": result_str,
+                            }
+                        )
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_error",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "tool_error",
+                                        "tool_name": fn_name,
+                                        "error": result_str,
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
                         continue
 
                     if fn_name in _EXCLUDED_TOOLS:
-                        result_str = f"Error: Tool '{fn_name}' is not available to sub-agents."
-                        messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                        transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "blocked", "result": result_str})
+                        result_str = (
+                            f"Error: Tool '{fn_name}' is not available to sub-agents."
+                        )
+                        messages.append(
+                            {"role": "tool", "content": result_str, "name": fn_name}
+                        )
+                        transcript_steps.append(
+                            {
+                                "type": "tool_call",
+                                "name": fn_name,
+                                "args": fn_args,
+                                "status": "blocked",
+                                "result": result_str,
+                            }
+                        )
                         if agent_id:
                             await broadcast_message(
                                 "sub_agent_stream",
-                                json.dumps({
-                                    "agent_id": agent_id,
-                                    "agent_name": agent_name,
-                                    "model_tier": model_tier,
-                                    "stream_type": "tool_blocked",
-                                    "tool_name": fn_name,
-                                    "error": result_str,
-                                    "transcript": transcript_steps,
-                                }),
+                                json.dumps(
+                                    {
+                                        "agent_id": agent_id,
+                                        "agent_name": agent_name,
+                                        "model_tier": model_tier,
+                                        "stream_type": "tool_blocked",
+                                        "tool_name": fn_name,
+                                        "error": result_str,
+                                        "transcript": transcript_steps,
+                                    }
+                                ),
                             )
                         continue
 
@@ -1361,47 +1340,74 @@ async def _run_ollama_sub_agent(
 
                     # Broadcast tool call start
                     step_index = len(transcript_steps)
-                    transcript_steps.append({"type": "tool_call", "name": fn_name, "args": fn_args, "status": "calling"})
+                    transcript_steps.append(
+                        {
+                            "type": "tool_call",
+                            "name": fn_name,
+                            "args": fn_args,
+                            "status": "calling",
+                        }
+                    )
                     if agent_id:
                         await broadcast_message(
                             "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_call",
-                                "tool_name": fn_name,
-                                "tool_args": fn_args,
-                                "transcript": transcript_steps,
-                            }),
+                            json.dumps(
+                                {
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_call",
+                                    "tool_name": fn_name,
+                                    "tool_args": fn_args,
+                                    "transcript": transcript_steps,
+                                }
+                            ),
                         )
 
                     try:
                         result = await mcp_manager.call_tool(fn_name, fn_args)
                         result_str = str(result)
                         if len(result_str) > MAX_TOOL_RESULT_LENGTH:
-                            result_str = _truncate_safely(result_str, MAX_TOOL_RESULT_LENGTH)
+                            result_str = _truncate_safely(
+                                result_str, MAX_TOOL_RESULT_LENGTH
+                            )
                     except Exception as e:
-                        logger.warning("Ollama sub-agent tool %s failed: %s", fn_name, e)
+                        logger.warning(
+                            "Ollama sub-agent tool %s failed: %s", fn_name, e
+                        )
                         result_str = f"Tool execution error: {type(e).__name__}"
 
-                    messages.append({"role": "tool", "content": result_str, "name": fn_name})
-                    result_preview = result_str[:_TRANSCRIPT_RESULT_PREVIEW] if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW else result_str
-                    transcript_steps[step_index] = {"type": "tool_call", "name": fn_name, "args": fn_args, "status": "complete", "result": result_preview}
+                    messages.append(
+                        {"role": "tool", "content": result_str, "name": fn_name}
+                    )
+                    result_preview = (
+                        result_str[:_TRANSCRIPT_RESULT_PREVIEW]
+                        if len(result_str) > _TRANSCRIPT_RESULT_PREVIEW
+                        else result_str
+                    )
+                    transcript_steps[step_index] = {
+                        "type": "tool_call",
+                        "name": fn_name,
+                        "args": fn_args,
+                        "status": "complete",
+                        "result": result_preview,
+                    }
 
                     # Broadcast tool result
                     if agent_id:
                         await broadcast_message(
                             "sub_agent_stream",
-                            json.dumps({
-                                "agent_id": agent_id,
-                                "agent_name": agent_name,
-                                "model_tier": model_tier,
-                                "stream_type": "tool_result",
-                                "tool_name": fn_name,
-                                "tool_result": result_preview,
-                                "transcript": transcript_steps,
-                            }),
+                            json.dumps(
+                                {
+                                    "agent_id": agent_id,
+                                    "agent_name": agent_name,
+                                    "model_tier": model_tier,
+                                    "stream_type": "tool_result",
+                                    "tool_name": fn_name,
+                                    "tool_result": result_preview,
+                                    "transcript": transcript_steps,
+                                }
+                            ),
                         )
 
                 # Check cancellation after tool execution loop
@@ -1424,15 +1430,17 @@ async def _run_ollama_sub_agent(
     if agent_id:
         await broadcast_message(
             "sub_agent_stream",
-            json.dumps({
-                "agent_id": agent_id,
-                "agent_name": agent_name,
-                "model_tier": model_tier,
-                "stream_type": "final",
-                "content": final_response,
-                "transcript": transcript_steps,
-                "token_stats": total_tokens,
-            }),
+            json.dumps(
+                {
+                    "agent_id": agent_id,
+                    "agent_name": agent_name,
+                    "model_tier": model_tier,
+                    "stream_type": "final",
+                    "content": final_response,
+                    "transcript": transcript_steps,
+                    "token_stats": total_tokens,
+                }
+            ),
         )
 
     return {
@@ -1476,7 +1484,10 @@ async def execute_sub_agent(
 
     logger.info(
         "Spawning sub-agent '%s' [%s] (tier=%s, model=%s)",
-        agent_name, agent_id, model_tier, model_name,
+        agent_name,
+        agent_id,
+        model_tier,
+        model_name,
     )
 
     # Retrieve tools for this sub-agent's instruction
@@ -1495,16 +1506,24 @@ async def execute_sub_agent(
             if _uses_ollama_client(model_name):
                 result = await asyncio.wait_for(
                     _run_ollama_sub_agent(
-                        model_name, instruction, tools,
-                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
+                        model_name,
+                        instruction,
+                        tools,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        model_tier=model_tier,
                     ),
                     timeout=_SUB_AGENT_TIMEOUT,
                 )
             else:
                 result = await asyncio.wait_for(
                     _run_cloud_sub_agent(
-                        model_name, instruction, tools,
-                        agent_id=agent_id, agent_name=agent_name, model_tier=model_tier,
+                        model_name,
+                        instruction,
+                        tools,
+                        agent_id=agent_id,
+                        agent_name=agent_name,
+                        model_tier=model_tier,
                     ),
                     timeout=_SUB_AGENT_TIMEOUT,
                 )
@@ -1541,7 +1560,11 @@ async def execute_sub_agent(
         logger.warning("Failed to write sub-agent debug log: %s", e)
 
     if error:
-        return f"Error: {error}\n\nPartial response:\n{response_text}" if response_text else f"Error: {error}"
+        return (
+            f"Error: {error}\n\nPartial response:\n{response_text}"
+            if response_text
+            else f"Error: {error}"
+        )
 
     return response_text
 
@@ -1561,8 +1584,7 @@ async def execute_sub_agents_parallel(
         return []
 
     normalized_tiers = [
-        _normalize_model_tier(c.get("model_tier", "fast"))
-        for c in calls
+        _normalize_model_tier(c.get("model_tier", "fast")) for c in calls
     ]
 
     # Pre-resolve tiers once to avoid repeated DB queries (H5 fix)
@@ -1573,7 +1595,9 @@ async def execute_sub_agents_parallel(
                 tier_cache[tier] = _resolve_tier_model(tier)
     except Exception as e:
         logger.error("Failed to resolve sub-agent batch model tier: %s", e)
-        error_text = f"Error: Failed to resolve sub-agent model tier: {type(e).__name__}: {e}"
+        error_text = (
+            f"Error: Failed to resolve sub-agent model tier: {type(e).__name__}: {e}"
+        )
         return [error_text for _ in calls]
 
     # Check if ANY call resolves to local Ollama — if so, run all sequentially

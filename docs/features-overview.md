@@ -15,6 +15,7 @@ Use this as the product-level index, then jump to dedicated docs for architectur
 
 - Local Ollama models.
 - Cloud providers: Anthropic, OpenAI, Gemini, OpenRouter.
+- ChatGPT subscription access through the bundled OpenAI Codex app-server, with account-scoped model discovery and Xpdite-managed tools.
 - Local and cloud model availability/configuration in settings.
 
 ## Tooling and MCP

@@ -478,6 +478,7 @@ export interface SubAgentStreamContent {
   error?: string;
   final_response?: string;
   transcript?: SubAgentTranscriptStep[];
+  is_delta?: boolean;
 }
 
 export interface SubAgentTranscriptStep {

@@ -287,6 +287,12 @@ api.skillsApi.toggle(name, en)   → PATCH /api/skills/{name}/toggle
 api.skillsApi.delete(name)       → DELETE /api/skills/{name}
 ```
 
+### ChatGPT subscription connector UI
+
+`OpenAICodexStatus.connection_state` distinguishes runtime unavailable, disconnected, authenticating, connected, refreshing, rate limited, reconnect required, and degraded states while retaining the legacy booleans. The OpenAI settings tab uses browser/device-code login and shows account email/plan only when app-server returns them. `openai-codex` model rows preserve account catalog metadata (picker ID, underlying model, default flag, reasoning efforts, modalities, upgrade metadata). Hidden models are omitted. The app treats a missing ChatGPT context window as unknown (`0` UI denominator); never substitute a fixed limit.
+
+Each ChatGPT model row renders a compact effort picker from that row's `supported_reasoning_efforts`. It persists a fully-qualified model-to-effort map through `GET/PUT /api/models/reasoning-efforts`; stop picker events from bubbling to the row toggle.
+
 ---
 
 ## Electron-Specific Notes
