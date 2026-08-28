@@ -14,6 +14,7 @@ This directory is organized by audience entry points and domain guides.
 - [`configuration.md`](./configuration.md) — runtime settings, limits, and data layout
 - [`api-reference.md`](./api-reference.md) — REST/WebSocket/internal mobile API contracts
 - [`mcp-guide.md`](./mcp-guide.md) — MCP integration model and extension workflow
+- [`intel-macos-build-spec.md`](./intel-macos-build-spec.md) — proposed native Intel macOS build and capability design
 
 ## 3) Feature Domain Docs
 
