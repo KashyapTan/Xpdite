@@ -36,6 +36,9 @@ IS_PACKAGED_RUNTIME = bool(
     or os.environ.get("XPDITE_RUNTIME_ENV_FILE")
 )
 RUNTIME_ENV_FILE = os.environ.get("XPDITE_RUNTIME_ENV_FILE", "").strip()
+BUILD_CAPABILITIES_PATH = os.environ.get(
+    "XPDITE_BUILD_CAPABILITIES_PATH", ""
+).strip()
 CHILD_PYTHON_EXECUTABLE = os.environ.get("XPDITE_CHILD_PYTHON_EXECUTABLE", "").strip()
 
 

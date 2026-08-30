@@ -5,6 +5,16 @@ import types
 import pytest
 
 from source.services.media import video_watcher as vw
+from source.infrastructure import runtime_capabilities
+
+
+@pytest.fixture(autouse=True)
+def _enable_runtime_video_capability(monkeypatch):
+    monkeypatch.setattr(
+        runtime_capabilities,
+        "get_feature_status",
+        lambda _feature: {"available": True, "reason": ""},
+    )
 
 
 def _direct_run_in_thread(func, *args, **kwargs):
@@ -552,6 +562,21 @@ class TestMetadataExtraction:
 
 
 class TestDownloadAndTranscribe:
+    def test_download_and_transcribe_reports_unavailable_capability(self, monkeypatch):
+        monkeypatch.setattr(
+            runtime_capabilities,
+            "get_feature_status",
+            lambda _feature: {
+                "available": False,
+                "reason": "Unavailable in the Intel macOS build.",
+            },
+        )
+        with pytest.raises(vw.VideoWatcherError, match="Intel macOS"):
+            vw._download_and_transcribe(
+                "https://www.youtube.com/watch?v=abc123",
+                vw.TranscriptionPlan("cpu", "int8", "base.en", 60.0),
+            )
+
     def test_download_and_transcribe_success(self, monkeypatch, tmp_path):
         class DownloadError(Exception):
             pass

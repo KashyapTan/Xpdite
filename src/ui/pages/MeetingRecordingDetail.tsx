@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useOutletContext, useParams } from 'react-router-dom';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import { api } from '../services/api';
+import { useRuntimeCapabilities } from '../contexts/RuntimeCapabilitiesContext';
 import {
     CalendarIcon,
     CheckIcon,
@@ -57,6 +58,7 @@ interface ActionSuggestion {
 }
 
 const MeetingRecordingDetail: React.FC = () => {
+    const capabilities = useRuntimeCapabilities();
     const { setMini } = useOutletContext<{
         setMini: (val: boolean) => void;
     }>();
@@ -397,12 +399,19 @@ const MeetingRecordingDetail: React.FC = () => {
                                 Live transcript available. Post-processing will generate a higher quality version.
                             </div>
                         )}
+                        {!capabilities.features.whisperx_alignment.available && recording.status === 'ready' && (
+                            <div className="meeting-detail-banner partial" role="status">
+                                Advanced alignment and speaker labels are not included in this build. The completed transcript uses native faster-whisper timestamps.
+                            </div>
+                        )}
 
                         {/* Transcript */}
                         <div className="meeting-detail-section">
                             <h3 className="meeting-detail-section-title">
                                 Transcript
-                                {hasTier2 && <span style={{ fontSize: '0.7em', marginLeft: 8, color: 'var(--color-text-dim)' }}>Enhanced</span>}
+                                {hasTier2 && <span style={{ fontSize: '0.7em', marginLeft: 8, color: 'var(--color-text-dim)' }}>
+                                    {capabilities.features.whisperx_alignment.available ? 'Enhanced' : 'Final'}
+                                </span>}
                             </h3>
                             <div className="meeting-detail-transcript">
                                 {hasTier2 ? (
@@ -489,4 +498,3 @@ const MeetingRecordingDetail: React.FC = () => {
 };
 
 export default MeetingRecordingDetail;
-

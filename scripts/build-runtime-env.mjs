@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { resolveBuildProfileFromEnvironment } from './build-profile.mjs';
 
 const projectRoot = process.cwd();
 const envPath = path.join(projectRoot, '.env');
 const outputDir = path.join(projectRoot, 'dist-runtime-config');
 const outputPath = path.join(outputDir, 'google-oauth.env');
+const capabilitiesPath = path.join(outputDir, 'build-capabilities.json');
 const allowlist = ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'];
 
 function parseEnvFile(content) {
@@ -42,8 +44,8 @@ const resolvedValues = new Map(
 );
 const missing = allowlist.filter((key) => !resolvedValues.get(key));
 if (missing.length > 0) {
-  throw new Error(
-    `Missing required Google OAuth values. Set them in ${envPath} or process.env: ${missing.join(', ')}`,
+  console.warn(
+    `Google OAuth will be unavailable because these optional values are not set: ${missing.join(', ')}`,
   );
 }
 
@@ -56,3 +58,18 @@ const serialized = `${allowlist
 
 fs.writeFileSync(outputPath, serialized, 'utf8');
 console.log(`Wrote packaged runtime env to ${outputPath}`);
+
+const resolvedProfile = resolveBuildProfileFromEnvironment(process.env, { projectRoot });
+const capabilityManifest = {
+  schema_version: 1,
+  profile: resolvedProfile.profile,
+  platform: resolvedProfile.platform,
+  architecture: resolvedProfile.architecture,
+  features: resolvedProfile.features,
+};
+fs.writeFileSync(
+  capabilitiesPath,
+  `${JSON.stringify(capabilityManifest, null, 2)}\n`,
+  'utf8',
+);
+console.log(`Wrote build capability manifest to ${capabilitiesPath}`);

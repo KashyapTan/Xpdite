@@ -43,10 +43,21 @@ jobs:
         run: bun run test:codex-runtime
 
   verify:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            install-command: bun run install:python:full
+            python-environment: .venv-build/windows-x64-full
+          - runner: macos-15-intel
+            install-command: bun run install:python:mac-x64
+            python-environment: .venv-build/macos-x64-mac-intel-transcription
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env:
       UV_PYTHON_PREFERENCE: managed
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/${{ matrix.python-environment }}
 
     steps:
       - name: Check out repository
@@ -69,8 +80,12 @@ jobs:
       - name: Install managed Python
         run: uv python install 3.13
 
+      - name: Install macOS audio dependency
+        if: runner.os == 'macOS'
+        run: brew install portaudio
+
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13
+        run: ${{ matrix.install-command }}
 
       - name: Run lint
         run: bun run lint
@@ -78,8 +93,22 @@ jobs:
       - name: Run frontend tests
         run: bun run test:frontend
 
+      - name: Run build script tests
+        run: bun run test:scripts
+
       - name: Run backend tests
-        run: uv run python -m pytest tests -q
+        run: uv run --no-sync python -m pytest tests -q
+
+      - name: Run Python lint
+        run: uv run --no-sync ruff check .
+
+      - name: Verify Intel native transcription imports
+        if: runner.os == 'macOS'
+        run: >-
+          uv run --no-sync python -c
+          "import ctranslate2, faster_whisper, onnxruntime, pyaudio;
+          audio = pyaudio.PyAudio(); audio.terminate();
+          print('Intel native transcription imports passed')"
 
       - name: Transpile Electron process
         run: bun run transpile:electron

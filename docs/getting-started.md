@@ -48,7 +48,7 @@ Windows x64:
 irm https://kashyaptan.com/Xpdite/install.ps1 | iex
 ```
 
-macOS Apple Silicon:
+macOS (Apple Silicon or Intel; the installer selects the native artifact):
 
 ```bash
 curl -fsSL https://kashyaptan.com/Xpdite/install.sh | bash
@@ -102,6 +102,11 @@ bun install
 bun run install:python
 ```
 
+Python environments are isolated by native build profile under `.venv-build/`.
+Use `bun run install:python:full` for the full Apple Silicon/Windows/Linux x64
+profile or `bun run install:python:mac-x64` on a native Intel Mac. Intel macOS
+requires `brew install portaudio` before dependency synchronization.
+
 ### Run in Development
 
 ```bash
@@ -142,7 +147,9 @@ bun run build
 Packaging is host-specific:
 
 - `bun run dist:win` must be run on Windows.
-- `bun run dist:mac` must be run on macOS. This repo targets Apple Silicon (`arm64`) for beta DMG builds.
+- `bun run dist:mac-arm64` must run natively on Apple Silicon.
+- `bun run dist:mac-x64` must run natively on Intel macOS.
+- `bun run dist:mac` remains an alias for `dist:mac-arm64`.
 
 For packaged Windows output:
 
@@ -153,8 +160,23 @@ bun run dist:win
 For packaged macOS output:
 
 ```bash
-bun run dist:mac
+bun run dist:mac-arm64
 ```
+
+On a native Intel Mac, run:
+
+```bash
+bun run install:python:mac-x64
+bun run dist:mac-x64
+```
+
+The Intel artifact supports microphone dictation, live/final meeting
+transcription, and the YouTube Whisper fallback with faster-whisper CPU `int8`.
+It intentionally omits WhisperX forced alignment, speaker diarization, and the
+bundled Sentence Transformers fallback. Chat, providers, screenshots, MCP,
+Codex, configured Ollama embeddings, and BM25 retrieval remain available.
+
+Both macOS artifacts require macOS 11 or later.
 
 ### Packaged Google OAuth
 

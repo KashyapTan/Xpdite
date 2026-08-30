@@ -8,6 +8,7 @@ import types
 from typing import Any
 
 import pytest
+from source.infrastructure import runtime_capabilities
 
 
 @pytest.fixture()
@@ -34,6 +35,15 @@ def _bind_ts(ts_module):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _enable_runtime_audio_capability(monkeypatch):
+    monkeypatch.setattr(
+        runtime_capabilities,
+        "get_feature_status",
+        lambda _feature: {"available": True, "reason": ""},
+    )
+
+
 class _FakeThread:
     def __init__(self, target=None, daemon=None):
         self.target = target
@@ -54,6 +64,18 @@ class _Segment:
 
 
 class TestTranscriptionService:
+    def test_start_recording_reports_unavailable_capability(self, monkeypatch):
+        monkeypatch.setattr(
+            runtime_capabilities,
+            "get_feature_status",
+            lambda _feature: {
+                "available": False,
+                "reason": "Microphone audio components could not load.",
+            },
+        )
+        with pytest.raises(RuntimeError, match="Microphone audio components"):
+            ts.TranscriptionService().start_recording()
+
     def test_start_recording_starts_background_thread(self, monkeypatch):
         service = ts.TranscriptionService()
         created_threads = []

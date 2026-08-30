@@ -12,6 +12,7 @@ This guide covers local runtime operations, observability, and incident response
 ## Health Endpoints
 
 - Backend: `GET /api/health`
+- Effective build/runtime features: authenticated loopback `GET /api/runtime-capabilities`
 - Mobile internal health: `GET /internal/mobile/health`
 - Bridge: `GET http://127.0.0.1:<bridge_port>/health`
 
@@ -57,6 +58,8 @@ This guide covers local runtime operations, observability, and incident response
 - **Port conflicts**: backend/bridge auto-probe alternative ports.
 - **Provider key failures**: key validation endpoint returns explicit errors.
 - **Tool server startup issues**: degraded tool availability, core app remains usable.
+- **Optional native feature load failures**: only the affected capability is disabled;
+  inspect `/api/runtime-capabilities` for a product-level reason.
 - **Bridge adapter auth failures**: platform-specific status shows `error`.
 
 ## Recovery Actions

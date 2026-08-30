@@ -10,6 +10,7 @@ export default tseslint.config(
     'dist-*',
     'build-temp',
     '.venv',
+    '.venv-build',
     '.uv-cache',
     '.pytest_cache',
     '.ruff_cache',

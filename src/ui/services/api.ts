@@ -94,6 +94,69 @@ export interface ModelContextWindowResponse {
   source: string;
 }
 
+export interface RuntimeCapabilityStatus {
+  available: boolean;
+  reason: string;
+}
+
+export interface RuntimeCapabilities {
+  profile: string;
+  platform: string;
+  architecture: string;
+  features: {
+    microphone_dictation: RuntimeCapabilityStatus;
+    meeting_transcription: RuntimeCapabilityStatus;
+    youtube_whisper_fallback: RuntimeCapabilityStatus;
+    whisperx_alignment: RuntimeCapabilityStatus;
+    speaker_diarization: RuntimeCapabilityStatus;
+    local_sentence_embeddings: RuntimeCapabilityStatus;
+  };
+}
+
+const conservativeRuntimeCapabilities: RuntimeCapabilities = {
+  profile: 'compatibility-fallback',
+  platform: 'unknown',
+  architecture: 'unknown',
+  features: {
+    microphone_dictation: { available: true, reason: '' },
+    meeting_transcription: { available: true, reason: '' },
+    youtube_whisper_fallback: { available: true, reason: '' },
+    whisperx_alignment: { available: true, reason: '' },
+    speaker_diarization: { available: true, reason: '' },
+    local_sentence_embeddings: { available: true, reason: '' },
+  },
+};
+
+function normalizeRuntimeCapabilities(payload: unknown): RuntimeCapabilities | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const raw = payload as Record<string, unknown>;
+  const features = raw.features;
+  if (!features || typeof features !== 'object') return null;
+  const names = Object.keys(conservativeRuntimeCapabilities.features) as Array<
+    keyof RuntimeCapabilities['features']
+  >;
+  const normalizedFeatures = {} as RuntimeCapabilities['features'];
+  for (const name of names) {
+    const status = (features as Record<string, unknown>)[name];
+    if (!status || typeof status !== 'object') return null;
+    const available = (status as Record<string, unknown>).available;
+    const reason = (status as Record<string, unknown>).reason;
+    if (typeof available !== 'boolean' || typeof reason !== 'string') return null;
+    normalizedFeatures[name] = { available, reason };
+  }
+  if (
+    typeof raw.profile !== 'string'
+    || typeof raw.platform !== 'string'
+    || typeof raw.architecture !== 'string'
+  ) return null;
+  return {
+    profile: raw.profile,
+    platform: raw.platform,
+    architecture: raw.architecture,
+    features: normalizedFeatures,
+  };
+}
+
 export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra';
 export type ModelReasoningEfforts = Record<string, ReasoningEffort>;
 
@@ -694,6 +757,7 @@ export function createApiService(
 
 // Singleton for direct imports (when WebSocket context is not needed)
 export const api = {
+  conservativeRuntimeCapabilities,
   /**
    * Current HTTP base URL. **Synchronous** — returns `http://localhost:8000`
    * until `discoverServerPort()` has resolved. Prefer `await baseUrl()`
@@ -702,6 +766,18 @@ export const api = {
   get HTTP_BASE_URL() { return getHttpBaseUrl(); },
   /** @see HTTP_BASE_URL — same caveat about pre-discovery staleness. */
   get WS_BASE_URL() { return getWsBaseUrl(); },
+
+  async getRuntimeCapabilities(): Promise<RuntimeCapabilities> {
+    try {
+      const base = await baseUrl();
+      const response = await artifactFetch(`${base}/api/runtime-capabilities`);
+      if (!response.ok) return conservativeRuntimeCapabilities;
+      return normalizeRuntimeCapabilities(await response.json())
+        ?? conservativeRuntimeCapabilities;
+    } catch {
+      return conservativeRuntimeCapabilities;
+    }
+  },
 
   /**
    * Fetch all Ollama models installed on the user's machine.

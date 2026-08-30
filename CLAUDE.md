@@ -85,18 +85,24 @@ bun run build:python     # Python build via scripts/build-python.mjs (without Py
 bun run build:python-exe # PyInstaller via scripts/build-python-exe.py (used by prebuild hook)
 bun run preview          # preview the Vite production build locally
 bun run lint             # ESLint
-bun run install:python   # uv sync --group dev (always run after pulling)
+bun run lint:python      # Ruff in the resolved native profile
+bun run test:backend     # pytest in the resolved native profile
+bun run install:python   # exact-sync the native host profile into .venv-build/
+bun run install:python:full      # full Apple Silicon/Windows/Linux x64 profile
+bun run install:python:mac-x64   # Intel macOS transcription profile
 bun run install:uv       # install the UV tool itself (first-time setup)
 bun run transpile:electron  # tsc for Electron main process only
 bun run dist:win         # full production package for Windows (x64)
-bun run dist:mac         # full production package for macOS (arm64)
+bun run dist:mac         # alias for dist:mac-arm64
+bun run dist:mac-arm64   # native Apple Silicon package
+bun run dist:mac-x64     # native Intel transcription package
 bun run dist:linux       # full production package for Linux (x64)
 
 # Python (run from project root)
-uv run python -m source.main                   # start Python server directly
-uv sync --group dev                           # install / update Python deps
+node scripts/run-python-profile.mjs python -m source.main  # start Python server directly
+node scripts/sync-python.mjs                  # exact-sync native Python profile
 uv add <pkg>                                  # add a new Python package
-uv run <file_name>                            # run python files for testing
+node scripts/run-python-profile.mjs <command> # run inside the native profile
 ```
 
 **Requires Python 3.13+** (`requires-python = ">=3.13"` in `pyproject.toml`).

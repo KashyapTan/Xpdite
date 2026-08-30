@@ -21,6 +21,7 @@ import { useScreenshots } from '../hooks/useScreenshots';
 import { useTokenUsage } from '../hooks/useTokenUsage';
 import { useTabs } from '../contexts/TabContext';
 import { useWebSocket } from '../contexts/WebSocketContext';
+import { useRuntimeCapabilities } from '../contexts/RuntimeCapabilitiesContext';
 
 // Components
 import TitleBar from '../components/TitleBar';
@@ -546,6 +547,7 @@ function App() {
   const chatState = useChatState();
   const screenshotState = useScreenshots();
   const tokenState = useTokenUsage();
+  const runtimeCapabilities = useRuntimeCapabilities();
   const { setTokenUsage } = tokenState;
 
   // ============================================
@@ -3372,9 +3374,12 @@ function App() {
               />
 
               <div
-                className={`mic-input-section ${isRecording ? 'recording' : ''}`}
-                onClick={handleMicClick}
-                title={isRecording ? "Stop recording" : "Start voice input"}
+                className={`mic-input-section ${isRecording ? 'recording' : ''} ${runtimeCapabilities.features.microphone_dictation.available ? '' : 'disabled'}`}
+                onClick={runtimeCapabilities.features.microphone_dictation.available ? handleMicClick : undefined}
+                aria-disabled={!runtimeCapabilities.features.microphone_dictation.available}
+                title={runtimeCapabilities.features.microphone_dictation.available
+                  ? isRecording ? 'Stop recording' : 'Start voice input'
+                  : runtimeCapabilities.features.microphone_dictation.reason}
               >
                 <img src={micSignSvg} alt="Voice input" className="mic-icon" />
               </div>

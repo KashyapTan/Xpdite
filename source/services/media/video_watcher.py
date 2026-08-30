@@ -381,6 +381,12 @@ def _resolve_audio_path(temp_dir: str, ydl: Any, info: dict[str, Any]) -> str | 
 def _download_and_transcribe(
     url: str, plan: TranscriptionPlan
 ) -> tuple[list[TranscriptSegment], str | None]:
+    from ...infrastructure.runtime_capabilities import get_feature_status
+
+    capability = get_feature_status("youtube_whisper_fallback")
+    if not capability["available"]:
+        raise VideoWatcherError(capability["reason"])
+
     try:
         import yt_dlp
         from yt_dlp.utils import DownloadError
@@ -828,4 +834,3 @@ class VideoWatcherService:
 
 
 video_watcher_service = VideoWatcherService()
-

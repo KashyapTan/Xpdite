@@ -118,6 +118,12 @@ class MeetingRecorderService:
         if self._is_recording:
             raise RuntimeError("A recording is already in progress")
 
+        from ...infrastructure.runtime_capabilities import get_feature_status
+
+        capability = get_feature_status("meeting_transcription")
+        if not capability["available"]:
+            raise RuntimeError(capability["reason"])
+
         self._loop = asyncio.get_running_loop()
         self._started_at = time.time()
 
@@ -532,7 +538,9 @@ class PostProcessingPipeline:
         compute_type = compute_info["compute_type"]
         estimated_total = get_estimated_processing_time(duration)
 
-        # ── Step 1: Full transcription with large-v3 ──
+        from ...infrastructure.runtime_capabilities import feature_available
+
+        # ── Step 1: Full transcription ──
         self._broadcast_progress(
             recording_id, "transcribing", 10, estimated_total * 0.9
         )
@@ -555,29 +563,35 @@ class PostProcessingPipeline:
             self._broadcast_progress(recording_id, "error", 0, 0)
             return
 
-        # ── Step 2: WhisperX alignment ──
-        self._broadcast_progress(recording_id, "aligning", 40, estimated_total * 0.5)
-
         aligned_segments = None
-        try:
-            aligned_segments = self._align_transcript(
-                tier2_segments, audio_path, backend
+        if feature_available("whisperx_alignment"):
+            self._broadcast_progress(
+                recording_id, "aligning", 40, estimated_total * 0.5
             )
-        except Exception as e:
-            logger.warning("WhisperX alignment failed (continuing without): %s", e)
+            try:
+                aligned_segments = self._align_transcript(
+                    tier2_segments, audio_path, backend
+                )
+            except Exception as e:
+                logger.warning("WhisperX alignment failed (continuing without): %s", e)
+        else:
+            logger.info("Skipping WhisperX alignment: unavailable in this build")
 
         # ── Step 3: SpeechBrain diarization ──
-        self._broadcast_progress(recording_id, "diarizing", 60, estimated_total * 0.3)
-
         diarization_enabled = (
             self._get_setting("meeting_diarization_enabled", "true") == "true"
         )
         diarization_result = None
-        if diarization_enabled:
+        if diarization_enabled and feature_available("speaker_diarization"):
+            self._broadcast_progress(
+                recording_id, "diarizing", 60, estimated_total * 0.3
+            )
             try:
                 diarization_result = self._diarize(audio_path, backend)
             except Exception as e:
                 logger.warning("Diarization failed (continuing without): %s", e)
+        elif diarization_enabled:
+            logger.info("Skipping speaker diarization: unavailable in this build")
 
         # ── Step 4: Merge into unified JSON ──
         self._broadcast_progress(recording_id, "merging", 75, estimated_total * 0.15)
@@ -630,14 +644,26 @@ class PostProcessingPipeline:
     def _transcribe_full(
         self, audio_path: str, backend: str, compute_type: str
     ) -> list[dict]:
-        """Full transcription with faster-whisper large-v3."""
+        """Full transcription with faster-whisper and native word timestamps."""
         from faster_whisper import WhisperModel
 
         device = "cuda" if backend == "cuda" else "cpu"
-        logger.info(
-            "Loading large-v3 model (device=%s, compute=%s)...", device, compute_type
+        from ...infrastructure.runtime_capabilities import feature_available
+
+        model_name = (
+            "large-v3"
+            if feature_available("whisperx_alignment")
+            else self._service._model_size
+            if self._service._model_size in {"tiny", "base", "small"}
+            else "base.en"
         )
-        model = WhisperModel("large-v3", device=device, compute_type=compute_type)
+        logger.info(
+            "Loading %s model (device=%s, compute=%s)...",
+            model_name,
+            device,
+            compute_type,
+        )
+        model = WhisperModel(model_name, device=device, compute_type=compute_type)
 
         segments, info = model.transcribe(audio_path, beam_size=5, word_timestamps=True)
 

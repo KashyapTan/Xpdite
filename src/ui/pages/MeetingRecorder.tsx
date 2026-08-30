@@ -7,11 +7,13 @@ import {
     MeetingRecorderProvider,
     useMeetingRecorder,
 } from '../contexts/MeetingRecorderContext';
+import { useRuntimeCapabilities } from '../contexts/RuntimeCapabilitiesContext';
 import regionSSIcon from '../assets/region-screen-shot-icon.svg';
 import fullscreenSSIcon from '../assets/entire-screen-shot-icon.svg';
 import '../CSS/pages/MeetingRecorder.css';
 
 const MeetingRecorderContent: React.FC = () => {
+    const capabilities = useRuntimeCapabilities();
     const { setMini } = useOutletContext<{ setMini: (val: boolean) => void }>();
     const navigate = useNavigate();
     const {
@@ -84,13 +86,21 @@ const MeetingRecorderContent: React.FC = () => {
                         <XIcon size={14} className="meeting-recorder-error-dismiss" />
                     </div>
                 )}
+                {!capabilities.features.meeting_transcription.available && (
+                    <div className="meeting-recorder-error" role="status">
+                        {capabilities.features.meeting_transcription.reason}
+                    </div>
+                )}
 
                 <section className="meeting-recorder-control-panel">
                     <div className="meeting-recorder-controls">
                         <button
                             className={`meeting-record-btn ${isRecordingUi ? 'recording' : ''}`}
                             onClick={isRecordingUi ? stopRecording : startRecording}
-                            disabled={isPending}
+                            disabled={isPending || !capabilities.features.meeting_transcription.available}
+                            title={!capabilities.features.meeting_transcription.available
+                                ? capabilities.features.meeting_transcription.reason
+                                : undefined}
                             aria-busy={isPending}
                         >
                             <span className="meeting-record-btn-icon">

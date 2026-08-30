@@ -8,6 +8,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import source.services.media.meeting_recorder as mr
+from source.infrastructure import runtime_capabilities
+
+
+@pytest.fixture(autouse=True)
+def _enable_runtime_meeting_capabilities(monkeypatch):
+    monkeypatch.setattr(
+        runtime_capabilities,
+        "get_feature_status",
+        lambda _feature: {"available": True, "reason": ""},
+    )
+    monkeypatch.setattr(runtime_capabilities, "feature_available", lambda _feature: True)
 
 
 class _FakeThread(threading.Thread):
@@ -29,6 +40,19 @@ class _FakeThread(threading.Thread):
 
 
 class TestMeetingRecorderService:
+    @pytest.mark.asyncio
+    async def test_start_recording_reports_unavailable_transcription(self, monkeypatch):
+        monkeypatch.setattr(
+            runtime_capabilities,
+            "get_feature_status",
+            lambda _feature: {
+                "available": False,
+                "reason": "Local transcription components could not load.",
+            },
+        )
+        with pytest.raises(RuntimeError, match="Local transcription components"):
+            await mr.MeetingRecorderService().start_recording()
+
     @pytest.mark.asyncio
     async def test_start_recording_initializes_db_wave_and_thread(self, tmp_path):
         service = mr.MeetingRecorderService()
@@ -594,6 +618,51 @@ class TestPostProcessingPipeline:
         assert json.loads(saved_kwargs["tier2_transcript_json"]) == [{"text": "final"}]
         assert "title" not in saved_kwargs
         mock_remove.assert_not_called()
+
+    def test_intel_processing_skips_alignment_and_diarization(self, tmp_path, monkeypatch):
+        pipeline = mr.PostProcessingPipeline(MagicMock(_model_size="base"))
+        audio_path = tmp_path / "intel.wav"
+        audio_path.write_bytes(b"x")
+        job = {
+            "recording_id": "rec-intel",
+            "audio_file_path": str(audio_path),
+            "duration_seconds": 15,
+        }
+        monkeypatch.setattr(runtime_capabilities, "feature_available", lambda _feature: False)
+
+        with (
+            patch(
+                "source.services.media.gpu_detector.get_compute_info",
+                return_value={"backend": "cpu", "compute_type": "int8"},
+            ),
+            patch(
+                "source.services.media.gpu_detector.get_estimated_processing_time",
+                return_value=10.0,
+            ),
+            patch.object(
+                pipeline,
+                "_transcribe_full",
+                return_value=[{"text": "intel", "start": 0, "end": 1}],
+            ),
+            patch.object(pipeline, "_align_transcript") as mock_align,
+            patch.object(pipeline, "_diarize") as mock_diarize,
+            patch.object(pipeline, "_generate_title", return_value=None),
+            patch.object(
+                pipeline,
+                "_get_setting",
+                side_effect=lambda key, default="": {
+                    "meeting_diarization_enabled": "true",
+                    "meeting_keep_audio": "true",
+                }.get(key, default),
+            ),
+            patch.object(pipeline, "_broadcast_progress"),
+            patch.object(mr.db, "update_meeting_recording") as mock_update,
+        ):
+            pipeline._process_recording(job)
+
+        mock_align.assert_not_called()
+        mock_diarize.assert_not_called()
+        assert mock_update.call_args_list[0].kwargs["status"] == "ready"
 
     def test_generate_title_uses_meeting_analysis_model_setting(self):
         pipeline = mr.PostProcessingPipeline(MagicMock())

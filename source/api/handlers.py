@@ -622,7 +622,12 @@ class MessageHandler:
         from ..core.thread_pool import run_in_thread
 
         if app_state.transcription_service:
-            await run_in_thread(app_state.transcription_service.start_recording)
+            try:
+                await run_in_thread(app_state.transcription_service.start_recording)
+            except RuntimeError as error:
+                await self.websocket.send_text(
+                    json.dumps({"type": "transcription_result", "content": f"Error: {error}"})
+                )
 
     async def _handle_stop_recording(self, data: Dict[str, Any]):
         """Handle stop recording request."""

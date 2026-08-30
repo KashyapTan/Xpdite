@@ -25,6 +25,12 @@ Host binding is configurable through `XPDITE_SERVER_HOST`. Binding to non-loopba
 
 ## REST API
 
+### Runtime capabilities
+
+- `GET /api/runtime-capabilities` — authenticated loopback endpoint returning the
+  effective build profile and product-level feature availability. Responses omit
+  package versions, filesystem paths, and build-host details.
+
 ### Health
 
 - `GET /api/health`

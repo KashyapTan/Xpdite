@@ -440,6 +440,11 @@ textarea,
   background-color: var(--color-surface);
 }
 
+.mic-input-section.disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .mic-input-section.recording {
   background-color: var(--color-red-soft);
   border: 1px solid var(--color-red);
@@ -2077,5 +2082,4 @@ textarea,
   -webkit-text-fill-color: transparent;
   animation: tool-text-shimmer 1.5s linear infinite;
 }
-
 

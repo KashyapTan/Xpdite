@@ -15,6 +15,23 @@ const {
   saveApiKeyMock: vi.fn(),
   deleteApiKeyMock: vi.fn(),
 }));
+const { runtimeCapabilitiesState } = vi.hoisted(() => ({
+  runtimeCapabilitiesState: {
+    current: {
+      profile: 'full',
+      platform: 'darwin',
+      architecture: 'arm64',
+      features: {
+        microphone_dictation: { available: true, reason: '' },
+        meeting_transcription: { available: true, reason: '' },
+        youtube_whisper_fallback: { available: true, reason: '' },
+        whisperx_alignment: { available: true, reason: '' },
+        speaker_diarization: { available: true, reason: '' },
+        local_sentence_embeddings: { available: true, reason: '' },
+      },
+    },
+  },
+}));
 
 vi.mock('../../../contexts/WebSocketContext', () => ({
   useWebSocket: () => ({
@@ -29,6 +46,10 @@ vi.mock('../../../services/api', () => ({
     saveApiKey: saveApiKeyMock,
     deleteApiKey: deleteApiKeyMock,
   },
+}));
+
+vi.mock('../../../contexts/RuntimeCapabilitiesContext', () => ({
+  useRuntimeCapabilities: () => runtimeCapabilitiesState.current,
 }));
 
 type Message = Record<string, unknown>;
@@ -54,6 +75,12 @@ describe('MeetingRecorderSettings', () => {
       subscriber = handler;
       return unsubscribeMock;
     });
+    runtimeCapabilitiesState.current.profile = 'full';
+    runtimeCapabilitiesState.current.architecture = 'arm64';
+    runtimeCapabilitiesState.current.features.speaker_diarization = {
+      available: true,
+      reason: '',
+    };
   });
 
   test('requests compute info/settings on mount and renders defaults', async () => {
@@ -147,5 +174,19 @@ describe('MeetingRecorderSettings', () => {
       expect(screen.getByText('Hugging Face token removed.')).toBeInTheDocument();
     });
   });
-});
 
+  test('disables unsupported Intel diarization and hides token setup', () => {
+    runtimeCapabilitiesState.current.profile = 'mac-intel-transcription';
+    runtimeCapabilitiesState.current.architecture = 'x64';
+    runtimeCapabilitiesState.current.features.speaker_diarization = {
+      available: false,
+      reason: 'Unavailable in the Intel macOS build.',
+    };
+
+    render(<MeetingRecorderSettings />);
+
+    expect(screen.getAllByRole('checkbox')[0]).toBeDisabled();
+    expect(screen.getByText('Unavailable in the Intel macOS build.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Personal access token')).not.toBeInTheDocument();
+  });
+});
