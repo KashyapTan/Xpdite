@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { BoltIcon, MonitorIcon } from '../icons/AppIcons';
 import { api } from '../../services/api';
+import { useRuntimeCapabilities } from '../../contexts/RuntimeCapabilitiesContext';
 import '../../CSS/settings/SettingsMeetingRecorder.css';
 
 interface ComputeInfo {
@@ -23,6 +24,7 @@ type HuggingFaceStatus = {
 };
 
 const MeetingRecorderSettings: React.FC = () => {
+    const capabilities = useRuntimeCapabilities();
     const { send, subscribe } = useWebSocket();
     const [computeInfo, setComputeInfo] = useState<ComputeInfo | null>(null);
     const [settings, setSettings] = useState<MeetingSettings>({
@@ -179,6 +181,7 @@ const MeetingRecorderSettings: React.FC = () => {
                         <input
                             type="checkbox"
                             checked={settings.diarization_enabled === 'true'}
+                            disabled={!capabilities.features.speaker_diarization.available}
                             onChange={(e) =>
                                 updateSetting('diarization_enabled', e.target.checked ? 'true' : 'false')
                             }
@@ -186,10 +189,15 @@ const MeetingRecorderSettings: React.FC = () => {
                         <span className="meeting-settings-toggle-slider"></span>
                     </label>
                 </div>
+                {!capabilities.features.speaker_diarization.available && (
+                    <p className="meeting-settings-card-description" role="status">
+                        {capabilities.features.speaker_diarization.reason}
+                    </p>
+                )}
             </div>
 
             {/* Hugging Face token */}
-            <div className="meeting-settings-card">
+            {capabilities.features.speaker_diarization.available && <div className="meeting-settings-card">
                 <div className="meeting-settings-card-info">
                     <h3 className="meeting-settings-card-title">Hugging Face Token</h3>
                     <p className="meeting-settings-card-description">
@@ -257,7 +265,7 @@ const MeetingRecorderSettings: React.FC = () => {
                 </div>
                 {hfError && <div className="meeting-settings-error">{hfError}</div>}
                 {hfMessage && <div className="meeting-settings-success">{hfMessage}</div>}
-            </div>
+            </div>}
 
             {/* Keep Raw Audio */}
             <div className="meeting-settings-card">

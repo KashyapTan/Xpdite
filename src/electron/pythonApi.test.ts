@@ -300,6 +300,7 @@ describe('pythonApi', () => {
     );
     const runtimeRoot = path.join(packagedResourcesPath, 'python-runtime');
     const runtimeEnvFile = path.join(packagedResourcesPath, 'runtime-config', 'google-oauth.env');
+    const buildCapabilitiesFile = path.join(packagedResourcesPath, 'runtime-config', 'build-capabilities.json');
     const childPythonPath = process.platform === 'win32'
       ? path.join(runtimeRoot, 'python', 'python.exe')
       : path.join(runtimeRoot, 'python', 'bin', 'python3');
@@ -308,6 +309,7 @@ describe('pythonApi', () => {
       value === bundledServerPath
       || value === runtimeRoot
       || value === runtimeEnvFile
+      || value === buildCapabilitiesFile
       || value === childPythonPath
     ));
 
@@ -328,6 +330,7 @@ describe('pythonApi', () => {
           XPDITE_USER_DATA_DIR: 'C:/Users/tester/AppData/Roaming/Xpdite',
           XPDITE_RUNTIME_ROOT: runtimeRoot,
           XPDITE_RUNTIME_ENV_FILE: runtimeEnvFile,
+          XPDITE_BUILD_CAPABILITIES_PATH: buildCapabilitiesFile,
           XPDITE_CHILD_PYTHON_EXECUTABLE: childPythonPath,
         }),
       }),
@@ -354,6 +357,7 @@ describe('pythonApi', () => {
     const bundledServerPath = path.join(packagedResourcesPath, 'python-server', 'xpdite-server');
     const runtimeRoot = path.join(packagedResourcesPath, 'python-runtime');
     const runtimeEnvFile = path.join(packagedResourcesPath, 'runtime-config', 'google-oauth.env');
+    const buildCapabilitiesFile = path.join(packagedResourcesPath, 'runtime-config', 'build-capabilities.json');
     const versionedPythonBin = path.join(runtimeRoot, 'python', 'bin');
     const versionedChildPythonPath = path.join(versionedPythonBin, 'python3.13');
 
@@ -364,6 +368,7 @@ describe('pythonApi', () => {
       value === bundledServerPath
       || value === runtimeRoot
       || value === runtimeEnvFile
+      || value === buildCapabilitiesFile
       || value === versionedPythonBin
       || value === versionedChildPythonPath
     ));

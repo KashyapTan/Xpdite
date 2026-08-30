@@ -87,6 +87,8 @@ jobs:
     needs: resolve-release
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-build/windows-x64-full
 
     steps:
       - name: Check out repository
@@ -110,7 +112,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13
+        run: bun run install:python:full
 
       - name: Run lint
         run: bun run lint
@@ -118,8 +120,14 @@ jobs:
       - name: Run frontend tests
         run: bun run test:frontend
 
+      - name: Run build script tests
+        run: bun run test:scripts
+
       - name: Run backend tests
-        run: uv run python -m pytest tests -q
+        run: uv run --no-sync python -m pytest tests -q
+
+      - name: Run Python lint
+        run: uv run --no-sync ruff check .
 
       - name: Transpile Electron process
         run: bun run transpile:electron
@@ -133,6 +141,8 @@ jobs:
       - verify
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-build/windows-x64-full
 
     steps:
       - name: Check out repository
@@ -156,7 +166,7 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13
+        run: bun run install:python:full
 
       - name: Initialize packaged Codex app-server
         run: bun run test:codex-runtime
@@ -174,12 +184,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
-  build-macos:
+  build-macos-arm64:
     needs:
       - resolve-release
       - verify
     runs-on: macos-14
     timeout-minutes: 120
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-build/macos-arm64-full
 
     steps:
       - name: Check out repository
@@ -206,21 +218,80 @@ jobs:
         run: uv python install 3.13
 
       - name: Install Python dependencies
-        run: uv sync --group dev --python 3.13
+        run: bun run install:python:full
 
       - name: Initialize packaged Codex app-server
         run: bun run test:codex-runtime
 
-      - name: Build macOS release
+      - name: Build Apple Silicon macOS release
         env:
           XPDITE_BUILD_VERSION: ${{ needs.resolve-release.outputs.version }}
           XPDITE_MAC_IDENTITY: "-"
-        run: bun run dist:mac
+        run: bun run dist:mac-arm64
 
       - name: Upload macOS disk image
         uses: actions/upload-artifact@v7
         with:
-          name: xpdite-release-mac
+          name: xpdite-release-mac-arm64
+          path: dist/*.dmg
+          if-no-files-found: error
+          compression-level: 0
+
+  build-macos-x64:
+    needs:
+      - resolve-release
+      - verify
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    env:
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.venv-build/macos-x64-mac-intel-transcription
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install macOS audio dependency
+        run: brew install portaudio
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install JavaScript dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install managed Python
+        run: uv python install 3.13
+
+      - name: Install Intel transcription profile
+        run: bun run install:python:mac-x64
+
+      - name: Verify Intel native imports
+        run: uv run --no-sync python scripts/smoke-intel-transcription.py
+
+      - name: Initialize packaged Codex app-server
+        env:
+          XPDITE_TARGET_PLATFORM: darwin
+          XPDITE_TARGET_ARCH: x64
+        run: bun run test:codex-runtime
+
+      - name: Build Intel macOS release
+        env:
+          XPDITE_BUILD_VERSION: ${{ needs.resolve-release.outputs.version }}
+          XPDITE_MAC_IDENTITY: "-"
+        run: bun run dist:mac-x64
+
+      - name: Upload Intel macOS disk image
+        uses: actions/upload-artifact@v7
+        with:
+          name: xpdite-release-mac-x64
           path: dist/*.dmg
           if-no-files-found: error
           compression-level: 0
@@ -229,7 +300,8 @@ jobs:
     needs:
       - resolve-release
       - build-windows
-      - build-macos
+      - build-macos-arm64
+      - build-macos-x64
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -240,10 +312,16 @@ jobs:
           name: xpdite-release-win
           path: release-assets/windows
 
-      - name: Download macOS artifact
+      - name: Download Apple Silicon macOS artifact
         uses: actions/download-artifact@v5
         with:
-          name: xpdite-release-mac
+          name: xpdite-release-mac-arm64
+          path: release-assets/macos
+
+      - name: Download Intel macOS artifact
+        uses: actions/download-artifact@v5
+        with:
+          name: xpdite-release-mac-x64
           path: release-assets/macos
 
       - name: Create release checksums

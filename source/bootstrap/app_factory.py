@@ -27,6 +27,12 @@ async def _init_tab_manager() -> None:
     init_tab_manager()
 
 
+async def _init_runtime_capabilities() -> None:
+    from ..infrastructure.runtime_capabilities import initialize_runtime_capabilities
+
+    await run_in_thread(initialize_runtime_capabilities)
+
+
 async def _restore_mobile_sessions() -> None:
     from ..services.integrations.mobile_channel import mobile_channel_service
 
@@ -122,6 +128,7 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        await _init_runtime_capabilities()
         await _init_tab_manager()
         await _restore_mobile_sessions()
         await _init_marketplace_sources(app)

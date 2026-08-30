@@ -61,6 +61,15 @@ bun run dev:electron
 - Inspect SQLite and memory files for malformed content.
 - Reproduce issue in development with focused logs/tests.
 
+## Intel macOS Audio Features Are Disabled
+
+- Confirm the Intel transcription profile was installed with
+  `bun run install:python:mac-x64` on a native `x86_64` Mac.
+- Install the build prerequisite with `brew install portaudio`, then synchronize again.
+- Check `GET /api/runtime-capabilities` through the local authenticated app session.
+- WhisperX alignment, speaker diarization, and bundled Sentence Transformers are
+  intentionally unavailable in the Intel artifact; this is not a recording failure.
+
 ## Last-Resort Reset
 
 If you need a clean local state, back up and then remove `user_data/` for the target environment.

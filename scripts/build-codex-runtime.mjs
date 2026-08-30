@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,8 +50,8 @@ function resolveInstalledPackageDir(packageName) {
 
 export function resolveCodexRuntimePaths({
     root = process.cwd(),
-    platform = process.platform,
-    arch = process.arch,
+    platform = process.env.XPDITE_TARGET_PLATFORM || process.platform,
+    arch = process.env.XPDITE_TARGET_ARCH || process.arch,
     resolvePackageDir = resolveInstalledPackageDir,
 } = {}) {
     const { packageName, targetTriple, binaryName } = getCodexRuntimeDetails(platform, arch);
@@ -114,6 +115,30 @@ export async function copyCodexRuntime(options = {}) {
             destinationBinary,
         ]);
     }
+
+    const lockfilePath = path.join(options.root || process.cwd(), 'bun.lock');
+    const sourceBinaryStats = await fs.stat(sourceBinary);
+    const stamp = {
+        schemaVersion: 2,
+        platform,
+        architecture: options.arch || process.env.XPDITE_TARGET_ARCH || process.arch,
+        profile: process.env.XPDITE_BUILD_PROFILE || 'host-runtime-smoke',
+        groups: (process.env.XPDITE_BUILD_GROUPS || '').split(',').filter(Boolean),
+        source: path.basename(source),
+        binaryRelativePath,
+        sourceBinary: {
+            size: sourceBinaryStats.size,
+            mtimeMs: sourceBinaryStats.mtimeMs,
+        },
+        lockfileSha256: existsSync(lockfilePath)
+            ? createHash('sha256').update(await fs.readFile(lockfilePath)).digest('hex')
+            : null,
+    };
+    await fs.writeFile(
+        path.join(outputRoot, '.build-stamp.json'),
+        `${JSON.stringify(stamp, null, 2)}\n`,
+        'utf8',
+    );
 
     return { source, sourceBinary, destination, binary: destinationBinary };
 }

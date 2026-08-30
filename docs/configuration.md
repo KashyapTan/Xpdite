@@ -10,6 +10,12 @@ This document describes runtime configuration surfaces and defaults.
 
 ## Environment Variables
 
+- `XPDITE_TARGET_PLATFORM`, `XPDITE_TARGET_ARCH`, `XPDITE_BUILD_PROFILE`, and
+  `XPDITE_PYTHON_ENV` are build-time profile values set by repository scripts.
+  Do not set them independently for packaged builds.
+- `XPDITE_BUILD_CAPABILITIES_PATH` points the packaged backend at immutable
+  `build-capabilities.json` metadata supplied by Electron.
+
 | Variable | Default | Description |
 |---|---|---|
 | `XPDITE_USER_DATA_DIR` | `<project_root>/user_data` (dev) | Root for DB, memories, artifacts, screenshots, and skills |

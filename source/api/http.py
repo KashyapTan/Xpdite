@@ -256,6 +256,16 @@ async def session_health_check(
     return {"status": "healthy"}
 
 
+@router.get("/runtime-capabilities")
+async def runtime_capabilities(
+    _local_access: None = Depends(_require_local_api_access),
+):
+    """Return effective product capabilities without local package details."""
+    from ..infrastructure.runtime_capabilities import get_runtime_capabilities
+
+    return await _run_in_thread(get_runtime_capabilities)
+
+
 def _validate_artifact_type(artifact_type: Optional[str]) -> Optional[str]:
     if artifact_type is None:
         return None

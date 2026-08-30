@@ -22,6 +22,29 @@ def anyio_backend():
 
 
 class TestHttpApiHelpers:
+    @pytest.mark.anyio
+    async def test_runtime_capabilities_endpoint_returns_effective_contract(self):
+        expected = {
+            "profile": "mac-intel-transcription",
+            "platform": "darwin",
+            "architecture": "x64",
+            "features": {},
+        }
+
+        async def fake_run_in_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        with (
+            patch(
+                "source.infrastructure.runtime_capabilities.get_runtime_capabilities",
+                return_value=expected,
+            ),
+            patch.object(http_api, "_run_in_thread", new=fake_run_in_thread),
+        ):
+            result = await http_api.runtime_capabilities()
+
+        assert result == expected
+
     def test_extract_openrouter_error_prefers_nested_error_message(self):
         response = MagicMock()
         response.status_code = 500

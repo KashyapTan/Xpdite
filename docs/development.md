@@ -30,11 +30,27 @@ bun run dev:ollama
 
 ```bash
 bun run lint
+bun run lint:python
 bun run test:frontend
+bun run test:backend
 bun run build:react
-uv run python -m pytest tests/ -v
-uv run ruff check .
 ```
+
+The Python scripts resolve the same isolated native profile used by
+`bun run install:python`; they invoke UV with `--no-sync` so an implicit group
+set cannot replace it.
+
+Build-profile commands:
+
+```bash
+bun run install:python:full
+bun run install:python:mac-x64
+bun run dist:mac-arm64
+bun run dist:mac-x64
+```
+
+macOS packages are native-only builds. The distribution wrapper rejects Rosetta
+and cross-architecture host/target combinations before building.
 
 ## Core Engineering Conventions
 

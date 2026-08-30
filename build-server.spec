@@ -1,9 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import importlib.util
+import os
 from pathlib import Path
 from PyInstaller.utils.hooks import collect_all, collect_data_files, copy_metadata
 
 PROJECT_ROOT = Path.cwd()
+BUILD_PROFILE = os.environ.get("XPDITE_BUILD_PROFILE", "full").strip() or "full"
+if BUILD_PROFILE not in {"full", "mac-intel-transcription"}:
+    raise RuntimeError(f"Unsupported Xpdite PyInstaller profile: {BUILD_PROFILE}")
+
+ENABLE_ADVANCED_AUDIO = BUILD_PROFILE == "full"
+ENABLE_LOCAL_EMBEDDINGS = BUILD_PROFILE == "full"
 BUNDLED_EMBEDDING_MODEL_DIR = (
     PROJECT_ROOT / "build-temp" / "embedding-models" / "all-MiniLM-L6-v2"
 )
@@ -41,29 +49,64 @@ LITELLM_DATA_FILES = collect_data_files(
     ],
 )
 LITELLM_METADATA = copy_metadata("litellm")
-SENTENCE_TRANSFORMERS_DATA, SENTENCE_TRANSFORMERS_BINARIES, SENTENCE_TRANSFORMERS_HIDDENIMPORTS = collect_all(
-    "sentence_transformers"
-)
-HUGGINGFACE_HUB_DATA, HUGGINGFACE_HUB_BINARIES, HUGGINGFACE_HUB_HIDDENIMPORTS = collect_all(
-    "huggingface_hub"
-)
-EXTRA_RUNTIME_DATA = []
-EXTRA_RUNTIME_BINARIES = []
-EXTRA_RUNTIME_HIDDENIMPORTS = []
-for package_name in SENTENCE_TRANSFORMER_RUNTIME_PACKAGES:
-    package_data, package_binaries, package_hiddenimports = collect_all(package_name)
-    EXTRA_RUNTIME_DATA += package_data
-    EXTRA_RUNTIME_BINARIES += package_binaries
-    EXTRA_RUNTIME_HIDDENIMPORTS += package_hiddenimports
-EXTRA_RUNTIME_HIDDENIMPORTS += SENTENCE_TRANSFORMER_RUNTIME_MODULES
-SENTENCE_TRANSFORMERS_METADATA = copy_metadata("sentence-transformers")
-TRANSFORMERS_METADATA = copy_metadata("transformers")
-TOKENIZERS_METADATA = copy_metadata("tokenizers")
-HUGGINGFACE_HUB_METADATA = copy_metadata("huggingface-hub")
-SAFETENSORS_METADATA = copy_metadata("safetensors")
+
+PROFILE_DATA = []
+PROFILE_BINARIES = []
+PROFILE_HIDDENIMPORTS = []
+PROFILE_METADATA = []
+
+
+def collect_required(import_name, distribution_name, feature_name):
+    if importlib.util.find_spec(import_name) is None:
+        raise RuntimeError(
+            f"Missing package {distribution_name!r} required by {feature_name} "
+            f"for build profile {BUILD_PROFILE!r}. Synchronize the correct dependency groups."
+        )
+    package_data, package_binaries, package_hiddenimports = collect_all(import_name)
+    PROFILE_DATA.extend(package_data)
+    PROFILE_BINARIES.extend(package_binaries)
+    PROFILE_HIDDENIMPORTS.extend(package_hiddenimports)
+    PROFILE_METADATA.extend(copy_metadata(distribution_name))
+    print(f"Including {distribution_name} for {feature_name} ({BUILD_PROFILE})")
+
+
+for package in (
+    ("faster_whisper", "faster-whisper"),
+    ("ctranslate2", "ctranslate2"),
+    ("onnxruntime", "onnxruntime"),
+    ("pyaudio", "PyAudio"),
+):
+    collect_required(*package, "transcription")
+
+if ENABLE_ADVANCED_AUDIO:
+    for package in (
+        ("whisperx", "whisperx"),
+        ("speechbrain", "speechbrain"),
+        ("torchaudio", "torchaudio"),
+        ("torch", "torch"),
+    ):
+        collect_required(*package, "advanced audio")
+else:
+    print("Intentionally omitting WhisperX, SpeechBrain, Torch, and Torchaudio")
+
+if ENABLE_LOCAL_EMBEDDINGS:
+    collect_required(
+        "sentence_transformers", "sentence-transformers", "local embeddings"
+    )
+    collect_required("huggingface_hub", "huggingface-hub", "local embeddings")
+    for package_name in SENTENCE_TRANSFORMER_RUNTIME_PACKAGES:
+        package_data, package_binaries, package_hiddenimports = collect_all(package_name)
+        PROFILE_DATA.extend(package_data)
+        PROFILE_BINARIES.extend(package_binaries)
+        PROFILE_HIDDENIMPORTS.extend(package_hiddenimports)
+    PROFILE_HIDDENIMPORTS.extend(SENTENCE_TRANSFORMER_RUNTIME_MODULES)
+    for distribution_name in ("transformers", "tokenizers", "safetensors"):
+        PROFILE_METADATA.extend(copy_metadata(distribution_name))
+else:
+    print("Intentionally omitting Sentence Transformers and its bundled model")
 
 EMBEDDING_MODEL_DATA = []
-if BUNDLED_EMBEDDING_MODEL_DIR.exists():
+if ENABLE_LOCAL_EMBEDDINGS and BUNDLED_EMBEDDING_MODEL_DIR.exists():
     EMBEDDING_MODEL_DATA.append(
         (
             str(BUNDLED_EMBEDDING_MODEL_DIR),
@@ -74,22 +117,12 @@ if BUNDLED_EMBEDDING_MODEL_DIR.exists():
 a = Analysis(
     ['source/__main__.py'],
     pathex=[str(PROJECT_ROOT)],
-    binaries=(
-        SENTENCE_TRANSFORMERS_BINARIES
-        + HUGGINGFACE_HUB_BINARIES
-        + EXTRA_RUNTIME_BINARIES
-    ),
+    binaries=PROFILE_BINARIES,
     datas=(
         LITELLM_DATA_FILES
         + LITELLM_METADATA
-        + SENTENCE_TRANSFORMERS_DATA
-        + HUGGINGFACE_HUB_DATA
-        + EXTRA_RUNTIME_DATA
-        + SENTENCE_TRANSFORMERS_METADATA
-        + TRANSFORMERS_METADATA
-        + TOKENIZERS_METADATA
-        + HUGGINGFACE_HUB_METADATA
-        + SAFETENSORS_METADATA
+        + PROFILE_DATA
+        + PROFILE_METADATA
         + EMBEDDING_MODEL_DATA
     ),
     hiddenimports=[
@@ -134,13 +167,23 @@ a = Analysis(
         'time',
         'concurrent.futures'
     ]
-    + SENTENCE_TRANSFORMERS_HIDDENIMPORTS
-    + HUGGINGFACE_HUB_HIDDENIMPORTS
-    + EXTRA_RUNTIME_HIDDENIMPORTS,
+    + PROFILE_HIDDENIMPORTS,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=(
+        []
+        if BUILD_PROFILE == "full"
+        else [
+            "sentence_transformers",
+            "transformers",
+            "whisperx",
+            "speechbrain",
+            "torch",
+            "torchaudio",
+            "pyannote",
+        ]
+    ),
     noarchive=False,
     optimize=0,
 )

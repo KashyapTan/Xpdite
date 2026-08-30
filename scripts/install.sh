@@ -370,7 +370,7 @@ main() {
           asset_pattern='^Xpdite-.*-mac-arm64\.dmg$'
           ;;
         x86_64)
-          fail "Current releases only publish Apple Silicon macOS builds."
+          asset_pattern='^Xpdite-.*-mac-x64\.dmg$'
           ;;
         *)
           fail "Unsupported macOS architecture: $ARCH_NAME"
@@ -386,7 +386,7 @@ main() {
   esac
 
   release_output="$(resolve_release "$asset_pattern")" \
-    || fail "Could not find a matching Xpdite release for channel '${CHANNEL}'."
+    || fail "Could not find a macOS ${ARCH_NAME} Xpdite release asset for channel '${CHANNEL}'."
 
   selected_tag="$(printf '%s\n' "$release_output" | sed -n '1p')"
   selected_asset_name="$(printf '%s\n' "$release_output" | sed -n '2p')"

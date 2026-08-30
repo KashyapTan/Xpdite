@@ -19,6 +19,10 @@ bun install
 bun run install:python
 ```
 
+`install:python` resolves the dependency profile from the native host and uses an
+isolated `.venv-build/<target>-<profile>` environment. Do not use a full profile
+on Intel macOS; use `bun run install:python:mac-x64`.
+
 ## Quality Gates
 
 Before opening a PR, run the Build and Validate command set documented in `docs/development.md`.

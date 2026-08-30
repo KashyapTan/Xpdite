@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Outlet, useNavigate } from 'react-router-dom';
 import { WebSocketProvider, useWebSocket } from '../contexts/WebSocketContext';
+import { RuntimeCapabilitiesProvider } from '../contexts/RuntimeCapabilitiesContext';
 import { useTabKeyboardShortcuts } from '../hooks';
 import BootScreen from './boot/BootScreen';
 import xpditeLogo from '../assets/new/xpdite-logo-transparent.svg';
@@ -116,31 +117,33 @@ const Layout: React.FC = () => {
 
   return (
     <WebSocketProvider>
-      <HotkeyWindowBridge
-        miniRef={miniRef}
-        toggleMini={toggleMini}
-        setIsHidden={setIsHidden}
-      />
-      <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
-        <div
-          className="mini-container"
-          title="Restore Xpdite"
-          onClick={() => toggleMini(false)}
-        >
-          <img
-            src={xpditeLogo}
-            alt="Xpdite Logo"
-            className="xpdite-logo"
-          />
-        </div>
+      <RuntimeCapabilitiesProvider>
+        <HotkeyWindowBridge
+          miniRef={miniRef}
+          toggleMini={toggleMini}
+          setIsHidden={setIsHidden}
+        />
+        <div className={`app-wrapper ${mini ? 'mini-mode' : 'normal-mode'}`}>
+          <div
+            className="mini-container"
+            title="Restore Xpdite"
+            onClick={() => toggleMini(false)}
+          >
+            <img
+              src={xpditeLogo}
+              alt="Xpdite Logo"
+              className="xpdite-logo"
+            />
+          </div>
 
-        {flash && <div className="auto-mode-flash" aria-hidden="true" />}
+          {flash && <div className="auto-mode-flash" aria-hidden="true" />}
 
-        <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
-          <BootScreen />
-          <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden, triggerFlash }} />
+          <div className="container" style={{ opacity: isHidden ? 0 : 1 }}>
+            <BootScreen />
+            <Outlet context={{ setMini: toggleMini, setIsHidden, isHidden, triggerFlash }} />
+          </div>
         </div>
-      </div>
+      </RuntimeCapabilitiesProvider>
     </WebSocketProvider>
   );
 };

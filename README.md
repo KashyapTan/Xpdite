@@ -79,7 +79,7 @@ https://github.com/user-attachments/assets/956f8147-c917-4aa2-bc60-771742cbdc9b
    ```bash
    irm https://kashyaptan.com/Xpdite/install.ps1 | iex
    ```
-   macOS Apple Silicon:
+   macOS (Apple Silicon or Intel):
    ```bash
    curl -fsSL https://kashyaptan.com/Xpdite/install.sh | bash
    ```
@@ -91,7 +91,7 @@ See [docs/getting-started.md](./docs/getting-started.md) for full setup details 
 
 ### Developers
 
-Requirements: Bun, Python 3.13+, UV, Git.
+Requirements: Bun, Python 3.13+, UV, Git. macOS audio builds also require Homebrew PortAudio.
 
 ```bash
 git clone https://github.com/KashyapTan/xpdite.git
@@ -100,6 +100,13 @@ bun install
 bun run install:python
 bun run dev
 ```
+
+`install:python` selects the native dependency profile. Apple Silicon, Windows,
+and Linux x64 use the full profile; Intel macOS uses the transcription profile.
+Intel retains dictation, meeting transcription, and YouTube transcription while
+WhisperX alignment, speaker diarization, and bundled Sentence Transformers are
+unavailable. A configured Ollama embedding model and BM25 tool retrieval continue
+to work on Intel.
 
 Useful checks:
 

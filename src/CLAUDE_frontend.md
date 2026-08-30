@@ -232,6 +232,7 @@ Renders serialized sub-agent step JSON (text/tool steps) into an in-message tran
 - **`marketplace`** → `<MarketplaceSettings>` — Community extension manager for skills, prompts, and server installs.
 - **`connections`** → `<SettingsConnections>` — Google OAuth for Gmail + Calendar plus external MCP connector toggles. Shows email and service badges when connected.
 - **`meeting`** → `<MeetingRecorderSettings>` — Whisper model selector, diarization toggle, keep-audio toggle. Communicates via WS (`meeting_get_compute_info`, `meeting_get_settings`, `meeting_update_settings`).
+- **Runtime capabilities** → `RuntimeCapabilitiesContext` fetches the authenticated backend capability contract once the shared WebSocket is ready. UI controls use feature availability/reasons and never hard-code CPU architecture checks.
 - **`mobile`** → `<SettingsMobileChannels>` — Connects WhatsApp, Telegram, and Discord to the unified backend via the channel-bridge daemon. WhatsApp uses phone-number + pairing-code linked-device auth. Discord setup requires bot token, application ID, and public key; reconnect keeps the saved token unless the user replaces it.
 - **`sub-agents`** → `<SettingsSubAgents>` — Tier mapping for sub-agent `fast_model` and `smart_model`; blank values fall back to the currently active model.
 - **`scheduled-jobs`** → `<SettingsScheduledJobs>` — Scheduled task controls (toggle, run-now, delete, per-job forwarding targets).

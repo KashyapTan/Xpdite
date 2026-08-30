@@ -9,8 +9,12 @@ import queue
 import tempfile
 import os
 import logging
-import pyaudio
 import wave
+
+try:
+    import pyaudio
+except (ImportError, OSError):
+    pyaudio = None
 
 logger = logging.getLogger(__name__)
 WhisperModel = None
@@ -39,7 +43,7 @@ class TranscriptionService:
 
         # Audio configuration
         self.CHUNK = 1024
-        self.FORMAT = pyaudio.paInt16
+        self.FORMAT = getattr(pyaudio, "paInt16", 8)
         self.CHANNELS = 1
         self.RATE = 16000
         self.SAMPLE_WIDTH = 2  # pyaudio.paInt16 is always 2 bytes
@@ -63,6 +67,13 @@ class TranscriptionService:
         """Start recording audio in a background thread."""
         if self.is_recording:
             return
+
+        from ...infrastructure.runtime_capabilities import get_feature_status
+
+        capability = get_feature_status("microphone_dictation")
+        if not capability["available"] or pyaudio is None:
+            reason = capability["reason"] or "Microphone audio components could not load."
+            raise RuntimeError(reason)
 
         self.is_recording = True
         self._recording_error = None
@@ -94,6 +105,9 @@ class TranscriptionService:
 
     def _record_audio(self):
         """Internal method to capture audio from the microphone."""
+        if pyaudio is None:
+            self._recording_error = "Microphone audio components could not load."
+            return
         p = pyaudio.PyAudio()
 
         try:

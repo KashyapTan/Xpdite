@@ -460,6 +460,22 @@ function findRuntimeEnvFile(): string {
     throw new Error(`Runtime env file not found at: ${primary} or ${fallback}`);
 }
 
+function findBuildCapabilitiesFile(): string {
+    const resourcesPath = process.resourcesPath;
+    const primary = path.join(resourcesPath, 'runtime-config', 'build-capabilities.json');
+    if (fs.existsSync(primary)) {
+        return primary;
+    }
+
+    const appPath = path.dirname(process.execPath);
+    const fallback = path.join(appPath, 'resources', 'runtime-config', 'build-capabilities.json');
+    if (fs.existsSync(fallback)) {
+        return fallback;
+    }
+
+    throw new Error(`Build capability manifest not found at: ${primary} or ${fallback}`);
+}
+
 function getPythonServerArgs(): string[] {
     if (isDev()) {
         // In development, run as module
@@ -540,6 +556,7 @@ export async function startPythonServer(): Promise<void> {
         const args = getPythonServerArgs();
         const runtimeRoot = !isDev() ? findRuntimeRoot() : undefined;
         const runtimeEnvFile = !isDev() ? findRuntimeEnvFile() : undefined;
+        const buildCapabilitiesFile = !isDev() ? findBuildCapabilitiesFile() : undefined;
         const childPythonExecutable = runtimeRoot ? findBundledChildPythonExecutable(runtimeRoot) : undefined;
         
         console.log(`Starting Python server...`);
@@ -559,6 +576,7 @@ export async function startPythonServer(): Promise<void> {
                         XPDITE_USER_DATA_DIR: app.getPath('userData'),
                         XPDITE_RUNTIME_ROOT: runtimeRoot,
                         XPDITE_RUNTIME_ENV_FILE: runtimeEnvFile,
+                        XPDITE_BUILD_CAPABILITIES_PATH: buildCapabilitiesFile,
                         XPDITE_CHILD_PYTHON_EXECUTABLE: childPythonExecutable,
                       }
                     : {}),

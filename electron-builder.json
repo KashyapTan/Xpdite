@@ -18,7 +18,8 @@
             "from": "dist-python-runtime",
             "to": "python-runtime",
             "filter": [
-                "**/*"
+                "**/*",
+                "!**/.build-stamp.json"
             ]
         },
         {
@@ -39,7 +40,8 @@
             "from": "dist-codex-runtime",
             "to": "codex-runtime",
             "filter": [
-                "**/*"
+                "**/*",
+                "!**/.build-stamp.json"
             ]
         }
     ],
@@ -47,7 +49,8 @@
     "icon": "./assets/xpdite-icon.png",
     "mac": {
         "target": "dmg",
-        "icon": "./assets/xpdite.icns"
+        "icon": "./assets/xpdite.icns",
+        "minimumSystemVersion": "11.0"
     },
     "linux": {
         "target": "AppImage",
