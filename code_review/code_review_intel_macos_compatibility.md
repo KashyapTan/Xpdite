@@ -77,6 +77,7 @@ None required before merge.
 - Pruned build-only Python packages from the shipped runtime and added native Intel speech smoke
   coverage to release automation.
 - Expanded Codex build metadata with groups, source identity, and lockfile hash.
+- Made build-script assertions host-portable for Windows path separators and permission semantics.
 
 ### ⚠️ Flagged for Human Review
 

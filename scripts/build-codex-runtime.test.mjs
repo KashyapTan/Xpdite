@@ -68,7 +68,9 @@ test('copyCodexRuntime copies the resolved mac runtime into dist-codex-runtime',
     assert.equal(copied.destination, path.join(tempRoot, 'dist-codex-runtime', 'aarch64-apple-darwin'));
     assert.equal(await fs.readFile(destinationBinary, 'utf-8'), '#!/bin/sh\n');
     assert.equal(await fs.readFile(destinationRipgrep, 'utf-8'), 'rg');
-    assert.equal((await fs.stat(destinationBinary)).mode & 0o777, 0o755);
+    if (process.platform !== 'win32') {
+        assert.equal((await fs.stat(destinationBinary)).mode & 0o777, 0o755);
+    }
 });
 
 test('resolveCodexRuntimePaths rejects an optional package with no executable', async () => {

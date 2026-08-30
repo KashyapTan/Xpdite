@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 import {
   assertNativeHost,
@@ -28,9 +29,13 @@ test('returns exact groups and isolated Intel environment', () => {
   });
 
   assert.deepEqual(resolved.groups, ['dev', 'transcription']);
-  assert.match(
+  assert.equal(
     resolved.environmentDir,
-    /\.venv-build\/macos-x64-mac-intel-transcription$/,
+    path.join(
+      path.resolve('/tmp/xpdite-profile-test'),
+      '.venv-build',
+      'macos-x64-mac-intel-transcription',
+    ),
   );
   assert.equal(resolved.features.speaker_diarization, false);
   assert.equal(resolved.features.meeting_transcription, true);
